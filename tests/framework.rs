@@ -1,7 +1,11 @@
 use ddd_cqrs_es::{
-    Aggregate, CommandHandler, EventStore, EventStoreError, ExpectedRevision, InMemoryEventStore,
-    NewEvent, Repository,
+    Aggregate, AggregateFixture, ConcurrencyError, EventStore, EventStoreError, ExpectedRevision,
+    InMemoryEventStore, InMemoryProjectionRunner, Metadata, NewEvent, Projection, Repository,
+    RepositoryError,
 };
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::thread;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum CounterEvent {
@@ -15,10 +19,11 @@ enum CounterCommand {
     Increment { by: u64 },
 }
 
-#[derive(Default, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Counter {
-    exists: bool,
+    id: Option<String>,
     value: u64,
+    revision: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,29 +34,46 @@ enum CounterError {
 }
 
 impl Aggregate for Counter {
+    type Id = String;
+    type Command = CounterCommand;
     type Event = CounterEvent;
+    type Error = CounterError;
+
+    fn aggregate_type() -> &'static str {
+        "counter"
+    }
+
+    fn id(&self) -> Option<&Self::Id> {
+        self.id.as_ref()
+    }
+
+    fn revision(&self) -> u64 {
+        self.revision
+    }
 
     fn apply(&mut self, event: &Self::Event) {
         match event {
-            CounterEvent::Created => self.exists = true,
-            CounterEvent::Incremented { by } => self.value += by,
+            CounterEvent::Created => {
+                self.id = Some("fixture-counter".to_owned());
+            }
+            CounterEvent::Incremented { by } => {
+                self.value += by;
+            }
         }
+
+        self.revision += 1;
     }
-}
 
-impl CommandHandler<CounterCommand> for Counter {
-    type Error = CounterError;
-
-    fn handle(&self, command: CounterCommand) -> Result<Vec<Self::Event>, Self::Error> {
+    fn handle(&self, command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> {
         match command {
             CounterCommand::Create => {
-                if self.exists {
+                if self.id.is_some() {
                     return Err(CounterError::AlreadyCreated);
                 }
                 Ok(vec![CounterEvent::Created])
             }
             CounterCommand::Increment { by } => {
-                if !self.exists {
+                if self.id.is_none() {
                     return Err(CounterError::NotCreated);
                 }
                 if by == 0 {
@@ -61,60 +83,233 @@ impl CommandHandler<CounterCommand> for Counter {
             }
         }
     }
+
+    fn new() -> Self {
+        Self::default()
+    }
 }
 
 #[test]
 fn repository_executes_commands_and_replays_state() {
-    let store = InMemoryEventStore::<CounterEvent>::new();
+    let store = InMemoryEventStore::<Counter>::new();
     let repo = Repository::new(store);
+    let counter_id = "counter-1".to_owned();
 
-    repo.execute::<Counter, _>("counter-1", CounterCommand::Create)
+    repo.execute(&counter_id, CounterCommand::Create, Metadata::default())
         .unwrap();
-    repo.execute::<Counter, _>("counter-1", CounterCommand::Increment { by: 2 })
-        .unwrap();
-    repo.execute::<Counter, _>("counter-1", CounterCommand::Increment { by: 3 })
-        .unwrap();
+    repo.execute(
+        &counter_id,
+        CounterCommand::Increment { by: 2 },
+        Metadata::default(),
+    )
+    .unwrap();
+    repo.execute(
+        &counter_id,
+        CounterCommand::Increment { by: 3 },
+        Metadata::default(),
+    )
+    .unwrap();
 
-    let loaded = repo.load::<Counter>("counter-1").unwrap();
+    let loaded = repo.load(&counter_id).unwrap();
     assert_eq!(loaded.state.value, 5);
-    assert_eq!(loaded.version, 3);
+    assert_eq!(loaded.revision, 3);
+    assert_eq!(loaded.state.revision(), 3);
 }
 
 #[test]
 fn event_store_rejects_wrong_expected_revision() {
-    let store = InMemoryEventStore::<CounterEvent>::new();
+    let store = InMemoryEventStore::<Counter>::new();
+    let counter_id = "counter-1".to_owned();
 
     store
         .append(
-            "counter-1",
+            &counter_id,
             ExpectedRevision::NoStream,
-            vec![NewEvent::without_metadata(CounterEvent::Created)],
+            vec![NewEvent::new(CounterEvent::Created, Metadata::default())],
         )
         .unwrap();
 
     let result = store.append(
-        "counter-1",
+        &counter_id,
         ExpectedRevision::NoStream,
-        vec![NewEvent::without_metadata(CounterEvent::Incremented { by: 1 })],
+        vec![NewEvent::new(
+            CounterEvent::Incremented { by: 1 },
+            Metadata::default(),
+        )],
     );
 
     assert!(matches!(
         result,
-        Err(EventStoreError::Conflict {
-            expected: ExpectedRevision::NoStream,
-            actual: 1
-        })
+        Err(EventStoreError::Concurrency(
+            ConcurrencyError::StreamAlreadyExists
+        ))
     ));
 }
 
 #[test]
 fn domain_errors_are_not_persisted() {
-    let store = InMemoryEventStore::<CounterEvent>::new();
+    let store = InMemoryEventStore::<Counter>::new();
     let repo = Repository::new(store.clone());
+    let counter_id = "counter-1".to_owned();
 
-    let result = repo.execute::<Counter, _>("counter-1", CounterCommand::Increment { by: 1 });
-    assert!(result.is_err());
+    let result = repo.execute(
+        &counter_id,
+        CounterCommand::Increment { by: 1 },
+        Metadata::default(),
+    );
 
-    let events = store.load("counter-1").unwrap();
+    assert!(matches!(result, Err(RepositoryError::Domain(_))));
+    let events = store.load(&counter_id).unwrap();
     assert!(events.is_empty());
+}
+
+#[test]
+fn metadata_and_global_sequence_are_preserved() {
+    let store = InMemoryEventStore::<Counter>::new();
+    let repo = Repository::new(store.clone());
+    let counter_id = "counter-1".to_owned();
+    let metadata = Metadata::new()
+        .with_actor_id("user-1")
+        .with_correlation_id("corr-1")
+        .with_header("source", "test");
+
+    let committed = repo
+        .execute(&counter_id, CounterCommand::Create, metadata.clone())
+        .unwrap();
+
+    assert_eq!(committed[0].sequence, Some(1));
+    assert_eq!(committed[0].revision, 1);
+    assert_eq!(committed[0].metadata, metadata);
+    assert_eq!(committed[0].aggregate_type, "counter");
+
+    let global = store.load_global_after(None).unwrap();
+    assert_eq!(global.len(), 1);
+    assert_eq!(global[0].sequence, Some(1));
+}
+
+#[test]
+fn exact_revision_conflicts_are_first_class() {
+    let store = InMemoryEventStore::<Counter>::new();
+    let counter_id = "counter-1".to_owned();
+
+    store
+        .append(
+            &counter_id,
+            ExpectedRevision::Any,
+            vec![NewEvent::new(CounterEvent::Created, Metadata::default())],
+        )
+        .unwrap();
+
+    let error = store
+        .append(
+            &counter_id,
+            ExpectedRevision::Exact(0),
+            vec![NewEvent::new(
+                CounterEvent::Incremented { by: 1 },
+                Metadata::default(),
+            )],
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        EventStoreError::Concurrency(ConcurrencyError::WrongExpectedRevision {
+            expected: ExpectedRevision::Exact(0),
+            actual: 1,
+        })
+    ));
+}
+
+#[test]
+fn concurrent_appends_to_same_stream_preserve_one_winner_per_revision() {
+    let store = Arc::new(InMemoryEventStore::<Counter>::new());
+    let counter_id = "counter-1".to_owned();
+
+    let handles = (0..8)
+        .map(|_| {
+            let store = Arc::clone(&store);
+            let counter_id = counter_id.clone();
+            thread::spawn(move || {
+                store.append(
+                    &counter_id,
+                    ExpectedRevision::NoStream,
+                    vec![NewEvent::new(CounterEvent::Created, Metadata::default())],
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let successes = handles
+        .into_iter()
+        .map(|handle| handle.join().unwrap())
+        .filter(Result::is_ok)
+        .count();
+
+    assert_eq!(successes, 1);
+    assert_eq!(store.load(&counter_id).unwrap().len(), 1);
+}
+
+#[test]
+fn aggregate_fixture_asserts_events_errors_state_and_revision() {
+    AggregateFixture::<Counter>::new()
+        .given_no_events()
+        .when(CounterCommand::Create)
+        .then_expect_events(vec![CounterEvent::Created])
+        .then_expect_revision(0);
+
+    AggregateFixture::<Counter>::new()
+        .given(vec![CounterEvent::Created])
+        .when(CounterCommand::Increment { by: 0 })
+        .then_expect_error(CounterError::InvalidIncrement)
+        .then_expect_state(|counter| assert_eq!(counter.revision(), 1));
+}
+
+#[derive(Default)]
+struct CounterProjection {
+    values: HashMap<String, u64>,
+}
+
+impl Projection<CounterEvent, String> for CounterProjection {
+    type Error = ();
+
+    fn name(&self) -> &'static str {
+        "counter_projection"
+    }
+
+    fn apply(
+        &mut self,
+        event: &ddd_cqrs_es::EventEnvelope<CounterEvent, String>,
+    ) -> Result<(), Self::Error> {
+        let value = self.values.entry(event.aggregate_id.clone()).or_default();
+        match event.payload {
+            CounterEvent::Created => {}
+            CounterEvent::Incremented { by } => *value += by,
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn projection_runner_resumes_from_checkpoint() {
+    let store = InMemoryEventStore::<Counter>::new();
+    let repo = Repository::new(store.clone());
+    let counter_id = "counter-1".to_owned();
+
+    repo.execute(&counter_id, CounterCommand::Create, Metadata::default())
+        .unwrap();
+
+    let mut runner = InMemoryProjectionRunner::new(CounterProjection::default());
+    assert_eq!(runner.run::<Counter, _>(&store).unwrap(), 1);
+    assert_eq!(runner.checkpoint(), Some(1));
+
+    repo.execute(
+        &counter_id,
+        CounterCommand::Increment { by: 4 },
+        Metadata::default(),
+    )
+    .unwrap();
+
+    assert_eq!(runner.run::<Counter, _>(&store).unwrap(), 1);
+    assert_eq!(runner.checkpoint(), Some(2));
+    assert_eq!(runner.projection().values[&counter_id], 4);
 }

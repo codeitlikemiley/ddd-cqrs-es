@@ -1,78 +1,123 @@
-use ddd_cqrs_es::{Aggregate, CommandHandler, InMemoryEventStore, Repository};
+use ddd_cqrs_es::{Aggregate, InMemoryEventStore, Metadata, Repository};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum AccountEvent {
-    Opened { account_id: String, owner: String },
-    Deposited { amount: i64 },
-    Withdrawn { amount: i64 },
+    AccountOpened {
+        account_id: String,
+        owner_name: String,
+    },
+    MoneyDeposited {
+        amount: i64,
+    },
+    MoneyWithdrawn {
+        amount: i64,
+    },
+    AccountClosed,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum AccountCommand {
-    Open { account_id: String, owner: String },
-    Deposit { amount: i64 },
-    Withdraw { amount: i64 },
+    OpenAccount {
+        account_id: String,
+        owner_name: String,
+    },
+    DepositMoney {
+        amount: i64,
+    },
+    WithdrawMoney {
+        amount: i64,
+    },
+    CloseAccount,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Account {
     id: Option<String>,
-    owner: Option<String>,
+    owner_name: Option<String>,
     balance: i64,
+    is_open: bool,
+    revision: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum AccountError {
-    AlreadyOpened,
-    NotOpened,
+    AlreadyOpen,
+    NotOpen,
     InvalidAmount,
     InsufficientFunds,
+    AlreadyClosed,
 }
 
 impl Aggregate for Account {
+    type Id = String;
+    type Command = AccountCommand;
     type Event = AccountEvent;
+    type Error = AccountError;
+
+    fn aggregate_type() -> &'static str {
+        "bank_account"
+    }
+
+    fn id(&self) -> Option<&Self::Id> {
+        self.id.as_ref()
+    }
+
+    fn revision(&self) -> u64 {
+        self.revision
+    }
 
     fn apply(&mut self, event: &Self::Event) {
         match event {
-            AccountEvent::Opened { account_id, owner } => {
+            AccountEvent::AccountOpened {
+                account_id,
+                owner_name,
+            } => {
                 self.id = Some(account_id.clone());
-                self.owner = Some(owner.clone());
+                self.owner_name = Some(owner_name.clone());
+                self.is_open = true;
             }
-            AccountEvent::Deposited { amount } => {
+            AccountEvent::MoneyDeposited { amount } => {
                 self.balance += amount;
             }
-            AccountEvent::Withdrawn { amount } => {
+            AccountEvent::MoneyWithdrawn { amount } => {
                 self.balance -= amount;
             }
+            AccountEvent::AccountClosed => {
+                self.is_open = false;
+            }
         }
+
+        self.revision += 1;
     }
-}
 
-impl CommandHandler<AccountCommand> for Account {
-    type Error = AccountError;
-
-    fn handle(&self, command: AccountCommand) -> Result<Vec<Self::Event>, Self::Error> {
+    fn handle(&self, command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> {
         match command {
-            AccountCommand::Open { account_id, owner } => {
-                if self.id.is_some() {
-                    return Err(AccountError::AlreadyOpened);
+            AccountCommand::OpenAccount {
+                account_id,
+                owner_name,
+            } => {
+                if self.is_open {
+                    return Err(AccountError::AlreadyOpen);
                 }
 
-                Ok(vec![AccountEvent::Opened { account_id, owner }])
+                Ok(vec![AccountEvent::AccountOpened {
+                    account_id,
+                    owner_name,
+                }])
             }
-            AccountCommand::Deposit { amount } => {
-                if self.id.is_none() {
-                    return Err(AccountError::NotOpened);
+            AccountCommand::DepositMoney { amount } => {
+                if !self.is_open {
+                    return Err(AccountError::NotOpen);
                 }
                 if amount <= 0 {
                     return Err(AccountError::InvalidAmount);
                 }
 
-                Ok(vec![AccountEvent::Deposited { amount }])
+                Ok(vec![AccountEvent::MoneyDeposited { amount }])
             }
-            AccountCommand::Withdraw { amount } => {
-                if self.id.is_none() {
-                    return Err(AccountError::NotOpened);
+            AccountCommand::WithdrawMoney { amount } => {
+                if !self.is_open {
+                    return Err(AccountError::NotOpen);
                 }
                 if amount <= 0 {
                     return Err(AccountError::InvalidAmount);
@@ -81,35 +126,63 @@ impl CommandHandler<AccountCommand> for Account {
                     return Err(AccountError::InsufficientFunds);
                 }
 
-                Ok(vec![AccountEvent::Withdrawn { amount }])
+                Ok(vec![AccountEvent::MoneyWithdrawn { amount }])
+            }
+            AccountCommand::CloseAccount => {
+                if self.id.is_some() && !self.is_open {
+                    return Err(AccountError::AlreadyClosed);
+                }
+                if self.id.is_none() {
+                    return Err(AccountError::NotOpen);
+                }
+
+                Ok(vec![AccountEvent::AccountClosed])
             }
         }
+    }
+
+    fn new() -> Self {
+        Self::default()
     }
 }
 
 fn main() {
-    let store = InMemoryEventStore::<AccountEvent>::new();
+    let store = InMemoryEventStore::<Account>::new();
     let repo = Repository::new(store);
-    let account_id = "account-1";
+    let account_id = "account-1".to_owned();
+    let metadata = Metadata::new().with_actor_id("example-user");
 
-    repo.execute::<Account, _>(
-        account_id,
-        AccountCommand::Open {
-            account_id: account_id.to_owned(),
-            owner: "Uriah".to_owned(),
+    repo.execute(
+        &account_id,
+        AccountCommand::OpenAccount {
+            account_id: account_id.clone(),
+            owner_name: "Uriah".to_owned(),
         },
+        metadata.clone(),
     )
     .unwrap();
 
-    repo.execute::<Account, _>(account_id, AccountCommand::Deposit { amount: 100 })
+    repo.execute(
+        &account_id,
+        AccountCommand::DepositMoney { amount: 100 },
+        metadata.clone(),
+    )
+    .unwrap();
+
+    repo.execute(
+        &account_id,
+        AccountCommand::WithdrawMoney { amount: 35 },
+        metadata.clone(),
+    )
+    .unwrap();
+
+    repo.execute(&account_id, AccountCommand::CloseAccount, metadata)
         .unwrap();
 
-    repo.execute::<Account, _>(account_id, AccountCommand::Withdraw { amount: 35 })
-        .unwrap();
-
-    let loaded = repo.load::<Account>(account_id).unwrap();
+    let loaded = repo.load(&account_id).unwrap();
     assert_eq!(loaded.state.balance, 65);
-    assert_eq!(loaded.version, 3);
+    assert_eq!(loaded.revision, 4);
+    assert!(!loaded.state.is_open);
 
     println!("{:#?}", loaded);
 }

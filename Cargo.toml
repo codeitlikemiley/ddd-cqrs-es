@@ -13,4 +13,14 @@ categories = ["development-tools", "rust-patterns"]
 name = "ddd_cqrs_es"
 path = "src/lib.rs"
 
+[features]
+default = ["std"]
+std = []
+async = []
+serde = []
+json = ["serde"]
+uuid = []
+chrono = []
+tracing = []
+
 [dependencies]

@@ -1,147 +1,140 @@
 # ddd_cqrs_es
 
-A lightweight, dependency-free Rust starter framework for Domain-Driven Design, CQRS, and Event Sourcing.
+A lightweight Rust framework for Domain-Driven Design, CQRS, and Event Sourcing.
 
-It gives you the core building blocks without forcing a database, serializer, async runtime, or web framework:
+The crate gives you explicit, infrastructure-light building blocks:
 
-- `Aggregate`: event-sourced domain state
-- `CommandHandler`: command decision logic
-- `EventStore`: persistence abstraction
-- `InMemoryEventStore`: test/local event store
-- `Repository`: load, execute, and save aggregate events with optimistic concurrency
-- `Projection`: read-model updater abstraction
+- `Aggregate`: typed domain consistency boundary
+- `EventEnvelope`: persisted event metadata, revision, and global sequence
+- `Metadata`: audit, tracing, causality, and tenancy context
+- `EventStore`: pluggable persistence abstraction
+- `InMemoryEventStore`: thread-safe test/local store with optimistic concurrency
+- `Repository`: aggregate loading, command execution, and append coordination
+- `Projection` and `InMemoryProjectionRunner`: read-model replay with checkpoints
+- `ProcessManager`: event-to-command saga abstraction
+- `SnapshotStore`: optional snapshot persistence abstraction
+- `AggregateFixture`: concise aggregate unit tests
+
+The core does not require a web framework, database, serializer, message broker,
+or async runtime.
 
 ## Install
 
-Because this is a local crate starter, use it through a path dependency:
+Use it as a path dependency while this crate is local:
 
 ```toml
 [dependencies]
 ddd_cqrs_es = { path = "../ddd_cqrs_es" }
 ```
 
-## Core flow
+## Core Flow
 
-1. Define domain events.
-2. Define commands.
-3. Implement `Aggregate` for your domain object.
-4. Implement `CommandHandler<Command>` for decision logic.
-5. Use `Repository` to load state, handle commands, and append events.
-6. Build projections from `EventEnvelope`s for query/read models.
+1. Define commands and past-tense domain events.
+2. Implement `Aggregate` for your consistency boundary.
+3. Use `Repository` with an `EventStore` to execute commands.
+4. Build query models with projections from committed envelopes.
 
 ## Example
 
 ```rust
-use ddd_cqrs_es::{Aggregate, CommandHandler, InMemoryEventStore, Repository};
+use ddd_cqrs_es::{Aggregate, InMemoryEventStore, Metadata, Repository};
 
 #[derive(Clone)]
-enum AccountEvent {
-    Opened { account_id: String, owner: String },
-    Deposited { amount: i64 },
+enum CounterEvent {
+    Created,
+    Incremented(u64),
 }
 
-enum AccountCommand {
-    Open { account_id: String, owner: String },
-    Deposit { amount: i64 },
+enum CounterCommand {
+    Create,
+    Increment(u64),
 }
 
 #[derive(Default)]
-struct Account {
-    id: Option<String>,
-    balance: i64,
+struct Counter {
+    exists: bool,
+    value: u64,
+    revision: u64,
 }
 
 #[derive(Debug)]
-enum AccountError {
-    AlreadyOpened,
-    NotOpened,
-    InvalidAmount,
+enum CounterError {
+    AlreadyCreated,
+    NotCreated,
 }
 
-impl Aggregate for Account {
-    type Event = AccountEvent;
+impl Aggregate for Counter {
+    type Id = String;
+    type Command = CounterCommand;
+    type Event = CounterEvent;
+    type Error = CounterError;
+
+    fn aggregate_type() -> &'static str {
+        "counter"
+    }
+
+    fn id(&self) -> Option<&Self::Id> {
+        None
+    }
+
+    fn revision(&self) -> u64 {
+        self.revision
+    }
 
     fn apply(&mut self, event: &Self::Event) {
         match event {
-            AccountEvent::Opened { account_id, .. } => self.id = Some(account_id.clone()),
-            AccountEvent::Deposited { amount } => self.balance += amount,
+            CounterEvent::Created => self.exists = true,
+            CounterEvent::Incremented(by) => self.value += by,
         }
+        self.revision += 1;
     }
-}
 
-impl CommandHandler<AccountCommand> for Account {
-    type Error = AccountError;
-
-    fn handle(&self, command: AccountCommand) -> Result<Vec<Self::Event>, Self::Error> {
+    fn handle(&self, command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> {
         match command {
-            AccountCommand::Open { account_id, owner } => {
-                if self.id.is_some() {
-                    return Err(AccountError::AlreadyOpened);
-                }
-                Ok(vec![AccountEvent::Opened { account_id, owner }])
-            }
-            AccountCommand::Deposit { amount } => {
-                if self.id.is_none() {
-                    return Err(AccountError::NotOpened);
-                }
-                if amount <= 0 {
-                    return Err(AccountError::InvalidAmount);
-                }
-                Ok(vec![AccountEvent::Deposited { amount }])
-            }
+            CounterCommand::Create if self.exists => Err(CounterError::AlreadyCreated),
+            CounterCommand::Create => Ok(vec![CounterEvent::Created]),
+            CounterCommand::Increment(_) if !self.exists => Err(CounterError::NotCreated),
+            CounterCommand::Increment(by) => Ok(vec![CounterEvent::Incremented(by)]),
         }
+    }
+
+    fn new() -> Self {
+        Self::default()
     }
 }
 
-fn main() {
-    let store = InMemoryEventStore::<AccountEvent>::new();
-    let repo = Repository::new(store);
+let store = InMemoryEventStore::<Counter>::new();
+let repo = Repository::new(store);
+let counter_id = "counter-1".to_owned();
 
-    repo.execute::<Account, _>(
-        "account-1",
-        AccountCommand::Open {
-            account_id: "account-1".to_string(),
-            owner: "Uriah".to_string(),
-        },
-    ).unwrap();
+repo.execute(&counter_id, CounterCommand::Create, Metadata::default())?;
+repo.execute(&counter_id, CounterCommand::Increment(5), Metadata::default())?;
 
-    repo.execute::<Account, _>(
-        "account-1",
-        AccountCommand::Deposit { amount: 100 },
-    ).unwrap();
-
-    let account = repo.load::<Account>("account-1").unwrap();
-    assert_eq!(account.state.balance, 100);
-    assert_eq!(account.version, 2);
-}
+let loaded = repo.load(&counter_id)?;
+assert_eq!(loaded.state.value, 5);
+# Ok::<(), ddd_cqrs_es::RepositoryError<CounterError>>(())
 ```
 
-Run the full example:
+Run the full bank account example:
 
 ```bash
 cargo run --example bank_account
 ```
 
-Run tests:
+Run verification:
 
 ```bash
 cargo test
+cargo test --doc
 ```
 
-## Design notes
+## Design Notes
 
-- Revision `0` means the stream is empty.
-- The first persisted event has revision `1`.
-- `Repository` saves with `ExpectedRevision::Exact(version)` to enforce optimistic concurrency.
-- Metadata is generic and defaults to `()`.
-- The crate is synchronous and dependency-free by design. Add async traits, serialization, and a durable store adapter when integrating with your production stack.
+- Commands are imperative; events are facts named in the past tense.
+- Aggregates do not mutate during command handling. They return events.
+- Repository append uses `ExpectedRevision::Exact(revision)` to enforce optimistic concurrency.
+- Event envelopes preserve metadata, event type/version, stream revision, and global sequence.
+- Projections should be idempotent because read models are eventually consistent.
+- Snapshots are optional and never replace the event log.
 
-## Recommended next production extensions
-
-- `serde` integration for event and metadata serialization.
-- Event type/version names for upcasting.
-- Snapshot repository for long streams.
-- Outbox/subscription runner for projections.
-- Postgres, DynamoDB, Kafka, or EventStoreDB implementation of `EventStore`.
-- Tracing/correlation metadata.
-- Idempotency keys for command handlers.
+See `docs/` for architecture, getting started, testing, persistence, and projection guides.

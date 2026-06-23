@@ -46,6 +46,20 @@ pub trait Aggregate: Sized {
 
         LoadedAggregate { state, revision }
     }
+
+    /// Rebuilds an aggregate from raw events for aggregate unit tests.
+    fn replay_events(events: &[Self::Event]) -> LoadedAggregate<Self> {
+        let mut state = Self::new();
+
+        for event in events {
+            state.apply(event);
+        }
+
+        LoadedAggregate {
+            state,
+            revision: events.len() as u64,
+        }
+    }
 }
 
 /// Aggregate state plus the persisted stream revision that produced it.

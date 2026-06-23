@@ -2,69 +2,125 @@ use crate::event::{ExpectedRevision, Revision};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
-/// Errors produced by an [`EventStore`](crate::EventStore).
+/// Optimistic concurrency failure.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ConcurrencyError {
+    /// The append expected an empty stream, but events already exist.
+    StreamAlreadyExists,
+    /// The append expected one revision but found another.
+    WrongExpectedRevision {
+        /// Expected revision constraint.
+        expected: ExpectedRevision,
+        /// Actual stream revision at append time.
+        actual: Revision,
+    },
+}
+
+impl Display for ConcurrencyError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConcurrencyError::StreamAlreadyExists => f.write_str("event stream already exists"),
+            ConcurrencyError::WrongExpectedRevision { expected, actual } => {
+                write!(
+                    f,
+                    "wrong expected revision: expected {:?}, actual revision {}",
+                    expected, actual
+                )
+            }
+        }
+    }
+}
+
+impl Error for ConcurrencyError {}
+
+/// Errors produced by event store implementations.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EventStoreError {
     /// Optimistic concurrency check failed.
-    Conflict {
-        expected: ExpectedRevision,
-        actual: Revision,
-    },
-    /// Shared state was poisoned, usually because a previous thread panicked
-    /// while holding a lock.
+    Concurrency(ConcurrencyError),
+    /// Event serialization failed.
+    Serialization(String),
+    /// Event deserialization failed.
+    Deserialization(String),
+    /// Backend connection or availability failure.
+    Connection(String),
+    /// Shared state was poisoned by a panic while holding a lock.
     Poisoned,
     /// Adapter-specific failure.
     Backend(String),
+    /// Unknown adapter failure.
+    Unknown(String),
 }
 
 impl Display for EventStoreError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            EventStoreError::Conflict { expected, actual } => {
-                write!(
-                    f,
-                    "event stream conflict: expected {:?}, actual revision {}",
-                    expected, actual
-                )
+            EventStoreError::Concurrency(error) => Display::fmt(error, f),
+            EventStoreError::Serialization(message) => write!(f, "serialization error: {message}"),
+            EventStoreError::Deserialization(message) => {
+                write!(f, "deserialization error: {message}")
             }
-            EventStoreError::Poisoned => write!(f, "event store lock was poisoned"),
+            EventStoreError::Connection(message) => write!(f, "connection error: {message}"),
+            EventStoreError::Poisoned => f.write_str("event store lock was poisoned"),
             EventStoreError::Backend(message) => write!(f, "event store backend error: {message}"),
+            EventStoreError::Unknown(message) => write!(f, "unknown event store error: {message}"),
         }
     }
 }
 
-impl Error for EventStoreError {}
-
-/// Error returned by [`Repository::execute`](crate::Repository::execute).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ExecuteError<DomainError> {
-    Store(EventStoreError),
-    Domain(DomainError),
-}
-
-impl<DomainError> From<EventStoreError> for ExecuteError<DomainError> {
-    fn from(value: EventStoreError) -> Self {
-        ExecuteError::Store(value)
+impl Error for EventStoreError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            EventStoreError::Concurrency(error) => Some(error),
+            _ => None,
+        }
     }
 }
 
-impl<DomainError: Display> Display for ExecuteError<DomainError> {
+/// Error returned by repository operations.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RepositoryError<DomainError, StoreError = EventStoreError> {
+    /// Aggregate command handling rejected the command.
+    Domain(DomainError),
+    /// Event store rejected the append due to optimistic concurrency.
+    Concurrency(ConcurrencyError),
+    /// Event store or infrastructure operation failed.
+    Store(StoreError),
+}
+
+impl<DomainError, StoreError> Display for RepositoryError<DomainError, StoreError>
+where
+    DomainError: Display,
+    StoreError: Display,
+{
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            ExecuteError::Store(error) => Display::fmt(error, f),
-            ExecuteError::Domain(error) => Display::fmt(error, f),
+            RepositoryError::Domain(error) => Display::fmt(error, f),
+            RepositoryError::Concurrency(error) => Display::fmt(error, f),
+            RepositoryError::Store(error) => Display::fmt(error, f),
         }
     }
 }
 
-impl<DomainError> Error for ExecuteError<DomainError>
+impl<DomainError, StoreError> Error for RepositoryError<DomainError, StoreError>
 where
     DomainError: Error + 'static,
+    StoreError: Error + 'static,
 {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            ExecuteError::Store(error) => Some(error),
-            ExecuteError::Domain(error) => Some(error),
+            RepositoryError::Domain(error) => Some(error),
+            RepositoryError::Concurrency(error) => Some(error),
+            RepositoryError::Store(error) => Some(error),
+        }
+    }
+}
+
+impl<DomainError> From<EventStoreError> for RepositoryError<DomainError, EventStoreError> {
+    fn from(value: EventStoreError) -> Self {
+        match value {
+            EventStoreError::Concurrency(error) => RepositoryError::Concurrency(error),
+            error => RepositoryError::Store(error),
         }
     }
 }
