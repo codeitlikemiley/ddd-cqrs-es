@@ -4,6 +4,21 @@ use std::collections::BTreeMap;
 ///
 /// The fields support tracing, auditability, multi-tenancy, and event
 /// causality without requiring a specific observability crate.
+///
+/// # Example
+///
+/// ```rust
+/// use ddd_cqrs_es::Metadata;
+///
+/// let metadata = Metadata::new()
+///     .with_correlation_id("corr-123")
+///     .with_actor_id("user-alice")
+///     .with_header("custom-key", "custom-value");
+///
+/// assert_eq!(metadata.correlation_id.as_deref(), Some("corr-123"));
+/// assert_eq!(metadata.actor_id.as_deref(), Some("user-alice"));
+/// assert_eq!(metadata.headers.get("custom-key").map(|s| s.as_str()), Some("custom-value"));
+/// ```
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Metadata {

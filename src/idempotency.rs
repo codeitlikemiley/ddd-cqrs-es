@@ -5,6 +5,16 @@ use std::fmt::{Display, Formatter};
 use std::sync::{Arc, RwLock};
 
 /// Stable idempotency key used to deduplicate command retries.
+///
+/// # Example
+///
+/// ```rust
+/// use ddd_cqrs_es::IdempotencyKey;
+///
+/// let key = IdempotencyKey::new("command-123");
+/// assert_eq!(key.as_str(), "command-123");
+/// assert_eq!(key.to_string(), "command-123");
+/// ```
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -63,6 +73,19 @@ impl Display for InMemoryIdempotencyError {
 impl Error for InMemoryIdempotencyError {}
 
 /// Thread-safe in-memory idempotency store.
+///
+/// # Example
+///
+/// ```rust
+/// use ddd_cqrs_es::{IdempotencyKey, IdempotencyStore, InMemoryIdempotencyStore};
+///
+/// let store = InMemoryIdempotencyStore::<String>::new();
+/// let key = IdempotencyKey::new("msg-1");
+///
+/// store.save(key.clone(), "processed".to_string()).unwrap();
+/// let value = store.load(&key).unwrap();
+/// assert_eq!(value, Some("processed".to_string()));
+/// ```
 #[derive(Clone, Debug)]
 pub struct InMemoryIdempotencyStore<V>
 where

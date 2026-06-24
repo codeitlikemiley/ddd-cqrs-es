@@ -19,6 +19,18 @@ pub const INITIAL_REVISION: Revision = 0;
 pub type EventType = String;
 
 /// A unique identifier assigned to a persisted event.
+///
+/// # Example
+///
+/// ```rust
+/// use ddd_cqrs_es::EventId;
+///
+/// let id = EventId::new();
+/// assert!(!id.as_str().is_empty());
+///
+/// let custom = EventId::from_string("my-custom-id");
+/// assert_eq!(custom.as_str(), "my-custom-id");
+/// ```
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -82,6 +94,30 @@ impl Display for EventId {
 ///
 /// Implement this for event enums so stored envelopes use stable event names
 /// and schema versions instead of Rust type paths.
+///
+/// # Example
+///
+/// ```rust
+/// use ddd_cqrs_es::DomainEvent;
+///
+/// #[derive(Clone)]
+/// enum OrderEvent {
+///     Placed { order_id: String },
+/// }
+///
+/// impl DomainEvent for OrderEvent {
+///     fn event_type(&self) -> &'static str {
+///         "order_placed"
+///     }
+///     fn event_version(&self) -> u32 {
+///         1
+///     }
+/// }
+///
+/// let event = OrderEvent::Placed { order_id: "order-1".to_string() };
+/// assert_eq!(event.event_type(), "order_placed");
+/// assert_eq!(event.event_version(), 1);
+/// ```
 pub trait DomainEvent: Clone + Send + Sync + 'static {
     /// Stable event type name, such as `account_opened`.
     fn event_type(&self) -> &'static str;
@@ -93,6 +129,15 @@ pub trait DomainEvent: Clone + Send + Sync + 'static {
 }
 
 /// Concurrency expectation used when appending events.
+///
+/// # Example
+///
+/// ```rust
+/// use ddd_cqrs_es::ExpectedRevision;
+///
+/// let expected = ExpectedRevision::Exact(10);
+/// assert_eq!(expected, ExpectedRevision::Exact(10));
+/// ```
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExpectedRevision {
@@ -105,6 +150,22 @@ pub enum ExpectedRevision {
 }
 
 /// A domain event before persistence assigns revision and sequence values.
+///
+/// # Example
+///
+/// ```rust
+/// use ddd_cqrs_es::{NewEvent, DomainEvent, Metadata};
+///
+/// #[derive(Clone)]
+/// struct MyEvent;
+/// impl DomainEvent for MyEvent {
+///     fn event_type(&self) -> &'static str { "my_event" }
+/// }
+///
+/// let new_event = NewEvent::new(MyEvent, Metadata::default());
+/// assert_eq!(new_event.event_type, "my_event");
+/// assert_eq!(new_event.event_version, 1);
+/// ```
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewEvent<E> {
@@ -161,6 +222,29 @@ impl<E> NewEvent<E> {
 }
 
 /// A persisted event with stream identity, revision, metadata, and timestamps.
+///
+/// # Example
+///
+/// ```rust
+/// use ddd_cqrs_es::{EventEnvelope, EventId, Metadata};
+/// use std::time::SystemTime;
+///
+/// let envelope = EventEnvelope::new(
+///     EventId::from_string("evt-123"),
+///     "aggregate-1".to_string(),
+///     "my_aggregate",
+///     5,
+///     Some(42),
+///     "my_event",
+///     1,
+///     "payload_data".to_string(),
+///     Metadata::default(),
+///     SystemTime::now(),
+/// );
+/// assert_eq!(envelope.revision, 5);
+/// assert_eq!(envelope.sequence, Some(42));
+/// assert_eq!(envelope.event_id.as_str(), "evt-123");
+/// ```
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EventEnvelope<E, Id> {

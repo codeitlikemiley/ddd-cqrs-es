@@ -1,184 +1,94 @@
 # ddd_cqrs_es
 
-A lightweight Rust framework for Domain-Driven Design, CQRS, and Event Sourcing.
+A lightweight, infrastructure-light Domain-Driven Design (DDD), CQRS, and Event Sourcing framework for Rust.
 
-The crate gives you explicit, infrastructure-light building blocks:
+Decouple your core business logic completely from databases, serialization, web frameworks, and asynchronous runtimes. Design pure domain aggregates, enforce transactional consistency boundaries, and build rich read models with minimal friction.
 
-- `Aggregate`: typed domain consistency boundary
-- `DomainEvent`: stable event type/version metadata
-- `EventEnvelope`: persisted event metadata, revision, and global sequence
-- `Metadata`: audit, tracing, causality, and tenancy context
-- `EventStore`: pluggable persistence abstraction
-- `InMemoryEventStore`: thread-safe test/local store with optimistic concurrency
-- `Repository`: aggregate loading, command execution, and append coordination
-- `Projection` and `InMemoryProjectionRunner`: read-model replay with checkpoints
-- `ProcessManager`: event-to-command saga abstraction
-- `SnapshotStore`: optional snapshot persistence abstraction
-- `AggregateFixture`: concise aggregate unit tests
-- `PostgresEventStore` behind the `postgres` feature
-- `SqliteEventStore` behind the `sqlite` feature
+---
 
-The core does not require a web framework, database, serializer, message broker,
-or async runtime.
+## Quick Installation
 
-## Install
-
-Use it as a path dependency while this crate is local:
+Add the crate as a path dependency in your `Cargo.toml`:
 
 ```toml
 [dependencies]
 ddd_cqrs_es = { path = "../ddd_cqrs_es" }
 ```
 
-## Core Flow
+To enable durable adapters:
+- **SQLite Support:** `features = ["sqlite"]`
+- **PostgreSQL Support:** `features = ["postgres"]`
 
-1. Define commands and past-tense domain events.
-2. Implement `Aggregate` for your consistency boundary.
-3. Use `Repository` with an `EventStore` to execute commands.
-4. Build query models with projections from committed envelopes.
+---
 
-## Example
+## Quick Usage
+
+Define your command, event, and state. Execute a transaction:
 
 ```rust
-use ddd_cqrs_es::{Aggregate, DomainEvent, InMemoryEventStore, Metadata, Repository};
+use ddd_cqrs_es::{Aggregate, InMemoryEventStore, Repository, Metadata};
 
-#[derive(Clone)]
-enum CounterEvent {
-    Created,
-    Incremented(u64),
-}
+// 1. Define command, event, state, and implement the Aggregate trait.
+// (See docs/getting-started for the complete example code)
 
-impl DomainEvent for CounterEvent {
-    fn event_type(&self) -> &'static str {
-        match self {
-            CounterEvent::Created => "counter_created",
-            CounterEvent::Incremented(_) => "counter_incremented",
-        }
-    }
-}
-
-enum CounterCommand {
-    Create,
-    Increment(u64),
-}
-
-#[derive(Default)]
-struct Counter {
-    exists: bool,
-    value: u64,
-    revision: u64,
-}
-
-#[derive(Debug)]
-enum CounterError {
-    AlreadyCreated,
-    NotCreated,
-}
-
-impl Aggregate for Counter {
-    type Id = String;
-    type Command = CounterCommand;
-    type Event = CounterEvent;
-    type Error = CounterError;
-
-    fn aggregate_type() -> &'static str {
-        "counter"
-    }
-
-    fn id(&self) -> Option<&Self::Id> {
-        None
-    }
-
-    fn revision(&self) -> u64 {
-        self.revision
-    }
-
-    fn apply(&mut self, event: &Self::Event) {
-        match event {
-            CounterEvent::Created => self.exists = true,
-            CounterEvent::Incremented(by) => self.value += by,
-        }
-        self.revision += 1;
-    }
-
-    fn handle(&self, command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> {
-        match command {
-            CounterCommand::Create if self.exists => Err(CounterError::AlreadyCreated),
-            CounterCommand::Create => Ok(vec![CounterEvent::Created]),
-            CounterCommand::Increment(_) if !self.exists => Err(CounterError::NotCreated),
-            CounterCommand::Increment(by) => Ok(vec![CounterEvent::Incremented(by)]),
-        }
-    }
-
-    fn new() -> Self {
-        Self::default()
-    }
-}
-
-let store = InMemoryEventStore::<Counter>::new();
+let store = InMemoryEventStore::<BankAccount>::new();
 let repo = Repository::new(store);
-let counter_id = "counter-1".to_owned();
+let account_id = "account_abc123".to_owned();
 
-repo.execute(&counter_id, CounterCommand::Create, Metadata::default())?;
-repo.execute(&counter_id, CounterCommand::Increment(5), Metadata::default())?;
-
-let loaded = repo.load(&counter_id)?;
-assert_eq!(loaded.state.value, 5);
-# Ok::<(), ddd_cqrs_es::RepositoryError<CounterError>>(())
-```
-
-Run the full bank account example:
-
-```bash
-cargo run --example bank_account
-```
-
-Run verification:
-
-```bash
-cargo test
-cargo test --doc
-```
-
-## Feature-Gated Adapters
-
-Enable SQLite:
-
-```toml
-ddd_cqrs_es = { path = "../ddd_cqrs_es", features = ["sqlite"] }
-```
-
-```rust
-let store = ddd_cqrs_es::SqliteEventStore::<MyAggregate>::in_memory()?;
-```
-
-Enable PostgreSQL:
-
-```toml
-ddd_cqrs_es = { path = "../ddd_cqrs_es", features = ["postgres"] }
-```
-
-```rust
-let store = ddd_cqrs_es::PostgresEventStore::<MyAggregate>::connect(
-    "host=localhost port=5432 user=uriah dbname=events"
+// 2. Execute business validation and persist events in a transaction
+repo.execute(
+    &account_id,
+    BankAccountCommand::DepositMoney { amount: 100 },
+    Metadata::default(),
 )?;
-store.initialize_schema()?;
+
+// 3. Rebuild the aggregate state by replaying past events in-memory
+let loaded = repo.load(&account_id)?;
+assert_eq!(loaded.state.balance(), 100);
 ```
 
-Run the live Postgres contract test by providing a connection string:
+---
 
-```bash
-DDD_CQRS_ES_POSTGRES_URL='host=localhost port=5432 user=uriah dbname=ddd_cqrs_es_live' \
-  cargo test --features postgres postgres_store_passes_reusable_contract_when_url_is_provided
-```
+## Detailed Conceptual Guides
 
-## Design Notes
+Our documentation is structured around explaining the **theoretical concepts and patterns** before jumping into code. Each guide includes extensive theoretical discussions, visual architectural diagrams, and full production-ready code.
 
-- Commands are imperative; events are facts named in the past tense.
-- Aggregates do not mutate during command handling. They return events.
-- Repository append uses `ExpectedRevision::Exact(revision)` to enforce optimistic concurrency.
-- Event envelopes preserve metadata, event type/version, stream revision, and global sequence.
-- Projections should be idempotent because read models are eventually consistent.
-- Snapshots are optional and never replace the event log.
+Explore our guides in the [`/docs`](./docs) directory:
 
-See `docs/` for architecture, getting started, testing, persistence, and projection guides.
+### 🚀 [Getting Started Guide](./docs/getting-started.md)
+* **What you'll learn:** The core mechanics of Event Sourcing, how Aggregate state is rebuilt via history replay instead of CRUD overwrites, and how to write your first Aggregate command handler in Rust.
+
+### 🏛️ [Architecture & Design Guide](./docs/architecture.md)
+* **What you'll learn:** DDD concepts (Aggregate Roots as transactional consistency boundaries, Ubiquitous Language, Entities vs Value Objects) and the CQRS write/read responsibility split.
+* Includes the comprehensive command pipeline and read model propagation sequence diagrams.
+
+### 💾 [Persistence & Event Storage Guide](./docs/persistence.md)
+* **What you'll learn:** The append-only ledger model, designing durable schemas, and why Optimistic Concurrency Control (`ExpectedRevision`) is essential for stateless horizontal scaling.
+* Covers configuration of in-memory, SQLite, and PostgreSQL database adapters.
+
+### 👁️ [Projections & Read Models Guide](./docs/projections.md)
+* **What you'll learn:** Eventual consistency, asynchronous read-model materialization, sequence checkpoint tracking, and why projection appliers must be strictly idempotent.
+
+### 🧪 [Behavior-Driven Development Guide](./docs/testing.md)
+* **What you'll learn:** Why Event Sourcing is a unit-testing superpower. Write clean, fast BDD tests using the `AggregateFixture` API (`Given` history -> `When` command -> `Then` expect events).
+
+---
+
+## Local Documentation Server
+
+We utilize **Mintlify** to render a beautiful, modern documentation website. To preview the documentation locally with live-reloading:
+
+1. Install the Mint CLI:
+   ```bash
+   npm install -g mintlify
+   ```
+2. Navigate to the documentation directory and run the dev server:
+   ```bash
+   cd docs
+   mint dev
+   ```
+3. To validate the configuration and check for broken links prior to shipping:
+   ```bash
+   mint validate
+   mint broken-links
+   ```

@@ -33,6 +33,39 @@ where
 /// This store is intended for tests, examples, and local development. It is
 /// not durable, but it enforces the same stream revision checks production
 /// adapters should enforce.
+///
+/// # Example
+///
+/// ```rust
+/// use ddd_cqrs_es::{InMemoryEventStore, EventStore, NewEvent, ExpectedRevision, Metadata};
+/// # use ddd_cqrs_es::{Aggregate, DomainEvent};
+/// #
+/// # #[derive(Clone)]
+/// # enum MyEvent { Created }
+/// # impl DomainEvent for MyEvent {
+/// #     fn event_type(&self) -> &'static str { "my_event" }
+/// # }
+/// # struct MyAggregate;
+/// # impl Aggregate for MyAggregate {
+/// #     type Id = String;
+/// #     type Command = ();
+/// #     type Event = MyEvent;
+/// #     type Error = ();
+/// #     fn aggregate_type() -> &'static str { "my_aggregate" }
+/// #     fn id(&self) -> Option<&Self::Id> { None }
+/// #     fn revision(&self) -> u64 { 0 }
+/// #     fn new() -> Self { MyAggregate }
+/// #     fn apply(&mut self, _event: &Self::Event) {}
+/// #     fn handle(&self, _command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> { Ok(vec![]) }
+/// # }
+///
+/// let store = InMemoryEventStore::<MyAggregate>::new();
+/// assert_eq!(store.stream_count().unwrap(), 0);
+///
+/// let event = NewEvent::new(MyEvent::Created, Metadata::default());
+/// store.append(&"stream-1".to_string(), ExpectedRevision::NoStream, vec![event]).unwrap();
+/// assert_eq!(store.stream_count().unwrap(), 1);
+/// ```
 pub struct InMemoryEventStore<A>
 where
     A: Aggregate,

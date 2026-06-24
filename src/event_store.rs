@@ -10,6 +10,40 @@ pub type EventStream<A> = Vec<EventEnvelope<<A as Aggregate>::Event, <A as Aggre
 /// Durable adapters such as PostgreSQL, SQLite, Kafka, or object storage should
 /// implement this trait while preserving stream order and optimistic
 /// concurrency semantics.
+///
+/// # Example
+///
+/// ```rust
+/// use ddd_cqrs_es::{EventStore, InMemoryEventStore, NewEvent, ExpectedRevision, Metadata};
+/// # use ddd_cqrs_es::{Aggregate, DomainEvent};
+/// #
+/// # #[derive(Clone)]
+/// # enum MyEvent { Created }
+/// # impl DomainEvent for MyEvent {
+/// #     fn event_type(&self) -> &'static str { "my_event" }
+/// # }
+/// # struct MyAggregate;
+/// # impl Aggregate for MyAggregate {
+/// #     type Id = String;
+/// #     type Command = ();
+/// #     type Event = MyEvent;
+/// #     type Error = ();
+/// #     fn aggregate_type() -> &'static str { "my_aggregate" }
+/// #     fn id(&self) -> Option<&Self::Id> { None }
+/// #     fn revision(&self) -> u64 { 0 }
+/// #     fn new() -> Self { MyAggregate }
+/// #     fn apply(&mut self, _event: &Self::Event) {}
+/// #     fn handle(&self, _command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> { Ok(vec![]) }
+/// # }
+///
+/// let store = InMemoryEventStore::<MyAggregate>::new();
+/// let event = NewEvent::new(MyEvent::Created, Metadata::default());
+///
+/// store.append(&"stream-1".to_string(), ExpectedRevision::NoStream, vec![event]).unwrap();
+/// let events = store.load(&"stream-1".to_string()).unwrap();
+/// assert_eq!(events.len(), 1);
+/// assert_eq!(events[0].revision, 1);
+/// ```
 pub trait EventStore<A>: Clone + Send + Sync + 'static
 where
     A: Aggregate,

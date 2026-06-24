@@ -10,6 +10,36 @@ use std::time::SystemTime;
 /// Persisted aggregate snapshot used to speed up replay of long streams.
 ///
 /// Snapshots are optional and must never replace the event log.
+///
+/// # Example
+///
+/// ```rust
+/// use ddd_cqrs_es::{Snapshot, Metadata};
+/// # use ddd_cqrs_es::Aggregate;
+/// # #[derive(Clone)]
+/// # struct DummyEvent;
+/// # impl ddd_cqrs_es::DomainEvent for DummyEvent {
+/// #     fn event_type(&self) -> &'static str { "dummy" }
+/// # }
+/// # #[derive(Clone, Debug, PartialEq)]
+/// # struct MyAggregate;
+/// # impl Aggregate for MyAggregate {
+/// #     type Id = String;
+/// #     type Command = ();
+/// #     type Event = DummyEvent;
+/// #     type Error = ();
+/// #     fn aggregate_type() -> &'static str { "dummy" }
+/// #     fn id(&self) -> Option<&Self::Id> { None }
+/// #     fn revision(&self) -> u64 { 0 }
+/// #     fn new() -> Self { MyAggregate }
+/// #     fn apply(&mut self, _event: &Self::Event) {}
+/// #     fn handle(&self, _command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> { Ok(vec![]) }
+/// # }
+///
+/// let snapshot = Snapshot::new("stream-1".to_string(), 10, MyAggregate, Metadata::default());
+/// assert_eq!(snapshot.revision, 10);
+/// assert_eq!(snapshot.aggregate_id, "stream-1");
+/// ```
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Snapshot<A>
@@ -80,6 +110,39 @@ impl Display for InMemorySnapshotError {
 impl Error for InMemorySnapshotError {}
 
 /// Thread-safe in-memory snapshot store.
+///
+/// # Example
+///
+/// ```rust
+/// use ddd_cqrs_es::{InMemorySnapshotStore, SnapshotStore, Snapshot, Metadata};
+/// # use ddd_cqrs_es::Aggregate;
+/// # #[derive(Clone)]
+/// # struct DummyEvent;
+/// # impl ddd_cqrs_es::DomainEvent for DummyEvent {
+/// #     fn event_type(&self) -> &'static str { "dummy" }
+/// # }
+/// # #[derive(Clone, Debug, PartialEq)]
+/// # struct MyAggregate;
+/// # impl Aggregate for MyAggregate {
+/// #     type Id = String;
+/// #     type Command = ();
+/// #     type Event = DummyEvent;
+/// #     type Error = ();
+/// #     fn aggregate_type() -> &'static str { "dummy" }
+/// #     fn id(&self) -> Option<&Self::Id> { None }
+/// #     fn revision(&self) -> u64 { 0 }
+/// #     fn new() -> Self { MyAggregate }
+/// #     fn apply(&mut self, _event: &Self::Event) {}
+/// #     fn handle(&self, _command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> { Ok(vec![]) }
+/// # }
+///
+/// let store = InMemorySnapshotStore::<MyAggregate>::new();
+/// let snapshot = Snapshot::new("stream-1".to_string(), 10, MyAggregate, Metadata::default());
+///
+/// store.save_snapshot(snapshot.clone()).unwrap();
+/// let loaded = store.load_snapshot(&"stream-1".to_string()).unwrap().unwrap();
+/// assert_eq!(loaded.revision, 10);
+/// ```
 #[derive(Clone, Debug)]
 pub struct InMemorySnapshotStore<A>
 where

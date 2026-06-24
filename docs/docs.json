@@ -1,0 +1,61 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "sequoia",
+  "name": "ddd_cqrs_es",
+  "description": "A lightweight, infrastructure-light DDD, CQRS, and Event Sourcing framework for Rust.",
+  "colors": {
+    "primary": "#166E3F",
+    "light": "#26BD6C",
+    "dark": "#166E3F"
+  },
+  "favicon": "/favicon.ico",
+  "icons": {
+    "library": "lucide"
+  },
+  "styling": {
+    "eyebrows": "breadcrumbs"
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting Started",
+        "icon": "flag-triangle-right",
+        "expanded": true,
+        "pages": [
+          "index",
+          "getting-started"
+        ]
+      },
+      {
+        "group": "Architecture & Design",
+        "icon": "layers",
+        "expanded": true,
+        "pages": [
+          "architecture",
+          "persistence"
+        ]
+      },
+      {
+        "group": "Features & Guides",
+        "icon": "book-open",
+        "expanded": true,
+        "pages": [
+          "projections",
+          "testing"
+        ]
+      }
+    ]
+  },
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "navbar": {
+    "links": []
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/hexuria/ddd-cqrs-es"
+    }
+  }
+}

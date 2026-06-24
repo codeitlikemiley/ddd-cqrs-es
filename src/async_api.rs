@@ -51,6 +51,60 @@ pub type AsyncRepositoryResult<A, S, T> =
     Result<T, RepositoryError<<A as Aggregate>::Error, <S as AsyncEventStore<A>>::Error>>;
 
 /// Coordinates aggregate loading, command execution, and async event appending.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use ddd_cqrs_es::{AsyncRepository, Metadata};
+/// # use ddd_cqrs_es::{Aggregate, async_api::AsyncEventStore, event_store::EventStream, ExpectedRevision, NewEvent, INITIAL_REVISION};
+/// # use async_trait::async_trait;
+/// #
+/// # #[derive(Clone)]
+/// # struct DummyEvent;
+/// # impl ddd_cqrs_es::DomainEvent for DummyEvent {
+/// #     fn event_type(&self) -> &'static str { "dummy" }
+/// # }
+/// # #[derive(Debug, Clone, PartialEq)]
+/// # struct DummyError;
+/// # impl std::fmt::Display for DummyError {
+/// #     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "dummy") }
+/// # }
+/// # impl std::error::Error for DummyError {}
+/// # #[derive(Clone, Debug, PartialEq)]
+/// # struct MyAggregate;
+/// # impl Aggregate for MyAggregate {
+/// #     type Id = String;
+/// #     type Command = ();
+/// #     type Event = DummyEvent;
+/// #     type Error = DummyError;
+/// #     fn aggregate_type() -> &'static str { "dummy" }
+/// #     fn id(&self) -> Option<&Self::Id> { None }
+/// #     fn revision(&self) -> u64 { 0 }
+/// #     fn new() -> Self { MyAggregate }
+/// #     fn apply(&mut self, _event: &Self::Event) {}
+/// #     fn handle(&self, _command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> { Ok(vec![]) }
+/// # }
+/// #
+/// # #[derive(Clone)]
+/// # struct MockStore;
+/// # #[async_trait]
+/// # impl AsyncEventStore<MyAggregate> for MockStore {
+/// #     type Error = ddd_cqrs_es::error::EventStoreError;
+/// #     async fn load(&self, _id: &String) -> Result<EventStream<MyAggregate>, Self::Error> { Ok(vec![]) }
+/// #     async fn append(&self, _id: &String, _exp: ExpectedRevision, _evts: Vec<NewEvent<DummyEvent>>) -> Result<EventStream<MyAggregate>, Self::Error> { Ok(vec![]) }
+/// #     async fn load_global_after(&self, _seq: Option<u64>) -> Result<EventStream<MyAggregate>, Self::Error> { Ok(vec![]) }
+/// # }
+///
+/// # async fn doc_example() -> Result<(), Box<dyn std::error::Error>> {
+/// let store = MockStore;
+/// let repo = AsyncRepository::new(store);
+///
+/// let counter_id = "counter-1".to_owned();
+/// let loaded = repo.load(&counter_id).await?;
+/// assert_eq!(loaded.revision, 0);
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug)]
 pub struct AsyncRepository<A, S>
 where

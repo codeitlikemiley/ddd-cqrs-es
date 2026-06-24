@@ -38,6 +38,41 @@ pub type IdempotentRepositoryResult<A, S, I, T> = Result<
 >;
 
 /// Coordinates aggregate loading, command execution, and event appending.
+///
+/// # Example
+///
+/// ```rust
+/// use ddd_cqrs_es::{Repository, InMemoryEventStore, Metadata};
+/// # use ddd_cqrs_es::{Aggregate, DomainEvent};
+/// #
+/// # #[derive(Clone)]
+/// # enum CounterEvent { Created }
+/// # impl DomainEvent for CounterEvent {
+/// #     fn event_type(&self) -> &'static str { "counter_created" }
+/// # }
+/// # struct CounterAggregate { revision: u64 }
+/// # impl Aggregate for CounterAggregate {
+/// #     type Id = String;
+/// #     type Command = ();
+/// #     type Event = CounterEvent;
+/// #     type Error = ();
+/// #     fn aggregate_type() -> &'static str { "counter" }
+/// #     fn id(&self) -> Option<&Self::Id> { None }
+/// #     fn revision(&self) -> u64 { self.revision }
+/// #     fn new() -> Self { CounterAggregate { revision: 0 } }
+/// #     fn apply(&mut self, _event: &Self::Event) { self.revision += 1; }
+/// #     fn handle(&self, _command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> { Ok(vec![CounterEvent::Created]) }
+/// # }
+///
+/// let store = InMemoryEventStore::<CounterAggregate>::new();
+/// let repo = Repository::new(store);
+///
+/// let aggregate_id = "counter-1".to_string();
+/// repo.execute(&aggregate_id, (), Metadata::default()).unwrap();
+///
+/// let loaded = repo.load(&aggregate_id).unwrap();
+/// assert_eq!(loaded.revision, 1);
+/// ```
 #[derive(Clone, Debug)]
 pub struct Repository<A, S>
 where

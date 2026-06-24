@@ -6,6 +6,56 @@ use std::hash::Hash;
 /// Aggregates validate commands and return new events. They should not persist
 /// themselves, publish messages, call infrastructure, or mutate themselves
 /// during command handling.
+///
+/// # Example
+///
+/// ```rust
+/// use ddd_cqrs_es::{Aggregate, DomainEvent, LoadedAggregate};
+///
+/// #[derive(Clone)]
+/// enum CounterEvent {
+///     Incremented(u32),
+/// }
+///
+/// impl DomainEvent for CounterEvent {
+///     fn event_type(&self) -> &'static str { "counter_incremented" }
+/// }
+///
+/// struct Counter {
+///     value: u32,
+///     revision: u64,
+/// }
+///
+/// impl Aggregate for Counter {
+///     type Id = String;
+///     type Command = u32;
+///     type Event = CounterEvent;
+///     type Error = &'static str;
+///
+///     fn aggregate_type() -> &'static str { "counter" }
+///     fn id(&self) -> Option<&Self::Id> { None }
+///     fn revision(&self) -> u64 { self.revision }
+///     fn new() -> Self { Self { value: 0, revision: 0 } }
+///
+///     fn apply(&mut self, event: &Self::Event) {
+///         match event {
+///             CounterEvent::Incremented(by) => self.value += by,
+///         }
+///         self.revision += 1;
+///     }
+///
+///     fn handle(&self, command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> {
+///         if command == 0 {
+///             return Err("increment must be greater than zero");
+///         }
+///         Ok(vec![CounterEvent::Incremented(command)])
+///     }
+/// }
+///
+/// let counter = Counter::new();
+/// let events = counter.handle(5).unwrap();
+/// assert_eq!(events.len(), 1);
+/// ```
 pub trait Aggregate: Sized {
     /// Aggregate identifier type.
     type Id: Clone + Eq + Hash + Send + Sync + 'static;
@@ -63,6 +113,16 @@ pub trait Aggregate: Sized {
 }
 
 /// Aggregate state plus the persisted stream revision that produced it.
+///
+/// # Example
+///
+/// ```rust
+/// use ddd_cqrs_es::LoadedAggregate;
+///
+/// let loaded = LoadedAggregate::new("my state".to_string(), 5);
+/// assert_eq!(loaded.revision, 5);
+/// assert_eq!(loaded.into_inner(), "my state");
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LoadedAggregate<A> {
     /// Replayed aggregate state.

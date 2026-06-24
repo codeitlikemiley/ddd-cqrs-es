@@ -3,6 +3,21 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 
 /// Optimistic concurrency failure.
+///
+/// # Example
+///
+/// ```rust
+/// use ddd_cqrs_es::{ConcurrencyError, ExpectedRevision};
+///
+/// let error = ConcurrencyError::WrongExpectedRevision {
+///     expected: ExpectedRevision::Exact(4),
+///     actual: 3,
+/// };
+/// assert_eq!(
+///     error.to_string(),
+///     "wrong expected revision: expected Exact(4), actual revision 3"
+/// );
+/// ```
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConcurrencyError {
@@ -35,6 +50,16 @@ impl Display for ConcurrencyError {
 impl Error for ConcurrencyError {}
 
 /// Errors produced by event store implementations.
+///
+/// # Example
+///
+/// ```rust
+/// use ddd_cqrs_es::{EventStoreError, ConcurrencyError};
+/// use std::error::Error;
+///
+/// let error = EventStoreError::Concurrency(ConcurrencyError::StreamAlreadyExists);
+/// assert!(error.source().is_some());
+/// ```
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EventStoreError {
@@ -101,6 +126,16 @@ impl Error for EventStoreError {
 }
 
 /// Error returned by repository operations.
+///
+/// # Example
+///
+/// ```rust
+/// use ddd_cqrs_es::{RepositoryError, EventStoreError};
+///
+/// let store_err = EventStoreError::Connection("db offline".to_string());
+/// let error: RepositoryError<&'static str, EventStoreError> = RepositoryError::Store(store_err);
+/// assert_eq!(error.to_string(), "connection error: db offline");
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RepositoryError<DomainError, StoreError = EventStoreError> {
     /// Aggregate command handling rejected the command.

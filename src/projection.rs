@@ -7,6 +7,51 @@ use crate::event_store::EventStore;
 /// Projections consume committed event envelopes and update query-optimized
 /// state. Implementations should be idempotent because projection runners may
 /// retry after failures.
+///
+/// # Example
+///
+/// ```rust
+/// use ddd_cqrs_es::{Projection, EventEnvelope, EventId, Metadata};
+/// use std::time::SystemTime;
+///
+/// #[derive(Clone)]
+/// enum UserEvent {
+///     Created(String),
+/// }
+///
+/// struct UserCounter {
+///     count: usize,
+/// }
+///
+/// impl Projection<UserEvent, String> for UserCounter {
+///     type Error = std::convert::Infallible;
+///
+///     fn name(&self) -> &'static str { "user_counter" }
+///
+///     fn apply(&mut self, event: &EventEnvelope<UserEvent, String>) -> Result<(), Self::Error> {
+///         match event.event() {
+///             UserEvent::Created(_) => self.count += 1,
+///         }
+///         Ok(())
+///     }
+/// }
+///
+/// let mut counter = UserCounter { count: 0 };
+/// let envelope = EventEnvelope::new(
+///     EventId::new(),
+///     "user-1".to_string(),
+///     "user",
+///     1,
+///     None,
+///     "UserCreated",
+///     1,
+///     UserEvent::Created("Alice".to_owned()),
+///     Metadata::default(),
+///     SystemTime::now(),
+/// );
+/// counter.apply(&envelope).unwrap();
+/// assert_eq!(counter.count, 1);
+/// ```
 pub trait Projection<E, Id> {
     /// Projection error.
     type Error;
@@ -19,6 +64,51 @@ pub trait Projection<E, Id> {
 }
 
 /// In-memory projection runner with a sequence checkpoint.
+///
+/// # Example
+///
+/// ```rust
+/// use ddd_cqrs_es::{InMemoryProjectionRunner, InMemoryEventStore, Projection, EventEnvelope, EventId, Metadata};
+/// use std::time::SystemTime;
+/// # use ddd_cqrs_es::Aggregate;
+/// # #[derive(Clone)]
+/// # enum UserEvent { Created }
+/// # impl ddd_cqrs_es::DomainEvent for UserEvent {
+/// #     fn event_type(&self) -> &'static str { "user_created" }
+/// # }
+/// # #[derive(Clone, Debug, PartialEq)]
+/// # struct UserAggregate;
+/// # impl Aggregate for UserAggregate {
+/// #     type Id = String;
+/// #     type Command = ();
+/// #     type Event = UserEvent;
+/// #     type Error = ();
+/// #     fn aggregate_type() -> &'static str { "user" }
+/// #     fn id(&self) -> Option<&Self::Id> { None }
+/// #     fn revision(&self) -> u64 { 0 }
+/// #     fn new() -> Self { UserAggregate }
+/// #     fn apply(&mut self, _event: &Self::Event) {}
+/// #     fn handle(&self, _command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> { Ok(vec![]) }
+/// # }
+///
+/// struct UserCounter {
+///     count: usize,
+/// }
+///
+/// impl Projection<UserEvent, String> for UserCounter {
+///     type Error = std::convert::Infallible;
+///     fn name(&self) -> &'static str { "user_counter" }
+///     fn apply(&mut self, event: &EventEnvelope<UserEvent, String>) -> Result<(), Self::Error> {
+///         self.count += 1;
+///         Ok(())
+///     }
+/// }
+///
+/// let store = InMemoryEventStore::<UserAggregate>::new();
+/// let mut runner = InMemoryProjectionRunner::new(UserCounter { count: 0 });
+/// runner.run(&store).unwrap();
+/// assert_eq!(runner.projection().count, 0);
+/// ```
 #[derive(Clone, Debug)]
 pub struct InMemoryProjectionRunner<P> {
     projection: P,

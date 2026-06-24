@@ -9,6 +9,48 @@ use std::fmt::Debug;
 ///
 /// The fixture exercises aggregate decision logic without requiring a
 /// repository or event store.
+///
+/// # Example
+///
+/// ```rust
+/// use ddd_cqrs_es::AggregateFixture;
+/// # use ddd_cqrs_es::Aggregate;
+/// # #[derive(Clone, Debug, PartialEq)]
+/// # enum CounterEvent { Incremented(u32) }
+/// # impl ddd_cqrs_es::DomainEvent for CounterEvent {
+/// #     fn event_type(&self) -> &'static str { "incremented" }
+/// # }
+/// # #[derive(Clone, Debug, Default, PartialEq)]
+/// # struct Counter { value: u32, revision: u64 }
+/// # impl Aggregate for Counter {
+/// #     type Id = String;
+/// #     type Command = u32;
+/// #     type Event = CounterEvent;
+/// #     type Error = &'static str;
+/// #     fn aggregate_type() -> &'static str { "counter" }
+/// #     fn id(&self) -> Option<&Self::Id> { None }
+/// #     fn revision(&self) -> u64 { self.revision }
+/// #     fn new() -> Self { Self::default() }
+/// #     fn apply(&mut self, event: &Self::Event) {
+/// #         match event { CounterEvent::Incremented(by) => self.value += by }
+/// #         self.revision += 1;
+/// #     }
+/// #     fn handle(&self, command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> {
+/// #         if command == 0 { return Err("must be > 0"); }
+/// #         Ok(vec![CounterEvent::Incremented(command)])
+/// #     }
+/// # }
+///
+/// let fixture = AggregateFixture::<Counter>::new();
+///
+/// fixture
+///     .given(vec![CounterEvent::Incremented(5)])
+///     .when(3)
+///     .then_expect_events(vec![CounterEvent::Incremented(3)])
+///     .then_expect_state(|state| {
+///         assert_eq!(state.value, 8);
+///     });
+/// ```
 #[derive(Clone, Debug)]
 pub struct AggregateFixture<A>
 where
