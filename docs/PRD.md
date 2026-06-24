@@ -23,9 +23,10 @@ Implemented in this version:
 - Idempotency key and in-memory idempotency store.
 - Snapshot-aware repository loading and execution.
 - Reusable event store contract helper for adapter tests.
+- Feature-gated SQLite adapter.
+- Feature-gated PostgreSQL adapter.
 - Bank account example and integration tests.
 
 Deferred adapters and optional capabilities:
 
-- PostgreSQL and SQLite durable stores.
 - Tracing middleware.

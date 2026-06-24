@@ -97,10 +97,16 @@ pub mod event_store;
 pub mod idempotency;
 pub mod memory;
 pub mod metadata;
+#[cfg(feature = "postgres")]
+pub mod postgres;
 pub mod process_manager;
 pub mod projection;
 pub mod repository;
 pub mod snapshot;
+#[cfg(any(feature = "postgres", feature = "sqlite"))]
+mod sql_common;
+#[cfg(feature = "sqlite")]
+pub mod sqlite;
 pub mod store;
 pub mod testing;
 pub mod upcast;
@@ -124,6 +130,8 @@ pub use idempotency::{
 };
 pub use memory::InMemoryEventStore;
 pub use metadata::Metadata;
+#[cfg(feature = "postgres")]
+pub use postgres::PostgresEventStore;
 pub use process_manager::ProcessManager;
 pub use projection::{InMemoryProjectionRunner, Projection, ProjectionRunnerError};
 pub use repository::{
@@ -133,5 +141,7 @@ pub use repository::{
 pub use snapshot::{
     InMemorySnapshotError, InMemorySnapshotStore, Snapshot, SnapshotRepositoryError, SnapshotStore,
 };
+#[cfg(feature = "sqlite")]
+pub use sqlite::SqliteEventStore;
 pub use testing::{assert_event_store_contract, AggregateFixture};
 pub use upcast::EventUpcaster;

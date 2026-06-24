@@ -17,11 +17,49 @@ Required behavior:
 The in-memory store uses `Arc<RwLock<...>>`, stores events per aggregate stream,
 assigns global sequence numbers, and exposes `clear` for tests.
 
+## SQLite Adapter
+
+Enable with:
+
+```toml
+features = ["sqlite"]
+```
+
+`SqliteEventStore<A>` uses `rusqlite`, stores aggregate IDs, payloads, and
+metadata as JSON text, and uses a unique `(aggregate_type, aggregate_id,
+revision)` constraint for optimistic concurrency.
+
+```rust
+let store = ddd_cqrs_es::SqliteEventStore::<MyAggregate>::in_memory()?;
+```
+
+For file-backed stores, create a `rusqlite::Connection`, pass it to
+`SqliteEventStore::new`, and call `initialize_schema`.
+
+## PostgreSQL Adapter
+
+Enable with:
+
+```toml
+features = ["postgres"]
+```
+
+`PostgresEventStore<A>` uses the synchronous `postgres` driver, stores payloads
+and metadata as `JSONB`, assigns global sequence values through `BIGSERIAL`, and
+uses a unique `(aggregate_type, aggregate_id, revision)` constraint.
+
+```rust
+let store = ddd_cqrs_es::PostgresEventStore::<MyAggregate>::connect(
+    "host=localhost user=postgres dbname=events"
+)?;
+store.initialize_schema()?;
+```
+
 Durable adapters should map concurrency failures to `ConcurrencyError` and
 preserve adapter-specific context in `EventStoreError` or their own associated
 error type.
 
-Suggested SQL shape for future PostgreSQL and SQLite adapters:
+The current adapters use this logical SQL shape:
 
 ```sql
 CREATE TABLE events (
@@ -34,7 +72,7 @@ CREATE TABLE events (
     event_version INT NOT NULL,
     payload JSONB NOT NULL,
     metadata JSONB NOT NULL,
-    recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    recorded_at_ms BIGINT NOT NULL,
     UNIQUE (aggregate_type, aggregate_id, revision)
 );
 ```

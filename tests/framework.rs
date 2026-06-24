@@ -167,6 +167,17 @@ fn in_memory_store_passes_reusable_contract() {
     );
 }
 
+#[cfg(feature = "sqlite")]
+#[test]
+fn sqlite_store_passes_reusable_contract() {
+    assert_event_store_contract::<Counter, _>(
+        ddd_cqrs_es::SqliteEventStore::<Counter>::in_memory().unwrap(),
+        "sqlite-contract-counter".to_owned(),
+        CounterEvent::Created,
+        CounterEvent::Incremented { by: 1 },
+    );
+}
+
 #[test]
 fn domain_errors_are_not_persisted() {
     let store = InMemoryEventStore::<Counter>::new();

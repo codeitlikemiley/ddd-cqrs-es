@@ -15,6 +15,8 @@ The crate gives you explicit, infrastructure-light building blocks:
 - `ProcessManager`: event-to-command saga abstraction
 - `SnapshotStore`: optional snapshot persistence abstraction
 - `AggregateFixture`: concise aggregate unit tests
+- `PostgresEventStore` behind the `postgres` feature
+- `SqliteEventStore` behind the `sqlite` feature
 
 The core does not require a web framework, database, serializer, message broker,
 or async runtime.
@@ -136,6 +138,31 @@ Run verification:
 ```bash
 cargo test
 cargo test --doc
+```
+
+## Feature-Gated Adapters
+
+Enable SQLite:
+
+```toml
+ddd_cqrs_es = { path = "../ddd_cqrs_es", features = ["sqlite"] }
+```
+
+```rust
+let store = ddd_cqrs_es::SqliteEventStore::<MyAggregate>::in_memory()?;
+```
+
+Enable PostgreSQL:
+
+```toml
+ddd_cqrs_es = { path = "../ddd_cqrs_es", features = ["postgres"] }
+```
+
+```rust
+let store = ddd_cqrs_es::PostgresEventStore::<MyAggregate>::connect(
+    "host=localhost user=postgres dbname=events"
+)?;
+store.initialize_schema()?;
 ```
 
 ## Design Notes

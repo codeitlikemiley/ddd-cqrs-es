@@ -21,3 +21,4 @@ target/
 # OS specific
 .DS_Store
 Thumbs.db
+*.lock
