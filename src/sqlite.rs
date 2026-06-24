@@ -9,6 +9,7 @@ use crate::sql_common::{
     millis_to_system_time, serialize_id, serialize_metadata, serialize_payload,
     system_time_to_millis, validate_table_name,
 };
+use crate::upcast::UpcasterRegistry;
 use rusqlite::{params, Connection, ErrorCode};
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
@@ -25,6 +26,7 @@ where
 {
     connection: Arc<Mutex<Connection>>,
     table_name: String,
+    upcasters: UpcasterRegistry,
     _marker: PhantomData<fn() -> A>,
 }
 
@@ -36,6 +38,7 @@ where
         Self {
             connection: Arc::clone(&self.connection),
             table_name: self.table_name.clone(),
+            upcasters: self.upcasters.clone(),
             _marker: PhantomData,
         }
     }
@@ -79,8 +82,23 @@ where
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
             table_name,
+            upcasters: UpcasterRegistry::new(),
             _marker: PhantomData,
         })
+    }
+
+    /// Returns the upcaster registry.
+    pub fn upcasters(&self) -> &UpcasterRegistry {
+        &self.upcasters
+    }
+
+    /// Registers a sequential schema version upcaster for a specific event type.
+    pub fn register_upcaster<U>(&self, event_type: impl Into<String>, upcaster: U)
+    where
+        U: crate::upcast::EventUpcaster + Send + Sync + 'static,
+        U::Error: std::fmt::Debug + std::fmt::Display + Send + Sync + 'static,
+    {
+        self.upcasters.register(event_type, upcaster);
     }
 
     /// Initializes the SQLite event table and indexes.
@@ -159,11 +177,11 @@ where
             table = self.table_name
         );
         let mut statement = connection.prepare(&query).map_err(map_sqlite_error)?;
+        let upcasters = self.upcasters.clone();
         let rows = statement
-            .query_map(
-                params![A::aggregate_type(), aggregate_id],
-                row_to_envelope::<A>,
-            )
+            .query_map(params![A::aggregate_type(), aggregate_id], move |row| {
+                row_to_envelope::<A>(&upcasters, row)
+            })
             .map_err(map_sqlite_error)?;
 
         rows.collect::<Result<Vec<_>, _>>()
@@ -268,8 +286,11 @@ where
             table = self.table_name
         );
         let mut statement = connection.prepare(&query).map_err(map_sqlite_error)?;
+        let upcasters = self.upcasters.clone();
         let rows = statement
-            .query_map(params![A::aggregate_type(), sequence], row_to_envelope::<A>)
+            .query_map(params![A::aggregate_type(), sequence], move |row| {
+                row_to_envelope::<A>(&upcasters, row)
+            })
             .map_err(map_sqlite_error)?;
 
         rows.collect::<Result<Vec<_>, _>>()
@@ -314,7 +335,10 @@ where
     }
 }
 
-fn row_to_envelope<A>(row: &rusqlite::Row<'_>) -> rusqlite::Result<EventEnvelope<A::Event, A::Id>>
+fn row_to_envelope<A>(
+    upcasters: &UpcasterRegistry,
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<EventEnvelope<A::Event, A::Id>>
 where
     A: Aggregate,
     A::Event: serde::de::DeserializeOwned,
@@ -355,7 +379,12 @@ where
         )
     })?;
     let aggregate_id = deserialize_id(&aggregate_id).map_err(from_event_store_error)?;
-    let payload_value = serde_json::from_str(&payload).map_err(|error| {
+
+    let (event_version, upcasted_bytes) = upcasters
+        .upcast(&event_type, event_version, payload.into_bytes())
+        .map_err(|err| from_event_store_error(EventStoreError::Deserialization(err.to_string())))?;
+
+    let payload_value = serde_json::from_slice(&upcasted_bytes).map_err(|error| {
         from_event_store_error(EventStoreError::Deserialization(format!(
             "payload JSON: {error}"
         )))
@@ -409,4 +438,128 @@ fn map_sqlite_error(error: rusqlite::Error) -> EventStoreError {
 
 fn from_event_store_error(error: EventStoreError) -> rusqlite::Error {
     rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
+}
+
+/// SQLite checkpoint store implementation.
+#[derive(Clone, Debug)]
+pub struct SqliteCheckpointStore {
+    connection: Arc<Mutex<Connection>>,
+    table_name: String,
+}
+
+impl SqliteCheckpointStore {
+    /// Creates a SQLite checkpoint store using the default table name.
+    pub fn new(connection: Connection) -> Result<Self, EventStoreError> {
+        Self::with_table_name(connection, "projection_checkpoints")
+    }
+
+    /// Creates a SQLite checkpoint store with a custom table name.
+    pub fn with_table_name(
+        connection: Connection,
+        table_name: impl Into<String>,
+    ) -> Result<Self, EventStoreError> {
+        let table_name = table_name.into();
+        validate_table_name(&table_name)?;
+
+        let store = Self {
+            connection: Arc::new(Mutex::new(connection)),
+            table_name,
+        };
+        store.initialize_schema()?;
+        Ok(store)
+    }
+
+    /// Initializes the checkpoint schema table.
+    pub fn initialize_schema(&self) -> Result<(), EventStoreError> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| EventStoreError::Poisoned)?;
+        let sql = format!(
+            "CREATE TABLE IF NOT EXISTS {} (
+                projection_name TEXT PRIMARY KEY,
+                sequence INTEGER NOT NULL
+            );",
+            self.table_name
+        );
+        connection.execute(&sql, []).map_err(map_sqlite_error)?;
+        Ok(())
+    }
+}
+
+impl crate::projection::CheckpointStore for SqliteCheckpointStore {
+    type Error = EventStoreError;
+
+    fn load_checkpoint(&self, projection_name: &str) -> Result<Option<u64>, Self::Error> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| EventStoreError::Poisoned)?;
+        let sql = format!(
+            "SELECT sequence FROM {} WHERE projection_name = ?1;",
+            self.table_name
+        );
+        let mut stmt = connection.prepare(&sql).map_err(map_sqlite_error)?;
+        let mut rows = stmt
+            .query(params![projection_name])
+            .map_err(map_sqlite_error)?;
+
+        if let Some(row) = rows.next().map_err(map_sqlite_error)? {
+            let sequence: i64 = row.get(0).map_err(map_sqlite_error)?;
+            let sequence = u64::try_from(sequence).map_err(|_| {
+                EventStoreError::Deserialization("SQLite checkpoint cannot be negative".to_owned())
+            })?;
+            Ok(Some(sequence))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn save_checkpoint(&self, projection_name: &str, sequence: u64) -> Result<(), Self::Error> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| EventStoreError::Poisoned)?;
+        let sql = format!(
+            "INSERT INTO {} (projection_name, sequence) VALUES (?1, ?2)
+             ON CONFLICT(projection_name) DO UPDATE SET sequence = excluded.sequence;",
+            self.table_name
+        );
+        let sequence_i64 = i64::try_from(sequence)
+            .map_err(|_| EventStoreError::Deserialization("checkpoint exceeds i64".to_owned()))?;
+        connection
+            .execute(&sql, params![projection_name, sequence_i64])
+            .map_err(map_sqlite_error)?;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "async")]
+#[async_trait::async_trait]
+impl crate::projection::AsyncCheckpointStore for SqliteCheckpointStore {
+    type Error = EventStoreError;
+
+    async fn load_checkpoint(&self, projection_name: &str) -> Result<Option<u64>, Self::Error> {
+        let this = self.clone();
+        let name = projection_name.to_owned();
+        tokio::task::spawn_blocking(move || {
+            crate::projection::CheckpointStore::load_checkpoint(&this, &name)
+        })
+        .await
+        .map_err(|e| EventStoreError::Backend(e.to_string()))?
+    }
+
+    async fn save_checkpoint(
+        &self,
+        projection_name: &str,
+        sequence: u64,
+    ) -> Result<(), Self::Error> {
+        let this = self.clone();
+        let name = projection_name.to_owned();
+        tokio::task::spawn_blocking(move || {
+            crate::projection::CheckpointStore::save_checkpoint(&this, &name, sequence)
+        })
+        .await
+        .map_err(|e| EventStoreError::Backend(e.to_string()))?
+    }
 }

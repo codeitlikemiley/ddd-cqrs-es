@@ -9,6 +9,7 @@ use crate::sql_common::{
     millis_to_system_time, serialize_id, serialize_metadata, serialize_payload,
     system_time_to_millis, validate_table_name,
 };
+use crate::upcast::UpcasterRegistry;
 use ::postgres::{Client, NoTls};
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
@@ -25,6 +26,7 @@ where
 {
     client: Arc<Mutex<Client>>,
     table_name: String,
+    upcasters: UpcasterRegistry,
     _marker: PhantomData<fn() -> A>,
 }
 
@@ -36,6 +38,7 @@ where
         Self {
             client: Arc::clone(&self.client),
             table_name: self.table_name.clone(),
+            upcasters: self.upcasters.clone(),
             _marker: PhantomData,
         }
     }
@@ -87,8 +90,23 @@ where
         Ok(Self {
             client: Arc::new(Mutex::new(client)),
             table_name,
+            upcasters: UpcasterRegistry::new(),
             _marker: PhantomData,
         })
+    }
+
+    /// Returns the upcaster registry.
+    pub fn upcasters(&self) -> &UpcasterRegistry {
+        &self.upcasters
+    }
+
+    /// Registers a sequential schema version upcaster for a specific event type.
+    pub fn register_upcaster<U>(&self, event_type: impl Into<String>, upcaster: U)
+    where
+        U: crate::upcast::EventUpcaster + Send + Sync + 'static,
+        U::Error: std::fmt::Debug + std::fmt::Display + Send + Sync + 'static,
+    {
+        self.upcasters.register(event_type, upcaster);
     }
 
     /// Initializes the PostgreSQL event table and indexes.
@@ -143,7 +161,10 @@ where
             .query(&query, &[&A::aggregate_type(), &aggregate_id])
             .map_err(map_postgres_error)?;
 
-        rows.into_iter().map(row_to_envelope::<A>).collect()
+        let upcasters = self.upcasters.clone();
+        rows.into_iter()
+            .map(|row| row_to_envelope::<A>(&upcasters, row))
+            .collect()
     }
 
     fn append(
@@ -254,7 +275,10 @@ where
             .query(&query, &[&A::aggregate_type(), &sequence])
             .map_err(map_postgres_error)?;
 
-        rows.into_iter().map(row_to_envelope::<A>).collect()
+        let upcasters = self.upcasters.clone();
+        rows.into_iter()
+            .map(|row| row_to_envelope::<A>(&upcasters, row))
+            .collect()
     }
 }
 
@@ -296,6 +320,7 @@ where
 }
 
 fn row_to_envelope<A>(
+    upcasters: &UpcasterRegistry,
     row: ::postgres::Row,
 ) -> Result<EventEnvelope<A::Event, A::Id>, EventStoreError>
 where
@@ -310,7 +335,7 @@ where
     let sequence: i64 = row.try_get(4).map_err(map_postgres_error)?;
     let event_type: String = row.try_get(5).map_err(map_postgres_error)?;
     let event_version: i32 = row.try_get(6).map_err(map_postgres_error)?;
-    let payload: serde_json::Value = row.try_get(7).map_err(map_postgres_error)?;
+    let payload_val: serde_json::Value = row.try_get(7).map_err(map_postgres_error)?;
     let metadata: serde_json::Value = row.try_get(8).map_err(map_postgres_error)?;
     let recorded_at_ms: i64 = row.try_get(9).map_err(map_postgres_error)?;
 
@@ -324,6 +349,20 @@ where
         EventStoreError::Deserialization("event_version cannot be negative".to_owned())
     })?;
     let aggregate_id = deserialize_id(&aggregate_id)?;
+
+    let payload_bytes = serde_json::to_vec(&payload_val).map_err(|error| {
+        EventStoreError::Deserialization(format!(
+            "payload serialization for upcasting failed: {error}"
+        ))
+    })?;
+
+    let (event_version, upcasted_bytes) = upcasters
+        .upcast(&event_type, event_version, payload_bytes)
+        .map_err(|err| EventStoreError::Deserialization(err.to_string()))?;
+
+    let payload = serde_json::from_slice(&upcasted_bytes)
+        .map_err(|error| EventStoreError::Deserialization(format!("payload JSON: {error}")))?;
+
     let payload = deserialize_payload(&event_id, &event_type, payload)?;
     let metadata = deserialize_metadata(&event_id, metadata)?;
     let recorded_at = millis_to_system_time(recorded_at_ms)?;
@@ -362,4 +401,128 @@ fn map_postgres_insert_error(
 
 fn map_postgres_error(error: ::postgres::Error) -> EventStoreError {
     EventStoreError::Backend(error.to_string())
+}
+
+/// Postgres checkpoint store implementation.
+#[derive(Clone)]
+pub struct PostgresCheckpointStore {
+    client: Arc<Mutex<::postgres::Client>>,
+    table_name: String,
+}
+
+impl std::fmt::Debug for PostgresCheckpointStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PostgresCheckpointStore")
+            .field("table_name", &self.table_name)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PostgresCheckpointStore {
+    /// Creates a Postgres checkpoint store using the default table name.
+    pub fn new(client: ::postgres::Client) -> Result<Self, EventStoreError> {
+        Self::with_table_name(client, "projection_checkpoints")
+    }
+
+    /// Creates a Postgres checkpoint store with a custom table name.
+    pub fn with_table_name(
+        client: ::postgres::Client,
+        table_name: impl Into<String>,
+    ) -> Result<Self, EventStoreError> {
+        let table_name = table_name.into();
+        validate_table_name(&table_name)?;
+
+        let store = Self {
+            client: Arc::new(Mutex::new(client)),
+            table_name,
+        };
+        store.initialize_schema()?;
+        Ok(store)
+    }
+
+    /// Initializes the checkpoint schema table.
+    pub fn initialize_schema(&self) -> Result<(), EventStoreError> {
+        let mut client = self.client.lock().map_err(|_| EventStoreError::Poisoned)?;
+        let sql = format!(
+            "CREATE TABLE IF NOT EXISTS {} (
+                projection_name TEXT PRIMARY KEY,
+                sequence BIGINT NOT NULL
+            );",
+            self.table_name
+        );
+        client.execute(&sql, &[]).map_err(map_postgres_error)?;
+        Ok(())
+    }
+}
+
+impl crate::projection::CheckpointStore for PostgresCheckpointStore {
+    type Error = EventStoreError;
+
+    fn load_checkpoint(&self, projection_name: &str) -> Result<Option<u64>, Self::Error> {
+        let mut client = self.client.lock().map_err(|_| EventStoreError::Poisoned)?;
+        let sql = format!(
+            "SELECT sequence FROM {} WHERE projection_name = $1;",
+            self.table_name
+        );
+        let rows = client
+            .query(&sql, &[&projection_name])
+            .map_err(map_postgres_error)?;
+
+        if let Some(row) = rows.first() {
+            let sequence: i64 = row.get(0);
+            let sequence = u64::try_from(sequence).map_err(|_| {
+                EventStoreError::Deserialization(
+                    "Postgres checkpoint cannot be negative".to_owned(),
+                )
+            })?;
+            Ok(Some(sequence))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn save_checkpoint(&self, projection_name: &str, sequence: u64) -> Result<(), Self::Error> {
+        let mut client = self.client.lock().map_err(|_| EventStoreError::Poisoned)?;
+        let sql = format!(
+            "INSERT INTO {} (projection_name, sequence) VALUES ($1, $2)
+             ON CONFLICT (projection_name) DO UPDATE SET sequence = EXCLUDED.sequence;",
+            self.table_name
+        );
+        let sequence_i64 = i64::try_from(sequence)
+            .map_err(|_| EventStoreError::Deserialization("checkpoint exceeds i64".to_owned()))?;
+        client
+            .execute(&sql, &[&projection_name, &sequence_i64])
+            .map_err(map_postgres_error)?;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "async")]
+#[async_trait::async_trait]
+impl crate::projection::AsyncCheckpointStore for PostgresCheckpointStore {
+    type Error = EventStoreError;
+
+    async fn load_checkpoint(&self, projection_name: &str) -> Result<Option<u64>, Self::Error> {
+        let this = self.clone();
+        let name = projection_name.to_owned();
+        tokio::task::spawn_blocking(move || {
+            crate::projection::CheckpointStore::load_checkpoint(&this, &name)
+        })
+        .await
+        .map_err(|e| EventStoreError::Backend(e.to_string()))?
+    }
+
+    async fn save_checkpoint(
+        &self,
+        projection_name: &str,
+        sequence: u64,
+    ) -> Result<(), Self::Error> {
+        let this = self.clone();
+        let name = projection_name.to_owned();
+        tokio::task::spawn_blocking(move || {
+            crate::projection::CheckpointStore::save_checkpoint(&this, &name, sequence)
+        })
+        .await
+        .map_err(|e| EventStoreError::Backend(e.to_string()))?
+    }
 }

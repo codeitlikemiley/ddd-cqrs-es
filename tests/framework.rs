@@ -519,12 +519,56 @@ fn repository_returns_previous_result_for_idempotent_retry() {
     assert_eq!(store.load(&counter_id).unwrap().len(), 1);
 }
 
+#[test]
+fn repository_idempotent_concurrency() {
+    let store = InMemoryEventStore::<Counter>::new();
+    let idempotency = InMemoryIdempotencyStore::new();
+    let repo = Repository::new(store.clone());
+    let counter_id = "concurrent-counter".to_owned();
+    let key = IdempotencyKey::new("concurrent-req");
+
+    let repo_arc = Arc::new(repo);
+    let idempotency_arc = Arc::new(idempotency);
+    let counter_id_arc = Arc::new(counter_id.clone());
+    let key_arc = Arc::new(key);
+
+    let mut handles = vec![];
+    for _ in 0..10 {
+        let repo = Arc::clone(&repo_arc);
+        let idempotency = Arc::clone(&idempotency_arc);
+        let counter_id = Arc::clone(&counter_id_arc);
+        let key = Arc::clone(&key_arc);
+
+        handles.push(thread::spawn(move || {
+            repo.execute_idempotent(
+                &counter_id,
+                CounterCommand::Create,
+                Metadata::default(),
+                (*key).clone(),
+                &*idempotency,
+            )
+        }));
+    }
+
+    let mut results = vec![];
+    for handle in handles {
+        results.push(handle.join().unwrap().unwrap());
+    }
+
+    let first_result = &results[0];
+    for r in &results {
+        assert_eq!(r, first_result);
+    }
+
+    assert_eq!(store.load(&counter_id).unwrap().len(), 1);
+}
+
 #[cfg(feature = "async")]
 mod async_tests {
     use super::*;
     use ddd_cqrs_es::{
-        async_api::AsyncEventStore, AsyncRepository, AsyncSnapshotStore,
-        InMemoryEventStore, InMemoryIdempotencyStore, InMemorySnapshotStore, Snapshot,
+        async_api::AsyncEventStore, AsyncRepository, AsyncSnapshotStore, InMemoryEventStore,
+        InMemoryIdempotencyStore, InMemorySnapshotStore, Snapshot,
     };
 
     #[tokio::test]
@@ -569,7 +613,9 @@ mod async_tests {
             loaded.state.clone(),
             Metadata::default(),
         );
-        AsyncSnapshotStore::save_snapshot(&snapshots, snapshot).await.unwrap();
+        AsyncSnapshotStore::save_snapshot(&snapshots, snapshot)
+            .await
+            .unwrap();
 
         repo.execute(
             &counter_id,
@@ -579,7 +625,10 @@ mod async_tests {
         .await
         .unwrap();
 
-        let loaded_snap = repo.load_with_snapshot(&counter_id, &snapshots).await.unwrap();
+        let loaded_snap = repo
+            .load_with_snapshot(&counter_id, &snapshots)
+            .await
+            .unwrap();
         assert_eq!(loaded_snap.state.value, 10);
         assert_eq!(loaded_snap.revision, 2);
     }
@@ -618,5 +667,312 @@ mod async_tests {
         let events = AsyncEventStore::load(&store, &counter_id).await.unwrap();
         assert_eq!(events.len(), 1);
     }
+
+    #[tokio::test]
+    async fn test_async_repository_idempotent_concurrency() {
+        let store = InMemoryEventStore::<Counter>::new();
+        let idempotency = InMemoryIdempotencyStore::new();
+        let repo = Arc::new(AsyncRepository::new(store.clone()));
+        let idempotency_arc = Arc::new(idempotency);
+        let counter_id = Arc::new("async-concurrent-counter".to_owned());
+        let key = Arc::new(IdempotencyKey::new("async-concurrent-req"));
+
+        let mut tasks = vec![];
+        for _ in 0..10 {
+            let repo = Arc::clone(&repo);
+            let idempotency = Arc::clone(&idempotency_arc);
+            let counter_id = Arc::clone(&counter_id);
+            let key = Arc::clone(&key);
+
+            tasks.push(tokio::spawn(async move {
+                repo.execute_idempotent(
+                    &counter_id,
+                    CounterCommand::Create,
+                    Metadata::default(),
+                    (*key).clone(),
+                    &*idempotency,
+                )
+                .await
+            }));
+        }
+
+        let mut results = vec![];
+        for task in tasks {
+            results.push(task.await.unwrap().unwrap());
+        }
+
+        let first_result = &results[0];
+        for r in &results {
+            assert_eq!(r, first_result);
+        }
+
+        let events = AsyncEventStore::load(&store, &*counter_id).await.unwrap();
+        assert_eq!(events.len(), 1);
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "sqlite")]
+    async fn test_async_persisted_projection_runner() {
+        use ddd_cqrs_es::projection::{AsyncCheckpointStore, AsyncPersistedProjectionRunner};
+        use ddd_cqrs_es::SqliteCheckpointStore;
+        use rusqlite::Connection;
+
+        let conn = Connection::open_in_memory().unwrap();
+        let checkpoint_store = SqliteCheckpointStore::new(conn).unwrap();
+
+        let store = InMemoryEventStore::<Counter>::new();
+        let repo = AsyncRepository::new(store.clone());
+        let counter_id = "counter-1".to_owned();
+
+        repo.execute(&counter_id, CounterCommand::Create, Metadata::default())
+            .await
+            .unwrap();
+
+        let projection = CounterProjection::default();
+        let mut runner = AsyncPersistedProjectionRunner::new(projection, checkpoint_store.clone());
+
+        let applied = runner.run::<Counter, _>(&store).await.unwrap();
+        assert_eq!(applied, 1);
+
+        let cp = checkpoint_store
+            .load_checkpoint("counter_projection")
+            .await
+            .unwrap();
+        assert_eq!(cp, Some(1));
+    }
 }
 
+#[cfg(feature = "sqlite")]
+#[test]
+fn test_sqlite_chained_upcaster() {
+    use ddd_cqrs_es::EventUpcaster;
+
+    struct Upcaster1To2;
+    impl EventUpcaster for Upcaster1To2 {
+        type Error = std::convert::Infallible;
+        fn source_version(&self) -> u32 {
+            1
+        }
+        fn target_version(&self) -> u32 {
+            2
+        }
+        fn upcast(&self, raw_payload: Vec<u8>) -> Result<Vec<u8>, Self::Error> {
+            let s = String::from_utf8(raw_payload).unwrap();
+            let upgraded = s.replace("OldCreated", "V2Created");
+            Ok(upgraded.into_bytes())
+        }
+    }
+
+    struct Upcaster2To3;
+    impl EventUpcaster for Upcaster2To3 {
+        type Error = std::convert::Infallible;
+        fn source_version(&self) -> u32 {
+            2
+        }
+        fn target_version(&self) -> u32 {
+            3
+        }
+        fn upcast(&self, raw_payload: Vec<u8>) -> Result<Vec<u8>, Self::Error> {
+            let s = String::from_utf8(raw_payload).unwrap();
+            let upgraded = s.replace("V2Created", "Created");
+            Ok(upgraded.into_bytes())
+        }
+    }
+
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        r#"
+        CREATE TABLE events (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL UNIQUE,
+            aggregate_id TEXT NOT NULL,
+            aggregate_type TEXT NOT NULL,
+            revision INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            event_version INTEGER NOT NULL,
+            payload TEXT NOT NULL,
+            metadata TEXT NOT NULL,
+            recorded_at_ms INTEGER NOT NULL,
+            UNIQUE (aggregate_type, aggregate_id, revision)
+        );
+        "#,
+    )
+    .unwrap();
+
+    conn.execute(
+        "INSERT INTO events (event_id, aggregate_id, aggregate_type, revision, event_type, event_version, payload, metadata, recorded_at_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        rusqlite::params![
+            "event-123",
+            "\"counter-123\"",
+            "counter",
+            1,
+            "counter_created",
+            1,
+            "\"OldCreated\"",
+            serde_json::to_string(&Metadata::default()).unwrap(),
+            1700000000000i64,
+        ]
+    ).unwrap();
+
+    let store = ddd_cqrs_es::SqliteEventStore::<Counter>::new(conn).unwrap();
+    store.register_upcaster("counter_created", Upcaster1To2);
+    store.register_upcaster("counter_created", Upcaster2To3);
+
+    let events = ddd_cqrs_es::EventStore::load(&store, &"counter-123".to_owned()).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].payload, CounterEvent::Created);
+    assert_eq!(events[0].event_version, 3);
+}
+
+#[cfg(feature = "sqlite")]
+#[test]
+fn test_sqlite_checkpoint_store() {
+    use ddd_cqrs_es::projection::CheckpointStore;
+    use ddd_cqrs_es::SqliteCheckpointStore;
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    let store = SqliteCheckpointStore::new(conn).unwrap();
+
+    assert_eq!(store.load_checkpoint("proj1").unwrap(), None);
+    store.save_checkpoint("proj1", 42).unwrap();
+    assert_eq!(store.load_checkpoint("proj1").unwrap(), Some(42));
+    store.save_checkpoint("proj1", 100).unwrap();
+    assert_eq!(store.load_checkpoint("proj1").unwrap(), Some(100));
+}
+
+#[cfg(feature = "sqlite")]
+#[test]
+fn test_sync_persisted_projection_runner() {
+    use ddd_cqrs_es::projection::PersistedProjectionRunner;
+    use ddd_cqrs_es::SqliteCheckpointStore;
+
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    let checkpoint_store = SqliteCheckpointStore::new(conn).unwrap();
+
+    let store = InMemoryEventStore::<Counter>::new();
+    let repo = Repository::new(store.clone());
+    let counter_id = "counter-1".to_owned();
+
+    repo.execute(&counter_id, CounterCommand::Create, Metadata::default())
+        .unwrap();
+
+    let projection = CounterProjection::default();
+    let mut runner = PersistedProjectionRunner::new(projection, checkpoint_store.clone());
+
+    let applied = runner.run::<Counter, _>(&store).unwrap();
+    assert_eq!(applied, 1);
+
+    use ddd_cqrs_es::projection::CheckpointStore;
+    let cp = checkpoint_store
+        .load_checkpoint("counter_projection")
+        .unwrap();
+    assert_eq!(cp, Some(1));
+}
+
+#[cfg(feature = "postgres")]
+#[test]
+fn test_postgres_chained_upcaster() {
+    let Ok(database_url) = std::env::var("DDD_CQRS_ES_POSTGRES_URL") else {
+        eprintln!("skipping live Postgres upcaster test: DDD_CQRS_ES_POSTGRES_URL is not set");
+        return;
+    };
+    use ddd_cqrs_es::EventUpcaster;
+
+    struct Upcaster1To2;
+    impl EventUpcaster for Upcaster1To2 {
+        type Error = std::convert::Infallible;
+        fn source_version(&self) -> u32 {
+            1
+        }
+        fn target_version(&self) -> u32 {
+            2
+        }
+        fn upcast(&self, raw_payload: Vec<u8>) -> Result<Vec<u8>, Self::Error> {
+            let s = String::from_utf8(raw_payload).unwrap();
+            let upgraded = s.replace("OldCreated", "V2Created");
+            Ok(upgraded.into_bytes())
+        }
+    }
+
+    struct Upcaster2To3;
+    impl EventUpcaster for Upcaster2To3 {
+        type Error = std::convert::Infallible;
+        fn source_version(&self) -> u32 {
+            2
+        }
+        fn target_version(&self) -> u32 {
+            3
+        }
+        fn upcast(&self, raw_payload: Vec<u8>) -> Result<Vec<u8>, Self::Error> {
+            let s = String::from_utf8(raw_payload).unwrap();
+            let upgraded = s.replace("V2Created", "Created");
+            Ok(upgraded.into_bytes())
+        }
+    }
+
+    let mut client = postgres::Client::connect(&database_url, postgres::NoTls).unwrap();
+    let table_name = format!("events_upcast_{}", std::process::id());
+    let _ = client.execute(&format!("DROP TABLE IF EXISTS {};", table_name), &[]);
+
+    let store = ddd_cqrs_es::PostgresEventStore::<Counter>::connect_with_table_name(
+        &database_url,
+        table_name.clone(),
+    )
+    .unwrap();
+    store.initialize_schema().unwrap();
+
+    client.execute(
+        &format!(
+            "INSERT INTO {} (event_id, aggregate_id, aggregate_type, revision, event_type, event_version, payload, metadata, recorded_at_ms)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            table_name
+        ),
+        &[
+            &"my-test-event-id".to_owned(),
+            &"\"counter-123\"".to_owned(),
+            &"counter".to_owned(),
+            &1i64,
+            &"counter_created".to_owned(),
+            &1i32,
+            &serde_json::to_value("OldCreated").unwrap(),
+            &serde_json::to_value(Metadata::default()).unwrap(),
+            &1700000000000i64,
+        ]
+    ).unwrap();
+
+    store.register_upcaster("counter_created", Upcaster1To2);
+    store.register_upcaster("counter_created", Upcaster2To3);
+
+    let events = ddd_cqrs_es::EventStore::load(&store, &"counter-123".to_owned()).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].payload, CounterEvent::Created);
+    assert_eq!(events[0].event_version, 3);
+
+    let _ = client.execute(&format!("DROP TABLE IF EXISTS {};", table_name), &[]);
+}
+
+#[cfg(feature = "postgres")]
+#[test]
+fn test_postgres_checkpoint_store() {
+    let Ok(database_url) = std::env::var("DDD_CQRS_ES_POSTGRES_URL") else {
+        eprintln!("skipping live Postgres checkpoint test: DDD_CQRS_ES_POSTGRES_URL is not set");
+        return;
+    };
+    use ddd_cqrs_es::projection::CheckpointStore;
+    use ddd_cqrs_es::PostgresCheckpointStore;
+
+    let mut client = postgres::Client::connect(&database_url, postgres::NoTls).unwrap();
+    let table_name = format!("checkpoints_{}", std::process::id());
+    let _ = client.execute(&format!("DROP TABLE IF EXISTS {};", table_name), &[]);
+
+    let store = PostgresCheckpointStore::with_table_name(client, table_name.clone()).unwrap();
+
+    assert_eq!(store.load_checkpoint("proj1").unwrap(), None);
+    store.save_checkpoint("proj1", 42).unwrap();
+    assert_eq!(store.load_checkpoint("proj1").unwrap(), Some(42));
+    store.save_checkpoint("proj1", 100).unwrap();
+    assert_eq!(store.load_checkpoint("proj1").unwrap(), Some(100));
+
+    let mut client = postgres::Client::connect(&database_url, postgres::NoTls).unwrap();
+    let _ = client.execute(&format!("DROP TABLE IF EXISTS {};", table_name), &[]);
+}

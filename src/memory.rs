@@ -244,8 +244,10 @@ where
         EventStore::append(self, aggregate_id, expected_revision, events)
     }
 
-    async fn load_global_after(&self, sequence: Option<u64>) -> Result<EventStream<A>, Self::Error> {
+    async fn load_global_after(
+        &self,
+        sequence: Option<u64>,
+    ) -> Result<EventStream<A>, Self::Error> {
         EventStore::load_global_after(self, sequence)
     }
 }
-

@@ -2,6 +2,9 @@ use crate::aggregate::Aggregate;
 use crate::event::EventEnvelope;
 use crate::event_store::EventStore;
 
+#[cfg(feature = "async")]
+use async_trait::async_trait;
+
 /// A read-model updater.
 ///
 /// Projections consume committed event envelopes and update query-optimized
@@ -175,9 +178,201 @@ impl<P> InMemoryProjectionRunner<P> {
 
 /// Error returned by a projection runner.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ProjectionRunnerError<ProjectionError, StoreError> {
+pub enum ProjectionRunnerError<
+    ProjectionError,
+    StoreError,
+    CheckpointError = std::convert::Infallible,
+> {
     /// Projection logic failed.
     Projection(ProjectionError),
     /// Event store read failed.
     Store(StoreError),
+    /// Checkpoint storage failed.
+    Checkpoint(CheckpointError),
+}
+
+/// A persistent store for tracking projection sequence checkpoints.
+pub trait CheckpointStore {
+    /// Error type.
+    type Error;
+
+    /// Loads the last successfully processed event global sequence for a given projection name.
+    fn load_checkpoint(&self, projection_name: &str) -> Result<Option<u64>, Self::Error>;
+
+    /// Saves the last successfully processed event global sequence for a given projection name.
+    fn save_checkpoint(&self, projection_name: &str, sequence: u64) -> Result<(), Self::Error>;
+}
+
+/// An async persistent store for tracking projection sequence checkpoints.
+#[cfg(feature = "async")]
+#[async_trait]
+pub trait AsyncCheckpointStore {
+    /// Error type.
+    type Error;
+
+    /// Loads the last successfully processed event global sequence for a given projection name.
+    async fn load_checkpoint(&self, projection_name: &str) -> Result<Option<u64>, Self::Error>;
+
+    /// Saves the last successfully processed event global sequence for a given projection name.
+    async fn save_checkpoint(
+        &self,
+        projection_name: &str,
+        sequence: u64,
+    ) -> Result<(), Self::Error>;
+}
+
+/// A projection runner that uses a persistent `CheckpointStore` to coordinate progress.
+#[derive(Debug)]
+pub struct PersistedProjectionRunner<P, C> {
+    projection: P,
+    checkpoint_store: C,
+}
+
+impl<P, C> PersistedProjectionRunner<P, C> {
+    /// Creates a new persisted runner for a projection and checkpoint store.
+    pub fn new(projection: P, checkpoint_store: C) -> Self {
+        Self {
+            projection,
+            checkpoint_store,
+        }
+    }
+
+    /// Returns the wrapped projection.
+    pub fn projection(&self) -> &P {
+        &self.projection
+    }
+
+    /// Returns the wrapped projection mutably.
+    pub fn projection_mut(&mut self) -> &mut P {
+        &mut self.projection
+    }
+
+    /// Consumes the runner and returns the projection.
+    pub fn into_projection(self) -> P {
+        self.projection
+    }
+}
+
+impl<P, C> PersistedProjectionRunner<P, C>
+where
+    C: CheckpointStore,
+{
+    /// Loads global events after the current persistent checkpoint and applies them,
+    /// updating the checkpoint store.
+    #[allow(clippy::type_complexity)]
+    pub fn run<A, S>(
+        &mut self,
+        store: &S,
+    ) -> Result<usize, ProjectionRunnerError<P::Error, S::Error, C::Error>>
+    where
+        A: Aggregate,
+        S: EventStore<A>,
+        P: Projection<A::Event, A::Id>,
+    {
+        let name = self.projection.name();
+        let checkpoint = self
+            .checkpoint_store
+            .load_checkpoint(name)
+            .map_err(ProjectionRunnerError::Checkpoint)?;
+
+        let events = store
+            .load_global_after(checkpoint)
+            .map_err(ProjectionRunnerError::Store)?;
+        let mut applied = 0;
+
+        for event in events {
+            self.projection
+                .apply(&event)
+                .map_err(ProjectionRunnerError::Projection)?;
+            if let Some(seq) = event.sequence {
+                self.checkpoint_store
+                    .save_checkpoint(name, seq)
+                    .map_err(ProjectionRunnerError::Checkpoint)?;
+            }
+            applied += 1;
+        }
+
+        Ok(applied)
+    }
+}
+
+/// An async projection runner that uses a persistent `AsyncCheckpointStore` to coordinate progress.
+#[cfg(feature = "async")]
+#[derive(Debug)]
+pub struct AsyncPersistedProjectionRunner<P, C> {
+    projection: P,
+    checkpoint_store: C,
+}
+
+#[cfg(feature = "async")]
+impl<P, C> AsyncPersistedProjectionRunner<P, C> {
+    /// Creates a new async persisted runner for a projection and checkpoint store.
+    pub fn new(projection: P, checkpoint_store: C) -> Self {
+        Self {
+            projection,
+            checkpoint_store,
+        }
+    }
+
+    /// Returns the wrapped projection.
+    pub fn projection(&self) -> &P {
+        &self.projection
+    }
+
+    /// Returns the wrapped projection mutably.
+    pub fn projection_mut(&mut self) -> &mut P {
+        &mut self.projection
+    }
+
+    /// Consumes the runner and returns the projection.
+    pub fn into_projection(self) -> P {
+        self.projection
+    }
+}
+
+#[cfg(feature = "async")]
+impl<P, C> AsyncPersistedProjectionRunner<P, C>
+where
+    C: AsyncCheckpointStore,
+{
+    /// Loads global events after the current persistent checkpoint and applies them,
+    /// updating the checkpoint store.
+    #[allow(clippy::type_complexity)]
+    pub async fn run<A, S>(
+        &mut self,
+        store: &S,
+    ) -> Result<usize, ProjectionRunnerError<P::Error, S::Error, C::Error>>
+    where
+        A: Aggregate + Send + Sync,
+        S: crate::async_api::AsyncEventStore<A>,
+        P: Projection<A::Event, A::Id>,
+    {
+        let name = self.projection.name();
+        let checkpoint = self
+            .checkpoint_store
+            .load_checkpoint(name)
+            .await
+            .map_err(ProjectionRunnerError::Checkpoint)?;
+
+        let events = store
+            .load_global_after(checkpoint)
+            .await
+            .map_err(ProjectionRunnerError::Store)?;
+        let mut applied = 0;
+
+        for event in events {
+            self.projection
+                .apply(&event)
+                .map_err(ProjectionRunnerError::Projection)?;
+            if let Some(seq) = event.sequence {
+                self.checkpoint_store
+                    .save_checkpoint(name, seq)
+                    .await
+                    .map_err(ProjectionRunnerError::Checkpoint)?;
+            }
+            applied += 1;
+        }
+
+        Ok(applied)
+    }
 }

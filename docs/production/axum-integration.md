@@ -172,7 +172,7 @@ impl From<RepositoryError<BankAccountError>> for AppError {
         match err {
             RepositoryError::Domain(e) => AppError::Domain(e),
             RepositoryError::Concurrency(_) => AppError::Concurrency,
-            RepositoryError::Database(e) => AppError::Internal(e.to_string()),
+            RepositoryError::Store(e) => AppError::Internal(e.to_string()),
             _ => AppError::Internal("Unknown repository error occurred.".to_owned()),
         }
     }

@@ -4,12 +4,11 @@ use crate::aggregate::{Aggregate, LoadedAggregate};
 use crate::error::{EventStoreFailure, RepositoryError};
 use crate::event::{ExpectedRevision, NewEvent};
 use crate::event_store::EventStream;
+use crate::idempotency::{IdempotencyKey, IdempotencyState, IdempotentRepositoryError};
 use crate::metadata::Metadata;
-use async_trait::async_trait;
-use crate::idempotency::{IdempotencyKey, IdempotentRepositoryError};
 use crate::snapshot::{Snapshot, SnapshotRepositoryError};
+use async_trait::async_trait;
 use std::marker::PhantomData;
-
 
 /// Async event persistence abstraction for one aggregate type.
 #[async_trait]
@@ -235,10 +234,7 @@ where
         &self,
         aggregate_id: &A::Id,
         snapshots: &SS,
-    ) -> Result<
-        LoadedAggregate<A>,
-        SnapshotRepositoryError<A::Error, S::Error, SS::Error>,
-    >
+    ) -> Result<LoadedAggregate<A>, SnapshotRepositoryError<A::Error, S::Error, SS::Error>>
     where
         SS: AsyncSnapshotStore<A>,
     {
@@ -279,10 +275,7 @@ where
         command: A::Command,
         metadata: Metadata,
         snapshots: &SS,
-    ) -> Result<
-        EventStream<A>,
-        SnapshotRepositoryError<A::Error, S::Error, SS::Error>,
-    >
+    ) -> Result<EventStream<A>, SnapshotRepositoryError<A::Error, S::Error, SS::Error>>
     where
         SS: AsyncSnapshotStore<A>,
     {
@@ -315,43 +308,70 @@ where
         metadata: Metadata,
         idempotency_key: IdempotencyKey,
         idempotency_store: &I,
-    ) -> Result<
-        EventStream<A>,
-        IdempotentRepositoryError<A::Error, S::Error, I::Error>,
-    >
+    ) -> Result<EventStream<A>, IdempotentRepositoryError<A::Error, S::Error, I::Error>>
     where
         I: AsyncIdempotencyStore<EventStream<A>>,
     {
-        if let Some(committed) = idempotency_store
-            .load(&idempotency_key)
-            .await
-            .map_err(IdempotentRepositoryError::Idempotency)?
-        {
-            return Ok(committed);
+        loop {
+            match idempotency_store
+                .load(&idempotency_key)
+                .await
+                .map_err(IdempotentRepositoryError::Idempotency)?
+            {
+                Some(IdempotencyState::Complete(committed)) => {
+                    return Ok(committed);
+                }
+                Some(IdempotencyState::Pending) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    continue;
+                }
+                None => {
+                    if idempotency_store
+                        .reserve(idempotency_key.clone())
+                        .await
+                        .map_err(IdempotentRepositoryError::Idempotency)?
+                    {
+                        break;
+                    }
+                }
+            }
         }
 
-        let loaded = self.load(aggregate_id).await.map_err(|error| match error {
-            RepositoryError::Domain(error) => IdempotentRepositoryError::Domain(error),
-            RepositoryError::Concurrency(error) => IdempotentRepositoryError::Concurrency(error),
-            RepositoryError::Store(error) => IdempotentRepositoryError::Store(error),
-        })?;
-        let events = loaded
-            .state
-            .handle(command)
-            .map_err(IdempotentRepositoryError::Domain)?;
-        let events = events
-            .into_iter()
-            .map(|event| NewEvent::new(event, metadata.clone()))
-            .collect();
-        let committed = self
-            .store
-            .append(
-                aggregate_id,
-                ExpectedRevision::Exact(loaded.revision),
-                events,
-            )
-            .await
-            .map_err(IdempotentRepositoryError::from_store_error)?;
+        let committed = match async {
+            let loaded = self.load(aggregate_id).await.map_err(|error| match error {
+                RepositoryError::Domain(error) => IdempotentRepositoryError::Domain(error),
+                RepositoryError::Concurrency(error) => {
+                    IdempotentRepositoryError::Concurrency(error)
+                }
+                RepositoryError::Store(error) => IdempotentRepositoryError::Store(error),
+            })?;
+            let events = loaded
+                .state
+                .handle(command)
+                .map_err(IdempotentRepositoryError::Domain)?;
+            let events = events
+                .into_iter()
+                .map(|event| NewEvent::new(event, metadata.clone()))
+                .collect();
+            let committed = self
+                .store
+                .append(
+                    aggregate_id,
+                    ExpectedRevision::Exact(loaded.revision),
+                    events,
+                )
+                .await
+                .map_err(IdempotentRepositoryError::from_store_error)?;
+            Ok(committed)
+        }
+        .await
+        {
+            Ok(committed) => committed,
+            Err(err) => {
+                let _ = idempotency_store.remove(&idempotency_key).await;
+                return Err(err);
+            }
+        };
 
         idempotency_store
             .save(idempotency_key, committed.clone())
@@ -361,7 +381,6 @@ where
         Ok(committed)
     }
 }
-
 
 /// Async snapshot persistence abstraction.
 #[async_trait]
@@ -373,7 +392,8 @@ where
     type Error: Send;
 
     /// Loads the latest snapshot for an aggregate stream.
-    async fn load_snapshot(&self, aggregate_id: &A::Id) -> Result<Option<Snapshot<A>>, Self::Error>;
+    async fn load_snapshot(&self, aggregate_id: &A::Id)
+        -> Result<Option<Snapshot<A>>, Self::Error>;
 
     /// Saves a snapshot.
     async fn save_snapshot(&self, snapshot: Snapshot<A>) -> Result<(), Self::Error>;
@@ -389,10 +409,17 @@ where
     type Error: Send;
 
     /// Loads a previous result for an idempotency key.
-    async fn load(&self, key: &IdempotencyKey) -> Result<Option<V>, Self::Error>;
+    async fn load(&self, key: &IdempotencyKey) -> Result<Option<IdempotencyState<V>>, Self::Error>;
 
-    /// Saves a result for an idempotency key.
+    /// Reserves an idempotency key, marking it as pending/in-progress.
+    /// Returns `true` if the key was successfully reserved, or `false` if it was already reserved/completed.
+    async fn reserve(&self, key: IdempotencyKey) -> Result<bool, Self::Error>;
+
+    /// Saves a completed result for an idempotency key.
     async fn save(&self, key: IdempotencyKey, value: V) -> Result<(), Self::Error>;
+
+    /// Removes a reservation/entry (e.g. if execution failed).
+    async fn remove(&self, key: &IdempotencyKey) -> Result<(), Self::Error>;
 }
 
 /// Dispatches commands asynchronously without requiring a specific framework.

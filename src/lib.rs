@@ -114,8 +114,8 @@ pub mod upcast;
 pub use aggregate::{Aggregate, LoadedAggregate};
 #[cfg(feature = "async")]
 pub use async_api::{
-    AsyncCommandBus, AsyncCommandHandler, AsyncEventStore, AsyncQueryHandler, AsyncRepository,
-    AsyncRepositoryResult, AsyncSnapshotStore, AsyncIdempotencyStore,
+    AsyncCommandBus, AsyncCommandHandler, AsyncEventStore, AsyncIdempotencyStore,
+    AsyncQueryHandler, AsyncRepository, AsyncRepositoryResult, AsyncSnapshotStore,
 };
 
 pub use command::{CommandBus, CommandHandler, QueryHandler};
@@ -126,15 +126,20 @@ pub use event::{
 };
 pub use event_store::{EventStore, EventStream, StandardEventStore};
 pub use idempotency::{
-    IdempotencyKey, IdempotencyStore, IdempotentRepositoryError, InMemoryIdempotencyError,
-    InMemoryIdempotencyStore,
+    IdempotencyKey, IdempotencyState, IdempotencyStore, IdempotentRepositoryError,
+    InMemoryIdempotencyError, InMemoryIdempotencyStore,
 };
 pub use memory::InMemoryEventStore;
 pub use metadata::Metadata;
 #[cfg(feature = "postgres")]
-pub use postgres::PostgresEventStore;
+pub use postgres::{PostgresCheckpointStore, PostgresEventStore};
 pub use process_manager::ProcessManager;
-pub use projection::{InMemoryProjectionRunner, Projection, ProjectionRunnerError};
+#[cfg(feature = "async")]
+pub use projection::{AsyncCheckpointStore, AsyncPersistedProjectionRunner};
+pub use projection::{
+    CheckpointStore, InMemoryProjectionRunner, PersistedProjectionRunner, Projection,
+    ProjectionRunnerError,
+};
 pub use repository::{
     CommittedEvents, ExecutionOutcome, IdempotentRepositoryResult, Repository, RepositoryResult,
     SnapshotRepositoryResult,
@@ -143,6 +148,6 @@ pub use snapshot::{
     InMemorySnapshotError, InMemorySnapshotStore, Snapshot, SnapshotRepositoryError, SnapshotStore,
 };
 #[cfg(feature = "sqlite")]
-pub use sqlite::SqliteEventStore;
+pub use sqlite::{SqliteCheckpointStore, SqliteEventStore};
 pub use testing::{assert_event_store_contract, AggregateFixture};
-pub use upcast::EventUpcaster;
+pub use upcast::{ErasedUpcaster, EventUpcaster, UpcasterRegistry};

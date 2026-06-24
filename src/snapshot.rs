@@ -275,7 +275,10 @@ where
 {
     type Error = InMemorySnapshotError;
 
-    async fn load_snapshot(&self, aggregate_id: &A::Id) -> Result<Option<Snapshot<A>>, Self::Error> {
+    async fn load_snapshot(
+        &self,
+        aggregate_id: &A::Id,
+    ) -> Result<Option<Snapshot<A>>, Self::Error> {
         SnapshotStore::load_snapshot(self, aggregate_id)
     }
 
@@ -283,4 +286,3 @@ where
         SnapshotStore::save_snapshot(self, snapshot)
     }
 }
-

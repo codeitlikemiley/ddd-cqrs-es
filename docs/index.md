@@ -26,7 +26,7 @@ Our framework is highly modular. You can enable specific adapters and engines de
 | :--- | :--- | :--- |
 | **`default`** | Standard local, thread-safe in-memory event store and memory projection runners. | None |
 | **`sqlite`** | Durable local file-based database event store. | `rusqlite` |
-| **`postgres`** | Durable enterprise-grade relational database event store. | `postgres`, `r2d2` |
+| **`postgres`** | Durable enterprise-grade relational database event store. | `postgres` |
 
 ---
 

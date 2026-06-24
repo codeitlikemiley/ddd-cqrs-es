@@ -98,7 +98,7 @@ fn setup_sqlite() -> Result<Repository<BankAccount, SqliteEventStore<BankAccount
     let connection = rusqlite::Connection::open("local_events.db")?;
     
     // 2. Wrap connection in our SqliteEventStore adapter
-    let store = SqliteEventStore::<BankAccount>::new(connection);
+    let store = SqliteEventStore::<BankAccount>::new(connection)?;
     
     // 3. Initialize the database schema if it doesn't exist
     store.initialize_schema()?;

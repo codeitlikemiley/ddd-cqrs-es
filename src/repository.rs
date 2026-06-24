@@ -2,7 +2,9 @@ use crate::aggregate::{Aggregate, LoadedAggregate};
 use crate::error::{EventStoreError, EventStoreFailure, RepositoryError};
 use crate::event::{ExpectedRevision, NewEvent};
 use crate::event_store::{EventStore, EventStream};
-use crate::idempotency::{IdempotencyKey, IdempotencyStore, IdempotentRepositoryError};
+use crate::idempotency::{
+    IdempotencyKey, IdempotencyState, IdempotencyStore, IdempotentRepositoryError,
+};
 use crate::metadata::Metadata;
 use crate::snapshot::{SnapshotRepositoryError, SnapshotStore};
 use std::marker::PhantomData;
@@ -270,34 +272,62 @@ where
     where
         I: IdempotencyStore<CommittedEvents<A>>,
     {
-        if let Some(committed) = idempotency_store
-            .load(&idempotency_key)
-            .map_err(IdempotentRepositoryError::Idempotency)?
-        {
-            return Ok(committed);
+        loop {
+            match idempotency_store
+                .load(&idempotency_key)
+                .map_err(IdempotentRepositoryError::Idempotency)?
+            {
+                Some(IdempotencyState::Complete(committed)) => {
+                    return Ok(committed);
+                }
+                Some(IdempotencyState::Pending) => {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    continue;
+                }
+                None => {
+                    if idempotency_store
+                        .reserve(idempotency_key.clone())
+                        .map_err(IdempotentRepositoryError::Idempotency)?
+                    {
+                        break;
+                    }
+                }
+            }
         }
 
-        let loaded = self.load(aggregate_id).map_err(|error| match error {
-            RepositoryError::Domain(error) => IdempotentRepositoryError::Domain(error),
-            RepositoryError::Concurrency(error) => IdempotentRepositoryError::Concurrency(error),
-            RepositoryError::Store(error) => IdempotentRepositoryError::Store(error),
-        })?;
-        let events = loaded
-            .state
-            .handle(command)
-            .map_err(IdempotentRepositoryError::Domain)?;
-        let events = events
-            .into_iter()
-            .map(|event| NewEvent::new(event, metadata.clone()))
-            .collect();
-        let committed = self
-            .store
-            .append(
-                aggregate_id,
-                ExpectedRevision::Exact(loaded.revision),
-                events,
-            )
-            .map_err(IdempotentRepositoryError::from_store_error)?;
+        let committed =
+            match (|| -> Result<CommittedEvents<A>, RepositoryError<A::Error, S::Error>> {
+                let loaded = self.load(aggregate_id)?;
+                let events = loaded
+                    .state
+                    .handle(command)
+                    .map_err(RepositoryError::Domain)?;
+                let events = events
+                    .into_iter()
+                    .map(|event| NewEvent::new(event, metadata.clone()))
+                    .collect();
+                let committed = self
+                    .store
+                    .append(
+                        aggregate_id,
+                        ExpectedRevision::Exact(loaded.revision),
+                        events,
+                    )
+                    .map_err(EventStoreFailure::into_repository_error)?;
+                Ok(committed)
+            })() {
+                Ok(committed) => committed,
+                Err(err) => {
+                    let _ = idempotency_store.remove(&idempotency_key);
+                    return Err(match err {
+                        RepositoryError::Domain(error) => IdempotentRepositoryError::Domain(error),
+                        RepositoryError::Concurrency(error) => {
+                            IdempotentRepositoryError::Concurrency(error)
+                        }
+                        RepositoryError::Store(error) => IdempotentRepositoryError::Store(error),
+                    });
+                }
+            };
 
         idempotency_store
             .save(idempotency_key, committed.clone())

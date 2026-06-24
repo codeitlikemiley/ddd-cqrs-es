@@ -38,6 +38,16 @@ impl Display for IdempotencyKey {
     }
 }
 
+/// State of a processed or in-progress command.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IdempotencyState<V> {
+    /// Command is currently being processed.
+    Pending,
+    /// Command has completed, containing the original result.
+    Complete(V),
+}
+
 /// Stores previously committed command results by idempotency key.
 pub trait IdempotencyStore<V>: Clone + Send + Sync + 'static
 where
@@ -46,11 +56,18 @@ where
     /// Store-specific error type.
     type Error;
 
-    /// Loads a previous result for an idempotency key.
-    fn load(&self, key: &IdempotencyKey) -> Result<Option<V>, Self::Error>;
+    /// Loads a previous result or execution status for an idempotency key.
+    fn load(&self, key: &IdempotencyKey) -> Result<Option<IdempotencyState<V>>, Self::Error>;
 
-    /// Saves a result for an idempotency key.
+    /// Reserves an idempotency key, marking it as pending/in-progress.
+    /// Returns `true` if the key was successfully reserved, or `false` if it was already reserved/completed.
+    fn reserve(&self, key: IdempotencyKey) -> Result<bool, Self::Error>;
+
+    /// Saves a completed result for an idempotency key.
     fn save(&self, key: IdempotencyKey, value: V) -> Result<(), Self::Error>;
+
+    /// Removes a reservation/entry (e.g. if execution failed).
+    fn remove(&self, key: &IdempotencyKey) -> Result<(), Self::Error>;
 }
 
 /// Error returned by [`InMemoryIdempotencyStore`].
@@ -77,21 +94,22 @@ impl Error for InMemoryIdempotencyError {}
 /// # Example
 ///
 /// ```rust
-/// use ddd_cqrs_es::{IdempotencyKey, IdempotencyStore, InMemoryIdempotencyStore};
+/// use ddd_cqrs_es::{IdempotencyKey, IdempotencyStore, InMemoryIdempotencyStore, IdempotencyState};
 ///
 /// let store = InMemoryIdempotencyStore::<String>::new();
 /// let key = IdempotencyKey::new("msg-1");
 ///
+/// store.reserve(key.clone()).unwrap();
 /// store.save(key.clone(), "processed".to_string()).unwrap();
 /// let value = store.load(&key).unwrap();
-/// assert_eq!(value, Some("processed".to_string()));
+/// assert_eq!(value, Some(IdempotencyState::Complete("processed".to_string())));
 /// ```
 #[derive(Clone, Debug)]
 pub struct InMemoryIdempotencyStore<V>
 where
     V: Clone,
 {
-    entries: Arc<RwLock<HashMap<IdempotencyKey, V>>>,
+    entries: Arc<RwLock<HashMap<IdempotencyKey, IdempotencyState<V>>>>,
 }
 
 impl<V> Default for InMemoryIdempotencyStore<V>
@@ -130,7 +148,7 @@ where
 {
     type Error = InMemoryIdempotencyError;
 
-    fn load(&self, key: &IdempotencyKey) -> Result<Option<V>, Self::Error> {
+    fn load(&self, key: &IdempotencyKey) -> Result<Option<IdempotencyState<V>>, Self::Error> {
         let entries = self
             .entries
             .read()
@@ -138,12 +156,35 @@ where
         Ok(entries.get(key).cloned())
     }
 
+    fn reserve(&self, key: IdempotencyKey) -> Result<bool, Self::Error> {
+        let mut entries = self
+            .entries
+            .write()
+            .map_err(|_| InMemoryIdempotencyError::Poisoned)?;
+        match entries.entry(key) {
+            std::collections::hash_map::Entry::Occupied(_) => Ok(false),
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(IdempotencyState::Pending);
+                Ok(true)
+            }
+        }
+    }
+
     fn save(&self, key: IdempotencyKey, value: V) -> Result<(), Self::Error> {
         let mut entries = self
             .entries
             .write()
             .map_err(|_| InMemoryIdempotencyError::Poisoned)?;
-        entries.entry(key).or_insert(value);
+        entries.insert(key, IdempotencyState::Complete(value));
+        Ok(())
+    }
+
+    fn remove(&self, key: &IdempotencyKey) -> Result<(), Self::Error> {
+        let mut entries = self
+            .entries
+            .write()
+            .map_err(|_| InMemoryIdempotencyError::Poisoned)?;
+        entries.remove(key);
         Ok(())
     }
 }
@@ -218,12 +259,19 @@ where
 {
     type Error = InMemoryIdempotencyError;
 
-    async fn load(&self, key: &IdempotencyKey) -> Result<Option<V>, Self::Error> {
+    async fn load(&self, key: &IdempotencyKey) -> Result<Option<IdempotencyState<V>>, Self::Error> {
         IdempotencyStore::load(self, key)
+    }
+
+    async fn reserve(&self, key: IdempotencyKey) -> Result<bool, Self::Error> {
+        IdempotencyStore::reserve(self, key)
     }
 
     async fn save(&self, key: IdempotencyKey, value: V) -> Result<(), Self::Error> {
         IdempotencyStore::save(self, key, value)
     }
-}
 
+    async fn remove(&self, key: &IdempotencyKey) -> Result<(), Self::Error> {
+        IdempotencyStore::remove(self, key)
+    }
+}
