@@ -1,17 +1,25 @@
 use std::marker::PhantomData;
 use ddd_cqrs_es::{Aggregate, EventEnvelope, EventId, ExpectedRevision, NewEvent, EventStore};
 use ddd_cqrs_es::error::EventStoreError;
-use spin_sdk::sqlite::{Connection, Value};
-use futures::executor::block_on;
 
 #[cfg(feature = "postgres")]
 pub use ddd_cqrs_es::{PostgresEventStore, PostgresCheckpointStore};
 
+// =========================================================================
+// 1. RUNTIME: SPIN SQLITE
+// =========================================================================
+#[cfg(runtime_spin)]
+use spin_sdk::sqlite::{Connection, Value};
+#[cfg(runtime_spin)]
+use futures::executor::block_on;
+
+#[cfg(runtime_spin)]
 pub struct SpinSqliteEventStore<A> {
     db_name: String,
     _phantom: PhantomData<fn() -> A>,
 }
 
+#[cfg(runtime_spin)]
 impl<A> Clone for SpinSqliteEventStore<A> {
     fn clone(&self) -> Self {
         Self {
@@ -21,6 +29,7 @@ impl<A> Clone for SpinSqliteEventStore<A> {
     }
 }
 
+#[cfg(runtime_spin)]
 impl<A> SpinSqliteEventStore<A>
 where
     A: Aggregate,
@@ -72,6 +81,7 @@ where
     }
 }
 
+#[cfg(runtime_spin)]
 impl<A> EventStore<A> for SpinSqliteEventStore<A>
 where
     A: Aggregate + 'static,
@@ -162,7 +172,6 @@ where
         let connection = block_on(Connection::open(&self.db_name))
             .map_err(|e| EventStoreError::Connection(e.to_string()))?;
 
-        // 1. Get current max revision inside a connection session
         let current_revision = {
             let query = "SELECT COALESCE(MAX(revision), 0) as max_rev FROM events WHERE aggregate_type = ? AND aggregate_id = ?";
             let params = vec![
@@ -182,7 +191,6 @@ where
             actual
         };
 
-        // 2. Optimistic Concurrency Control (OCC) check
         match expected_revision {
             ExpectedRevision::Any => {}
             ExpectedRevision::NoStream if current_revision == 0 => {}
@@ -206,7 +214,6 @@ where
             return Ok(Vec::new());
         }
 
-        // 3. Append events
         let mut envelopes = Vec::new();
         let insert_query = r#"
             INSERT INTO events (
@@ -253,7 +260,6 @@ where
                     }
                 })?;
 
-            // Retrieve the sequence ID of the inserted event
             let sequence = block_on(connection.last_insert_rowid()) as u64;
 
             envelopes.push(EventEnvelope::new(
@@ -343,10 +349,12 @@ where
     }
 }
 
+#[cfg(runtime_spin)]
 pub struct SpinSqliteCheckpointStore {
     db_name: String,
 }
 
+#[cfg(runtime_spin)]
 impl Clone for SpinSqliteCheckpointStore {
     fn clone(&self) -> Self {
         Self {
@@ -355,6 +363,7 @@ impl Clone for SpinSqliteCheckpointStore {
     }
 }
 
+#[cfg(runtime_spin)]
 impl SpinSqliteCheckpointStore {
     pub fn new(db_name: impl Into<String>) -> Self {
         Self {
@@ -363,6 +372,7 @@ impl SpinSqliteCheckpointStore {
     }
 }
 
+#[cfg(runtime_spin)]
 impl ddd_cqrs_es::CheckpointStore for SpinSqliteCheckpointStore {
     type Error = EventStoreError;
 
@@ -403,10 +413,12 @@ impl ddd_cqrs_es::CheckpointStore for SpinSqliteCheckpointStore {
     }
 }
 
+#[cfg(runtime_spin)]
 pub struct CounterProjection {
     db_name: String,
 }
 
+#[cfg(runtime_spin)]
 impl CounterProjection {
     pub fn new(db_name: impl Into<String>) -> Self {
         Self {
@@ -415,6 +427,7 @@ impl CounterProjection {
     }
 }
 
+#[cfg(runtime_spin)]
 impl ddd_cqrs_es::Projection<crate::domain::CounterEvent, crate::domain::CounterId> for CounterProjection {
     type Error = EventStoreError;
 
@@ -429,7 +442,6 @@ impl ddd_cqrs_es::Projection<crate::domain::CounterEvent, crate::domain::Counter
         let connection = block_on(Connection::open(&self.db_name))
             .map_err(|e| EventStoreError::Connection(e.to_string()))?;
         
-        // 1. Get current read model value
         let query = "SELECT value FROM counter_read_model WHERE id = ?";
         let params = vec![Value::Text(aggregate_id_str.clone())];
         let query_result = block_on(connection.execute(query, params))
@@ -445,14 +457,12 @@ impl ddd_cqrs_es::Projection<crate::domain::CounterEvent, crate::domain::Counter
             }
         }
 
-        // 2. Apply event to calculate new value
         let new_value = match envelope.payload {
             crate::domain::CounterEvent::Incremented { amount } => current_value.saturating_add(amount),
             crate::domain::CounterEvent::Decremented { amount } => current_value.saturating_sub(amount),
             crate::domain::CounterEvent::ResetPerformed { value } => value,
         };
 
-        // 3. Save new value to read model using Upsert
         let upsert_sql = "INSERT INTO counter_read_model (id, value) VALUES (?, ?) \
                           ON CONFLICT(id) DO UPDATE SET value = excluded.value;";
         let upsert_params = vec![
@@ -460,6 +470,362 @@ impl ddd_cqrs_es::Projection<crate::domain::CounterEvent, crate::domain::Counter
             Value::Integer(new_value as i64),
         ];
         let _ = block_on(connection.execute(upsert_sql, upsert_params))
+            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+
+        Ok(())
+    }
+}
+
+
+// =========================================================================
+// 2. RUNTIME: GENERIC WASMTIME (WASI FILE PERSISTENCE)
+// =========================================================================
+#[cfg(runtime_wasmtime)]
+use std::fs;
+#[cfg(runtime_wasmtime)]
+use std::path::Path;
+
+#[cfg(runtime_wasmtime)]
+pub struct SpinSqliteEventStore<A> {
+    db_name: String,
+    _phantom: PhantomData<fn() -> A>,
+}
+
+#[cfg(runtime_wasmtime)]
+impl<A> Clone for SpinSqliteEventStore<A> {
+    fn clone(&self) -> Self {
+        Self {
+            db_name: self.db_name.clone(),
+            _phantom: PhantomData,
+        }
+    }
+}
+
+#[cfg(runtime_wasmtime)]
+impl<A> SpinSqliteEventStore<A>
+where
+    A: Aggregate,
+{
+    pub fn new(db_name: impl Into<String>) -> Self {
+        Self {
+            db_name: db_name.into(),
+            _phantom: PhantomData,
+        }
+    }
+
+    pub fn initialize_schema(&self) -> Result<(), String> {
+        fs::create_dir_all("/data").map_err(|e| e.to_string())?;
+        
+        let events_path = Path::new("/data/events.json");
+        if !events_path.exists() {
+            fs::write(events_path, "[]").map_err(|e| e.to_string())?;
+        }
+
+        let checkpoints_path = Path::new("/data/checkpoints.json");
+        if !checkpoints_path.exists() {
+            fs::write(checkpoints_path, "{}").map_err(|e| e.to_string())?;
+        }
+
+        let rm_path = Path::new("/data/counter_read_model.json");
+        if !rm_path.exists() {
+            fs::write(rm_path, "{}").map_err(|e| e.to_string())?;
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(runtime_wasmtime)]
+impl<A> EventStore<A> for SpinSqliteEventStore<A>
+where
+    A: Aggregate + 'static,
+    A::Event: serde::Serialize + serde::de::DeserializeOwned + Clone,
+    A::Id: serde::Serialize + serde::de::DeserializeOwned + Clone + PartialEq + std::fmt::Display,
+{
+    type Error = EventStoreError;
+
+    fn load(&self, aggregate_id: &A::Id) -> Result<Vec<EventEnvelope<A::Event, A::Id>>, Self::Error> {
+        let events_path = Path::new("/data/events.json");
+        if !events_path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let content = fs::read_to_string(events_path)
+            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+        
+        let values: Vec<serde_json::Value> = serde_json::from_str(&content)
+            .map_err(|e| EventStoreError::Deserialization(e.to_string()))?;
+
+        let mut envelopes = Vec::new();
+        for val in values {
+            if let Some(agg_type) = val.get("aggregate_type").and_then(|v| v.as_str()) {
+                if agg_type == A::aggregate_type() {
+                    if let Some(id_val) = val.get("aggregate_id") {
+                        if let Ok(id) = serde_json::from_value::<A::Id>(id_val.clone()) {
+                            if &id == aggregate_id {
+                                if let Ok(envelope) = serde_json::from_value::<EventEnvelope<A::Event, A::Id>>(val) {
+                                    envelopes.push(envelope);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        envelopes.sort_by_key(|e| e.revision);
+        Ok(envelopes)
+    }
+
+    fn append(
+        &self,
+        aggregate_id: &A::Id,
+        expected_revision: ExpectedRevision,
+        events: Vec<NewEvent<A::Event>>,
+    ) -> Result<Vec<EventEnvelope<A::Event, A::Id>>, Self::Error> {
+        let events_path = Path::new("/data/events.json");
+        let content = if events_path.exists() {
+            fs::read_to_string(events_path).map_err(|e| EventStoreError::Backend(e.to_string()))?
+        } else {
+            "[]".to_string()
+        };
+
+        let mut all_values: Vec<serde_json::Value> = serde_json::from_str(&content)
+            .map_err(|e| EventStoreError::Deserialization(e.to_string()))?;
+
+        let mut current_revision = 0u64;
+        let mut max_sequence = 0u64;
+
+        for val in &all_values {
+            if let Some(seq) = val.get("sequence").and_then(|s| s.as_u64()) {
+                if seq > max_sequence {
+                    max_sequence = seq;
+                }
+            }
+
+            if let Some(agg_type) = val.get("aggregate_type").and_then(|v| v.as_str()) {
+                if agg_type == A::aggregate_type() {
+                    if let Some(id_val) = val.get("aggregate_id") {
+                        if let Ok(id) = serde_json::from_value::<A::Id>(id_val.clone()) {
+                            if &id == aggregate_id {
+                                if let Some(rev) = val.get("revision").and_then(|r| r.as_u64()) {
+                                    if rev > current_revision {
+                                        current_revision = rev;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        match expected_revision {
+            ExpectedRevision::Any => {}
+            ExpectedRevision::NoStream if current_revision == 0 => {}
+            ExpectedRevision::NoStream => {
+                return Err(EventStoreError::Concurrency(
+                    ddd_cqrs_es::ConcurrencyError::StreamAlreadyExists,
+                ));
+            }
+            ExpectedRevision::Exact(expected) if expected == current_revision => {}
+            ExpectedRevision::Exact(_) => {
+                return Err(EventStoreError::Concurrency(
+                    ddd_cqrs_es::ConcurrencyError::WrongExpectedRevision {
+                        expected: expected_revision,
+                        actual: current_revision,
+                    },
+                ));
+            }
+        }
+
+        if events.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut envelopes = Vec::new();
+        let now = std::time::SystemTime::now();
+
+        for (i, event) in events.into_iter().enumerate() {
+            let revision = current_revision + i as u64 + 1;
+            let sequence = max_sequence + i as u64 + 1;
+            let event_id = EventId::new();
+
+            let envelope = EventEnvelope::new(
+                event_id,
+                aggregate_id.clone(),
+                A::aggregate_type().to_string(),
+                revision,
+                Some(sequence),
+                event.event_type,
+                event.event_version,
+                event.payload,
+                event.metadata,
+                now,
+            );
+
+            let val = serde_json::to_value(&envelope)
+                .map_err(|e| EventStoreError::Serialization(e.to_string()))?;
+            
+            all_values.push(val);
+            envelopes.push(envelope);
+        }
+
+        let new_content = serde_json::to_string(&all_values)
+            .map_err(|e| EventStoreError::Serialization(e.to_string()))?;
+        fs::write(events_path, new_content)
+            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+
+        Ok(envelopes)
+    }
+
+    fn load_global_after(&self, sequence: Option<u64>) -> Result<Vec<EventEnvelope<A::Event, A::Id>>, Self::Error> {
+        let seq = sequence.unwrap_or(0);
+        let events_path = Path::new("/data/events.json");
+        if !events_path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let content = fs::read_to_string(events_path)
+            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+        
+        let values: Vec<serde_json::Value> = serde_json::from_str(&content)
+            .map_err(|e| EventStoreError::Deserialization(e.to_string()))?;
+
+        let mut envelopes = Vec::new();
+        for val in values {
+            if let Some(agg_type) = val.get("aggregate_type").and_then(|v| v.as_str()) {
+                if agg_type == A::aggregate_type() {
+                    if let Some(s) = val.get("sequence").and_then(|s| s.as_u64()) {
+                        if s > seq {
+                            if let Ok(envelope) = serde_json::from_value::<EventEnvelope<A::Event, A::Id>>(val) {
+                                envelopes.push(envelope);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        envelopes.sort_by_key(|e| e.sequence.unwrap_or(0));
+        Ok(envelopes)
+    }
+}
+
+#[cfg(runtime_wasmtime)]
+pub struct SpinSqliteCheckpointStore {
+    db_name: String,
+}
+
+#[cfg(runtime_wasmtime)]
+impl Clone for SpinSqliteCheckpointStore {
+    fn clone(&self) -> Self {
+        Self {
+            db_name: self.db_name.clone(),
+        }
+    }
+}
+
+#[cfg(runtime_wasmtime)]
+impl SpinSqliteCheckpointStore {
+    pub fn new(db_name: impl Into<String>) -> Self {
+        Self {
+            db_name: db_name.into(),
+        }
+    }
+}
+
+#[cfg(runtime_wasmtime)]
+impl ddd_cqrs_es::CheckpointStore for SpinSqliteCheckpointStore {
+    type Error = EventStoreError;
+
+    fn load_checkpoint(&self, projection_name: &str) -> Result<Option<u64>, Self::Error> {
+        let path = Path::new("/data/checkpoints.json");
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        let content = fs::read_to_string(path)
+            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+        
+        let map: std::collections::HashMap<String, u64> = serde_json::from_str(&content)
+            .map_err(|e| EventStoreError::Deserialization(e.to_string()))?;
+        
+        Ok(map.get(projection_name).copied())
+    }
+
+    fn save_checkpoint(&self, projection_name: &str, sequence: u64) -> Result<(), Self::Error> {
+        let path = Path::new("/data/checkpoints.json");
+        let mut map: std::collections::HashMap<String, u64> = if path.exists() {
+            let content = fs::read_to_string(path)
+                .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+            serde_json::from_str(&content)
+                .map_err(|e| EventStoreError::Deserialization(e.to_string()))?
+        } else {
+            std::collections::HashMap::new()
+        };
+
+        map.insert(projection_name.to_string(), sequence);
+
+        let new_content = serde_json::to_string(&map)
+            .map_err(|e| EventStoreError::Serialization(e.to_string()))?;
+        fs::write(path, new_content)
+            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+        
+        Ok(())
+    }
+}
+
+#[cfg(runtime_wasmtime)]
+pub struct CounterProjection {
+    #[allow(dead_code)]
+    db_name: String,
+}
+
+#[cfg(runtime_wasmtime)]
+impl CounterProjection {
+    pub fn new(db_name: impl Into<String>) -> Self {
+        Self {
+            db_name: db_name.into(),
+        }
+    }
+}
+
+#[cfg(runtime_wasmtime)]
+impl ddd_cqrs_es::Projection<crate::domain::CounterEvent, crate::domain::CounterId> for CounterProjection {
+    type Error = EventStoreError;
+
+    fn name(&self) -> &'static str {
+        "counter_projection"
+    }
+
+    fn apply(&mut self, envelope: &EventEnvelope<crate::domain::CounterEvent, crate::domain::CounterId>) -> Result<(), Self::Error> {
+        let aggregate_id_str = serde_json::to_string(&envelope.aggregate_id)
+            .map_err(|e| EventStoreError::Serialization(e.to_string()))?;
+        
+        let path = Path::new("/data/counter_read_model.json");
+        let mut map: std::collections::HashMap<String, i32> = if path.exists() {
+            let content = fs::read_to_string(path)
+                .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+            serde_json::from_str(&content)
+                .map_err(|e| EventStoreError::Deserialization(e.to_string()))?
+        } else {
+            std::collections::HashMap::new()
+        };
+
+        let current_value = map.get(&aggregate_id_str).copied().unwrap_or(0);
+
+        let new_value = match envelope.payload {
+            crate::domain::CounterEvent::Incremented { amount } => current_value.saturating_add(amount),
+            crate::domain::CounterEvent::Decremented { amount } => current_value.saturating_sub(amount),
+            crate::domain::CounterEvent::ResetPerformed { value } => value,
+        };
+
+        map.insert(aggregate_id_str, new_value);
+
+        let new_content = serde_json::to_string(&map)
+            .map_err(|e| EventStoreError::Serialization(e.to_string()))?;
+        fs::write(path, new_content)
             .map_err(|e| EventStoreError::Backend(e.to_string()))?;
 
         Ok(())

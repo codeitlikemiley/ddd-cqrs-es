@@ -720,74 +720,138 @@ pub fn sync_read_model(
 
 Leptos utilizes Server Functions (`#[server]`) to elegantly bridge client components with backend resources. On the server side (`ssr` feature), we wire up our domain repositories, event store, checkpoint store, and projections.
 
-Here is how our server functions are constructed inside `/Users/uriah/Code/ddd/examples/counter-app/src/app.rs` or `server.rs`:
+### 5.1 Server Function Definitions (`src/app.rs`)
+
+Here is how our server functions are constructed inside `/Users/uriah/Code/ddd/examples/counter-app/src/app.rs`. Notice how they isolate SSR execution from client-side WASM hydration compilation:
+
+```rust
+#[server(prefix = "/api")]
+pub async fn get_count() -> Result<i32, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        get_count_db().await
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        unreachable!()
+    }
+}
+
+#[server(prefix = "/api")]
+pub async fn increment_count(amount: i32) -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        if amount <= 0 {
+            return Err(ServerFnError::new("Amount must be positive"));
+        }
+        run_cqrs_command(crate::domain::CounterCommand::Increment { amount })
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = amount;
+        unreachable!()
+    }
+}
+
+#[server(prefix = "/api")]
+pub async fn decrement_count(amount: i32) -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        if amount <= 0 {
+            return Err(ServerFnError::new("Amount must be positive"));
+        }
+        run_cqrs_command(crate::domain::CounterCommand::Decrement { amount })
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = amount;
+        unreachable!()
+    }
+}
+
+#[server(prefix = "/api")]
+pub async fn reset_count() -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        run_cqrs_command(crate::domain::CounterCommand::Reset)
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        unreachable!()
+    }
+}
+```
+
+### 5.2 Unified Server-Side Command Execution (`src/app.rs`)
+
+Behind the scenes on the server, we initialize our event store and checkpoints, execute the command within aggregate consistency boundaries through the repository, and instantly advance our projection runner to synchronize the read model:
 
 ```rust
 #[cfg(feature = "ssr")]
-pub mod ssr_util {
-    use ddd_cqrs_es::{Repository, Metadata};
-    use crate::domain::Counter;
-    use crate::store::{SpinSqliteEventStore, SpinSqliteCheckpointStore};
-    use crate::projection::CounterProjection;
+fn run_cqrs_command(command: crate::domain::CounterCommand) -> Result<(), ServerFnError> {
+    use ddd_cqrs_es::{Repository, PersistedProjectionRunner};
+    use crate::store::{SpinSqliteEventStore, SpinSqliteCheckpointStore, CounterProjection};
+    use crate::domain::{Counter, CounterId};
 
-    // Helper to initialize stores and run projections
-    pub fn get_cqrs_stack() -> (Repository<Counter, SpinSqliteEventStore<Counter>>, SpinSqliteEventStore<Counter>) {
-        let store = SpinSqliteEventStore::<Counter>::new("default");
-        store.initialize_schema();
-
-        let checkpoints = SpinSqliteCheckpointStore::new("default");
-        checkpoints.initialize_schema();
-
-        let mut projection = CounterProjection::new("default");
-        projection.initialize_schema();
-
-        // Sequential on-the-fly catching-up of read models
-        let _ = crate::projection::sync_read_model(&store, &checkpoints, &mut projection);
-
-        let repo = Repository::new(store.clone());
-        (repo, store)
-    }
-}
-
-/// Server function to read current flat read model state.
-#[server(prefix = "/api")]
-pub async fn get_count() -> Result<u32, ServerFnError<String>> {
-    use spin_sdk::sqlite::Connection;
-    let conn = Connection::open_default().unwrap();
+    let event_store = SpinSqliteEventStore::<Counter>::new("default");
     
-    let counter_id_json = "\"global_counter\"".to_string();
-    let query = "SELECT current_value FROM counter_read_model WHERE counter_id = ?";
-    
-    let row_set = conn.execute(query, &[spin_sdk::sqlite::Value::Text(counter_id_json)])
-        .map_err(|e| ServerFnError::ServerError(format!("{:?}", e)))?;
-        
-    if let Some(row) = row_set.rows().next() {
-        let val: i64 = row.get("current_value").unwrap_or(0);
-        Ok(val as u32)
-    } else {
-        Ok(0)
-    }
-}
+    // Ensure table schemas are initialized
+    event_store.initialize_schema().map_err(|e| ServerFnError::new(e))?;
 
-/// Server function to trigger state mutation securely inside aggregate boundaries.
-#[server(prefix = "/api")]
-pub async fn increment_count() -> Result<(), ServerFnError<String>> {
-    let (repo, store) = ssr_util::get_cqrs_stack();
-    let counter_id = crate::domain::CounterId("global_counter".to_string());
-    
-    // Execute command within the aggregate boundary
-    repo.execute(
-        &counter_id,
-        crate::domain::CounterCommand::Increment { amount: 1 },
-        ddd_cqrs_es::Metadata::default().with_actor_id("leptos-user")
-    ).map_err(|e| ServerFnError::ServerError(format!("Command validation failed: {}", e)))?;
+    let repo = Repository::new(event_store.clone());
+    let aggregate_id = CounterId("global".to_string());
 
-    // Instantly catch up the projection so that the next read yields the new value
-    let checkpoints = ssr_util::SpinSqliteCheckpointStore::new("default");
-    let mut projection = crate::projection::CounterProjection::new("default");
-    let _ = crate::projection::sync_read_model(&store, &checkpoints, &mut projection);
+    // Execute the command through the repository (validating business invariants)
+    repo.execute(&aggregate_id, command, ddd_cqrs_es::Metadata::default())
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    // Advance projection and update read-model checkpoint atomically
+    let checkpoint_store = SpinSqliteCheckpointStore::new("default");
+    let projection = CounterProjection::new("default");
+    let mut runner = PersistedProjectionRunner::new(projection, checkpoint_store);
+
+    runner.run::<Counter, _>(&event_store)
+        .map_err(|e| ServerFnError::new(format!("{:?}", e)))?;
 
     Ok(())
+}
+```
+
+### 5.3 WASI Server Function Registration (`src/server.rs`)
+
+To allow the Leptos WASI server router to map incoming client POST requests (like `/api/increment_count`) to their respective handler functions, we register each server function on the `Handler` builder inside `src/server.rs`:
+
+```rust
+use crate::app::{App, GetCount, IncrementCount, DecrementCount, ResetCount, GetLatestEvents};
+use leptos_wasi::prelude::Handler;
+use wasip3::http::types::{Request, Response, ErrorCode};
+
+struct LeptosServer;
+
+impl wasip3::exports::http::handler::Guest for LeptosServer {
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let _ = init_wasip3_spawner();
+        let conf = get_configuration(None).unwrap();
+        let leptos_options = conf.leptos_options;
+
+        let req = wasip3::http_compat::http_from_wasi_request(request)?;
+
+        // Build handler and register each server function using .with_server_fn::<T>()
+        let wasi_res = Handler::build(req).await
+            .map_err(|e| ErrorCode::InternalError(None))?
+            .static_files_handler("/pkg", serve_static_files)
+            .with_server_fn::<GetCount>()
+            .with_server_fn::<IncrementCount>()
+            .with_server_fn::<DecrementCount>()
+            .with_server_fn::<ResetCount>()
+            .with_server_fn::<GetLatestEvents>()
+            .generate_routes(App)
+            .handle_with_context(move || shell(leptos_options.clone()), || {})
+            .await
+            .map_err(|e| ErrorCode::InternalError(None))?;
+
+        Ok(wasi_res)
+    }
 }
 ```
 

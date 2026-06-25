@@ -25,11 +25,11 @@ impl wasip3::exports::http::handler::Guest for LeptosServer {
                 ErrorCode::InternalError(None)
             })?
             .static_files_handler("/pkg", serve_static_files)
-            .with_server_fn_axum::<GetCount>()
-            .with_server_fn_axum::<IncrementCount>()
-            .with_server_fn_axum::<DecrementCount>()
-            .with_server_fn_axum::<ResetCount>()
-            .with_server_fn_axum::<GetLatestEvents>()
+            .with_server_fn::<GetCount>()
+            .with_server_fn::<IncrementCount>()
+            .with_server_fn::<DecrementCount>()
+            .with_server_fn::<ResetCount>()
+            .with_server_fn::<GetLatestEvents>()
             .generate_routes(App)
             .handle_with_context(move || shell(leptos_options.clone()), || {})
             .await

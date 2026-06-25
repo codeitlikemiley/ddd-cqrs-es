@@ -464,7 +464,7 @@ fn NotFound() -> impl IntoView {
     view! { <h1>"Not Found"</h1> }
 }
 
-#[cfg(feature = "ssr")]
+#[cfg(all(feature = "ssr", runtime_spin))]
 pub async fn get_count_db() -> Result<i32, ServerFnError> {
     use spin_sdk::sqlite::{Connection, Value};
     use crate::store::SpinSqliteEventStore;
@@ -497,7 +497,7 @@ pub async fn get_count_db() -> Result<i32, ServerFnError> {
     Ok(0)
 }
 
-#[cfg(feature = "ssr")]
+#[cfg(all(feature = "ssr", runtime_spin))]
 pub async fn get_latest_events_db() -> Result<Vec<EventLogDto>, ServerFnError> {
     use spin_sdk::sqlite::{Connection, Value};
     use crate::store::SpinSqliteEventStore;
@@ -524,6 +524,87 @@ pub async fn get_latest_events_db() -> Result<Vec<EventLogDto>, ServerFnError> {
         let revision = row.get::<i64>(2).unwrap_or(0) as u64;
         let payload = row.get::<&str>(3).unwrap_or("").to_string();
         let recorded_at_ms = row.get::<i64>(4).unwrap_or(0);
+
+        let recorded_at = format!("+{}ms", recorded_at_ms % 100000);
+
+        events.push(EventLogDto {
+            sequence,
+            event_type,
+            revision,
+            payload,
+            recorded_at,
+        });
+    }
+
+    Ok(events)
+}
+
+#[cfg(all(feature = "ssr", runtime_wasmtime))]
+pub async fn get_count_db() -> Result<i32, ServerFnError> {
+    use std::fs;
+    use std::path::Path;
+    use crate::store::SpinSqliteEventStore;
+    use crate::domain::Counter;
+
+    let event_store = SpinSqliteEventStore::<Counter>::new("default");
+    let _ = event_store.initialize_schema();
+
+    let path = Path::new("/data/counter_read_model.json");
+    if !path.exists() {
+        return Ok(0);
+    }
+
+    let content = fs::read_to_string(path)
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    
+    let map: std::collections::HashMap<String, i32> = serde_json::from_str(&content)
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    
+    let aggregate_id = crate::domain::CounterId("global".to_string());
+    let aggregate_id_str = serde_json::to_string(&aggregate_id)
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(map.get(&aggregate_id_str).copied().unwrap_or(0))
+}
+
+#[cfg(all(feature = "ssr", runtime_wasmtime))]
+pub async fn get_latest_events_db() -> Result<Vec<EventLogDto>, ServerFnError> {
+    use std::fs;
+    use std::path::Path;
+    use ddd_cqrs_es::Aggregate;
+    use crate::store::SpinSqliteEventStore;
+    use crate::domain::Counter;
+
+    let event_store = SpinSqliteEventStore::<Counter>::new("default");
+    let _ = event_store.initialize_schema();
+
+    let path = Path::new("/data/events.json");
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let content = fs::read_to_string(path)
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    
+    let values: Vec<serde_json::Value> = serde_json::from_str(&content)
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let mut events = Vec::new();
+    let mut matching_vals: Vec<serde_json::Value> = values.into_iter()
+        .filter(|val| {
+            val.get("aggregate_type").and_then(|t| t.as_str()) == Some(Counter::aggregate_type())
+        })
+        .collect();
+    
+    matching_vals.sort_by_key(|val| val.get("sequence").and_then(|s| s.as_u64()).unwrap_or(0));
+    matching_vals.reverse();
+
+    for val in matching_vals.into_iter().take(5) {
+        let sequence = val.get("sequence").and_then(|s| s.as_u64()).unwrap_or(0);
+        let event_type = val.get("event_type").and_then(|t| t.as_str()).unwrap_or("").to_string();
+        let revision = val.get("revision").and_then(|r| r.as_u64()).unwrap_or(0);
+        let payload = val.get("payload").map(|p| p.to_string()).unwrap_or_default();
+        let recorded_at_ms = val.get("recorded_at_ms").and_then(|r| r.as_i64()).unwrap_or(0);
 
         let recorded_at = format!("+{}ms", recorded_at_ms % 100000);
 
