@@ -13,9 +13,13 @@ executor = { type = "http" }
 
 [component.counter-app]
 source = "target/wasm32-wasip2/release/counter_app.wasm"
-allowed_outbound_hosts = []
+allowed_outbound_hosts = ["*://*.turso.io:*", "*://*.neon.tech:*", "*://*.supabase.co:*", "*://localhost:*", "*://127.0.0.1:*"]
 key_value_stores = ["default"]
 sqlite_databases = ["default"]
+files = [
+  { source = "Cargo.toml", destination = "/Cargo.toml" }
+]
+
 [component.counter-app.build]
 command = "WASI_RUNTIME=spin cargo leptos build --release && WASI_RUNTIME=spin LEPTOS_OUTPUT_NAME=counter_app cargo build --lib --target wasm32-wasip2 --release --no-default-features --features ssr"
 watch = ["src/**/*.rs", "Cargo.toml"]

@@ -4,6 +4,8 @@ fn main() {
     // Tell cargo to check our custom cfg flags
     println!("cargo::rustc-check-cfg=cfg(runtime_spin)");
     println!("cargo::rustc-check-cfg=cfg(runtime_wasmtime)");
+    println!("cargo::rerun-if-env-changed=WASI_RUNTIME");
+    println!("cargo::rerun-if-env-changed=SPIN_BUILD");
 
     // Check for WASI_RUNTIME environment variable
     let runtime = env::var("WASI_RUNTIME").unwrap_or_else(|_| "wasmtime".to_string());

@@ -22,11 +22,14 @@ leptos_router = { version = "0.8.13" }
 leptos_wasi = { version = "0.3.1", default-features = false, features = ["wasip3"], optional = true }
 server_fn = { version = "0.8.12", features = ["axum-no-default"] }
 spin-sdk = { version = "6.0.0", optional = true }
+http = "1.1.0"
+http-body-util = { version = "0.1.2", optional = true }
 wasip3 = { version = "0.6.0", features = ["http-compat"], optional = true }
 wasm-bindgen = { version = "=0.2.125", optional = true }
 web-sys = { version = "0.3", features = ["Storage", "Window"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+md5 = "0.7"
 ddd_cqrs_es = { path = "../../", default-features = false, features = ["json", "serde"] }
 
 [features]
@@ -42,8 +45,10 @@ ssr = [
   "dep:leptos_wasi",
   "dep:wasip3",
   "dep:spin-sdk",
+  "dep:http-body-util",
 ]
 postgres = ["ddd_cqrs_es/postgres"]
+libsql = []
 
 [profile.wasm-release]
 inherits = "release"

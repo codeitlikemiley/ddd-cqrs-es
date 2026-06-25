@@ -464,190 +464,79 @@ fn NotFound() -> impl IntoView {
     view! { <h1>"Not Found"</h1> }
 }
 
-#[cfg(all(feature = "ssr", runtime_spin))]
+#[cfg(feature = "ssr")]
 pub async fn get_count_db() -> Result<i32, ServerFnError> {
-    use spin_sdk::sqlite::{Connection, Value};
-    use crate::store::SpinSqliteEventStore;
+    use crate::store::{get_count_db as store_get_count, MultiBackendEventStore};
     use crate::domain::Counter;
 
-    let event_store = SpinSqliteEventStore::<Counter>::new("default");
-    let _ = event_store.initialize_schema();
+    // Initialize schemas if not done
+    let event_store = MultiBackendEventStore::<Counter>::new();
+    event_store.initialize_schema_async().await.map_err(|e| ServerFnError::new(e))?;
 
-    let connection = Connection::open("default").await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let query = "SELECT value FROM counter_read_model WHERE id = ?";
-    let aggregate_id = crate::domain::CounterId("global".to_string());
-    let aggregate_id_str = serde_json::to_string(&aggregate_id)
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    
-    let params = vec![Value::Text(aggregate_id_str)];
-    let rowset = connection.execute(query, params).await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let rows = rowset.collect().await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    if let Some(row) = rows.first() {
-        if let Some(val) = row.get::<i64>(0) {
-            return Ok(val as i32);
-        }
-    }
-
-    Ok(0)
-}
-
-#[cfg(all(feature = "ssr", runtime_spin))]
-pub async fn get_latest_events_db() -> Result<Vec<EventLogDto>, ServerFnError> {
-    use spin_sdk::sqlite::{Connection, Value};
-    use crate::store::SpinSqliteEventStore;
-    use crate::domain::Counter;
-
-    let event_store = SpinSqliteEventStore::<Counter>::new("default");
-    let _ = event_store.initialize_schema();
-
-    let connection = Connection::open("default").await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    // Query the latest 5 events
-    let query = "SELECT sequence, event_type, revision, payload, recorded_at_ms FROM events ORDER BY sequence DESC LIMIT 5";
-    let rowset = connection.execute(query, Vec::<Value>::new()).await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let rows = rowset.collect().await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let mut events = Vec::new();
-    for row in rows {
-        let sequence = row.get::<i64>(0).unwrap_or(0) as u64;
-        let event_type = row.get::<&str>(1).unwrap_or("").to_string();
-        let revision = row.get::<i64>(2).unwrap_or(0) as u64;
-        let payload = row.get::<&str>(3).unwrap_or("").to_string();
-        let recorded_at_ms = row.get::<i64>(4).unwrap_or(0);
-
-        let recorded_at = format!("+{}ms", recorded_at_ms % 100000);
-
-        events.push(EventLogDto {
-            sequence,
-            event_type,
-            revision,
-            payload,
-            recorded_at,
-        });
-    }
-
-    Ok(events)
-}
-
-#[cfg(all(feature = "ssr", runtime_wasmtime))]
-pub async fn get_count_db() -> Result<i32, ServerFnError> {
-    use std::fs;
-    use std::path::Path;
-    use crate::store::SpinSqliteEventStore;
-    use crate::domain::Counter;
-
-    let event_store = SpinSqliteEventStore::<Counter>::new("default");
-    let _ = event_store.initialize_schema();
-
-    let path = Path::new("/data/counter_read_model.json");
-    if !path.exists() {
-        return Ok(0);
-    }
-
-    let content = fs::read_to_string(path)
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    
-    let map: std::collections::HashMap<String, i32> = serde_json::from_str(&content)
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    
-    let aggregate_id = crate::domain::CounterId("global".to_string());
-    let aggregate_id_str = serde_json::to_string(&aggregate_id)
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(map.get(&aggregate_id_str).copied().unwrap_or(0))
-}
-
-#[cfg(all(feature = "ssr", runtime_wasmtime))]
-pub async fn get_latest_events_db() -> Result<Vec<EventLogDto>, ServerFnError> {
-    use std::fs;
-    use std::path::Path;
-    use ddd_cqrs_es::Aggregate;
-    use crate::store::SpinSqliteEventStore;
-    use crate::domain::Counter;
-
-    let event_store = SpinSqliteEventStore::<Counter>::new("default");
-    let _ = event_store.initialize_schema();
-
-    let path = Path::new("/data/events.json");
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-
-    let content = fs::read_to_string(path)
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    
-    let values: Vec<serde_json::Value> = serde_json::from_str(&content)
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let mut events = Vec::new();
-    let mut matching_vals: Vec<serde_json::Value> = values.into_iter()
-        .filter(|val| {
-            val.get("aggregate_type").and_then(|t| t.as_str()) == Some(Counter::aggregate_type())
-        })
-        .collect();
-    
-    matching_vals.sort_by_key(|val| val.get("sequence").and_then(|s| s.as_u64()).unwrap_or(0));
-    matching_vals.reverse();
-
-    for val in matching_vals.into_iter().take(5) {
-        let sequence = val.get("sequence").and_then(|s| s.as_u64()).unwrap_or(0);
-        let event_type = val.get("event_type").and_then(|t| t.as_str()).unwrap_or("").to_string();
-        let revision = val.get("revision").and_then(|r| r.as_u64()).unwrap_or(0);
-        let payload = val.get("payload").map(|p| p.to_string()).unwrap_or_default();
-        let recorded_at_ms = val.get("recorded_at_ms").and_then(|r| r.as_i64()).unwrap_or(0);
-
-        let recorded_at = format!("+{}ms", recorded_at_ms % 100000);
-
-        events.push(EventLogDto {
-            sequence,
-            event_type,
-            revision,
-            payload,
-            recorded_at,
-        });
-    }
-
-    Ok(events)
+    store_get_count().await.map_err(|e| ServerFnError::new(e))
 }
 
 #[cfg(feature = "ssr")]
-fn run_cqrs_command(command: crate::domain::CounterCommand) -> Result<(), ServerFnError> {
-    use ddd_cqrs_es::{Repository, PersistedProjectionRunner};
-    use crate::store::{SpinSqliteEventStore, SpinSqliteCheckpointStore, CounterProjection};
+pub async fn get_latest_events_db() -> Result<Vec<EventLogDto>, ServerFnError> {
+    use crate::store::{get_latest_events_db as store_get_events, MultiBackendEventStore};
+    use crate::domain::Counter;
+
+    // Initialize schemas if not done
+    let event_store = MultiBackendEventStore::<Counter>::new();
+    event_store.initialize_schema_async().await.map_err(|e| ServerFnError::new(e))?;
+
+    store_get_events().await.map_err(|e| ServerFnError::new(e))
+}
+
+#[cfg(feature = "ssr")]
+async fn run_cqrs_command(command: crate::domain::CounterCommand) -> Result<(), ServerFnError> {
+    use crate::store::{MultiBackendEventStore, MultiBackendCheckpointStore, MultiBackendCounterProjection};
     use crate::domain::{Counter, CounterId};
+    use ddd_cqrs_es::Aggregate;
 
-    let event_store = SpinSqliteEventStore::<Counter>::new("default");
+    let event_store = MultiBackendEventStore::<Counter>::new();
     
-    // Ensure table schemas are initialized
-    event_store.initialize_schema().map_err(|e| ServerFnError::new(e))?;
+    // Ensure table schemas are initialized asynchronously
+    event_store.initialize_schema_async().await
+        .map_err(|e| ServerFnError::new(e))?;
 
-    let repo = Repository::new(event_store.clone());
     let aggregate_id = CounterId("global".to_string());
 
-    // Execute the command through the repository
-    repo.execute(&aggregate_id, command, ddd_cqrs_es::Metadata::default())
+    // Load aggregate stream asynchronously
+    let events = event_store.load_async(&aggregate_id).await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    // Advance projection
-    let checkpoint_store = SpinSqliteCheckpointStore::new("default");
-    let projection = CounterProjection::new("default");
-    let mut runner = PersistedProjectionRunner::new(projection, checkpoint_store);
+    // Replay events onto aggregate state using standard replay
+    let loaded = Counter::replay(&events);
+    let aggregate = loaded.state;
+    let current_revision = loaded.revision;
 
-    runner.run::<Counter, _>(&event_store)
-        .map_err(|e| ServerFnError::new(format!("{:?}", e)))?;
+    // Handle command and get new events
+    let new_events = aggregate.handle(command)
+        .map_err(|e| ServerFnError::new(e))?;
+
+    // Wrap events into NewEvent
+    let new_events_wrapped: Vec<ddd_cqrs_es::NewEvent<crate::domain::CounterEvent>> = new_events
+        .into_iter()
+        .map(|p| ddd_cqrs_es::NewEvent::new(p, ddd_cqrs_es::Metadata::default()))
+        .collect();
+
+    // Append new events asynchronously
+    event_store.append_async(
+        &aggregate_id,
+        ddd_cqrs_es::ExpectedRevision::Exact(current_revision),
+        new_events_wrapped,
+    ).await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    // Advance projection asynchronously
+    let checkpoint_store = MultiBackendCheckpointStore::new();
+    let mut projection = MultiBackendCounterProjection::new();
+    crate::store::run_projections_async(&event_store, &checkpoint_store, &mut projection).await
+        .map_err(|e| ServerFnError::new(e))?;
 
     Ok(())
 }
+
 
 #[server(prefix = "/api")]
 pub async fn get_count() -> Result<i32, ServerFnError> {
@@ -668,7 +557,7 @@ pub async fn increment_count(amount: i32) -> Result<(), ServerFnError> {
         if amount <= 0 {
             return Err(ServerFnError::new("Amount must be positive"));
         }
-        run_cqrs_command(crate::domain::CounterCommand::Increment { amount })
+        run_cqrs_command(crate::domain::CounterCommand::Increment { amount }).await
     }
     #[cfg(not(feature = "ssr"))]
     {
@@ -684,7 +573,7 @@ pub async fn decrement_count(amount: i32) -> Result<(), ServerFnError> {
         if amount <= 0 {
             return Err(ServerFnError::new("Amount must be positive"));
         }
-        run_cqrs_command(crate::domain::CounterCommand::Decrement { amount })
+        run_cqrs_command(crate::domain::CounterCommand::Decrement { amount }).await
     }
     #[cfg(not(feature = "ssr"))]
     {
@@ -697,7 +586,7 @@ pub async fn decrement_count(amount: i32) -> Result<(), ServerFnError> {
 pub async fn reset_count() -> Result<(), ServerFnError> {
     #[cfg(feature = "ssr")]
     {
-        run_cqrs_command(crate::domain::CounterCommand::Reset)
+        run_cqrs_command(crate::domain::CounterCommand::Reset).await
     }
     #[cfg(not(feature = "ssr"))]
     {

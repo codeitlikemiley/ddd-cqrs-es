@@ -984,63 +984,249 @@ fn HomePage() -> impl IntoView {
 
 ## 7. Getting Started & Execution Guide
 
-Follow these steps to build and run the complete application inside the WebAssembly/Spin sandbox environment.
+Follow these steps to build, configure, and execute the application with various database engines across different WASI-compliant WebAssembly runtimes.
 
 ### ⚙️ Prerequisites
-Ensure you have the following installed on your machine:
-*   Rust toolchain (stable, edition 2021/2024)
-*   WebAssembly targets: `rustup target add wasm32-wasip2`
-*   [Spin CLI](https://developer.fermyon.com/spin/v2/install): `brew install fermyon/tap/spin`
-*   [cargo-leptos](https://github.com/leptos-rs/cargo-leptos): `cargo install cargo-leptos`
 
-### 🏗️ Building the Application
-Run the build command from inside `/Users/uriah/Code/ddd/examples/counter-app`:
+Ensure you have the following installed on your developer machine:
+*   **Rust Toolchain**: Stable release (Rust 1.93.0+ or similar)
+*   **WASM Target**: `rustup target add wasm32-wasip2`
+*   **Fermyon Spin CLI** (for Spin runtime): `brew install fermyon/tap/spin`
+*   **Wasmtime CLI** (for bare WASM runtime): `brew install wasmtime`
+*   **cargo-leptos**: `cargo install cargo-leptos`
 
-```bash
-spin build
-```
-This triggers the multi-stage WASM build process defined in `spin.toml`:
-1.  Builds the CSS file using Tailwind/Styling rules.
-2.  Compiles the Client WebAssembly binary and copies site files into `target/site`.
-3.  Compiles the Server WASM binary targeting WASIP2 Component Model (`wasm32-wasip2`).
+### 🔑 Environment Setup (`.env`)
 
-### 🚀 Running the App Locally
-Launch the Spin server:
+Before running the application, configure your databases. We provide a complete template. Copy the example file to initialize your config:
 
 ```bash
-spin up
+cp examples/counter-app/.env.example examples/counter-app/.env
 ```
 
-You should see output similar to this:
-```text
-Logging component stdout to active terminal...
-Serving http://127.0.0.1:3000
-Available Routes:
-  counter-app: http://127.0.0.1:3000/...
-  counter-app-pkg: http://127.0.0.1:3000/pkg/...
-```
+Open `examples/counter-app/.env` and inspect the configuration variables. This file is tracked by version control as a reference, enabling seamless collaboration and automated testing across local and cloud environments:
 
-Open your browser to `http://127.0.0.1:3000` to interact with your secure, full-stack, optimistic-updating, Event-Sourced Leptos application!
+```ini
+# Supported backends: sqlite, postgres, neon, supabase, libsql, turso
+DATABASE_BACKEND=sqlite
+
+# =========================================================================
+# 1. PostgreSQL Settings (Local PostgreSQL / Supabase)
+# =========================================================================
+POSTGRES_URL=postgresql://postgres:postgres@localhost:5432/postgres
+
+# =========================================================================
+# 2. Neon Serverless Settings (HTTP SQL API)
+# =========================================================================
+NEON_URL=https://your-project.us-east-2.aws.neon.tech/sql
+NEON_API_KEY=your_neon_secret_token
+
+# =========================================================================
+# 3. Supabase REST API Settings
+# =========================================================================
+SUPABASE_URL=https://your-project.supabase.co/rest/v1
+SUPABASE_ANON_KEY=your_supabase_anon_public_key
+
+# =========================================================================
+# 4. LibSQL / Turso Settings (Hrana HTTP API)
+# =========================================================================
+TURSO_URL=https://your-db-name.turso.io
+TURSO_AUTH_TOKEN=your_turso_authorization_token
+```
 
 ---
 
-## 🔁 Changing Persistence Adapters (Enterprise Postgres)
+## 🔀 Advanced Enterprise Multi-Backend Architecture
 
-Because the core domain and Leptos server functions depend entirely on the generic traits `EventStore` and `CheckpointStore` rather than concrete database configurations, moving this application from Spin's SQLite database to an enterprise PostgreSQL database requires **zero changes** to your core domain and component architecture!
+Our Leptos application implements a state-of-the-art **Multi-Backend Persistence Engine** inside `src/store.rs`. 
 
-To switch to PostgreSQL, simply change the repository initialization inside `ssr_util::get_cqrs_stack()` to use the framework's native `PostgresEventStore` and `PostgresCheckpointStore`:
+Because our CQRS and Event Sourcing infrastructure depends strictly on framework traits (`EventStore`, `CheckpointStore`, `Projection`), we designed dynamic, runtime-routed wrappers—`MultiBackendEventStore<A>`, `MultiBackendCheckpointStore`, and `MultiBackendCounterProjection`—which inspect the environment at boot-time and execute the correct database operations without modifying a single line of business or component-rendering code.
+
+```mermaid
+flowchart TD
+    %% Define styles
+    classDef client fill:#1e1e38,stroke:#00d4aa,stroke-width:2px,color:#fff;
+    classDef server fill:#2d1e38,stroke:#a855f7,stroke-width:2px,color:#fff;
+    classDef routing fill:#1e293b,stroke:#f59e0b,stroke-width:2px,color:#fff;
+    classDef storage fill:#0f172a,stroke:#64748b,stroke-width:1px,color:#fff;
+
+    Client["🖥️ Leptos Frontend (WASM)"]:::client
+    Server["⚙️ Server Functions (WASI)"]:::server
+    Router["🔀 Multi-Backend Dispatcher"]:::routing
+    
+    %% Storage Backends
+    SpinSqlite["🗄️ Spin SQLite (Host-calls)"]:::storage
+    PostgresNative["🐘 Postgres Native (TCP)"]:::storage
+    NeonPostgres["⚡ Neon Serverless (Outbound HTTP)"]:::storage
+    SupabaseDB["⚡ Supabase REST (Outbound HTTP)"]:::storage
+    TursoLibSql["🌀 Turso/LibSQL (Hrana HTTP)"]:::storage
+    JsonFile["📂 JSON Flat-File (WASM Directory Mount)"]:::storage
+
+    %% Relationships
+    Client -->|"POST /api/increment_count"| Server
+    Server -->|"Repository::execute()"| Router
+    
+    Router -->|"DATABASE_BACKEND = sqlite"| SpinSqlite
+    Router -->|"DATABASE_BACKEND = postgres"| PostgresNative
+    Router -->|"DATABASE_BACKEND = neon"| NeonPostgres
+    Router -->|"DATABASE_BACKEND = supabase"| SupabaseDB
+    Router -->|"DATABASE_BACKEND = libsql"| TursoLibSql
+    Router -->|"DATABASE_BACKEND = sqlite (under Wasmtime)"| JsonFile
+```
+
+### Supported Database Backends Matrix
+
+| Backend Key (`db`) | Connection Model | Network Protocol | Target Runtime Compatibility | Use Cases |
+| :--- | :--- | :--- | :--- | :--- |
+| **`sqlite`** | Local Host-Call | WASM Host Interface | **Fermyon Spin** only | Low-latency local dev, edge microservices |
+| **`postgres`** | Direct Socket Pool | TCP Socket stream | **Fermyon Spin** (via outbound TCP) | Classic high-throughput self-hosted PG |
+| **`neon`** | Stateless HTTP SQL | JSON over HTTP (WASIp3) | **Wasmtime** & **Fermyon Spin** | Serverless cloud databases with cold-start mitigation |
+| **`supabase`** | Stateless REST | JSON REST over HTTP (WASIp3) | **Wasmtime** & **Fermyon Spin** | Rapid prototyping, managed Supabase database integration |
+| **`libsql`** / **`turso`** | Hrana Protocol | Pipeline HTTP (WASIp3) | **Wasmtime** & **Fermyon Spin** | Globally distributed SQL, SQLite-at-the-edge (Turso) |
+| **`sqlite`** (Wasmtime) | JSON Flat-File Fallback | POSIX File I/O | **Wasmtime** (mounted volume) | Zero-dependency local testing without external servers |
+
+---
+
+## ⚡ Overcoming WASM Sandbox Limits: Stateless Outbound HTTP
+
+When compiling applications to WebAssembly targets, traditional blocking socket connection pools (such as those used by `tokio-postgres` or standard native SQLite engines written in C) are strictly incompatible with the isolated, single-threaded sandboxed environment of a WASM component.
+
+To solve this compilation and runtime block, our Multi-Backend Engine employs a stateless, highly optimized **Outbound HTTP Bridge** powered by the WASIp3 HTTP Component Model standards. 
+
+When a database request is sent to Neon, Supabase, or Turso, the store adapter converts the SQL query and its parameterized arguments into a payload format (e.g., the JSON-based Hrana pipeline protocol for Turso/LibSQL or the HTTP SQL Endpoint format for Neon), dispatches it via a single non-blocking HTTP POST, collects the response, and translates the rows back into DDD event envelopes.
+
+### Sequence Flow: Outbound HTTP Database Query
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as ⚙️ WASM Component
+    participant SDK as 🔌 WASIp3 Outbound HTTP
+    participant Host as 🌐 Runtime Host (Wasmtime/Spin)
+    participant Cloud as ☁️ Database Cloud API (Neon/Turso)
+
+    App->>App: Serialize query + params into JSON body
+    App->>SDK: wasip3::http::client::send(wasi_req)
+    Note over SDK,Host: Native host-call transitions<br/>out of the WASM sandbox
+    Host->>Cloud: HTTP POST (TLS connection over internet)
+    Cloud-->>Host: HTTP 200 OK (JSON Rows/Result)
+    Host-->>SDK: Parse HTTP response stream
+    SDK-->>App: Return raw response bytes
+    App->>App: Deserialize bytes into EventEnvelope<A>
+```
+
+Here is a simplified look at how the `MultiBackendEventStore` leverages WASIp3 Outbound HTTP helpers to communicate with external SQL APIs:
 
 ```rust
-// In your server configuration module:
-use ddd_cqrs_es::{PostgresEventStore, PostgresCheckpointStore, Repository};
+// A look under the hood of src/store.rs:
+pub struct MultiBackendEventStore<A> {
+    _phantom: PhantomData<fn() -> A>,
+}
 
-pub async fn get_postgres_cqrs_stack() -> Repository<Counter, PostgresEventStore<Counter>> {
-    let client = connect_to_db().await; // Your pg-client pool
-    let store = PostgresEventStore::<Counter>::new(client, "events".to_string());
-    store.initialize_schema().await.unwrap();
+impl<A> EventStore<A> for MultiBackendEventStore<A>
+where
+    A: Aggregate + 'static,
+    A::Event: serde::Serialize + serde::de::DeserializeOwned,
+    A::Id: serde::Serialize + serde::de::DeserializeOwned,
+{
+    type Error = EventStoreError;
 
-    Repository::new(store)
+    fn load(&self, aggregate_id: &A::Id) -> Result<Vec<EventEnvelope<A::Event, A::Id>>, Self::Error> {
+        let backend = get_backend();
+        
+        match backend.as_str() {
+            "sqlite" => {
+                #[cfg(runtime_spin)] {
+                    let store = SpinSqliteEventStore::<A>::new("default");
+                    store.load(aggregate_id)
+                }
+                #[cfg(not(runtime_spin))] {
+                    // Under Wasmtime, fallback to JSON Flat-File Store mounted at /data/
+                    let store = JsonFileEventStore::<A>::new("/data");
+                    store.load(aggregate_id)
+                }
+            }
+            "postgres" => {
+                #[cfg(feature = "postgres")] {
+                    let store = PostgresEventStore::<A>::new(get_postgres_url());
+                    store.load(aggregate_id)
+                }
+                #[cfg(not(feature = "postgres"))] {
+                    Err(EventStoreError::Backend("Postgres feature not enabled".to_string()))
+                }
+            }
+            "neon" => {
+                // Execute stateless queries over Outbound HTTP SQL API
+                let url = get_postgres_url();
+                let api_key = get_neon_api_key();
+                let sql = "SELECT ... FROM events WHERE aggregate_id = $1";
+                let rows = block_on(execute_neon_query(&url, api_key.as_deref(), sql, vec![aggregate_id.to_string()]))?;
+                deserialize_postgres_rows(rows)
+            }
+            "turso" | "libsql" => {
+                // Execute Hrana pipeline over Outbound HTTP
+                let url = get_turso_url();
+                let token = get_turso_auth_token();
+                let sql = "SELECT ... FROM events WHERE aggregate_id = ?";
+                let result = block_on(execute_hrana_query(&url, token.as_deref(), sql, vec![aggregate_id.to_string()]))?;
+                deserialize_sqlite_rows(result.rows)
+            }
+            _ => Err(EventStoreError::Backend(format!("Unsupported database backend: {}", backend))),
+        }
+    }
+    
+    // Similarly dispatched for `append()` and `load_global_after()`...
 }
 ```
 
-This demonstrates the outstanding advantage of clean, decoupled Domain-Driven Design and Event Sourcing patterns: your business value is completely future-proofed!
+---
+
+## 🛠️ Execution & Testing Playbook
+
+We have provided a unified `Makefile` inside `examples/counter-app` to compile, package, and launch our Leptos WASM application using simple target flags. This shields you from compiling custom target configurations manually.
+
+### 1. Build and Run under Wasmtime (Bare Component Runtime)
+
+Running under Wasmtime is incredibly useful for standard system deployment, local orchestration, and target compatibility checks.
+
+```bash
+# Compile and run with the default local JSON Flat-File engine
+# (Creates and writes to examples/counter-app/data/ folder automatically!)
+make wasmtime
+
+# Compile and run connected to Neon serverless Postgres via WASIp3 Outbound HTTP
+make wasmtime db=neon
+
+# Compile and run connected to Supabase REST database via WASIp3 Outbound HTTP
+make wasmtime db=supabase
+
+# Compile and run connected to Turso/LibSQL DB over Hrana HTTP
+make wasmtime db=turso
+```
+
+### 2. Build and Run under Fermyon Spin (Microservices Runtime)
+
+Running under Fermyon Spin leverages the Spin-specific SQLite host engine or native Postgres connectivity.
+
+```bash
+# Compile and run with native Spin SQLite database host-calls
+make spin
+
+# Compile and run with native Spin PostgreSQL database connector
+make spin db=postgres
+```
+
+Once launched, open your web browser to `http://127.0.0.1:3000` to interact with your secure, full-stack, optimistic-updating, Event-Sourced Leptos application!
+
+---
+
+## 💎 The Pure DDD & CQRS Advantage
+
+Take a moment to step back and realize what we have accomplished.
+
+By separating **Domain Logic** (commands, aggregate invariants, and events) from **Infrastructure Concerns** (SQLite, Postgres, HTTP API protocols, network sandboxing, and runtime-specific environments), we have made our application completely robust, future-proof, and flexible.
+
+*   Want to run your microservice as a lightweight, zero-dependency serverless edge component? **Set `DATABASE_BACKEND=sqlite`**.
+*   Need to scale to enterprise workloads on AWS with thousands of events per second? **Enable `DATABASE_BACKEND=postgres`**.
+*   Want to run globally distributed edge containers with serverless SQL backends? **Set `DATABASE_BACKEND=neon` or `DATABASE_BACKEND=turso`**.
+
+Your domain logic does not change by a single letter. That is the outstanding power of building enterprise-grade systems with clean, decoupled **Domain-Driven Design** and **Event Sourcing**!
