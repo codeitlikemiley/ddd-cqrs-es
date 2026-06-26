@@ -1270,14 +1270,11 @@ fn parse_postgres_url_for_http(url: &str) -> (String, Option<String>) {
 fn get_postgres_url() -> String {
     let backend = get_backend();
     
-    // For supabase over HTTP (wasmtime), we need SUPABASE_URL (https://)
-    #[cfg(not(runtime_spin))]
-    {
-        if backend == "supabase" {
-            if let Ok(sup_url) = std::env::var("SUPABASE_URL") {
-                if !sup_url.is_empty() {
-                    return sup_url;
-                }
+    // For supabase over HTTP, we need SUPABASE_URL (https://)
+    if backend == "supabase" {
+        if let Ok(sup_url) = std::env::var("SUPABASE_URL") {
+            if !sup_url.is_empty() {
+                return sup_url;
             }
         }
     }
@@ -1289,11 +1286,8 @@ fn get_postgres_url() -> String {
         
     if url.starts_with("postgres://") || url.starts_with("postgresql://") {
         if backend == "neon" {
-            #[cfg(not(runtime_spin))]
-            {
-                let (http_url, _) = parse_postgres_url_for_http(&url);
-                return http_url;
-            }
+            let (http_url, _) = parse_postgres_url_for_http(&url);
+            return http_url;
         }
     }
     url
@@ -1479,9 +1473,13 @@ async fn execute_supabase_query(
         format!("{}/rest/v1/rpc/execute_sql", url.trim_end_matches('/'))
     };
 
+    // Interpolate parameters locally to bypass Supabase JSON parameter binding limitations
+    let interpolated_sql = interpolate_query(sql, &params)?;
+    println!("[SUPABASE SQL DEBUG] sql: {}", interpolated_sql);
+
     let req_payload = serde_json::json!({
-        "query_text": sql,
-        "query_params": params,
+        "query_text": interpolated_sql,
+        "query_params": Vec::<serde_json::Value>::new(),
     });
     let body_data = serde_json::to_vec(&req_payload)
         .map_err(|e| e.to_string())?;
@@ -1495,9 +1493,11 @@ async fn execute_supabase_query(
     }
 
     let resp_bytes = wasi_http_post(&rpc_url, headers, body_data).await?;
+    let body_str = String::from_utf8_lossy(&resp_bytes);
+    println!("[SUPABASE RESPONSE DEBUG] body: {}", body_str);
 
     let resp_val: serde_json::Value = serde_json::from_slice(&resp_bytes)
-        .map_err(|e| format!("Failed to parse Supabase response: {}. Body was: {}", e, String::from_utf8_lossy(&resp_bytes)))?;
+        .map_err(|e| format!("Failed to parse Supabase response: {}. Body was: {}", e, body_str))?;
 
     if let Some(err_obj) = resp_val.as_object() {
         if let Some(err_msg) = err_obj.get("error") {
@@ -2463,6 +2463,13 @@ async fn execute_libsql_query(
 fn execute_spin_pg(sql: &str, params: Vec<serde_json::Value>) -> Result<Vec<serde_json::Value>, String> {
     use spin_sdk::pg::{Connection as SpinPgConn, ParameterValue as SpinPgParam, DbValue as SpinPgDbVal};
     
+    let backend = get_backend();
+    if backend == "supabase" || backend == "neon" {
+        let url = get_postgres_url();
+        let api_key = get_neon_api_key();
+        return spin_block_on(execute_postgres_query(&url, api_key.as_deref(), sql, params));
+    }
+    
     let db_url = get_postgres_url();
     let conn = spin_block_on(SpinPgConn::open(&db_url)).map_err(|e| format!("Pg connection error: {:?}", e))?;
     
@@ -2527,6 +2534,13 @@ fn execute_spin_pg(sql: &str, params: Vec<serde_json::Value>) -> Result<Vec<serd
 #[cfg(runtime_spin)]
 async fn execute_spin_pg_async(sql: &str, params: Vec<serde_json::Value>) -> Result<Vec<serde_json::Value>, String> {
     use spin_sdk::pg::{Connection as SpinPgConn, ParameterValue as SpinPgParam, DbValue as SpinPgDbVal};
+    
+    let backend = get_backend();
+    if backend == "supabase" || backend == "neon" {
+        let url = get_postgres_url();
+        let api_key = get_neon_api_key();
+        return execute_postgres_query(&url, api_key.as_deref(), sql, params).await;
+    }
     
     let db_url = get_postgres_url();
     let conn = SpinPgConn::open(&db_url).await.map_err(|e| format!("Pg connection error: {:?}", e))?;
@@ -3358,6 +3372,13 @@ where
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         "#;
         
+        let insert_postgres_returning = r#"
+            INSERT INTO events (
+                event_id, aggregate_id, aggregate_type, revision, event_type, event_version, payload, metadata, recorded_at_ms
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING sequence
+        "#;
+        
         let select_seq_postgres = r#"
             SELECT sequence FROM events
             WHERE aggregate_type = $1 AND aggregate_id = $2 AND revision = $3
@@ -3401,27 +3422,59 @@ where
                 res.last_insert_rowid.ok_or_else(|| EventStoreError::Backend("Missing last_insert_rowid".to_string()))?
             } else {
                 // Postgres
-                // 1. Execute the INSERT statement without expecting any return rows
-                {
+                // Try executing atomic insert with RETURNING sequence first to avoid race conditions in pooled connections
+                let insert_res = {
                     #[cfg(runtime_spin)]
                     {
-                        execute_spin_pg_async(insert_postgres, params).await.map_err(|e| {
-                            if e.contains("UNIQUE") || e.contains("constraint") {
-                                EventStoreError::Concurrency(ddd_cqrs_es::ConcurrencyError::WrongExpectedRevision {
-                                    expected: expected_revision,
-                                    actual: current_revision,
-                                })
-                            } else {
-                                EventStoreError::Backend(e)
-                            }
-                        })?;
+                        execute_spin_pg_async(insert_postgres_returning, params.clone()).await
                     }
                     #[cfg(runtime_wasmtime)]
                     {
                         let url = get_postgres_url();
                         let api_key = get_neon_api_key();
-                        execute_postgres_query(&url, api_key.as_deref(), insert_postgres, params).await
-                            .map_err(|e| {
+                        execute_postgres_query(&url, api_key.as_deref(), insert_postgres_returning, params.clone()).await
+                    }
+                };
+                
+                let mut sequence = 0u64;
+                let mut got_sequence = false;
+                
+                match insert_res {
+                    Ok(rows) => {
+                        if let Some(first_row) = rows.first() {
+                            if let Some(seq_val) = first_row.get("sequence") {
+                                if let Some(s) = seq_val.as_u64() {
+                                    sequence = s;
+                                    got_sequence = true;
+                                } else if let Some(s) = seq_val.as_str() {
+                                    if let Ok(parsed) = s.parse::<u64>() {
+                                        sequence = parsed;
+                                        got_sequence = true;
+                                    }
+                                } else if let Some(i) = seq_val.as_i64() {
+                                    sequence = i as u64;
+                                    got_sequence = true;
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        if e.contains("UNIQUE") || e.contains("constraint") {
+                            return Err(EventStoreError::Concurrency(ddd_cqrs_es::ConcurrencyError::WrongExpectedRevision {
+                                expected: expected_revision,
+                                actual: current_revision,
+                            }));
+                        }
+                        println!("[POSTGRES] Atomic insert with RETURNING sequence failed ({:?}). Falling back to separate insert + select.", e);
+                    }
+                }
+                
+                if !got_sequence {
+                    // Fallback to separate insert then select pattern for older/incompatible drivers
+                    {
+                        #[cfg(runtime_spin)]
+                        {
+                            execute_spin_pg_async(insert_postgres, params.clone()).await.map_err(|e| {
                                 if e.contains("UNIQUE") || e.contains("constraint") {
                                     EventStoreError::Concurrency(ddd_cqrs_es::ConcurrencyError::WrongExpectedRevision {
                                         expected: expected_revision,
@@ -3431,45 +3484,63 @@ where
                                     EventStoreError::Backend(e)
                                 }
                             })?;
+                        }
+                        #[cfg(runtime_wasmtime)]
+                        {
+                            let url = get_postgres_url();
+                            let api_key = get_neon_api_key();
+                            execute_postgres_query(&url, api_key.as_deref(), insert_postgres, params.clone()).await
+                                .map_err(|e| {
+                                    if e.contains("UNIQUE") || e.contains("constraint") {
+                                        EventStoreError::Concurrency(ddd_cqrs_es::ConcurrencyError::WrongExpectedRevision {
+                                            expected: expected_revision,
+                                            actual: current_revision,
+                                        })
+                                    } else {
+                                        EventStoreError::Backend(e)
+                                    }
+                                })?;
+                        }
                     }
+                    
+                    let seq_params = vec![
+                        serde_json::Value::String(A::aggregate_type().to_string()),
+                        serde_json::Value::String(aggregate_id_str.clone()),
+                        serde_json::Value::Number(revision.into()),
+                    ];
+                    
+                    let seq_rows = {
+                        #[cfg(runtime_spin)]
+                        {
+                            execute_spin_pg_async(select_seq_postgres, seq_params).await
+                                .map_err(|e| EventStoreError::Backend(e))?
+                        }
+                        #[cfg(runtime_wasmtime)]
+                        {
+                            let url = get_postgres_url();
+                            let api_key = get_neon_api_key();
+                            execute_postgres_query(&url, api_key.as_deref(), select_seq_postgres, seq_params).await
+                                .map_err(|e| EventStoreError::Backend(e))?
+                        }
+                    };
+                    
+                    let first_row = seq_rows.first()
+                        .ok_or_else(|| EventStoreError::Backend("Pg sequence query returned empty rowset".to_string()))?;
+                    let seq_val = first_row.get("sequence")
+                        .ok_or_else(|| EventStoreError::Backend("Pg sequence row missing sequence field".to_string()))?;
+                    
+                    sequence = if let Some(s) = seq_val.as_u64() {
+                        s
+                    } else if let Some(s) = seq_val.as_str() {
+                        s.parse::<u64>().unwrap_or(0)
+                    } else if let Some(i) = seq_val.as_i64() {
+                        i as u64
+                    } else {
+                        return Err(EventStoreError::Backend("Failed to parse returned sequence".to_string()));
+                    };
                 }
                 
-                // 2. Query the inserted sequence row using unique columns to bypass the RETURNING constraint
-                let seq_params = vec![
-                    serde_json::Value::String(A::aggregate_type().to_string()),
-                    serde_json::Value::String(aggregate_id_str.clone()),
-                    serde_json::Value::Number(revision.into()),
-                ];
-                
-                let seq_rows = {
-                    #[cfg(runtime_spin)]
-                    {
-                        execute_spin_pg_async(select_seq_postgres, seq_params).await
-                            .map_err(|e| EventStoreError::Backend(format!("Failed to retrieve sequence: {}", e)))?
-                    }
-                    #[cfg(runtime_wasmtime)]
-                    {
-                        let url = get_postgres_url();
-                        let api_key = get_neon_api_key();
-                        execute_postgres_query(&url, api_key.as_deref(), select_seq_postgres, seq_params).await
-                            .map_err(|e| EventStoreError::Backend(format!("Failed to retrieve sequence: {}", e)))?
-                    }
-                };
-                
-                let first_row = seq_rows.first()
-                    .ok_or_else(|| EventStoreError::Backend("Pg sequence query returned empty rowset".to_string()))?;
-                let seq_val = first_row.get("sequence")
-                    .ok_or_else(|| EventStoreError::Backend("Pg sequence row missing sequence field".to_string()))?;
-                
-                if let Some(s) = seq_val.as_u64() {
-                    s
-                } else if let Some(s) = seq_val.as_str() {
-                    s.parse::<u64>().unwrap_or(0)
-                } else if let Some(i) = seq_val.as_i64() {
-                    i as u64
-                } else {
-                    return Err(EventStoreError::Backend("Failed to parse returned sequence".to_string()));
-                }
+                sequence
             };
             
             envelopes.push(EventEnvelope::new(
@@ -3700,6 +3771,13 @@ where
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         "#;
         
+        let insert_postgres_returning = r#"
+            INSERT INTO events (
+                event_id, aggregate_id, aggregate_type, revision, event_type, event_version, payload, metadata, recorded_at_ms
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING sequence
+        "#;
+        
         let select_seq_postgres = r#"
             SELECT sequence FROM events
             WHERE aggregate_type = $1 AND aggregate_id = $2 AND revision = $3
@@ -3743,27 +3821,59 @@ where
                 res.last_insert_rowid.ok_or_else(|| EventStoreError::Backend("Missing last_insert_rowid".to_string()))?
             } else {
                 // Postgres
-                // 1. Execute the INSERT statement without expecting any return rows
-                {
+                // Try executing atomic insert with RETURNING sequence first to avoid race conditions in pooled connections
+                let insert_res = {
                     #[cfg(runtime_spin)]
                     {
-                        execute_spin_pg(insert_postgres, params).map_err(|e| {
-                            if e.contains("UNIQUE") || e.contains("constraint") {
-                                EventStoreError::Concurrency(ddd_cqrs_es::ConcurrencyError::WrongExpectedRevision {
-                                    expected: expected_revision,
-                                    actual: current_revision,
-                                })
-                            } else {
-                                EventStoreError::Backend(e)
-                            }
-                        })?;
+                        execute_spin_pg(insert_postgres_returning, params.clone())
                     }
                     #[cfg(runtime_wasmtime)]
                     {
                         let url = get_postgres_url();
                         let api_key = get_neon_api_key();
-                        futures::executor::block_on(execute_postgres_query(&url, api_key.as_deref(), insert_postgres, params))
-                            .map_err(|e| {
+                        futures::executor::block_on(execute_postgres_query(&url, api_key.as_deref(), insert_postgres_returning, params.clone()))
+                    }
+                };
+                
+                let mut sequence = 0u64;
+                let mut got_sequence = false;
+                
+                match insert_res {
+                    Ok(rows) => {
+                        if let Some(first_row) = rows.first() {
+                            if let Some(seq_val) = first_row.get("sequence") {
+                                if let Some(s) = seq_val.as_u64() {
+                                    sequence = s;
+                                    got_sequence = true;
+                                } else if let Some(s) = seq_val.as_str() {
+                                    if let Ok(parsed) = s.parse::<u64>() {
+                                        sequence = parsed;
+                                        got_sequence = true;
+                                    }
+                                } else if let Some(i) = seq_val.as_i64() {
+                                    sequence = i as u64;
+                                    got_sequence = true;
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        if e.contains("UNIQUE") || e.contains("constraint") {
+                            return Err(EventStoreError::Concurrency(ddd_cqrs_es::ConcurrencyError::WrongExpectedRevision {
+                                expected: expected_revision,
+                                actual: current_revision,
+                            }));
+                        }
+                        println!("[POSTGRES] Atomic insert with RETURNING sequence failed ({:?}). Falling back to separate insert + select.", e);
+                    }
+                }
+                
+                if !got_sequence {
+                    // Fallback to separate insert then select pattern for older/incompatible drivers
+                    {
+                        #[cfg(runtime_spin)]
+                        {
+                            execute_spin_pg(insert_postgres, params.clone()).map_err(|e| {
                                 if e.contains("UNIQUE") || e.contains("constraint") {
                                     EventStoreError::Concurrency(ddd_cqrs_es::ConcurrencyError::WrongExpectedRevision {
                                         expected: expected_revision,
@@ -3773,45 +3883,63 @@ where
                                     EventStoreError::Backend(e)
                                 }
                             })?;
+                        }
+                        #[cfg(runtime_wasmtime)]
+                        {
+                            let url = get_postgres_url();
+                            let api_key = get_neon_api_key();
+                            futures::executor::block_on(execute_postgres_query(&url, api_key.as_deref(), insert_postgres, params.clone()))
+                                .map_err(|e| {
+                                    if e.contains("UNIQUE") || e.contains("constraint") {
+                                        EventStoreError::Concurrency(ddd_cqrs_es::ConcurrencyError::WrongExpectedRevision {
+                                            expected: expected_revision,
+                                            actual: current_revision,
+                                        })
+                                    } else {
+                                        EventStoreError::Backend(e)
+                                    }
+                                })?;
+                        }
                     }
+                    
+                    let seq_params = vec![
+                        serde_json::Value::String(A::aggregate_type().to_string()),
+                        serde_json::Value::String(aggregate_id_str.clone()),
+                        serde_json::Value::Number(revision.into()),
+                    ];
+                    
+                    let seq_rows = {
+                        #[cfg(runtime_spin)]
+                        {
+                            execute_spin_pg(select_seq_postgres, seq_params)
+                                .map_err(|e| EventStoreError::Backend(e))?
+                        }
+                        #[cfg(runtime_wasmtime)]
+                        {
+                            let url = get_postgres_url();
+                            let api_key = get_neon_api_key();
+                            futures::executor::block_on(execute_postgres_query(&url, api_key.as_deref(), select_seq_postgres, seq_params))
+                                .map_err(|e| EventStoreError::Backend(e))?
+                        }
+                    };
+                    
+                    let first_row = seq_rows.first()
+                        .ok_or_else(|| EventStoreError::Backend("Pg sequence query returned empty rowset".to_string()))?;
+                    let seq_val = first_row.get("sequence")
+                        .ok_or_else(|| EventStoreError::Backend("Pg sequence row missing sequence field".to_string()))?;
+                    
+                    sequence = if let Some(s) = seq_val.as_u64() {
+                        s
+                    } else if let Some(s) = seq_val.as_str() {
+                        s.parse::<u64>().unwrap_or(0)
+                    } else if let Some(i) = seq_val.as_i64() {
+                        i as u64
+                    } else {
+                        return Err(EventStoreError::Backend("Failed to parse returned sequence".to_string()));
+                    };
                 }
                 
-                // 2. Query the inserted sequence row using unique columns to bypass the RETURNING constraint
-                let seq_params = vec![
-                    serde_json::Value::String(A::aggregate_type().to_string()),
-                    serde_json::Value::String(aggregate_id_str.clone()),
-                    serde_json::Value::Number(revision.into()),
-                ];
-                
-                let seq_rows = {
-                    #[cfg(runtime_spin)]
-                    {
-                        execute_spin_pg(select_seq_postgres, seq_params)
-                            .map_err(|e| EventStoreError::Backend(format!("Failed to retrieve sequence: {}", e)))?
-                    }
-                    #[cfg(runtime_wasmtime)]
-                    {
-                        let url = get_postgres_url();
-                        let api_key = get_neon_api_key();
-                        futures::executor::block_on(execute_postgres_query(&url, api_key.as_deref(), select_seq_postgres, seq_params))
-                            .map_err(|e| EventStoreError::Backend(format!("Failed to retrieve sequence: {}", e)))?
-                    }
-                };
-                
-                let first_row = seq_rows.first()
-                    .ok_or_else(|| EventStoreError::Backend("Pg sequence query returned empty rowset".to_string()))?;
-                let seq_val = first_row.get("sequence")
-                    .ok_or_else(|| EventStoreError::Backend("Pg sequence row missing sequence field".to_string()))?;
-                
-                if let Some(s) = seq_val.as_u64() {
-                    s
-                } else if let Some(s) = seq_val.as_str() {
-                    s.parse::<u64>().unwrap_or(0)
-                } else if let Some(i) = seq_val.as_i64() {
-                    i as u64
-                } else {
-                    return Err(EventStoreError::Backend("Failed to parse returned sequence".to_string()));
-                }
+                sequence
             };
             
             envelopes.push(EventEnvelope::new(
