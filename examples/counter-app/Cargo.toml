@@ -25,12 +25,14 @@ spin-sdk = { version = "6.0.0", optional = true }
 http = "1.1.0"
 http-body-util = { version = "0.1.2", optional = true }
 wasip3 = { version = "0.6.0", features = ["http-compat"], optional = true }
+wit-bindgen = { version = "0.57.1", features = ["inter-task-wakeup"], optional = true }
 wasm-bindgen = { version = "=0.2.125", optional = true }
 web-sys = { version = "0.3", features = ["Storage", "Window"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 md5 = "0.7"
-ddd_cqrs_es = { path = "../../", default-features = false, features = ["json", "serde"] }
+async-trait = "0.1"
+ddd_cqrs_es = { path = "../../", default-features = false, features = ["json", "serde", "async"] }
 rustls = { version = "0.23.12", default-features = false, features = ["std", "tls12"], optional = true }
 rustls-rustcrypto = { version = "0.0.2-alpha", optional = true }
 webpki-roots = { version = "0.26.3", optional = true }
@@ -52,8 +54,16 @@ ssr = [
   "leptos_router/ssr",
   "dep:leptos_wasi",
   "dep:wasip3",
-  "dep:spin-sdk",
+  "dep:wit-bindgen",
   "dep:http-body-util",
+]
+sqlite = [
+  "ssr",
+  "dep:spin-sdk",
+  "ddd_cqrs_es/spin-sqlite",
+]
+postgres = [
+  "ssr",
   "dep:rustls",
   "dep:rustls-rustcrypto",
   "dep:webpki-roots",
@@ -61,9 +71,22 @@ ssr = [
   "dep:hmac",
   "dep:pbkdf2",
   "dep:base64",
+  "dep:spin-sdk",
+  "ddd_cqrs_es/wasi-postgres-tcp",
+  "ddd_cqrs_es/spin-postgres",
 ]
-postgres = ["ddd_cqrs_es/postgres"]
-libsql = []
+neon = [
+  "ssr",
+  "ddd_cqrs_es/wasi-neon",
+]
+libsql = [
+  "ssr",
+  "ddd_cqrs_es/wasi-libsql",
+]
+supabase = [
+  "ssr",
+  "ddd_cqrs_es/wasi-supabase-rpc",
+]
 
 [profile.wasm-release]
 inherits = "release"

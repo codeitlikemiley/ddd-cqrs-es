@@ -151,49 +151,90 @@ Ensure schemas and directories are initialized automatically on server boot:
 
 ## ⚡ 3. Server-Side Integration & Command Runner (`app.rs`)
 
-Handle write commands atomically using a unified server-side handler. In Leptos, protect server-only SSR imports behind `#[cfg(feature = "ssr")]`:
+Handle write commands atomically using a unified server-side handler. Use `AsyncRepository` to load, execute, and append events. To avoid unnecessary database queries, apply returned events directly in-memory to project the state when the sequence is contiguous, falling back to sequential catch-up projections only if a gap is detected.
+
+In Leptos, protect server-only SSR imports behind `#[cfg(feature = "ssr")]`:
 
 ```rust
 #[cfg(feature = "ssr")]
-fn run_cqrs_command(command: crate::domain::EntityCommand) -> Result<(), ServerFnError> {
-    use ddd_cqrs_es::{Repository, PersistedProjectionRunner};
-    use crate::store::{SpinSqliteEventStore, SpinSqliteCheckpointStore, EntityProjection};
-    use crate::domain::{EntityAggregate, EntityId};
+async fn run_cqrs_command(command: crate::domain::CounterCommand) -> Result<(), ServerFnError> {
+    use crate::store::{MultiBackendEventStore, MultiBackendCheckpointStore, MultiBackendCounterProjection};
+    use crate::domain::{Counter, CounterId};
+    use ddd_cqrs_es::AsyncRepository;
 
-    let event_store = SpinSqliteEventStore::<EntityAggregate>::new("default");
-    event_store.initialize_schema().map_err(|e| ServerFnError::new(e))?;
+    let event_store = MultiBackendEventStore::<Counter>::new();
+    let repository = AsyncRepository::new(event_store.clone());
+    let aggregate_id = CounterId("global".to_string());
 
-    let repo = Repository::new(event_store.clone());
-    let aggregate_id = EntityId("global_id".to_string());
+    // Load stream, handle command, and append events
+    let committed_events = repository.execute(
+        &aggregate_id,
+        command,
+        ddd_cqrs_es::Metadata::default(),
+    ).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    // Execute through consistency boundary
-    repo.execute(&aggregate_id, command, ddd_cqrs_es::Metadata::default())
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let checkpoint_store = MultiBackendCheckpointStore::new();
+    let mut projection = MultiBackendCounterProjection::new();
 
-    // Instantly catch up projections sequentially
-    let checkpoint_store = SpinSqliteCheckpointStore::new("default");
-    let projection = EntityProjection::new("default");
-    let mut runner = PersistedProjectionRunner::new(projection, checkpoint_store);
+    // Direct in-memory projection optimization for contiguous stream
+    let last_sequence = checkpoint_store.load_checkpoint_async("counter_projection").await
+        .unwrap_or(None)
+        .unwrap_or(0);
 
-    runner.run::<EntityAggregate, _>(&event_store)
-        .map_err(|e| ServerFnError::new(format!("{:?}", e)))?;
+    let mut contiguous = true;
+    let mut expected_seq = last_sequence + 1;
+    for env in &committed_events {
+        if let Some(seq) = env.sequence {
+            if seq == expected_seq {
+                expected_seq = seq + 1;
+            } else {
+                contiguous = false;
+                break;
+            }
+        } else {
+            contiguous = false;
+            break;
+        }
+    }
+
+    if contiguous && !committed_events.is_empty() {
+        for env in &committed_events {
+            projection.apply_async(env).await
+                .map_err(|e| ServerFnError::new(e.to_string()))?;
+        }
+        let last_committed_seq = committed_events.last().and_then(|env| env.sequence).unwrap();
+        checkpoint_store.save_checkpoint_async("counter_projection", last_committed_seq).await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+    } else {
+        // Fall back to standard catch-up runner on sequence gap
+        crate::store::run_projections_async(&event_store, &checkpoint_store, &mut projection).await
+            .map_err(|e| ServerFnError::new(e))?;
+    }
 
     Ok(())
 }
 ```
 
-Define clean Server Functions using the `#[server]` macro:
+Consolidate separate read calls into a single server function returning a unified view state to minimize browser network round-trips:
 
 ```rust
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CounterViewDto {
+    pub count: i32,
+    pub latest_events: Vec<EventLogDto>,
+}
+
 #[server(prefix = "/api")]
-pub async fn trigger_action(val: i32) -> Result<(), ServerFnError> {
+pub async fn get_counter_view() -> Result<CounterViewDto, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
-        run_cqrs_command(crate::domain::EntityCommand::DoAction { arg: val })
+        use crate::store::{get_count_db, get_latest_events_db};
+        let count = get_count_db().await.map_err(|e| ServerFnError::new(e))?;
+        let latest_events = get_latest_events_db().await.map_err(|e| ServerFnError::new(e))?;
+        Ok(CounterViewDto { count, latest_events })
     }
     #[cfg(not(feature = "ssr"))]
     {
-        let _ = val;
         unreachable!()
     }
 }
@@ -201,30 +242,37 @@ pub async fn trigger_action(val: i32) -> Result<(), ServerFnError> {
 
 ---
 
-## 🌐 4. WASI Server Handler Registration (`server.rs`)
+## 🌐 4. WASI Server Handler & Boot Migrations (`server.rs`)
 
-Leptos server functions must be registered on the WASIp3 `Handler` builder inside `server.rs` using `.with_server_fn::<T>()`:
+Database schema creation statements (`CREATE TABLE IF NOT EXISTS`) are highly blocking and prone to transaction conflicts under concurrency. They should be entirely removed from hot paths. Instead, perform migrations **exactly once asynchronously at server boot** (during handling of the first incoming request) using a shared async initialization guard. Do not use an `AtomicBool` `load()` followed by a later `store(true)` around an `.await`; concurrent first requests can all observe `false` and run migrations.
 
 ```rust
 use leptos_wasi::prelude::Handler;
 use wasip3::http::types::{Request, Response, ErrorCode};
-use crate::app::{App, shell, TriggerAction, GetState};
+use crate::app::{App, shell, GetCounterView, IncrementCount, DecrementCount, ResetCount};
 
 struct LeptosServer;
 
 impl wasip3::exports::http::handler::Guest for LeptosServer {
     async fn handle(request: Request) -> Result<Response, ErrorCode> {
         let _ = init_wasip3_spawner();
+
+        if let Err(e) = crate::store::initialize_schema_async().await {
+            eprintln!("Error executing boot schema migrations: {:?}", e);
+            return Err(ErrorCode::InternalError(None));
+        }
+
         let conf = get_configuration(None).unwrap();
         let leptos_options = conf.leptos_options;
-
         let req = wasip3::http_compat::http_from_wasi_request(request)?;
 
         let wasi_res = Handler::build(req).await
             .map_err(|e| ErrorCode::InternalError(None))?
             .static_files_handler("/pkg", serve_static_files)
-            .with_server_fn::<TriggerAction>()
-            .with_server_fn::<GetState>()
+            .with_server_fn::<GetCounterView>()
+            .with_server_fn::<IncrementCount>()
+            .with_server_fn::<DecrementCount>()
+            .with_server_fn::<ResetCount>()
             .generate_routes(App)
             .handle_with_context(move || shell(leptos_options.clone()), || {})
             .await
@@ -246,26 +294,19 @@ Execute the following commands from the project root to compile, build, and run 
 ### 5.1 Fermyon Spin Runtime (SQLite)
 Builds the CSS/WASM and runs local native Spin host:
 ```bash
-WASI_RUNTIME=spin cargo leptos build --release
-WASI_RUNTIME=spin LEPTOS_OUTPUT_NAME=counter_app cargo build --lib --target wasm32-wasip2 --release --no-default-features --features ssr
-spin up
+make db=sqlite spin
 ```
-*Or execute `make spin` if available in the template directory.*
 
-### 5.2 Generic Wasmtime Runtime (Flat File)
+### 5.2 Generic Wasmtime Runtime
 Builds CSS/WASM and serves using generic wasmtime sandbox capabilities:
 ```bash
-WASI_RUNTIME=wasmtime cargo leptos build --release
-WASI_RUNTIME=wasmtime LEPTOS_OUTPUT_NAME=counter_app cargo build --lib --target wasm32-wasip2 --release --no-default-features --features ssr --target-dir target/wasmtime
-wasmtime serve \
-    -W component-model-async=y \
-    -S p3=y \
-    -S cli=y \
-    -S http=y \
-    --dir=./target/site/pkg::/ \
-    --dir=./data::/data \
-    --env=LEPTOS_OUTPUT_NAME=counter_app \
-    --addr 127.0.0.1:3000 \
-    target/wasmtime/wasm32-wasip2/release/counter_app.wasm
+make db=neon wasmtime
+make db=turso wasmtime
 ```
-*Or execute `make wasmtime` if available in the template directory.*
+
+### 5.3 Reset Without Serving
+Reset the selected backend schema and return without launching the app:
+```bash
+make db=neon fresh
+make db=turso fresh
+```

@@ -3,7 +3,7 @@ use leptos_wasi::executor::init_wasip3_spawner;
 use leptos_wasi::prelude::Handler;
 use wasip3::http::types::{Request, Response, ErrorCode};
 
-use crate::app::{shell, App, GetCount, IncrementCount, DecrementCount, ResetCount, GetLatestEvents};
+use crate::app::{shell, App, GetCounterView, IncrementCount, DecrementCount, ResetCount};
 
 struct LeptosServer;
 
@@ -12,11 +12,22 @@ impl wasip3::exports::http::handler::Guest for LeptosServer {
         // 1. Initialize host async task scheduling
         let _ = init_wasip3_spawner();
 
+        // Convert the WASI request to http::Request before storage work so
+        // static assets do not trigger remote schema checks.
+        let req = wasip3::http_compat::http_from_wasi_request(request)?;
+        let request_path = req.uri().path().to_string();
+
+        // Store-level initialization is guarded by an async lock, so concurrent
+        // first requests do not run migrations more than once.
+        if !request_path.starts_with("/pkg/") {
+            if let Err(e) = crate::store::initialize_schema_async().await {
+                eprintln!("Error executing boot schema migrations: {:?}", e);
+                return Err(ErrorCode::InternalError(None));
+            }
+        }
+
         let conf = get_configuration(None).unwrap();
         let leptos_options = conf.leptos_options;
-
-        // Convert the WASI request to http::Request
-        let req = wasip3::http_compat::http_from_wasi_request(request)?;
 
         // 2. Build and handle request natively
         let wasi_res = Handler::build(req).await
@@ -25,11 +36,10 @@ impl wasip3::exports::http::handler::Guest for LeptosServer {
                 ErrorCode::InternalError(None)
             })?
             .static_files_handler("/pkg", serve_static_files)
-            .with_server_fn::<GetCount>()
+            .with_server_fn::<GetCounterView>()
             .with_server_fn::<IncrementCount>()
             .with_server_fn::<DecrementCount>()
             .with_server_fn::<ResetCount>()
-            .with_server_fn::<GetLatestEvents>()
             .generate_routes(App)
             .handle_with_context(move || shell(leptos_options.clone()), || {})
             .await

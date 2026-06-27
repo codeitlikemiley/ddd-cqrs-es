@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "hydrate")]
 use web_sys::window;
 
+#[allow(dead_code)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EventLogDto {
     pub sequence: u64,
@@ -14,6 +15,13 @@ pub struct EventLogDto {
     pub revision: u64,
     pub payload: String,
     pub recorded_at: String,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CounterViewDto {
+    pub count: i32,
+    pub latest_events: Vec<EventLogDto>,
 }
 
 #[cfg(feature = "ssr")]
@@ -69,8 +77,8 @@ fn HomePage() -> impl IntoView {
 
     let (custom_amount, set_custom_amount) = signal(5);
 
-    // Reactive count resource
-    let count = Resource::new(
+    // Reactive counter view resource
+    let counter_view = Resource::new(
         move || {
             (
                 increment_action.version().get(),
@@ -78,19 +86,7 @@ fn HomePage() -> impl IntoView {
                 reset_action.version().get(),
             )
         },
-        |_| get_count()
-    );
-
-    // Reactive events ledger resource
-    let events_resource = Resource::new(
-        move || {
-            (
-                increment_action.version().get(),
-                decrement_action.version().get(),
-                reset_action.version().get(),
-            )
-        },
-        |_| get_latest_events()
+        |_| get_counter_view()
     );
 
     let (optimistic_count, set_optimistic_count) = signal(None::<i32>);
@@ -112,7 +108,8 @@ fn HomePage() -> impl IntoView {
                 }
             }
 
-            if let Some(Ok(server_count)) = count.get() {
+            if let Some(Ok(view_data)) = counter_view.get() {
+                let server_count = view_data.count;
                 set_optimistic_count.set(Some(server_count));
 
                 #[cfg(feature = "hydrate")]
@@ -128,7 +125,8 @@ fn HomePage() -> impl IntoView {
     });
 
     Effect::new(move |_| {
-        if let Some(Ok(server_count)) = count.get() {
+        if let Some(Ok(view_data)) = counter_view.get() {
+            let server_count = view_data.count;
             if let Some(current_optimistic) = optimistic_count.get() {
                 if server_count != current_optimistic {
                     set_optimistic_count.set(Some(server_count));
@@ -387,9 +385,10 @@ fn HomePage() -> impl IntoView {
                             </div>
                         }>
                             {move || {
-                                events_resource.get().map(|res| {
+                                counter_view.get().map(|res| {
                                     match res {
-                                        Ok(logs) => {
+                                        Ok(view_data) => {
+                                            let logs = view_data.latest_events;
                                             if logs.is_empty() {
                                                 view! {
                                                     <div class="text-center text-xs text-slate-500 py-16 font-mono border border-dashed border-slate-800 rounded-xl">
@@ -465,84 +464,76 @@ fn NotFound() -> impl IntoView {
 }
 
 #[cfg(feature = "ssr")]
-pub async fn get_count_db() -> Result<i32, ServerFnError> {
-    use crate::store::{get_count_db as store_get_count, MultiBackendEventStore};
-    use crate::domain::Counter;
-
-    // Initialize schemas if not done
-    let event_store = MultiBackendEventStore::<Counter>::new();
-    event_store.initialize_schema_async().await.map_err(|e| ServerFnError::new(e))?;
-
-    store_get_count().await.map_err(|e| ServerFnError::new(e))
-}
-
-#[cfg(feature = "ssr")]
-pub async fn get_latest_events_db() -> Result<Vec<EventLogDto>, ServerFnError> {
-    use crate::store::{get_latest_events_db as store_get_events, MultiBackendEventStore};
-    use crate::domain::Counter;
-
-    // Initialize schemas if not done
-    let event_store = MultiBackendEventStore::<Counter>::new();
-    event_store.initialize_schema_async().await.map_err(|e| ServerFnError::new(e))?;
-
-    store_get_events().await.map_err(|e| ServerFnError::new(e))
+pub async fn get_counter_view_db() -> Result<CounterViewDto, ServerFnError> {
+    crate::store::get_counter_view_db()
+        .await
+        .map_err(|e| ServerFnError::new(e))
 }
 
 #[cfg(feature = "ssr")]
 async fn run_cqrs_command(command: crate::domain::CounterCommand) -> Result<(), ServerFnError> {
     use crate::store::{MultiBackendEventStore, MultiBackendCheckpointStore, MultiBackendCounterProjection};
     use crate::domain::{Counter, CounterId};
-    use ddd_cqrs_es::Aggregate;
+    use ddd_cqrs_es::AsyncRepository;
 
     let event_store = MultiBackendEventStore::<Counter>::new();
-    
-    // Ensure table schemas are initialized asynchronously
-    event_store.initialize_schema_async().await
-        .map_err(|e| ServerFnError::new(e))?;
-
+    let repository = AsyncRepository::new(event_store.clone());
     let aggregate_id = CounterId("global".to_string());
 
-    // Load aggregate stream asynchronously
-    let events = event_store.load_async(&aggregate_id).await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    // Replay events onto aggregate state using standard replay
-    let loaded = Counter::replay(&events);
-    let aggregate = loaded.state;
-    let current_revision = loaded.revision;
-
-    // Handle command and get new events
-    let new_events = aggregate.handle(command)
-        .map_err(|e| ServerFnError::new(e))?;
-
-    // Wrap events into NewEvent
-    let new_events_wrapped: Vec<ddd_cqrs_es::NewEvent<crate::domain::CounterEvent>> = new_events
-        .into_iter()
-        .map(|p| ddd_cqrs_es::NewEvent::new(p, ddd_cqrs_es::Metadata::default()))
-        .collect();
-
-    // Append new events asynchronously
-    event_store.append_async(
+    // Execute command via AsyncRepository (which loads the stream, handles the command, and appends new events)
+    let committed_events = repository.execute(
         &aggregate_id,
-        ddd_cqrs_es::ExpectedRevision::Exact(current_revision),
-        new_events_wrapped,
+        command,
+        ddd_cqrs_es::Metadata::default(),
     ).await.map_err(|e| ServerFnError::new(e.to_string()))?;
 
     // Advance projection asynchronously
     let checkpoint_store = MultiBackendCheckpointStore::new();
     let mut projection = MultiBackendCounterProjection::new();
-    crate::store::run_projections_async(&event_store, &checkpoint_store, &mut projection).await
-        .map_err(|e| ServerFnError::new(e))?;
+
+    // Contiguous path projection optimization
+    let last_sequence = checkpoint_store.load_checkpoint_async("counter_projection").await
+        .unwrap_or(None)
+        .unwrap_or(0);
+
+    let mut contiguous = true;
+    let mut expected_seq = last_sequence + 1;
+    for env in &committed_events {
+        if let Some(seq) = env.sequence {
+            if seq == expected_seq {
+                expected_seq = seq + 1;
+            } else {
+                contiguous = false;
+                break;
+            }
+        } else {
+            contiguous = false;
+            break;
+        }
+    }
+
+    if contiguous && !committed_events.is_empty() {
+        for env in &committed_events {
+            projection.apply_async(env).await
+                .map_err(|e| ServerFnError::new(e.to_string()))?;
+        }
+        let last_committed_seq = committed_events.last().and_then(|env| env.sequence).unwrap();
+        checkpoint_store.save_checkpoint_async("counter_projection", last_committed_seq).await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+    } else {
+        crate::store::run_projections_async(&event_store, &checkpoint_store, &mut projection).await
+            .map_err(|e| ServerFnError::new(e))?;
+    }
 
     Ok(())
 }
 
 
 #[server(prefix = "/api")]
-pub async fn get_count() -> Result<i32, ServerFnError> {
+pub async fn get_counter_view() -> Result<CounterViewDto, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
-        get_count_db().await
+        get_counter_view_db().await
     }
     #[cfg(not(feature = "ssr"))]
     {
@@ -587,18 +578,6 @@ pub async fn reset_count() -> Result<(), ServerFnError> {
     #[cfg(feature = "ssr")]
     {
         run_cqrs_command(crate::domain::CounterCommand::Reset).await
-    }
-    #[cfg(not(feature = "ssr"))]
-    {
-        unreachable!()
-    }
-}
-
-#[server(prefix = "/api")]
-pub async fn get_latest_events() -> Result<Vec<EventLogDto>, ServerFnError> {
-    #[cfg(feature = "ssr")]
-    {
-        get_latest_events_db().await
     }
     #[cfg(not(feature = "ssr"))]
     {

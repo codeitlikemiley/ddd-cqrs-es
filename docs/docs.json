@@ -77,6 +77,14 @@
           "production/upcasters",
           "production/axum-integration"
         ]
+      },
+      {
+        "group": "6. Runtimes & Cloud Deployment",
+        "icon": "server",
+        "expanded": true,
+        "pages": [
+          "wasmtime-vs-spin-comparison"
+        ]
       }
     ]
   },
