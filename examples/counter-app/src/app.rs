@@ -92,7 +92,7 @@ fn HomePage() -> impl IntoView {
     let (current_view, set_current_view) = signal(None::<CounterViewDto>);
     let (optimistic_count, set_optimistic_count) = signal(None::<i32>);
     let (last_seen_sequence, set_last_seen_sequence) = signal(0_u64);
-    let _ = last_seen_sequence;
+    let (pending_after_sequence, set_pending_after_sequence) = signal(None::<u64>);
 
     // Hydrate from local cache while the first server read is in flight.
     Effect::new(move |_| {
@@ -120,6 +120,7 @@ fn HomePage() -> impl IntoView {
             set_optimistic_count.set(Some(view_data.count));
             set_last_seen_sequence.set(view_data.last_sequence);
             set_current_view.set(Some(view_data.clone()));
+            set_pending_after_sequence.set(None);
 
             #[cfg(feature = "hydrate")]
             {
@@ -135,18 +136,29 @@ fn HomePage() -> impl IntoView {
 
     Effect::new(move |_| {
         let mut next_view = None::<CounterViewDto>;
+        let mut completed_action = false;
         for candidate in [
             increment_action.value().get(),
             decrement_action.value().get(),
             reset_action.value().get(),
         ] {
-            if let Some(Ok(view_data)) = candidate
-                && next_view
-                    .as_ref()
-                    .is_none_or(|current| view_data.last_sequence >= current.last_sequence)
-                {
-                    next_view = Some(view_data);
+            match candidate {
+                Some(Ok(view_data)) => {
+                    completed_action = true;
+                    if next_view
+                        .as_ref()
+                        .is_none_or(|current| view_data.last_sequence >= current.last_sequence)
+                    {
+                        next_view = Some(view_data);
+                    }
                 }
+                Some(Err(_)) => completed_action = true,
+                None => {}
+            }
+        }
+
+        if completed_action {
+            set_pending_after_sequence.set(None);
         }
 
         if let Some(view_data) = next_view {
@@ -161,7 +173,7 @@ fn HomePage() -> impl IntoView {
                         let _ = storage.set_item("counter_app_count", &view_data.count.to_string());
                         let _ = storage
                             .set_item("counter_app_last_sequence", &view_data.last_sequence.to_string());
-                    }
+                }
             }
         }
     });
@@ -188,6 +200,12 @@ fn HomePage() -> impl IntoView {
             set_optimistic_count.set(Some(message.view.count));
             set_last_seen_sequence.set(message.last_sequence);
             set_current_view.set(Some(message.view.clone()));
+            if pending_after_sequence
+                .get_untracked()
+                .is_some_and(|sequence| message.last_sequence > sequence)
+            {
+                set_pending_after_sequence.set(None);
+            }
 
             if let Some(window) = window()
                 && let Ok(Some(storage)) = window.local_storage() {
@@ -213,9 +231,7 @@ fn HomePage() -> impl IntoView {
     };
 
     let is_pending = move || {
-        increment_action.pending().get()
-            || decrement_action.pending().get()
-            || reset_action.pending().get()
+        pending_after_sequence.get().is_some()
     };
 
     let latest_error = move || {
@@ -242,24 +258,44 @@ fn HomePage() -> impl IntoView {
 
     // Button click handlers
     let on_inc = move |_| {
+        if pending_after_sequence.get_untracked().is_some() {
+            return;
+        }
+        set_pending_after_sequence.set(Some(last_seen_sequence.get_untracked()));
         increment_action.dispatch(IncrementCount { amount: 1 });
     };
 
     let on_dec = move |_| {
+        if pending_after_sequence.get_untracked().is_some() {
+            return;
+        }
+        set_pending_after_sequence.set(Some(last_seen_sequence.get_untracked()));
         decrement_action.dispatch(DecrementCount { amount: 1 });
     };
 
     let on_reset = move |_| {
+        if pending_after_sequence.get_untracked().is_some() {
+            return;
+        }
+        set_pending_after_sequence.set(Some(last_seen_sequence.get_untracked()));
         reset_action.dispatch(ResetCount {});
     };
 
     let on_custom_inc = move |_| {
+        if pending_after_sequence.get_untracked().is_some() {
+            return;
+        }
         let val = custom_amount.get();
+        set_pending_after_sequence.set(Some(last_seen_sequence.get_untracked()));
         increment_action.dispatch(IncrementCount { amount: val });
     };
 
     let on_custom_dec = move |_| {
+        if pending_after_sequence.get_untracked().is_some() {
+            return;
+        }
         let val = custom_amount.get();
+        set_pending_after_sequence.set(Some(last_seen_sequence.get_untracked()));
         decrement_action.dispatch(DecrementCount { amount: val });
     };
 

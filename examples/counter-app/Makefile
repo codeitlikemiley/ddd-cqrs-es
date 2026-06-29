@@ -1,12 +1,61 @@
 # Makefile for building app for different WASI runtimes
 .PHONY: help spin wasmtime clean run fresh db-reset
 
-# Load .env file and export variables if it exists first
-# This provides the default settings which can be overridden via command-line db= parameter
+# Preserve values supplied by the parent shell before loading .env defaults.
+# GNU make lets included files override environment-origin variables, so restore
+# these after .env is loaded to keep `REDIS_URL=... make ...` working.
+ENV_DATABASE_URL := $(if $(filter environment%,$(origin DATABASE_URL)),$(DATABASE_URL))
+ENV_DATABASE_AUTH_TOKEN := $(if $(filter environment%,$(origin DATABASE_AUTH_TOKEN)),$(DATABASE_AUTH_TOKEN))
+ENV_MYSQL_URL := $(if $(filter environment%,$(origin MYSQL_URL)),$(MYSQL_URL))
+ENV_POSTGRES_URL := $(if $(filter environment%,$(origin POSTGRES_URL)),$(POSTGRES_URL))
+ENV_NEON_DB_URL := $(if $(filter environment%,$(origin NEON_DB_URL)),$(NEON_DB_URL))
+ENV_TURSO_URL := $(if $(filter environment%,$(origin TURSO_URL)),$(TURSO_URL))
+ENV_TURSO_AUTH_TOKEN := $(if $(filter environment%,$(origin TURSO_AUTH_TOKEN)),$(TURSO_AUTH_TOKEN))
+ENV_SUPABASE_URL := $(if $(filter environment%,$(origin SUPABASE_URL)),$(SUPABASE_URL))
+ENV_SUPABASE_SECRET_KEY := $(if $(filter environment%,$(origin SUPABASE_SECRET_KEY)),$(SUPABASE_SECRET_KEY))
+ENV_REDIS_URL := $(if $(filter environment%,$(origin REDIS_URL)),$(REDIS_URL))
+ENV_REDIS_CHANNEL := $(if $(filter environment%,$(origin REDIS_CHANNEL)),$(REDIS_CHANNEL))
+
+# Load .env file and export variables if it exists first.
+# This provides local defaults while still allowing shell env and command-line
+# make variables to override them.
 ifneq (,$(wildcard .env))
   include .env
-  export
 endif
+ifneq ($(ENV_DATABASE_URL),)
+  DATABASE_URL := $(ENV_DATABASE_URL)
+endif
+ifneq ($(ENV_DATABASE_AUTH_TOKEN),)
+  DATABASE_AUTH_TOKEN := $(ENV_DATABASE_AUTH_TOKEN)
+endif
+ifneq ($(ENV_MYSQL_URL),)
+  MYSQL_URL := $(ENV_MYSQL_URL)
+endif
+ifneq ($(ENV_POSTGRES_URL),)
+  POSTGRES_URL := $(ENV_POSTGRES_URL)
+endif
+ifneq ($(ENV_NEON_DB_URL),)
+  NEON_DB_URL := $(ENV_NEON_DB_URL)
+endif
+ifneq ($(ENV_TURSO_URL),)
+  TURSO_URL := $(ENV_TURSO_URL)
+endif
+ifneq ($(ENV_TURSO_AUTH_TOKEN),)
+  TURSO_AUTH_TOKEN := $(ENV_TURSO_AUTH_TOKEN)
+endif
+ifneq ($(ENV_SUPABASE_URL),)
+  SUPABASE_URL := $(ENV_SUPABASE_URL)
+endif
+ifneq ($(ENV_SUPABASE_SECRET_KEY),)
+  SUPABASE_SECRET_KEY := $(ENV_SUPABASE_SECRET_KEY)
+endif
+ifneq ($(ENV_REDIS_URL),)
+  REDIS_URL := $(ENV_REDIS_URL)
+endif
+ifneq ($(ENV_REDIS_CHANNEL),)
+  REDIS_CHANNEL := $(ENV_REDIS_CHANNEL)
+endif
+export
 
 # Get db/realtime from command-line, fallback to .env, then defaults.
 

@@ -116,7 +116,6 @@ fn redis_client() -> ddd_cqrs_es::SpinRedisClient {
 #[cfg(all(feature = "wasi-redis", runtime_wasmtime))]
 fn redis_client() -> ddd_cqrs_es::WasiRedisClient {
     ddd_cqrs_es::WasiRedisClient::new(get_redis_url())
-        .with_read_timeout(Some(std::time::Duration::from_secs(30)))
 }
 
 #[allow(dead_code)]
@@ -1945,6 +1944,12 @@ struct CounterRedisSubscriber {
     alive_key: String,
 }
 
+#[cfg(all(feature = "wasi-redis", runtime_wasmtime))]
+const REDIS_REALTIME_POLL_INTERVAL_NS: u64 = 1_000_000_000;
+
+#[cfg(all(feature = "wasi-redis", runtime_wasmtime))]
+const REDIS_REALTIME_KEEPALIVE_POLLS: usize = 25;
+
 #[cfg(feature = "ssr")]
 impl CounterStreamState {
     async fn new(last_sequence: u64) -> Self {
@@ -2029,10 +2034,7 @@ impl CounterRedisSubscriber {
         None
     }
 
-    #[cfg(any(
-        all(feature = "spin-redis", runtime_spin),
-        all(feature = "wasi-redis", runtime_wasmtime)
-    ))]
+    #[cfg(all(feature = "spin-redis", runtime_spin))]
     async fn next_payload(&self) -> Result<Option<Vec<u8>>, String> {
         redis_touch_realtime_subscriber(&self.queue_key, &self.alive_key).await?;
         let value = redis_execute(
@@ -2047,10 +2049,22 @@ impl CounterRedisSubscriber {
         Ok(items.last().map(|payload| payload.as_bytes().to_vec()))
     }
 
-    #[cfg(not(any(
-        all(feature = "spin-redis", runtime_spin),
-        all(feature = "wasi-redis", runtime_wasmtime)
-    )))]
+    #[cfg(all(feature = "wasi-redis", runtime_wasmtime))]
+    async fn next_payload(&self) -> Result<Option<Vec<u8>>, String> {
+        for _ in 0..REDIS_REALTIME_KEEPALIVE_POLLS {
+            redis_touch_realtime_subscriber(&self.queue_key, &self.alive_key).await?;
+            let value = redis_execute("RPOP", vec![self.queue_key.as_bytes().to_vec()]).await?;
+            let items = redis_value_strings(&value);
+            if let Some(payload) = items.last() {
+                return Ok(Some(payload.as_bytes().to_vec()));
+            }
+            wasip3::clocks::monotonic_clock::wait_for(REDIS_REALTIME_POLL_INTERVAL_NS).await;
+        }
+
+        Ok(None)
+    }
+
+    #[cfg(not(any(all(feature = "spin-redis", runtime_spin), all(feature = "wasi-redis", runtime_wasmtime))))]
     async fn next_payload(&self) -> Result<Option<Vec<u8>>, String> {
         Ok(None)
     }

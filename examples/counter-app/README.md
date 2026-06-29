@@ -101,20 +101,19 @@ model, and checkpoint state remain the source of truth. If a publish fails
 after a command commits, clients recover by replaying durable events from the
 last seen sequence.
 
-With `realtime=redis`, the SSE route uses Redis-blocking long polling. Each
-browser request registers a short-TTL Redis list queue, then the server blocks
-on `BRPOP` for that queue. After a command commits and projections update, the
-publisher fans a wake message out to every live queue. The stream then re-reads
+With `realtime=redis`, the SSE route uses Redis as the wake transport. Each
+browser request registers a short-TTL Redis list queue. After a command commits
+and projections update, the publisher sends a notification to `REDIS_CHANNEL`
+and fans a wake message out to every live queue. The stream then re-reads
 durable state after `last_sequence`, sends one `counter` event, and closes.
 
-Idle streams do not reconnect repeatedly. When Redis has no wake message, the
-handler waits inside `BRPOP` for up to 25 seconds, emits one SSE comment
-keepalive with a 1 second EventSource retry interval, and closes. That keeps the
-Network tab quiet and keeps the server waiting on Redis instead of repeatedly
-checking the event store.
-The route intentionally does not run a blocking Redis `SUBSCRIBE`; it uses
-`BRPOP` through the existing outbound Redis command path so Spin and Wasmtime can
-share the same browser delivery behavior.
+Idle streams do not reconnect repeatedly. On Spin, the handler waits inside
+`BRPOP` for up to 25 seconds, emits one SSE comment keepalive with a 1 second
+EventSource retry interval, and closes. On Wasmtime, the handler uses `RPOP`
+with WASI async sleeps so the component can continue serving normal HTTP
+requests while waiting for Redis wake messages. The route intentionally does not
+run a blocking Redis `SUBSCRIBE`; it uses the existing outbound Redis command
+path so Spin and Wasmtime can share the same browser delivery behavior.
 
 On Spin, `make spin realtime=redis` uses `spin.redis.toml` and starts a
 separate Redis trigger component subscribed to `REDIS_CHANNEL`. The trigger
