@@ -108,7 +108,7 @@ Our framework supports multiple database options depending on your environment.
 
 > [!NOTE]
 > We support SQLite, PostgreSQL, MySQL, LibSQL, and Redis backends.
-> Real-time updates are supported out-of-the-box with **PostgreSQL** and **Redis** (as well as SQLite). Postgres/SQLite utilize native asynchronous HTTP response streaming (SSE) polling streams with non-blocking clocks, while Redis utilizes Pub/Sub and SSE notifications. MySQL remains a durable data store and does not provide database-native pub/sub in this library; pair it with application polling, an outbox worker, binlog CDC, Redis, NATS, Kafka, or WebSocket fan-out when push-style notifications are required.
+> The library provides durable stores, checkpoint stores, idempotency stores, and notification primitives. Push-style realtime delivery is application-owned: use polling, SSE, WebSocket, an outbox worker, binlog CDC, Redis, NATS, Kafka, or another fan-out layer as appropriate. Redis pub/sub support is notification-only; durable event replay remains the source of truth.
 
 ### 1. SQLite Store (Embedded File)
 Perfect for edge applications, local databases, or desktop apps. Enable with the `"sqlite"` feature.

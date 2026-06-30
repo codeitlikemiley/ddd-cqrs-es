@@ -193,26 +193,28 @@ Do not set `Connection: keep-alive` manually on this endpoint. WASIp3 rejects
 that hop-by-hop header during response conversion. The stream stays open because
 the response body is streaming and the content type is `text/event-stream`.
 
-With `REALTIME_BACKEND=redis`, the SSE route uses Redis-blocking long polling.
-Each browser request registers a short-TTL Redis list queue, then the server
-blocks on `BRPOP` for that queue. After commands commit and projections update,
-the publisher fans one wake message out to every live queue. The SSE handler
-treats that wake as notification-only and reads durable events after the
+With `REALTIME_BACKEND=redis`, the counter app SSE route uses Redis as the wake
+transport. Each browser request registers a short-TTL Redis list queue. After
+commands commit and projections update, the publisher sends a notification to
+`REDIS_CHANNEL` and fans one wake message out to every live queue. The SSE
+handler treats that wake as notification-only and reads durable events after the
 client's `last_sequence` before emitting one `counter` event and closing the
 response.
 
-Idle clients do not reconnect every few hundred milliseconds. When Redis has no
-wake message, the handler waits inside `BRPOP` for up to 25 seconds, emits one
-SSE comment keepalive with a 1 second EventSource retry interval, and closes.
-That means an idle tab creates roughly one request every 26 seconds, and the
-server is waiting on Redis rather than repeatedly querying the event store.
+Idle clients do not reconnect every few hundred milliseconds. On Spin, the
+handler waits inside `BRPOP` for up to 25 seconds, emits one SSE comment
+keepalive with a 1 second EventSource retry interval, and closes. On Wasmtime,
+the handler uses repeated `RPOP` calls with WASI async sleeps so the component
+can continue serving ordinary HTTP requests while it waits for Redis wake
+messages.
 
 Redis publishing remains a notification hook. On Spin, the optional Redis
 trigger sidecar observes the same pub/sub notifications and records health
 markers, but browser delivery uses the per-connection Redis list queues because
 the trigger cannot write into an already-open HTTP response owned by the HTTP
 component. The HTTP route does not perform a blocking Redis `SUBSCRIBE`; it uses
-`BRPOP` through the existing outbound Redis command path.
+the existing outbound Redis command path so Spin and Wasmtime share the same
+browser delivery model.
 
 For the counter app's Redis backend, read-model updates and checkpoint updates
 are applied together with one Lua command per event. The generic projection
@@ -233,4 +235,4 @@ Known boundaries:
 * Counter SSE wake queues are best-effort notification. Durable events remain the source of truth, and clients recover through `last_sequence` replay.
 * The event store is async-only.
 * Generic projection writes and checkpoint writes are not one transaction unless an adapter or application adds a transaction-aware runner.
-* The counter app HTTP SSE route uses Redis `BRPOP` wake queues instead of Redis `SUBSCRIBE`, because Spin outbound Redis exposes command execution while Redis Trigger runs as a separate component. It is a Redis-blocking long poll, not a permanent multi-chunk WebSocket-style stream.
+* The counter app HTTP SSE route uses per-client Redis list wake queues instead of Redis `SUBSCRIBE`, because Spin outbound Redis exposes command execution while Redis Trigger runs as a separate component. Spin waits with `BRPOP`; Wasmtime polls with `RPOP` and WASI async sleeps. It is not a permanent multi-chunk WebSocket-style stream.

@@ -1959,10 +1959,9 @@ impl rsa::rand_core::RngCore for MySqlAuthRng {
 
     fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rsa::rand_core::Error> {
         getrandom::fill(dest).map_err(|error| {
-            rsa::rand_core::Error::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("getrandom failed for MySQL auth: {error}"),
-            ))
+            rsa::rand_core::Error::new(std::io::Error::other(format!(
+                "getrandom failed for MySQL auth: {error}",
+            )))
         })
     }
 }

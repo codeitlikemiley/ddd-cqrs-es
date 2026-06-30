@@ -24,7 +24,7 @@ component = "counter-app-redis-trigger"
 
 [component.counter-app]
 source = "target/wasm32-wasip2/release/counter_app.wasm"
-allowed_outbound_hosts = ["*://*.turso.io:*", "*://*.neon.tech:*", "*://*.supabase.co:*", "*://localhost:*", "*://127.0.0.1:*", "mysql://*:*", "{{ redis_url }}"]
+allowed_outbound_hosts = ["*://*.turso.io:*", "*://*.neon.tech:*", "*://*.supabase.co:*", "*://localhost:*", "*://127.0.0.1:*", "mysql://*:*", "redis://*:*", "rediss://*:*"]
 key_value_stores = ["default"]
 sqlite_databases = ["default"]
 files = [
@@ -37,7 +37,7 @@ watch = ["src/**/*.rs", "Cargo.toml"]
 
 [component.counter-app-redis-trigger]
 source = "redis-trigger/target/wasm32-wasip2/release/counter_app_redis_trigger.wasm"
-allowed_outbound_hosts = ["{{ redis_url }}"]
+allowed_outbound_hosts = ["redis://*:*", "rediss://*:*"]
 
 [component.counter-app-redis-trigger.build]
 command = "cargo build --manifest-path redis-trigger/Cargo.toml --target wasm32-wasip2 --release"

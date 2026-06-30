@@ -114,7 +114,10 @@ impl UpcasterRegistry {
         U: EventUpcaster + Send + Sync + 'static,
         U::Error: std::fmt::Debug + std::fmt::Display + Send + Sync + 'static,
     {
-        let mut map = self.upcasters.write().unwrap();
+        let mut map = self
+            .upcasters
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         map.entry(event_type.into())
             .or_default()
             .push(Arc::new(upcaster));
@@ -128,7 +131,10 @@ impl UpcasterRegistry {
         mut current_version: u32,
         mut raw_payload: Vec<u8>,
     ) -> Result<(u32, Vec<u8>), Box<dyn std::error::Error + Send + Sync>> {
-        let map = self.upcasters.read().unwrap();
+        let map = self
+            .upcasters
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(list) = map.get(event_type) {
             loop {
                 // Find an upcaster that starts from current_version

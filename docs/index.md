@@ -40,12 +40,12 @@ Our framework is highly modular. You can enable specific adapters and engines de
 * **LibSQL / Turso:** Supported for distributed edge SQL via the `"wasi-libsql"` query helper.
 * **Redis:** Supported for async event store, checkpoints, and pub/sub notifications via `"redis"` / `"wasi-redis"` / `"spin-redis"`.
 
-#### Realtime Updates Support:
-Real-time streaming and state updates are supported out-of-the-box when using:
-1. **PostgreSQL / SQLite:** Supported via native asynchronous HTTP Response Streaming / Server-Sent Events (SSE) polling streams using non-blocking timers.
-2. **Redis:** Supported natively via Redis Pub/Sub wake-up notifications and SSE connections.
+#### Realtime and Notification Support:
+The root crate provides durable stores, checkpoints, idempotency stores, and notification primitives. HTTP streaming is application-owned.
 
-**MySQL:** The native MySQL adapter can be used as the durable event/checkpoint/idempotency store for application-owned polling streams. MySQL does not provide a built-in pub/sub stream in this library; use Redis, an outbox worker, binlog CDC, NATS, Kafka, or WebSocket fan-out when low-latency push notifications are required.
+* **PostgreSQL / SQLite / MySQL:** Use durable events and checkpoints to drive polling, SSE, WebSocket, or worker pipelines in your application.
+* **Redis:** Provides experimental async persistence plus notification-only pub/sub wake messages. Durable replay remains the source of truth.
+* **MySQL:** MySQL does not provide a built-in pub/sub stream in this library; pair it with Redis, an outbox worker, binlog CDC, NATS, Kafka, or WebSocket fan-out when low-latency push notifications are required.
 
 | Feature | Description | Third-Party Dependencies |
 | :--- | :--- | :--- |

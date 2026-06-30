@@ -8,6 +8,7 @@ license = "MIT"
 repository = "https://github.com/hexuria/ddd-cqrs-es"
 keywords = ["ddd", "cqrs", "event-sourcing", "events"]
 categories = ["development-tools", "rust-patterns"]
+exclude = [".agents/**"]
 
 [lib]
 name = "ddd_cqrs_es"

@@ -1229,48 +1229,14 @@ fn test_json_file_concurrency_and_atomicity() {
 static MYSQL_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(feature = "mysql")]
-fn get_admin_db_url(base_url: &str) -> String {
-    let (before_query, query) = match base_url.find('?') {
-        Some(idx) => (&base_url[..idx], &base_url[idx..]),
-        None => (base_url, ""),
-    };
-
-    if let Some(slash_idx) = before_query.rfind('/') {
-        if slash_idx > 6 {
-            let prefix = &before_query[..slash_idx];
-            return format!("{}{}", prefix, query);
-        }
-    }
-    base_url.to_string()
-}
-
-#[cfg(feature = "mysql")]
-fn get_test_db_url(base_url: &str, new_db_name: &str) -> String {
-    let (before_query, query) = match base_url.find('?') {
-        Some(idx) => (&base_url[..idx], &base_url[idx..]),
-        None => (base_url, ""),
-    };
-
-    if let Some(slash_idx) = before_query.rfind('/') {
-        if slash_idx > 6 {
-            let prefix = &before_query[..slash_idx];
-            return format!("{}/{}{}", prefix, new_db_name, query);
-        }
-    }
-    format!("{}/{}", base_url, new_db_name)
-}
-
-#[cfg(feature = "mysql")]
-struct DisposableMySqlDb {
-    admin_url: String,
-    db_name: String,
+struct MySqlTestDb {
     test_url: String,
 }
 
 #[cfg(feature = "mysql")]
-impl DisposableMySqlDb {
+impl MySqlTestDb {
     fn new() -> Result<Option<Self>, String> {
-        let base_url = match std::env::var("DDD_CQRS_ES_MYSQL_URL") {
+        let test_url = match std::env::var("DDD_CQRS_ES_MYSQL_URL") {
             Ok(value) if value.trim().is_empty() => return Ok(None),
             Ok(value) => value.trim().to_owned(),
             Err(std::env::VarError::NotPresent) => return Ok(None),
@@ -1281,48 +1247,58 @@ impl DisposableMySqlDb {
             }
         };
 
-        let db_name = format!(
-            "ddd_test_{}_{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
-
-        let admin_url = get_admin_db_url(&base_url);
-        let test_url = get_test_db_url(&base_url, &db_name);
-
-        let mut conn = mysql::Conn::new(admin_url.as_str()).map_err(|error| {
-            format!("failed to connect to MySQL admin URL from DDD_CQRS_ES_MYSQL_URL: {error}")
+        mysql::Conn::new(test_url.as_str()).map_err(|error| {
+            format!("failed to connect to MySQL URL from DDD_CQRS_ES_MYSQL_URL: {error}")
         })?;
-        use mysql::prelude::Queryable;
-        conn.query_drop(format!("CREATE DATABASE `{}`;", db_name))
-            .map_err(|error| {
-                format!("failed to create disposable MySQL database `{db_name}`: {error}")
-            })?;
 
-        Ok(Some(Self {
-            admin_url,
-            db_name,
-            test_url,
-        }))
+        Ok(Some(Self { test_url }))
     }
 }
 
 #[cfg(feature = "mysql")]
-impl Drop for DisposableMySqlDb {
-    fn drop(&mut self) {
-        if let Ok(mut conn) = mysql::Conn::new(self.admin_url.as_str()) {
-            use mysql::prelude::Queryable;
-            let _ = conn.query_drop(format!("DROP DATABASE IF EXISTS `{}`;", self.db_name));
+fn unique_mysql_table(prefix: &str) -> String {
+    format!(
+        "{}_{}_{}",
+        prefix,
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    )
+}
+
+#[cfg(feature = "mysql")]
+struct MySqlTableCleanup {
+    test_url: String,
+    tables: Vec<String>,
+}
+
+#[cfg(feature = "mysql")]
+impl MySqlTableCleanup {
+    fn new(test_url: &str, tables: Vec<String>) -> Self {
+        Self {
+            test_url: test_url.to_owned(),
+            tables,
         }
     }
 }
 
 #[cfg(feature = "mysql")]
-fn mysql_test_db_or_skip(test_name: &str) -> Option<DisposableMySqlDb> {
-    match DisposableMySqlDb::new() {
+impl Drop for MySqlTableCleanup {
+    fn drop(&mut self) {
+        if let Ok(mut conn) = mysql::Conn::new(self.test_url.as_str()) {
+            use mysql::prelude::Queryable;
+            for table in &self.tables {
+                let _ = conn.query_drop(format!("DROP TABLE IF EXISTS `{table}`;"));
+            }
+        }
+    }
+}
+
+#[cfg(feature = "mysql")]
+fn mysql_test_db_or_skip(test_name: &str) -> Option<MySqlTestDb> {
+    match MySqlTestDb::new() {
         Ok(Some(db)) => Some(db),
         Ok(None) => {
             eprintln!("skipping live MySQL {test_name}: DDD_CQRS_ES_MYSQL_URL is not set");
@@ -1335,19 +1311,15 @@ fn mysql_test_db_or_skip(test_name: &str) -> Option<DisposableMySqlDb> {
 #[cfg(feature = "mysql")]
 #[test]
 fn test_mysql_store_passes_reusable_contract_when_url_is_provided() {
-    let _guard = MYSQL_TEST_MUTEX.lock().unwrap();
+    let _guard = MYSQL_TEST_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let Some(db) = mysql_test_db_or_skip("contract test") else {
         return;
     };
 
-    let table_name = format!(
-        "events_live_contract_{}_{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    );
+    let table_name = unique_mysql_table("events_live_contract");
+    let _cleanup = MySqlTableCleanup::new(&db.test_url, vec![table_name.clone()]);
 
     let store = ddd_cqrs_es::MySqlEventStore::<Counter>::connect_with_table_name(
         &db.test_url,
@@ -1367,7 +1339,9 @@ fn test_mysql_store_passes_reusable_contract_when_url_is_provided() {
 #[cfg(feature = "mysql")]
 #[test]
 fn test_mysql_checkpoint_store() {
-    let _guard = MYSQL_TEST_MUTEX.lock().unwrap();
+    let _guard = MYSQL_TEST_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let Some(db) = mysql_test_db_or_skip("checkpoint test") else {
         return;
     };
@@ -1375,7 +1349,8 @@ fn test_mysql_checkpoint_store() {
     use ddd_cqrs_es::MySqlCheckpointStore;
 
     let conn = mysql::Conn::new(db.test_url.as_str()).unwrap();
-    let table_name = format!("checkpoints_{}", std::process::id());
+    let table_name = unique_mysql_table("checkpoints");
+    let _cleanup = MySqlTableCleanup::new(&db.test_url, vec![table_name.clone()]);
 
     let store = MySqlCheckpointStore::with_table_name(conn, table_name.clone()).unwrap();
 
@@ -1389,14 +1364,17 @@ fn test_mysql_checkpoint_store() {
 #[cfg(feature = "mysql")]
 #[test]
 fn test_mysql_idempotency_store() {
-    let _guard = MYSQL_TEST_MUTEX.lock().unwrap();
+    let _guard = MYSQL_TEST_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let Some(db) = mysql_test_db_or_skip("idempotency test") else {
         return;
     };
     use ddd_cqrs_es::MySqlIdempotencyStore;
 
     let conn = mysql::Conn::new(db.test_url.as_str()).unwrap();
-    let table_name = format!("idempotency_{}", std::process::id());
+    let table_name = unique_mysql_table("idempotency");
+    let _cleanup = MySqlTableCleanup::new(&db.test_url, vec![table_name.clone()]);
 
     let store = MySqlIdempotencyStore::with_table_name(conn, table_name.clone()).unwrap();
 

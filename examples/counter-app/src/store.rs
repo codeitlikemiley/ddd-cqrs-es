@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
-#[cfg(runtime_wasmtime)]
+#[cfg(any(runtime_spin, runtime_wasmtime))]
 use ddd_cqrs_es::AsyncCheckpointStore;
 use ddd_cqrs_es::{Aggregate, EventEnvelope, EventId, ExpectedRevision, NewEvent};
 use ddd_cqrs_es::error::EventStoreError;

@@ -301,6 +301,17 @@ where
 
     /// Executes a command once for an idempotency key and returns the previous
     /// committed events when the same key is retried.
+    ///
+    /// # Reliability
+    ///
+    /// This generic implementation coordinates the event store and idempotency
+    /// store through separate awaits. It prevents concurrent duplicate
+    /// execution, but it is not a crash-atomic transaction across both stores.
+    /// If a process stops after appending events and before saving the completed
+    /// idempotency result, the key can remain pending until application recovery
+    /// removes or completes it. Production systems that require exactly-once
+    /// crash recovery should use a transaction-aware adapter, outbox/recovery
+    /// worker, or a pending-key timeout policy.
     pub async fn execute_idempotent<I>(
         &self,
         aggregate_id: &A::Id,

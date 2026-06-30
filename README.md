@@ -35,10 +35,12 @@ To enable durable database adapters:
 * **Redis:** Supported via async event store, checkpoints, and pub/sub notifications using the `"redis"` feature.
 * **MySQL:** Supported on native targets via stable event/checkpoint/idempotency stores using the `"mysql"` feature. WASI examples can also use lower-level MySQL query helpers through `"wasi-mysql"` on Wasmtime or `"spin-mysql"` on Spin.
 
-#### ⚡ Realtime Updates Support:
-Real-time state and streaming updates are fully supported out-of-the-box when using:
-1. **PostgreSQL & SQLite:** Supported via native asynchronous HTTP Response Streaming / Server-Sent Events (SSE) polling streams with non-blocking WASIp3 timers.
-2. **Redis:** Supported natively via Redis Pub/Sub wake-up notifications and SSE connections.
+#### ⚡ Realtime and Notification Support:
+The root crate provides durable stores, checkpoint stores, idempotency stores, and notification primitives. It does not own an HTTP, SSE, or WebSocket server.
+
+* **PostgreSQL / SQLite / MySQL:** Use durable events and checkpoints to drive application-owned polling, SSE, WebSocket, or worker pipelines.
+* **Redis:** Provides experimental async persistence plus `RedisPubSubPublisher` for notification-only wake messages. Clients should wake on notifications and replay durable events/checkpoints as the source of truth.
+* **Counter app:** Demonstrates SSE polling and Redis wake queues for Spin and Wasmtime. That example-level delivery wiring is separate from the stable root API.
 
 The stable built-in SQL adapters are `SqliteEventStore`, `PostgresEventStore`, `MySqlEventStore` (native only), `SqliteCheckpointStore`, `PostgresCheckpointStore`, `MySqlCheckpointStore` (native only), `SqliteIdempotencyStore`, `PostgresIdempotencyStore`, and `MySqlIdempotencyStore` (native only). WASI, Spin, Neon, LibSQL, Supabase, and MySQL runtime feature flags expose lower-level query helpers for examples and runtime experiments. Redis exposes an experimental async `RedisEventStore`, `RedisCheckpointStore`, and `RedisPubSubPublisher`; pub/sub is notification-only and durable event replay remains the source of truth. The counter example includes a separate Spin Redis Trigger sidecar for subscriber smoke testing; it is not part of the root library API. The WASI counter-app supports `db=mysql` on Wasmtime through raw TCP (`wasi-mysql`) and on Spin through `spin_sdk::mysql` (`spin-mysql`).
 
