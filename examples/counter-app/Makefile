@@ -260,6 +260,8 @@ help-db:
 	@echo "  redis    - Redis event/checkpoint/read-model store using REDIS_URL"
 	@echo ""
 	@echo "Public aliases such as db=psql or db=libsql are not supported; use db=postgres or db=turso."
+	@echo "Internally, reset and runtime adapter wiring also accepts libsql for compatibility, but"
+	@echo "db=turso is the supported public interface."
 
 help-realtime:
 	@echo "Supported realtime=<mode> values:"

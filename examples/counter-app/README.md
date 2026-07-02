@@ -57,6 +57,15 @@ Once running, access the application at `http://127.0.0.1:3000`.
 
 ## Storage Backends
 
+### Backend Alias Contract
+
+`make db=<backend>` is the public contract and supports:
+`sqlite`, `postgres`, `neon`, `supabase`, `turso`, `mysql`, and `redis`.
+
+Use `db=turso` as the public backend for Turso/LibSQL. Internally, runtime and reset
+paths accept `libsql` for compatibility, but this is not a supported public
+alias in `make db=...`.
+
 The Makefile selects storage with `db=<backend>` and derives the runtime
 environment variables for you.
 
@@ -120,8 +129,10 @@ make wasmtime db=redis realtime=redis
 The Makefile accepts `realtime=off`, `realtime=polling`, and `realtime=redis`.
 Use `make help-realtime` to print the current list.
 
-`realtime=redis` is a wake/notification transport. It is supported with every
-supported `db` backend:
+`realtime=redis` is always a wake/notification transport. It does not switch the
+durable storage backend.
+
+It is supported with every supported `db` backend:
 
 ```bash
 make wasmtime db=sqlite realtime=redis
@@ -143,6 +154,9 @@ make spin db=redis realtime=redis
 `db=redis` is different: it uses Redis as the durable event store, checkpoint
 store, and read-model store. `make ... db=redis realtime=redis` uses Redis for
 both persistence and wake notifications.
+
+When combining durable `db=<other>` with `realtime=redis`, persistence remains on
+that durable backend and Redis only supplies wake notifications.
 
 ## Realtime Updates
 

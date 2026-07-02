@@ -87,6 +87,10 @@ Our documentation is structured around explaining core theoretical concepts and 
 * [**5.5. Including Metadata**](./docs/production/metadata.md) — Attach correlation, causation, actor, and tenant headers for enterprise audit tracing.
 * [**5.6. Event Upcasters**](./docs/production/upcasters.md) — Handle live event schema evolution smoothly using `EventUpcaster` byte transforms.
 
+For contributor-facing documentation, workflows, and available agent skills, see:
+* [SKILLS.md](./SKILLS.md)
+* [CONTRIBUTING.md](./CONTRIBUTING.md)
+
 ---
 
 ## Local Documentation Server

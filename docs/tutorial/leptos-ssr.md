@@ -1146,6 +1146,8 @@ where
                 deserialize_postgres_rows(rows)
             }
             "turso" | "libsql" => {
+                // Public backend name is "turso"; "libsql" remains an internal
+                // compatibility branch used by runtime/store internals.
                 // Execute Hrana pipeline over Outbound HTTP
                 let url = get_turso_url();
                 let token = get_turso_auth_token();

@@ -87,7 +87,16 @@
         "icon": "server",
         "expanded": true,
         "pages": [
+          "tutorial/leptos-ssr",
           "wasmtime-vs-spin-comparison"
+        ]
+      },
+      {
+        "group": "7. Reference",
+        "icon": "book-open",
+        "expanded": true,
+        "pages": [
+          "PRD"
         ]
       }
     ]
