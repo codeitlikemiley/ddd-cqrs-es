@@ -3,6 +3,11 @@
   "theme": "sequoia",
   "name": "ddd_cqrs_es",
   "description": "A lightweight, infrastructure-light DDD, CQRS, and Event Sourcing framework for Rust.",
+  "seo": {
+    "metatags": {
+      "canonical": "https://ddd-cqrs-es.goldcoders.dev"
+    }
+  },
   "colors": {
     "primary": "#166E3F",
     "light": "#26BD6C",
