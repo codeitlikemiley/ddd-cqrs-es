@@ -12,6 +12,8 @@ VERSION_ARG := $(word 2,$(MAKECMDGOALS))
 
 # `make publish` can optionally take `--dry-run` / `dry-run`.
 PUBLISH_MODE_ARG := $(word 2,$(MAKECMDGOALS))
+EXAMPLE_CHECK_TARGET := counter-app
+EXAMPLE_CHECK_FEATURES := ssr,sqlite
 
 help:
 	@echo "Usage:"
@@ -26,6 +28,7 @@ help:
 	@echo "  make publish -- --dry-run"
 	@echo "  make publish dry-run"
 	@echo "  make example spin db=neon realtime=redis"
+	@echo "  make example-check                  # Compile counter-app counterexample with sqlite feature"
 
 version:
 	@bash scripts/version.sh $(VERSION_ARG)
@@ -44,6 +47,9 @@ example:
 		exit 2; \
 	fi; \
 	$(MAKE) -C examples/counter-app $(EXAMPLE_RUNTIME) db="$(db)" realtime="$(realtime)"
+
+example-check:
+	cargo check --manifest-path examples/$(EXAMPLE_CHECK_TARGET)/Cargo.toml --target wasm32-wasip2 --no-default-features --features $(EXAMPLE_CHECK_FEATURES)
 
 # No-op placeholders so `make version X`, `make publish --dry-run`, and
 # `make example spin` don't fail on positional arguments.

@@ -56,3 +56,9 @@ jobs:
 
       - name: Docs hardening validation
         run: bash scripts/verify-docs-rust.sh
+
+      - name: Install WASI target for example compile check
+        run: rustup target add wasm32-wasip2
+
+      - name: Compile counter-app example (sqlite backend)
+        run: make example-check
