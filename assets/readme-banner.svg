@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="500" viewBox="0 0 1600 500" role="img" aria-labelledby="title desc" preserveAspectRatio="xMidYMid meet">
+  <title id="title">Domain Driven Design + CQRS + ES banner</title>
+  <desc id="desc">Readable project banner for a Rust event sourcing framework.</desc>
+
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#041224"/>
+      <stop offset="50%" stop-color="#0a2c4f"/>
+      <stop offset="100%" stop-color="#05253f"/>
+    </linearGradient>
+    <linearGradient id="line" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00e2ff"/>
+      <stop offset="100%" stop-color="#3af0cb"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1600" height="500" fill="url(#bg)"/>
+  <rect x="62" y="48" width="1476" height="404" rx="34" fill="rgba(255,255,255,0.05)" stroke="#34dbff" stroke-opacity="0.45" stroke-width="2"/>
+  <rect x="94" y="84" width="1412" height="332" rx="24" fill="rgba(5,22,46,0.62)" stroke="#77f4d2" stroke-opacity="0.25" stroke-width="1"/>
+
+  <text x="130" y="206" fill="#8df7d0" font-family="Trebuchet MS, Segoe UI, Arial, sans-serif" font-size="42" font-weight="700">Domain Driven Design + CQRS + ES</text>
+  <text x="130" y="269" fill="#e0f9ff" font-family="Segoe UI, Arial, sans-serif" font-size="40" font-weight="600">First-class Leptos WASI support</text>
+
+  <line x1="130" y1="302" x2="1470" y2="302" stroke="url(#line)" stroke-width="3" stroke-opacity="0.7"/>
+
+  <text x="130" y="390" fill="#dff8ff" font-family="Segoe UI, Arial, sans-serif" font-size="40" font-weight="600">Production-grade deployment with Spin + spin-kube</text>
+</svg>
