@@ -200,7 +200,7 @@ Runtime setup checklist:
 
 | Runtime | Required setup |
 | :--- | :--- |
-| Spin without Redis realtime | Use `spin.toml`, pass `DATABASE_BACKEND`, derived `DATABASE_URL`, derived `DATABASE_AUTH_TOKEN`, and `REALTIME_BACKEND=off` or `polling`. |
+| Spin without Redis realtime | Use `spin.toml`, pass `DATABASE_BACKEND`, `REALTIME_BACKEND=off` or `polling`, and only the derived database env required by the selected backend. |
 | Spin with Redis realtime | Use `spin.redis.toml`, pass the same database env plus `REALTIME_BACKEND=redis`, `REDIS_URL`, and `REDIS_CHANNEL`; set Spin variables `redis_url` and `redis_channel` for the Redis trigger. |
 | Wasmtime without Redis realtime | Enable Preview 3, HTTP, TCP, inherited network, DNS lookup, mount `target/site/pkg` at `/`, mount `./data` at `/data`, and pass database env values. |
 | Wasmtime with Redis realtime | Use the Wasmtime setup above plus `REALTIME_BACKEND=redis`, `REDIS_URL`, and `REDIS_CHANNEL`; there is no Redis trigger sidecar under Wasmtime. |
@@ -233,7 +233,11 @@ variables:
 | `supabase` | `SUPABASE_URL`, `SUPABASE_SECRET_KEY` | `DATABASE_URL`, `DATABASE_AUTH_TOKEN` |
 | `turso` | `TURSO_URL`, `TURSO_AUTH_TOKEN` | `DATABASE_URL`, `DATABASE_AUTH_TOKEN` |
 | `mysql` | `MYSQL_URL` | `DATABASE_URL` |
-| `redis` | `REDIS_URL` | `DATABASE_URL` |
+| `redis` | `REDIS_URL` | `REDIS_URL` |
+
+`DATABASE_URL` and `DATABASE_AUTH_TOKEN` are internal runtime env values. Set
+the public backend-specific variables in `.env`; pass the internal values
+yourself only when bypassing the Makefile.
 
 The SSE endpoint is:
 

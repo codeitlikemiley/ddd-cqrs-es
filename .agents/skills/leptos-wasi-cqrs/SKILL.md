@@ -155,11 +155,16 @@ The counter app uses `MultiBackendEventStore`, checkpoint helpers, and read-mode
 
 - `db=sqlite`: Spin SQLite host store on Spin; JSON files mounted at `/data` on Wasmtime.
 - `db=postgres`: PostgreSQL URL from `POSTGRES_URL`, passed internally as `DATABASE_URL`.
-- `db=neon`: Neon HTTP SQL URL from `NEON_DB_URL`.
-- `db=supabase`: Supabase REST URL/key from `SUPABASE_URL` and `SUPABASE_SECRET_KEY`.
-- `db=turso`: Turso/LibSQL Hrana URL/token from `TURSO_URL` and `TURSO_AUTH_TOKEN`; public command name remains `db=turso`.
-- `db=mysql`: raw TCP MySQL on Wasmtime with `wasi-mysql`; Spin host MySQL with `spin-mysql`.
-- `db=redis`: Redis is the durable event/checkpoint/read-model store.
+- `db=neon`: Neon HTTP SQL URL from `NEON_DB_URL`, passed internally as `DATABASE_URL`.
+- `db=supabase`: Supabase REST URL/key from `SUPABASE_URL` and `SUPABASE_SECRET_KEY`, passed internally as `DATABASE_URL` and `DATABASE_AUTH_TOKEN`.
+- `db=turso`: Turso/LibSQL Hrana URL/token from `TURSO_URL` and `TURSO_AUTH_TOKEN`, passed internally as `DATABASE_URL` and `DATABASE_AUTH_TOKEN`; public command name remains `db=turso`.
+- `db=mysql`: MySQL URL from `MYSQL_URL`, passed internally as `DATABASE_URL`; raw TCP MySQL on Wasmtime with `wasi-mysql`; Spin host MySQL with `spin-mysql`.
+- `db=redis`: Redis is the durable event/checkpoint/read-model store and uses `REDIS_URL` directly.
+
+Do not document `DATABASE_URL` or `DATABASE_AUTH_TOKEN` as public `.env`
+configuration for the counter app. They are internal runtime env values derived
+by the Makefile. MySQL intentionally does not fall back to `DATABASE_URL`; use
+`MYSQL_URL` for `db=mysql`.
 
 `realtime=redis` is independent of the durable backend. It uses Redis as notification/wake transport, then the SSE route replays durable events after the client's `last_sequence`.
 

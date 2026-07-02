@@ -976,7 +976,8 @@ REALTIME_BACKEND=off
 REDIS_CHANNEL=counter-events
 
 # make derives DATABASE_URL/DATABASE_AUTH_TOKEN from the backend-specific
-# values below before launching Spin or Wasmtime.
+# values below before launching Spin or Wasmtime. Do not set those internal
+# runtime values here for normal counter-app workflows.
 
 # =========================================================================
 # 1. PostgreSQL Settings (Local PostgreSQL)
@@ -1187,7 +1188,11 @@ boundaries:
 | `supabase` | `SUPABASE_URL`, `SUPABASE_SECRET_KEY` | `DATABASE_URL`, `DATABASE_AUTH_TOKEN` |
 | `turso` | `TURSO_URL`, `TURSO_AUTH_TOKEN` | `DATABASE_URL`, `DATABASE_AUTH_TOKEN` |
 | `mysql` | `MYSQL_URL` | `DATABASE_URL` |
-| `redis` | `REDIS_URL` | `DATABASE_URL`; also `REDIS_URL` for realtime wake transport |
+| `redis` | `REDIS_URL` | `REDIS_URL` |
+
+`DATABASE_URL` and `DATABASE_AUTH_TOKEN` are internal runtime env values. Set
+the public backend-specific variables in `.env`; pass the internal values
+yourself only when bypassing the Makefile.
 
 Spin manifests must allow outbound hosts for every backend family you plan to
 demonstrate:
