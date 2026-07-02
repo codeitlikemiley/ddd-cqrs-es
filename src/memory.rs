@@ -1,3 +1,7 @@
+//! In-memory event store implementation used by tests, examples, and local
+//! development. It preserves stream/revision behavior for API compatibility while
+//! remaining non-durable.
+
 use crate::aggregate::Aggregate;
 use crate::error::{ConcurrencyError, EventStoreError};
 use crate::event::{EventEnvelope, EventId, ExpectedRevision, NewEvent};

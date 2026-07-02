@@ -154,12 +154,16 @@ impl SqlSchemaConfig {
 /// A representation of a versioned schema migration.
 #[derive(Debug, Clone)]
 pub struct SchemaMigration {
+    /// Migration version, used for ordering and idempotent replay.
     pub version: i32,
+    /// Short migration name used for observability and debugging.
     pub description: &'static str,
+    /// Forward migration SQL (`up`) statement with `{..._table}` placeholders.
     pub up_sql: &'static str,
 }
 
 /// Canonical framework-owned migrations.
+/// Returns the built-in migration list for a given SQL dialect in ascending version order.
 pub fn get_migrations(dialect: SqlDialect) -> Vec<SchemaMigration> {
     match dialect {
         SqlDialect::Sqlite => vec![

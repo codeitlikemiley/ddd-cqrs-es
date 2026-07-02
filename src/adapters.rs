@@ -11,6 +11,7 @@
 //! general-purpose SQL parameterization APIs and are not full event-store or
 //! checkpoint-store backends until they implement the reusable library traits.
 
+/// SQL schema for the Postgres `events` table used by framework-owned migrations.
 pub const EVENTS_TABLE_SCHEMA_POSTGRES: &str = r#"
 CREATE TABLE IF NOT EXISTS events (
     sequence BIGSERIAL PRIMARY KEY,
@@ -27,6 +28,7 @@ CREATE TABLE IF NOT EXISTS events (
 );
 "#;
 
+/// SQL schema for the Postgres `checkpoints` table used by framework-owned migrations.
 pub const CHECKPOINTS_TABLE_SCHEMA_POSTGRES: &str = r#"
 CREATE TABLE IF NOT EXISTS checkpoints (
     projection_name VARCHAR(255) PRIMARY KEY,
@@ -34,6 +36,7 @@ CREATE TABLE IF NOT EXISTS checkpoints (
 );
 "#;
 
+/// SQL schema for the SQLite `events` table used by framework-owned migrations.
 pub const EVENTS_TABLE_SCHEMA_SQLITE: &str = r#"
 CREATE TABLE IF NOT EXISTS events (
     event_id TEXT NOT NULL UNIQUE,
@@ -50,6 +53,7 @@ CREATE TABLE IF NOT EXISTS events (
 );
 "#;
 
+/// SQL schema for the SQLite `checkpoints` table used by framework-owned migrations.
 pub const CHECKPOINTS_TABLE_SCHEMA_SQLITE: &str = r#"
 CREATE TABLE IF NOT EXISTS checkpoints (
     projection_name TEXT PRIMARY KEY,
@@ -62,7 +66,7 @@ fn env_non_empty(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|s| !s.is_empty())
 }
 
-/// Helper to decode any database JSON row to standard EventEnvelope
+/// Decode a database JSON row into a standard [`crate::event::EventEnvelope`].
 pub fn row_to_envelope<E, Id>(
     row: &serde_json::Value,
 ) -> Result<crate::event::EventEnvelope<E, Id>, String>
@@ -244,6 +248,10 @@ pub async fn wasi_http_post(
 // -------------------------------------------------------------------------
 // Postgres formatting & local query interpolation helpers
 // -------------------------------------------------------------------------
+/// Convert a JSON value into a SQL literal for PostgreSQL text interpolation.
+///
+/// This helper is only for internal backend adapters that rely on raw SQL text
+/// substitution; callers should pass already validated values.
 pub fn format_pg_value(val: &serde_json::Value) -> Result<String, String> {
     match val {
         serde_json::Value::Null => Ok("NULL".to_string()),
@@ -261,6 +269,9 @@ pub fn format_pg_value(val: &serde_json::Value) -> Result<String, String> {
     }
 }
 
+/// Replace `$1`, `$2`, ... placeholders in a SQL template with interpolated literals.
+///
+/// Returns an error when a placeholder index is invalid or out of bounds.
 pub fn interpolate_query(sql: &str, params: &[serde_json::Value]) -> Result<String, String> {
     let mut final_sql = String::new();
     let mut chars = sql.chars().peekable();
@@ -299,6 +310,7 @@ pub fn interpolate_query(sql: &str, params: &[serde_json::Value]) -> Result<Stri
     Ok(final_sql)
 }
 
+/// Base64-encode binary payloads without padding surprises.
 pub fn base64_encode(input: &[u8]) -> String {
     const CHARSET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut result = String::with_capacity(input.len().div_ceil(3) * 4);
@@ -340,6 +352,10 @@ pub fn base64_encode(input: &[u8]) -> String {
 // Neon / Serverless Postgres HTTP adapter
 // -------------------------------------------------------------------------
 #[cfg(feature = "wasi-neon")]
+/// Execute a Neon SQL statement via the Neon HTTP API and return decoded rows.
+///
+/// The query `sql` is sent with positional parameters and results are returned as
+/// raw JSON values to keep the adapter transport-agnostic.
 pub async fn execute_neon_query(
     url: &str,
     sql: &str,
@@ -438,6 +454,10 @@ pub async fn execute_neon_query(
 // Supabase PostgREST RPC HTTP adapter
 // -------------------------------------------------------------------------
 #[cfg(feature = "wasi-supabase-rpc")]
+/// Execute SQL via Supabase PostgREST `execute_sql` RPC.
+///
+/// This helper interpolates the SQL template and extracts RPC SQL errors into
+/// readable string failures.
 pub async fn execute_supabase_query(
     url: &str,
     secret_key: Option<&str>,
@@ -510,8 +530,11 @@ pub async fn execute_supabase_query(
 // Turso / LibSQL Hrana /v2/pipeline HTTP adapter
 // -------------------------------------------------------------------------
 #[cfg(feature = "wasi-libsql")]
+/// Container for libSQL pipeline results including rowset and optional last insert id.
 pub struct LibSqlResult {
+    /// Parsed rowset from the `/v2/pipeline` response.
     pub rows: Vec<serde_json::Value>,
+    /// Optional last insert row id when supported by the executed statement.
     pub last_insert_rowid: Option<u64>,
 }
 
@@ -643,6 +666,10 @@ fn parse_libsql_result(resp: &serde_json::Value) -> Result<LibSqlResult, String>
 }
 
 #[cfg(feature = "wasi-libsql")]
+/// Execute a parameterized statement against a Turso/LibSQL endpoint.
+///
+/// Rows are converted to JSON objects and a helper result is returned for both
+/// query and write command paths.
 pub async fn execute_libsql_query(
     url: &str,
     auth_token: Option<&str>,
@@ -699,15 +726,25 @@ pub async fn execute_libsql_query(
 // Wasmtime Raw TCP PostgreSQL driver (requires no library other than TLS/crypto)
 // -------------------------------------------------------------------------
 #[cfg(feature = "wasi-postgres-tcp")]
+/// Parsed host/credential details for raw PostgreSQL TCP transport adapters.
 pub struct PgConnParams {
+    /// TCP hostname or IP for the PostgreSQL server.
     pub host: String,
+    /// TCP port for the PostgreSQL server.
     pub port: u16,
+    /// Username used during SASL/SCRAM authentication.
     pub user: String,
+    /// Optional password passed during authentication.
     pub password: Option<String>,
+    /// Database name from the connection URL.
     pub database: String,
 }
 
 #[cfg(feature = "wasi-postgres-tcp")]
+/// Parse a PostgreSQL connection URL into [`PgConnParams`].
+///
+/// Supports `postgres://` and `postgresql://` schemes and optional `@`-style
+/// credentials and path-based database names.
 pub fn parse_pg_url(url: &str) -> Result<PgConnParams, String> {
     let stripped = if let Some(rest) = url.strip_prefix("postgres://") {
         rest
@@ -1117,6 +1154,9 @@ fn parse_data_row(payload: &[u8], columns: &[PgColumn]) -> std::io::Result<serde
 static PG_CONN: std::sync::Mutex<Option<(String, PgStream)>> = std::sync::Mutex::new(None);
 
 #[cfg(feature = "wasi-postgres-tcp")]
+/// Open and authenticate a PostgreSQL TCP connection and negotiate protocol handshakes.
+///
+/// Handles optional SSL negotiation and returns a ready-to-use stream wrapper.
 pub fn connect_and_auth_postgres(
     url: &str,
     pg_params: &PgConnParams,
@@ -1414,6 +1454,10 @@ pub fn connect_and_auth_postgres(
 }
 
 #[cfg(feature = "wasi-postgres-tcp")]
+/// Execute a SQL statement on an authenticated Postgres stream and return row data.
+///
+/// The query is interpolated from `$N` placeholders before transmission, and
+/// result packets are decoded into JSON objects.
 pub fn execute_query_on_stream(
     pg_stream: &mut PgStream,
     sql: &str,
@@ -1455,6 +1499,9 @@ pub fn execute_query_on_stream(
 }
 
 #[cfg(feature = "wasi-postgres-tcp")]
+/// Execute SQL over raw Postgres TCP with a small connection cache per URL.
+///
+/// Returns all rows as JSON arrays/objects in the framework's shared shape.
 pub fn execute_raw_tcp_postgres(
     url: &str,
     sql: &str,
@@ -1546,6 +1593,9 @@ struct MySqlColumn {
 }
 
 #[cfg(feature = "wasi-mysql")]
+/// Execute SQL over raw MySQL TCP with minimal protocol parsing.
+///
+/// Parameter placeholders are interpolated using `?` markers before transmission.
 pub fn execute_raw_tcp_mysql(
     url: &str,
     sql: &str,
@@ -2342,6 +2392,10 @@ fn escape_mysql_string(value: &str) -> String {
 // Spin SQLite adapter
 // -------------------------------------------------------------------------
 #[cfg(feature = "spin-sqlite")]
+/// Execute a Spin SQLite query against the default connection and return JSON rows.
+///
+/// Statement parameters are converted into Spin value types and each returned
+/// column is materialized as a JSON object keyed by column name.
 pub async fn execute_spin_sqlite(
     sql: &str,
     params: Vec<serde_json::Value>,
@@ -2413,6 +2467,9 @@ pub async fn execute_spin_sqlite(
 // Spin Postgres adapter
 // -------------------------------------------------------------------------
 #[cfg(feature = "spin-postgres")]
+/// Execute a Spin Postgres query and return JSON rows for read operations.
+///
+/// For write commands this returns an empty rowset after successful execution.
 pub async fn execute_spin_pg(
     db_url: &str,
     sql: &str,
@@ -2529,6 +2586,9 @@ pub async fn execute_spin_pg(
 // Spin MySQL adapter
 // -------------------------------------------------------------------------
 #[cfg(feature = "spin-mysql")]
+/// Execute a Spin MySQL query and return JSON rows for read operations.
+///
+/// `?` placeholders are interpolated into SQL-safe values before execution.
 pub async fn execute_spin_mysql(
     db_url: &str,
     sql: &str,
