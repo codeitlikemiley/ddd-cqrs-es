@@ -1,5 +1,7 @@
 # ddd_cqrs_es
 
+[![ci](https://github.com/codeitlikemiley/ddd-cqrs-es/actions/workflows/ci.yml/badge.svg)](https://github.com/codeitlikemiley/ddd-cqrs-es/actions/workflows/ci.yml)
+
 A lightweight, infrastructure-light Domain-Driven Design (DDD), CQRS, and Event Sourcing framework for Rust.
 
 Decouple your core business logic completely from databases, serialization, web frameworks, and asynchronous runtimes. Design pure domain aggregates, enforce transactional consistency boundaries, and build rich read models with minimal friction.
@@ -18,6 +20,29 @@ ddd_cqrs_es = { git = "https://github.com/codeitlikemiley/ddd-cqrs-es" }
 # Or from crates.io (once published):
 # ddd_cqrs_es = "0.2.0"
 ```
+
+## Publishing (library crate)
+
+The crate is released to [crates.io](https://crates.io) using root Makefile targets:
+
+1. Dry-run validation (local and non-publishing):
+   ```bash
+   rtk make publish dry-run
+   ```
+2. Actual publish (requires token):
+   ```bash
+   CARGO_REGISTRY_TOKEN=<token> rtk make publish
+   ```
+
+You can also run these helper scripts directly:
+
+```bash
+rtk bash scripts/release-crates-io.sh dry-run
+CARGO_REGISTRY_TOKEN=<token> rtk bash scripts/release-crates-io.sh publish
+```
+
+GitHub Actions also provides a manual release workflow:
+* Navigate to **Actions → release-crates-io** and run with mode `dry-run` or `publish`.
 
 To enable durable database adapters:
 * **SQLite Support:** Enable the `"sqlite"` feature.

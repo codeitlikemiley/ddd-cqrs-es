@@ -45,3 +45,23 @@ Run this before docs-focused PRs:
 - `rtk node -v` (environment sanity check, if needed)
 - `rtk jq -r '.navigation.groups[].pages[]' docs/docs.json | sort` and compare against `docs/**/*.md`
 - `rtk scripts/verify-docs.sh`
+
+## Release process (crates.io)
+
+For a release to [crates.io](https://crates.io):
+
+- Dry run:
+  - `rtk make publish dry-run` or `rtk make publish -- --dry-run`
+- Publish:
+  - `CARGO_REGISTRY_TOKEN=<token> rtk make publish`
+- Or trigger GitHub Actions manually:
+  - Workflow: `release-crates-io`
+  - Mode: `dry-run` or `publish`
+
+## Versioning and example shortcuts
+
+- Bump version:
+  - `make version` (auto-increment patch)
+  - `make version 0.2.1` (explicit version)
+- Run example with same pattern as app Makefile:
+  - `make example spin db=neon realtime=redis`
