@@ -9,24 +9,18 @@ As applications scale, this single-model approach leads to severe performance bo
 
 **Command-Query Responsibility Segregation (CQRS)** solves this by dividing these responsibilities into completely separate pipelines:
 
-```
-                  ┌───────────────────────────────┐
-                  │            Client             │
-                  └───────┬───────────────▲───────┘
-                          │               │
-                 Commands │ (Write Path)  │ Queries (Read Path)
-                          ▼               │
-               ┌─────────────────────┐    │    ┌─────────────────────┐
-               │    Write Model      │    │    │     Read Model      │
-               │ (Aggregate/Store)   │    │    │    (Projections)    │
-               └──────────┬──────────┘    │    └──────────▲──────────┘
-                          │               │               │
-                    Events│               └───────────────┤Replays
-                          ▼                               │
-               ┌─────────────────────┐                    │
-               │     Event Store     ├────────────────────┘
-               │    (Fact Ledger)    │
-               └─────────────────────┘
+```mermaid
+flowchart TD
+    Client["Client"]
+    Write["Write Model<br/>Aggregate / Store"]
+    Store["Event Store<br/>Fact Ledger"]
+    Read["Read Model<br/>Projections"]
+
+    Client -- "Commands<br/>(write path)" --> Write
+    Write -- "Events" --> Store
+    Store -- "Replay committed facts" --> Read
+    Client -- "Queries<br/>(read path)" --> Read
+    Read -- "Query results" --> Client
 ```
 
 ---

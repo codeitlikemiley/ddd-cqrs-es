@@ -34,27 +34,15 @@ $$\text{Spin} \approx 1 \times (\text{Handshake} + \text{Query}) + 5 \times (\te
 
 ## 3. Visualizing the Difference
 
-```
-WASMTIME (No Connection Pooling)
-Query 1: [TCP Handshake] -> [TLS Handshake] -> [Query Execution]  (300ms)
-Query 2: [TCP Handshake] -> [TLS Handshake] -> [Query Execution]  (300ms)
-Query 3: [TCP Handshake] -> [TLS Handshake] -> [Query Execution]  (300ms)
-Query 4: [TCP Handshake] -> [TLS Handshake] -> [Query Execution]  (300ms)
-Query 5: [TCP Handshake] -> [TLS Handshake] -> [Query Execution]  (300ms)
-Query 6: [TCP Handshake] -> [TLS Handshake] -> [Query Execution]  (300ms)
-==========================================================================
-TOTAL: ~2.4 seconds
-
-SPIN (With Global Connection Pooling)
-Query 1: [TCP Handshake] -> [TLS Handshake] -> [Query Execution]  (300ms)
-Query 2: =====================================> [Query Execution]  (40ms)  <-- Reused TCP/TLS Pipe!
-Query 3: =====================================> [Query Execution]  (40ms)  <-- Reused TCP/TLS Pipe!
-Query 4: =====================================> [Query Execution]  (40ms)  <-- Reused TCP/TLS Pipe!
-Query 5: =====================================> [Query Execution]  (40ms)  <-- Reused TCP/TLS Pipe!
-Query 6: =====================================> [Query Execution]  (40ms)  <-- Reused TCP/TLS Pipe!
-==========================================================================
-TOTAL: ~500-600ms
-```
+| Query | Wasmtime (`wasmtime serve`) | Spin (`spin up`) |
+| --- | --- | --- |
+| 1 | New TCP/TLS + query (~300ms) | New TCP/TLS + query (~300ms) |
+| 2 | New TCP/TLS + query (~300ms) | Reused TCP/TLS + query (~40ms) |
+| 3 | New TCP/TLS + query (~300ms) | Reused TCP/TLS + query (~40ms) |
+| 4 | New TCP/TLS + query (~300ms) | Reused TCP/TLS + query (~40ms) |
+| 5 | New TCP/TLS + query (~300ms) | Reused TCP/TLS + query (~40ms) |
+| 6 | New TCP/TLS + query (~300ms) | Reused TCP/TLS + query (~40ms) |
+| Total | ~2.4 seconds | ~500-600ms |
 
 ---
 
@@ -102,21 +90,21 @@ Fermyon Cloud provides managed, serverless, auto-scaling WASM orchestration with
 ### B. SpinKube (Enterprise Kubernetes at the Edge)
 SpinKube is an open-source project that integrates WebAssembly natively into standard Kubernetes clusters. Instead of running heavy Docker containers (which require hundreds of MBs and take seconds to start), SpinKube runs WASM modules as native processes using custom node shims.
 
-```
-+--------------------------------------------------------------+
-|                    Your Kubernetes Cluster                   |
-|                                                              |
-|   +-------------------+              +-------------------+   |
-|   |   Linux Pod RTT   |              |  SpinKube WASM    |   |
-|   |  Traditional Pod  |              |   (Fast & Light)  |   |
-|   |  [500MB Container]|              |    [512KB WASM]   |   |
-|   +---------+---------+              +---------+---------+   |
-|             |                                  |             |
-|   +---------v---------+              +---------v---------+   |
-|   | Containerd Docker |              | Containerd-Shim   |   |
-|   |   Engine Runtime  |              |   (Wasmtime/Spin) |   |
-|   +-------------------+              +-------------------+   |
-+--------------------------------------------------------------+
+```mermaid
+flowchart LR
+    subgraph Cluster["Your Kubernetes Cluster"]
+        subgraph Pod["Traditional Linux Pod"]
+            Container["500 MB container image"]
+            Docker["containerd Docker runtime"]
+            Container --> Docker
+        end
+
+        subgraph Wasm["SpinKube WASM Workload"]
+            Module["512 KB WASM module"]
+            Shim["containerd-shim-spin-v2<br/>Wasmtime / Spin runtime"]
+            Module --> Shim
+        end
+    end
 ```
 
 It is fully compatible with major managed cloud Kubernetes providers:

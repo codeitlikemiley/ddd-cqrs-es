@@ -3,11 +3,6 @@
   "theme": "sequoia",
   "name": "ddd_cqrs_es",
   "description": "A lightweight, infrastructure-light DDD, CQRS, and Event Sourcing framework for Rust.",
-  "seo": {
-    "metatags": {
-      "canonical": "https://ddd-cqrs-es.goldcoders.dev"
-    }
-  },
   "colors": {
     "primary": "#166E3F",
     "light": "#26BD6C",
@@ -94,6 +89,14 @@
         "expanded": true,
         "pages": [
           "tutorial/leptos-ssr",
+          "tutorial/leptos-ssr-domain",
+          "tutorial/leptos-ssr-spin-storage",
+          "tutorial/leptos-ssr-projections",
+          "tutorial/leptos-ssr-server-api",
+          "tutorial/leptos-ssr-ui",
+          "tutorial/leptos-ssr-runtime-backends",
+          "tutorial/leptos-ssr-execution",
+          "tutorial/leptos-ssr-architecture-payoff",
           "wasmtime-vs-spin-comparison"
         ]
       },

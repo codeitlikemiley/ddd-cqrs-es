@@ -15,8 +15,14 @@ However, business requirements evolve. Fields are added, renamed, or deprecated.
 
 An **Upcaster** is a lightweight, raw-level transformer that intercepts old event payloads during the loading/replay phase and upgrades them on-the-fly to the latest schema version before they are deserialized into your domain types:
 
-```
-[ Immutable Store (v1 JSON) ] ──► [ EventUpcaster ] ──► [ Latest Domain Event (v2) ]
+```mermaid
+flowchart LR
+    Store["Immutable Store<br/>v1 JSON"]
+    Upcaster["EventUpcaster"]
+    Event["Latest Domain Event<br/>v2"]
+
+    Store --> Upcaster
+    Upcaster --> Event
 ```
 
 Because upcasters operate during the loading loop, the database remains completely untouched, preserving our historical audit guarantees, while your application code only ever has to reason about the latest, current event structure.

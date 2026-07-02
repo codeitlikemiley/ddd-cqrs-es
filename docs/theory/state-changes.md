@@ -11,17 +11,20 @@ In an Event Sourced system, we make changes to the application state through a d
 
 ## The Two-Step State Transition
 
-```
-[ Incoming Command ]
-        │
-        ▼
-1. Validation (handle) ──► Fails ──► Return Error (Abort)
-        │
-        ▼ Succeeds
-   Emits Domain Events
-        │
-        ▼
-2. Mutation (apply) ──► Mutates in-memory state deterministically
+```mermaid
+flowchart TD
+    Command["Incoming Command"]
+    Validate{"1. Validation<br/>handle(command)"}
+    Error["Return Error<br/>Abort"]
+    Events["Emit Domain Events"]
+    Apply["2. Mutation<br/>apply(event)"]
+    State["Mutate in-memory state<br/>deterministically"]
+
+    Command --> Validate
+    Validate -- "Fails" --> Error
+    Validate -- "Succeeds" --> Events
+    Events --> Apply
+    Apply --> State
 ```
 
 ### Step 1: Command Validation (`handle`)

@@ -11,17 +11,18 @@ To support high-performance, flexible querying, we use the read side of CQRS. Th
 
 ## The Query Pipeline
 
-```
-[ Committed Events ]
-        │
-        ▼
-[ Projection Runner ] (Polls/Listens sequentially)
-        │
-        ▼
-[ Projection ] (Applies events to Read Model)
-        │
-        ▼
-[ Read Model Database ] ◄─── [ User UI Queries ] (Fast SELECTs/Joins)
+```mermaid
+flowchart TD
+    Events["Committed Events"]
+    Runner["Projection Runner<br/>Polls or listens sequentially"]
+    Projection["Projection<br/>Applies events to read model"]
+    ReadModel["Read Model Database"]
+    Queries["User UI Queries<br/>Fast SELECTs / joins"]
+
+    Events --> Runner
+    Runner --> Projection
+    Projection --> ReadModel
+    Queries --> ReadModel
 ```
 
 ### 1. Read Models (Views)
@@ -43,8 +44,14 @@ Because projections execute *after* events are successfully written and committe
 
 This state is called **Eventual Consistency**:
 
-```
-[ Command Committed ] ──(latency boundary)──► [ Projection Applied ] ──► [ UI View Updated ]
+```mermaid
+flowchart LR
+    Command["Command Committed"]
+    Projection["Projection Applied"]
+    UI["UI View Updated"]
+
+    Command -- "latency boundary" --> Projection
+    Projection --> UI
 ```
 
 In practice, this sub-millisecond latency is invisible to users and represents a massive benefit:
