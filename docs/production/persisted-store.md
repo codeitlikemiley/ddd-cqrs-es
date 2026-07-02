@@ -9,6 +9,8 @@ A durable event store acts as our application's **immutable ledger**. It is high
 1. **Load Stream:** Fetch all committed event envelopes for a specific Aggregate ID, ordered sequentially by their stream version.
 2. **Append Stream:** Append a block of new events to the stream in a single transaction.
 
+Read [Production Guarantees](./guarantees.md) before choosing APIs for a production command path. The generic APIs are portable; the native SQL adapters add transaction-aware idempotent append, durable snapshots, and transaction-friendly projection patterns. Read [Database Query Patterns](./db-query-patterns.md) before adding custom SQL or application read models.
+
 ---
 
 ## Optimistic Concurrency Control (OCC)
@@ -91,13 +93,20 @@ Our framework supports multiple database options depending on your environment.
 
 | Database Backend | Feature Flag | Supported Modes | Realtime Support | Production Ready |
 | :--- | :--- | :--- | :--- | :--- |
-| **SQLite** | `"sqlite"` | Native Sync (event, checkpoint, idempotency) | Yes (via SSE polling/polling stream) | Yes |
-| **PostgreSQL** | `"postgres"` | Native Sync (event, checkpoint, idempotency) | Yes (via SSE polling/polling stream) | Yes |
-| **LibSQL / Turso** | `"wasi-libsql"` | Async HTTP / Hrana SQL query helpers | No | Experimental / WASM |
+| **SQLite** | `"sqlite"` | Native Sync (event, checkpoint, idempotency, snapshot, atomic idempotent append) | Yes (via SSE polling/polling stream) | Yes |
+| **PostgreSQL** | `"postgres"` | Native Sync (event, checkpoint, idempotency, snapshot, atomic idempotent append) | Yes (via SSE polling/polling stream) | Yes |
+| **LibSQL / Turso** | `"wasi-libsql"` | Async HTTP / Hrana SQL query helpers | Counter app supports SSE polling or Redis wake | Experimental / WASM |
 | **Redis** | `"redis"` | Async (event, checkpoint, pub/sub) | Yes (via Pub/Sub / SSE notifications) | Experimental / WASM |
-| **MySQL** | `"mysql"`, `"wasi-mysql"`, `"spin-mysql"` | Native Sync stores plus raw TCP Wasmtime and Spin SDK query helpers | Application-owned polling or external pub/sub bridge | Yes for native stores; runtime helpers are experimental / WASM |
+| **MySQL** | `"mysql"`, `"wasi-mysql"`, `"spin-mysql"` | Native Sync stores plus raw TCP Wasmtime and Spin SDK query helpers | Counter app supports SSE polling or Redis wake | Yes for native stores; runtime helpers are experimental / WASM |
 
 #### To Enable Durable Database Adapters:
+
+Custom schema table names are validated when constructing `SqlSchemaConfig`:
+
+```rust
+let config = ddd_cqrs_es::SqlSchemaConfig::new(ddd_cqrs_es::SqlDialect::Postgres)
+    .with_events_table("tenant_a_events")?;
+```
 * **SQLite Support:** Enable the `"sqlite"` feature.
 * **PostgreSQL Support:** Enable the `"postgres"` feature.
 * **MySQL Support:** Enable the `"mysql"` feature.
@@ -109,6 +118,8 @@ Our framework supports multiple database options depending on your environment.
 > [!NOTE]
 > We support SQLite, PostgreSQL, MySQL, LibSQL, and Redis backends.
 > The library provides durable stores, checkpoint stores, idempotency stores, and notification primitives. Push-style realtime delivery is application-owned: use polling, SSE, WebSocket, an outbox worker, binlog CDC, Redis, NATS, Kafka, or another fan-out layer as appropriate. Redis pub/sub support is notification-only; durable event replay remains the source of truth.
+
+For request idempotency, prefer `Repository::execute_idempotent_atomic` with the native SQL event stores. `Repository::execute_idempotent` remains available for portable and non-strict workloads, but it coordinates a separate idempotency store and is not crash-atomic across both stores.
 
 ### 1. SQLite Store (Embedded File)
 Perfect for edge applications, local databases, or desktop apps. Enable with the `"sqlite"` feature.

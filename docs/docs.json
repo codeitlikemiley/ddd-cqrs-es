@@ -71,8 +71,10 @@
         "icon": "database",
         "expanded": true,
         "pages": [
+          "production/guarantees",
           "production/persisted-store",
           "production/persisted-views",
+          "production/db-query-patterns",
           "production/redis",
           "production/metadata",
           "production/upcasters",

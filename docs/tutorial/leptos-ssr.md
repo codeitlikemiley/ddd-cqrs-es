@@ -152,14 +152,6 @@ impl Aggregate for Counter {
         "counter"
     }
 
-    fn id(&self) -> Option<&Self::Id> {
-        if self.id.0.is_empty() {
-            None
-        } else {
-            Some(&self.id)
-        }
-    }
-
     fn revision(&self) -> u64 {
         self.revision
     }
@@ -329,8 +321,8 @@ where
                 recorded_at_ms INTEGER NOT NULL,
                 UNIQUE (aggregate_type, aggregate_id, revision)
             );
-            CREATE INDEX IF NOT EXISTS {table}_stream_idx
-                ON {table} (aggregate_type, aggregate_id, revision);
+            CREATE INDEX IF NOT EXISTS {table}_global_replay_idx
+                ON {table} (aggregate_type, sequence);
             "#,
             table = self.table_name
         );
@@ -725,11 +717,28 @@ Leptos utilizes Server Functions (`#[server]`) to elegantly bridge client compon
 Here is how our server functions are constructed inside `/Users/uriah/Code/ddd/examples/counter-app/src/app.rs`. Notice how they isolate SSR execution from client-side WASM hydration compilation:
 
 ```rust
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EventLogDto {
+    pub sequence: u64,
+    pub event_type: String,
+    pub revision: u64,
+    pub payload: String,
+    pub recorded_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CounterViewDto {
+    pub count: i32,
+    pub latest_events: Vec<EventLogDto>,
+    pub last_sequence: u64,
+    pub realtime_enabled: bool,
+}
+
 #[server(prefix = "/api")]
-pub async fn get_count() -> Result<i32, ServerFnError> {
+pub async fn get_counter_view() -> Result<CounterViewDto, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
-        get_count_db().await
+        get_counter_view_db().await
     }
     #[cfg(not(feature = "ssr"))]
     {
@@ -738,13 +747,13 @@ pub async fn get_count() -> Result<i32, ServerFnError> {
 }
 
 #[server(prefix = "/api")]
-pub async fn increment_count(amount: i32) -> Result<(), ServerFnError> {
+pub async fn increment_count(amount: i32) -> Result<CounterViewDto, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
         if amount <= 0 {
             return Err(ServerFnError::new("Amount must be positive"));
         }
-        run_cqrs_command(crate::domain::CounterCommand::Increment { amount })
+        run_cqrs_command(crate::domain::CounterCommand::Increment { amount }).await
     }
     #[cfg(not(feature = "ssr"))]
     {
@@ -754,13 +763,13 @@ pub async fn increment_count(amount: i32) -> Result<(), ServerFnError> {
 }
 
 #[server(prefix = "/api")]
-pub async fn decrement_count(amount: i32) -> Result<(), ServerFnError> {
+pub async fn decrement_count(amount: i32) -> Result<CounterViewDto, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
         if amount <= 0 {
             return Err(ServerFnError::new("Amount must be positive"));
         }
-        run_cqrs_command(crate::domain::CounterCommand::Decrement { amount })
+        run_cqrs_command(crate::domain::CounterCommand::Decrement { amount }).await
     }
     #[cfg(not(feature = "ssr"))]
     {
@@ -770,10 +779,10 @@ pub async fn decrement_count(amount: i32) -> Result<(), ServerFnError> {
 }
 
 #[server(prefix = "/api")]
-pub async fn reset_count() -> Result<(), ServerFnError> {
+pub async fn reset_count() -> Result<CounterViewDto, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
-        run_cqrs_command(crate::domain::CounterCommand::Reset)
+        run_cqrs_command(crate::domain::CounterCommand::Reset).await
     }
     #[cfg(not(feature = "ssr"))]
     {
@@ -788,33 +797,37 @@ Behind the scenes on the server, we initialize our event store and checkpoints, 
 
 ```rust
 #[cfg(feature = "ssr")]
-fn run_cqrs_command(command: crate::domain::CounterCommand) -> Result<(), ServerFnError> {
-    use ddd_cqrs_es::{Repository, PersistedProjectionRunner};
-    use crate::store::{SpinSqliteEventStore, SpinSqliteCheckpointStore, CounterProjection};
+async fn run_cqrs_command(
+    command: crate::domain::CounterCommand,
+) -> Result<CounterViewDto, ServerFnError> {
     use crate::domain::{Counter, CounterId};
+    use crate::store::MultiBackendEventStore;
+    use ddd_cqrs_es::AsyncRepository;
 
-    let event_store = SpinSqliteEventStore::<Counter>::new("default");
-    
-    // Ensure table schemas are initialized
-    event_store.initialize_schema().map_err(|e| ServerFnError::new(e))?;
-
-    let repo = Repository::new(event_store.clone());
+    let event_store = MultiBackendEventStore::<Counter>::new();
+    let repository = AsyncRepository::new(event_store);
     let aggregate_id = CounterId("global".to_string());
 
-    // Execute the command through the repository (validating business invariants)
-    repo.execute(&aggregate_id, command, ddd_cqrs_es::Metadata::default())
+    let (loaded, committed_events) = repository
+        .execute_returning_state(
+            &aggregate_id,
+            command,
+            ddd_cqrs_es::Metadata::default(),
+        )
+        .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    // Advance projection and save the checkpoint after successful projection writes.
-    // Projection writes must be idempotent because checkpoint updates are separate.
-    let checkpoint_store = SpinSqliteCheckpointStore::new("default");
-    let projection = CounterProjection::new("default");
-    let mut runner = PersistedProjectionRunner::new(projection, checkpoint_store);
+    let mut view = get_counter_view_db().await?;
+    view.count = loaded.state.value;
+    if let Some(last_sequence) = committed_events.last().and_then(|event| event.sequence) {
+        view.last_sequence = last_sequence;
+    }
+    crate::store::publish_counter_realtime(&view).await;
+    if let Err(error) = crate::store::catch_up_counter_projection().await {
+        eprintln!("failed to catch up counter projection: {error}");
+    }
 
-    runner.run::<Counter, _>(&event_store)
-        .map_err(|e| ServerFnError::new(format!("{:?}", e)))?;
-
-    Ok(())
+    Ok(view)
 }
 ```
 
@@ -823,7 +836,7 @@ fn run_cqrs_command(command: crate::domain::CounterCommand) -> Result<(), Server
 To allow the Leptos WASI server router to map incoming client POST requests (like `/api/increment_count`) to their respective handler functions, we register each server function on the `Handler` builder inside `src/server.rs`:
 
 ```rust
-use crate::app::{App, GetCount, IncrementCount, DecrementCount, ResetCount, GetLatestEvents};
+use crate::app::{shell, App, GetCounterView, IncrementCount, DecrementCount, ResetCount};
 use leptos_wasi::prelude::Handler;
 use wasip3::http::types::{Request, Response, ErrorCode};
 
@@ -836,16 +849,21 @@ impl wasip3::exports::http::handler::Guest for LeptosServer {
         let leptos_options = conf.leptos_options;
 
         let req = wasip3::http_compat::http_from_wasi_request(request)?;
+        if req.uri().path() == "/api/counter/stream" {
+            let response = crate::store::counter_stream_response(&req)
+                .await
+                .map_err(|_| ErrorCode::InternalError(None))?;
+            return wasip3::http_compat::http_into_wasi_response(response);
+        }
 
         // Build handler and register each server function using .with_server_fn::<T>()
         let wasi_res = Handler::build(req).await
             .map_err(|e| ErrorCode::InternalError(None))?
             .static_files_handler("/pkg", serve_static_files)
-            .with_server_fn::<GetCount>()
+            .with_server_fn::<GetCounterView>()
             .with_server_fn::<IncrementCount>()
             .with_server_fn::<DecrementCount>()
             .with_server_fn::<ResetCount>()
-            .with_server_fn::<GetLatestEvents>()
             .generate_routes(App)
             .handle_with_context(move || shell(leptos_options.clone()), || {})
             .await
@@ -860,126 +878,69 @@ impl wasip3::exports::http::handler::Guest for LeptosServer {
 
 ## 6. Polished Premium UI Walkthrough
 
-On the frontend, Leptos uses reactive signals, server actions, and forms to provide a snappy, fluid user interface. Let's inspect the `HomePage` view from our counter app to see how it binds server functions and implements optimistic states:
+On the frontend, Leptos uses reactive signals, server actions, and direct button dispatch to provide a snappy, fluid user interface. The current counter app keeps a local optimistic count, tracks the sequence it expects the server to reach, and ignores older action/SSE snapshots so rapid clicks do not visibly rewind the number:
 
 ```rust
 #[component]
 fn HomePage() -> impl IntoView {
-    // Action to trigger backend mutation
     let increment_action = ServerAction::<IncrementCount>::new();
-    
-    // Local signal holding optimistic display count
-    let (optimistic_count, set_optimistic_count) = signal(None::<u32>);
-    
-    // Resource representing the server-synchronized data
-    let count = Resource::new(
-        move || increment_action.version().get(),
-        |_| get_count()
-    );
+    let counter_view = Resource::new(|| (), |_| get_counter_view());
+    let (current_view, set_current_view) = signal(None::<CounterViewDto>);
+    let (optimistic_count, set_optimistic_count) = signal(None::<i32>);
+    let (last_seen_sequence, set_last_seen_sequence) = signal(0_u64);
+    let (pending_until_sequence, set_pending_until_sequence) = signal(None::<u64>);
 
-    // Effect: Synchronize the local optimistic count when server count updates
     Effect::new(move |_| {
-        if let Some(Ok(server_count)) = count.get() {
-            set_optimistic_count.set(Some(server_count));
+        if let Some(Ok(view_data)) = counter_view.get() {
+            if current_view
+                .get_untracked()
+                .is_some_and(|current| view_data.last_sequence < current.last_sequence)
+            {
+                return;
+            }
+
+            let caught_up = pending_until_sequence
+                .get_untracked()
+                .is_none_or(|sequence| view_data.last_sequence >= sequence);
+
+            if caught_up {
+                set_optimistic_count.set(Some(view_data.count));
+                set_pending_until_sequence.set(None);
+            }
+            set_last_seen_sequence.set(view_data.last_sequence);
+            set_current_view.set(Some(view_data));
         }
     });
 
-    let display_count = move || {
-        if let Some(opt_count) = optimistic_count.get() {
-            opt_count.to_string()
-        } else {
-            "...".to_string()
-        }
+    let apply_optimistic_increment = move |_| {
+        let base_count = optimistic_count
+            .get_untracked()
+            .or_else(|| current_view.get_untracked().map(|view| view.count))
+            .unwrap_or_default();
+        set_optimistic_count.set(Some(base_count.saturating_add(1)));
+
+        let base_sequence = pending_until_sequence
+            .get_untracked()
+            .or_else(|| current_view.get_untracked().map(|view| view.last_sequence))
+            .unwrap_or_else(|| last_seen_sequence.get_untracked());
+        set_pending_until_sequence.set(Some(base_sequence.saturating_add(1)));
+
+        increment_action.dispatch(IncrementCount { amount: 1 });
     };
 
     view! {
-        <div class="min-h-screen bg-[#1a2332] flex items-center justify-center p-4">
-            <div class="bg-[#263343] rounded-xl shadow-2xl p-8 md:p-12 max-w-md w-full border border-[#3a4a5c]">
-                <div class="text-center space-y-8">
-                    <div class="space-y-2">
-                        <div class="flex items-center justify-center gap-3 mb-4">
-                            <div class="w-10 h-10 bg-[#00d4aa] rounded-lg flex items-center justify-center">
-                                <span class="text-[#1a2332] font-bold text-xl">L</span>
-                            </div>
-                            <h1 class="text-3xl md:text-4xl font-medium text-white">
-                                "counter-app"
-                            </h1>
-                        </div>
-                        <p class="text-[#8b9cb8] text-sm">
-                            "Powered by Leptos + WASI SQLite CQRS"
-                        </p>
-                    </div>
-
-                    <div class="relative">
-                        <div class="bg-[#1a2332] rounded-lg p-8 border border-[#3a4a5c]">
-                            <div class="text-5xl md:text-6xl font-light text-white tabular-nums">
-                                {display_count}
-                            </div>
-                            <div class="text-[#8b9cb8] text-sm mt-2 uppercase tracking-wider">
-                                "COUNT VALUE"
-                            </div>
-                        </div>
-
-                        {/* Spinner layout shown when a server sync transaction is pending */}
-                        <Show when=move || increment_action.pending().get()>
-                            <div class="absolute inset-0 flex items-center justify-center bg-[#1a2332]/50 rounded-lg">
-                                <div class="animate-spin rounded-full h-8 w-8 border-2 border-transparent border-t-[#00d4aa]"></div>
-                            </div>
-                        </Show>
-                    </div>
-
-                    <ActionForm action=increment_action>
-                        <button
-                            disabled=move || increment_action.pending().get()
-                            on:click=move |_| {
-                                // OPTIMISTIC UPDATE: Increment state on screen instantly
-                                if let Some(current) = optimistic_count.get() {
-                                    set_optimistic_count.set(Some(current + 1));
-                                }
-                            }
-                            class="w-full rounded-lg bg-[#00d4aa] px-6 py-3 text-[#1a2332] font-medium transition-all duration-200 hover:bg-[#00b894] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            {move || if increment_action.pending().get() {
-                                "Syncing..."
-                            } else {
-                                "Increment Counter"
-                            }}
-                        </button>
-                    </ActionForm>
-
-                    <div class="flex items-center justify-center gap-2 text-xs">
-                        <div class={move || {
-                            if optimistic_count.get().is_none() {
-                                "w-2 h-2 rounded-full bg-yellow-500 animate-pulse"
-                            } else if increment_action.pending().get() {
-                                "w-2 h-2 rounded-full bg-[#00d4aa] animate-pulse"
-                            } else {
-                                "w-2 h-2 rounded-full bg-[#00d4aa]"
-                            }
-                        }}></div>
-                        <span class="text-[#8b9cb8] uppercase tracking-wider">
-                            {move || {
-                                if optimistic_count.get().is_none() {
-                                    "Loading"
-                                } else if increment_action.pending().get() {
-                                    "Syncing"
-                                } else {
-                                    "Ready"
-                                }
-                            }}
-                        </span>
-                    </div>
-                </div>
-            </div>
-        </div>
+        <button on:click=apply_optimistic_increment>
+            "+1"
+        </button>
+        <div>{move || optimistic_count.get().unwrap_or_default()}</div>
     }
 }
 ```
 
 ### Hydration Mechanics & UI States
-1.  **Server-Side Rendering (SSR)**: When the page is loaded, the server triggers `get_count()`, renders the HTML layout with the true count, and sends down static markup. The user sees a fully rendered page instantly.
+1.  **Server-Side Rendering (SSR)**: When the page is loaded, the server triggers `get_counter_view()`, renders the HTML layout with the true count and latest ledger entries, and sends down static markup. The user sees a fully rendered page instantly.
 2.  **Hydration**: The compiled Client WebAssembly binary is loaded by the browser, intercepts the static page, attaches event listeners, and initializes signals. The transition is completely invisible and painless.
-3.  **Optimistic State Updates**: On button click, we don't wait for a round-trip network response. We instantly increment our optimistic signal `current + 1`, and the UI updates within a millisecond. In the background, Leptos posts to our command function. Once the command completes, the final, verified server-value is received and overrides the optimistic value. This eliminates perceived latency!
+3.  **Optimistic State Updates**: On button click, the UI applies the local count change immediately and dispatches the server action in the background. The client only lets authoritative responses replace the optimistic count once the returned sequence catches up to the expected sequence, so older SSE/action responses cannot move the visible value backward during bursty clicks.
 
 ---
 
@@ -994,7 +955,7 @@ Ensure you have the following installed on your developer machine:
 *   **WASM Target**: `rustup target add wasm32-wasip2`
 *   **Fermyon Spin CLI** (for Spin runtime): `brew install fermyon/tap/spin`
 *   **Wasmtime CLI** (for bare WASM runtime): `brew install wasmtime`
-*   **cargo-leptos**: `cargo install cargo-leptos`
+*   **cargo-leptos**: `cargo install --locked cargo-leptos`
 
 ### 🔑 Environment Setup (`.env`)
 
@@ -1004,10 +965,10 @@ Before running the application, configure your databases. We provide a complete 
 cp examples/counter-app/.env.example examples/counter-app/.env
 ```
 
-Open `examples/counter-app/.env` and inspect the configuration variables. This file is tracked by version control as a reference, enabling seamless collaboration and automated testing across local and cloud environments:
+Open `examples/counter-app/.env` and inspect the configuration variables. The `.env.example` template is tracked by version control as a reference, enabling seamless collaboration and automated testing across local and cloud environments:
 
 ```ini
-# Supported make backends: sqlite, postgres, neon, supabase, turso, redis
+# Supported make backends: sqlite, postgres, neon, supabase, turso, mysql, redis
 DATABASE_BACKEND=sqlite
 
 # Realtime transport: off, polling, redis
@@ -1040,7 +1001,12 @@ TURSO_URL=
 TURSO_AUTH_TOKEN=
 
 # =========================================================================
-# 5. Redis Settings (experimental event store and realtime notifications)
+# 5. MySQL Settings
+# =========================================================================
+MYSQL_URL=mysql://user:password@127.0.0.1:3306/counter_app
+
+# =========================================================================
+# 6. Redis Settings (experimental event store and realtime notifications)
 # =========================================================================
 REDIS_URL=redis://127.0.0.1:6379
 ```
@@ -1071,6 +1037,7 @@ flowchart TD
     NeonPostgres["⚡ Neon Serverless (Outbound HTTP)"]:::storage
     SupabaseDB["⚡ Supabase REST (Outbound HTTP)"]:::storage
     TursoLibSql["🌀 Turso/LibSQL (Hrana HTTP)"]:::storage
+    MySqlStore["MySQL (TCP or Spin host API)"]:::storage
     RedisStore["Redis Event Store + Notifications"]:::storage
     JsonFile["📂 JSON Flat-File (WASM Directory Mount)"]:::storage
 
@@ -1082,7 +1049,8 @@ flowchart TD
     Router -->|"DATABASE_BACKEND = postgres"| PostgresNative
     Router -->|"DATABASE_BACKEND = neon"| NeonPostgres
     Router -->|"DATABASE_BACKEND = supabase"| SupabaseDB
-    Router -->|"DATABASE_BACKEND = libsql"| TursoLibSql
+    Router -->|"DATABASE_BACKEND = turso"| TursoLibSql
+    Router -->|"DATABASE_BACKEND = mysql"| MySqlStore
     Router -->|"DATABASE_BACKEND = redis"| RedisStore
     Router -->|"DATABASE_BACKEND = sqlite (under Wasmtime)"| JsonFile
 ```
@@ -1091,14 +1059,13 @@ flowchart TD
 
 | Backend Key (`db`) | Connection Model | Network Protocol | Target Runtime Compatibility | Use Cases | Realtime Support |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`sqlite`** | Local Host-Call | WASM Host Interface | **Fermyon Spin** only | Low-latency local dev, edge microservices | Yes (via SSE stream) |
-| **`postgres`** | Direct Socket Pool | TCP Socket stream | **Fermyon Spin** (via outbound TCP) | Classic high-throughput self-hosted PG | Yes (via SSE stream) |
-| **`neon`** | Stateless HTTP SQL | JSON over HTTP (WASIp3) | **Wasmtime** & **Fermyon Spin** | Serverless cloud databases with cold-start mitigation | No |
-| **`supabase`** | Stateless REST | JSON REST over HTTP (WASIp3) | **Wasmtime** & **Fermyon Spin** | Rapid prototyping, managed Supabase database integration | No |
-| **`libsql`** / **`turso`** | Hrana Protocol | Pipeline HTTP (WASIp3) | **Wasmtime** & **Fermyon Spin** | Globally distributed SQL, SQLite-at-the-edge (Turso) | No |
+| **`sqlite`** | Local Host-Call or JSON files | Spin SQLite host calls; Wasmtime `/data` mount | **Fermyon Spin** & **Wasmtime** | Low-latency local dev, edge microservices, zero-dependency local testing | Yes (SSE polling or Redis wake) |
+| **`postgres`** | Direct Socket Pool | TCP Socket stream | **Fermyon Spin** & **Wasmtime** | Classic high-throughput self-hosted PG | Yes (SSE polling or Redis wake) |
+| **`neon`** | Stateless HTTP SQL | JSON over HTTP (WASIp3) | **Wasmtime** & **Fermyon Spin** | Serverless cloud databases with cold-start mitigation | Yes (SSE polling or Redis wake) |
+| **`supabase`** | Stateless REST | JSON REST over HTTP (WASIp3) | **Wasmtime** & **Fermyon Spin** | Rapid prototyping, managed Supabase database integration | Yes (SSE polling or Redis wake) |
+| **`turso`** | Hrana Protocol | Pipeline HTTP (WASIp3) | **Wasmtime** & **Fermyon Spin** | Globally distributed SQL, SQLite-at-the-edge (Turso) | Yes (SSE polling or Redis wake) |
 | **`redis`** | Async Redis commands | RESP TCP under Wasmtime, Spin Redis outbound and optional Redis Trigger under Spin | **Wasmtime** & **Fermyon Spin** | Experimental event persistence, checkpoints, and realtime notifications | Yes (via PubSub / SSE) |
-| **`sqlite`** (Wasmtime) | JSON Flat-File Fallback | POSIX File I/O | **Wasmtime** (mounted volume) | Zero-dependency local testing without external servers | Yes (via SSE stream) |
-| **`mysql`** | Direct Socket | TCP Socket stream on Wasmtime; Spin SDK MySQL host API on Spin; native driver on non-WASI targets | **Wasmtime**, **Fermyon Spin**, and native targets | High-throughput self-hosted or cloud MySQL | App-owned polling or external pub/sub bridge |
+| **`mysql`** | Direct Socket | TCP stream on Wasmtime; Spin SDK MySQL host API on Spin; native driver on non-WASI targets | **Wasmtime**, **Fermyon Spin**, and native targets | High-throughput self-hosted or cloud MySQL | Yes (SSE polling or Redis wake) |
 
 ---
 
@@ -1197,7 +1164,53 @@ where
 
 ## 🛠️ Execution & Testing Playbook
 
-We have provided a unified `Makefile` inside `examples/counter-app` to compile, package, and launch our Leptos WASM application using simple target flags. This shields you from compiling custom target configurations manually.
+We have provided a unified `Makefile` inside `examples/counter-app` to compile, package, reset, and launch our Leptos WASM application using simple target flags. This shields you from compiling custom target configurations manually.
+
+Run these commands from `examples/counter-app`:
+
+```bash
+make help
+make help topic=db
+make help topic=realtime
+make help-matrix
+```
+
+The Makefile is the canonical setup path. It derives runtime env vars from the
+public backend variables and selects the correct Cargo features, Spin manifest,
+and Wasmtime host permissions. If you wire the runtime manually, preserve these
+boundaries:
+
+| Backend | Public variable | Runtime env passed to component |
+| :--- | :--- | :--- |
+| `postgres` | `POSTGRES_URL` | `DATABASE_URL` |
+| `neon` | `NEON_DB_URL` | `DATABASE_URL` |
+| `supabase` | `SUPABASE_URL`, `SUPABASE_SECRET_KEY` | `DATABASE_URL`, `DATABASE_AUTH_TOKEN` |
+| `turso` | `TURSO_URL`, `TURSO_AUTH_TOKEN` | `DATABASE_URL`, `DATABASE_AUTH_TOKEN` |
+| `mysql` | `MYSQL_URL` | `DATABASE_URL` |
+| `redis` | `REDIS_URL` | `DATABASE_URL`; also `REDIS_URL` for realtime wake transport |
+
+Spin manifests must allow outbound hosts for every backend family you plan to
+demonstrate:
+
+```toml
+allowed_outbound_hosts = [
+  "*://*.turso.io:*",
+  "*://*.neon.tech:*",
+  "*://*.supabase.co:*",
+  "*://localhost:*",
+  "*://127.0.0.1:*",
+  "postgres://*:*",
+  "postgresql://*:*",
+  "mysql://*:*",
+  "redis://*:*",
+  "rediss://*:*",
+]
+```
+
+Use `spin.redis.toml` when `realtime=redis`; it adds the Redis trigger sidecar
+and exposes `redis_url` / `redis_channel` Spin variables. Wasmtime does not use
+that sidecar; it needs Preview 3, HTTP, TCP, inherited networking, DNS lookup,
+`./target/site/pkg` mounted at `/`, and `./data` mounted at `/data`.
 
 ### 1. Build and Run under Wasmtime (Bare Component Runtime)
 
@@ -1208,14 +1221,35 @@ Running under Wasmtime is incredibly useful for standard system deployment, loca
 # (Creates and writes to examples/counter-app/data/ folder automatically!)
 make wasmtime
 
+# Compile and run connected to PostgreSQL over TCP
+make wasmtime db=postgres
+
+# Compile and run connected to PostgreSQL with Redis wake notifications
+make wasmtime db=postgres realtime=redis
+
 # Compile and run connected to Neon serverless Postgres via WASIp3 Outbound HTTP
 make wasmtime db=neon
+
+# Compile and run connected to Neon with Redis wake notifications
+make wasmtime db=neon realtime=redis
 
 # Compile and run connected to Supabase REST database via WASIp3 Outbound HTTP
 make wasmtime db=supabase
 
+# Compile and run connected to Supabase with Redis wake notifications
+make wasmtime db=supabase realtime=redis
+
 # Compile and run connected to Turso/LibSQL DB over Hrana HTTP
 make wasmtime db=turso
+
+# Compile and run connected to Turso with Redis wake notifications
+make wasmtime db=turso realtime=redis
+
+# Compile and run connected to MySQL over raw TCP
+make wasmtime db=mysql
+
+# Compile and run connected to MySQL with Redis wake notifications
+make wasmtime db=mysql realtime=redis
 
 # Compile and run with the experimental Redis event store and SSE notifications
 make wasmtime db=redis realtime=redis
@@ -1223,7 +1257,7 @@ make wasmtime db=redis realtime=redis
 
 ### 2. Build and Run under Fermyon Spin (Microservices Runtime)
 
-Running under Fermyon Spin leverages the Spin-specific SQLite host engine or native Postgres connectivity.
+Running under Fermyon Spin leverages Spin-specific host integrations for SQLite, Postgres, MySQL, and Redis.
 
 ```bash
 # Compile and run with native Spin SQLite database host-calls
@@ -1232,11 +1266,53 @@ make spin
 # Compile and run with native Spin PostgreSQL database connector
 make spin db=postgres
 
+# Compile and run with native Spin PostgreSQL and Redis wake notifications
+make spin db=postgres realtime=redis
+
+# Compile and run through Spin connected to Neon with Redis wake notifications
+make spin db=neon realtime=redis
+
+# Compile and run through Spin connected to Supabase REST database
+make spin db=supabase
+
+# Compile and run through Spin connected to Supabase with Redis wake notifications
+make spin db=supabase realtime=redis
+
+# Compile and run through Spin connected to Turso with Redis wake notifications
+make spin db=turso realtime=redis
+
+# Compile and run with Spin SDK MySQL and SSE polling
+make spin db=mysql realtime=polling
+
+# Compile and run with Spin SDK MySQL and Redis wake notifications
+make spin db=mysql realtime=redis
+
 # Compile and run with Spin Redis persistence and SSE notifications
 make spin db=redis realtime=redis
 ```
 
+`realtime=redis` is a Redis wake transport, not a request to use Redis as the
+event store. It is supported with every supported `db` backend, including
+`db=mysql`. Use `db=redis` only when Redis should also be the durable event,
+checkpoint, and read-model store.
+
+### 3. Reset a Backend without Serving
+
+The `fresh` target resets the selected backend schema, tables, or files and
+then exits. It does not build or start the application.
+
+```bash
+make db=sqlite fresh
+make db=postgres fresh
+make db=neon fresh
+make db=supabase fresh
+make db=turso fresh
+make db=mysql fresh
+make db=redis fresh
+```
+
 Once launched, open your web browser to `http://127.0.0.1:3000` to interact with your secure, full-stack, optimistic-updating, Event-Sourced Leptos application!
+
 ---
 
 ## 💎 The Pure DDD & CQRS Advantage
@@ -1248,6 +1324,8 @@ By separating **Domain Logic** (commands, aggregate invariants, and events) from
 *   Want to run your microservice as a lightweight, zero-dependency serverless edge component? **Set `DATABASE_BACKEND=sqlite`**.
 *   Need to scale to enterprise workloads on AWS with thousands of events per second? **Enable `DATABASE_BACKEND=postgres`**.
 *   Want to run globally distributed edge containers with serverless SQL backends? **Set `DATABASE_BACKEND=neon` or `DATABASE_BACKEND=turso`**.
-*   Want experimental Redis-backed event persistence and faster cross-client UI wakeups? **Set `DATABASE_BACKEND=redis` and `REALTIME_BACKEND=redis`**.
+*   Want MySQL for a self-hosted or managed relational backend? **Set `DATABASE_BACKEND=mysql`**.
+*   Want Redis-backed event persistence and faster cross-client UI wakeups? **Set `DATABASE_BACKEND=redis` and `REALTIME_BACKEND=redis`**.
+*   Want MySQL persistence with Redis wake notifications? **Set `DATABASE_BACKEND=mysql` and `REALTIME_BACKEND=redis`**.
 
 Your domain logic does not change by a single letter. That is the outstanding power of building enterprise-grade systems with clean, decoupled **Domain-Driven Design** and **Event Sourcing**!

@@ -5,7 +5,7 @@ description: Scale your read models reliably using sequence checkpoint offsets.
 
 In a local test application, replaying all events in-memory upon every request is perfectly fine. However, in a production system with millions of events, we cannot perform full in-memory replays of our entire ledger to satisfy queries.
 
-To scale queries, we persist our read models inside database tables and run background **Projection Runners** that sequentially process events and manage **Checkpoints**.
+To scale queries, we persist our read models inside database tables and run background **Projection Runners** that sequentially process events and manage **Checkpoints**. See [Database Query Patterns](./db-query-patterns.md) for the exact event-store indexes, read-model query rules, and consistency tradeoffs.
 
 ---
 

@@ -1,5 +1,5 @@
 ---
-title: 5.4. Including Metadata
+title: 5.5. Including Metadata
 description: Attach correlation, causation, actor, and tenancy tracking headers to your event ledger.
 ---
 

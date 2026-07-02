@@ -55,10 +55,6 @@ impl Aggregate for BankAccount {
         "bank_account"
     }
 
-    fn id(&self) -> Option<&Self::Id> {
-        self.id.as_ref()
-    }
-
     fn revision(&self) -> u64 {
         self.revision
     }

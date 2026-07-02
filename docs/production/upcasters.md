@@ -1,5 +1,5 @@
 ---
-title: 5.5. Event Upcasters
+title: 5.6. Event Upcasters
 description: Handle event schema evolution over time without mutating historical records.
 ---
 

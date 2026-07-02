@@ -16,7 +16,7 @@ Add the crate as a dependency in your `Cargo.toml`:
 ddd_cqrs_es = { git = "https://github.com/hexuria/ddd-cqrs-es" }
 
 # Or from crates.io (once published):
-# ddd_cqrs_es = "0.1.0"
+# ddd_cqrs_es = "0.2.0"
 ```
 
 To enable durable database adapters:
@@ -42,7 +42,14 @@ The root crate provides durable stores, checkpoint stores, idempotency stores, a
 * **Redis:** Provides experimental async persistence plus `RedisPubSubPublisher` for notification-only wake messages. Clients should wake on notifications and replay durable events/checkpoints as the source of truth.
 * **Counter app:** Demonstrates SSE polling and Redis wake queues for Spin and Wasmtime. That example-level delivery wiring is separate from the stable root API.
 
-The stable built-in SQL adapters are `SqliteEventStore`, `PostgresEventStore`, `MySqlEventStore` (native only), `SqliteCheckpointStore`, `PostgresCheckpointStore`, `MySqlCheckpointStore` (native only), `SqliteIdempotencyStore`, `PostgresIdempotencyStore`, and `MySqlIdempotencyStore` (native only). WASI, Spin, Neon, LibSQL, Supabase, and MySQL runtime feature flags expose lower-level query helpers for examples and runtime experiments. Redis exposes an experimental async `RedisEventStore`, `RedisCheckpointStore`, and `RedisPubSubPublisher`; pub/sub is notification-only and durable event replay remains the source of truth. The counter example includes a separate Spin Redis Trigger sidecar for subscriber smoke testing; it is not part of the root library API. The WASI counter-app supports `db=mysql` on Wasmtime through raw TCP (`wasi-mysql`) and on Spin through `spin_sdk::mysql` (`spin-mysql`).
+The stable built-in SQL adapters are `SqliteEventStore`, `PostgresEventStore`, `MySqlEventStore` (native only), `SqliteCheckpointStore`, `PostgresCheckpointStore`, `MySqlCheckpointStore` (native only), `SqliteIdempotencyStore`, `PostgresIdempotencyStore`, `MySqlIdempotencyStore` (native only), `SqliteSnapshotStore`, `PostgresSnapshotStore`, and `MySqlSnapshotStore`. SQL event stores also implement atomic idempotent append through `execute_idempotent_atomic`. WASI, Spin, Neon, LibSQL, Supabase, and MySQL runtime feature flags expose lower-level query helpers for examples and runtime experiments. Redis exposes an experimental async `RedisEventStore`, `RedisCheckpointStore`, and `RedisPubSubPublisher`; pub/sub is notification-only and durable event replay remains the source of truth. The counter example includes a separate Spin Redis Trigger sidecar for subscriber smoke testing; it is not part of the root library API. The WASI counter-app supports `db=mysql` on Wasmtime through raw TCP (`wasi-mysql`) and on Spin through `spin_sdk::mysql` (`spin-mysql`).
+
+#### API Notes:
+* Aggregates no longer expose `id()` through the trait; repositories use the external stream ID supplied by the caller.
+* `EventType` is a small newtype; use `event_type.as_str()` or `event_type.into_string()` at string boundaries.
+* `SqlSchemaConfig` validates table names through fallible `with_*_table(...)` builders.
+* `ProcessManagerRunner` and `AsyncProcessManagerRunner` can dispatch process-manager commands through the command bus traits.
+* `execute_idempotent(...)` is portable but not crash-atomic across separate stores. Use `execute_idempotent_atomic(...)` with the native SQL stores for production request idempotency.
 
 ---
 
@@ -72,11 +79,13 @@ Our documentation is structured around explaining core theoretical concepts and 
 * [**4.3. Putting Everything Together**](./docs/config-app/assembly.md) — Tie the write-side repository and read-side projection runner into an executable entry point.
 
 ### 5. Building an Application
-* [**5.1. Persisted Event Store**](./docs/production/persisted-store.md) — Connect SQLite and PostgreSQL adapters with Optimistic Concurrency Control (OCC).
+* [**5.0. Production Guarantees**](./docs/production/guarantees.md) — Distinguish portable APIs from transaction-aware SQL APIs, durable snapshots, atomic projections, and notification-only realtime.
+* [**5.1. Persisted Event Store**](./docs/production/persisted-store.md) — Connect SQLite, PostgreSQL, and MySQL adapters with Optimistic Concurrency Control (OCC).
 * [**5.2. Queries with Persisted Views**](./docs/production/persisted-views.md) — Manage multi-process projections asynchronously using checkpoint sequence offsets.
-* [**5.3. Redis Event Store and Realtime**](./docs/production/redis.md) — Use the experimental async Redis event store, checkpoint store, and notification-only pub/sub publisher.
-* [**5.4. Including Metadata**](./docs/production/metadata.md) — Attach correlation, causation, actor, and tenant headers for enterprise audit tracing.
-* [**5.5. Event Upcasters**](./docs/production/upcasters.md) — Handle live event schema evolution smoothly using `EventUpcaster` byte transforms.
+* [**5.3. Database Query Patterns**](./docs/production/db-query-patterns.md) — Match event-store, checkpoint, snapshot, and read-model queries to the right indexes and consistency boundaries.
+* [**5.4. Redis Event Store and Realtime**](./docs/production/redis.md) — Use the experimental async Redis event store, checkpoint store, and notification-only pub/sub publisher.
+* [**5.5. Including Metadata**](./docs/production/metadata.md) — Attach correlation, causation, actor, and tenant headers for enterprise audit tracing.
+* [**5.6. Event Upcasters**](./docs/production/upcasters.md) — Handle live event schema evolution smoothly using `EventUpcaster` byte transforms.
 
 ---
 

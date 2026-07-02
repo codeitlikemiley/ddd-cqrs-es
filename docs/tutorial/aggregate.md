@@ -55,11 +55,6 @@ impl Aggregate for BankAccount {
         "bank_account"
     }
 
-    /// Exposes the unique ID of this instance.
-    fn id(&self) -> Option<&Self::Id> {
-        self.id.as_ref()
-    }
-
     /// Current version number of the aggregate (tracks replayed events count).
     fn revision(&self) -> u64 {
         self.revision

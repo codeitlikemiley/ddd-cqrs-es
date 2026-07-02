@@ -1,5 +1,5 @@
 ---
-title: 5.3. Redis Event Store and Realtime
+title: 5.4. Redis Event Store and Realtime
 description: Experimental async Redis persistence and notification support.
 ---
 
@@ -147,6 +147,26 @@ make db=redis fresh
 make wasmtime db=redis realtime=redis
 ```
 
+`realtime=redis` can also be used as a wake transport with another durable
+backend. It is supported with every counter-app backend:
+
+```bash
+make wasmtime db=sqlite realtime=redis
+make spin db=sqlite realtime=redis
+make wasmtime db=postgres realtime=redis
+make spin db=postgres realtime=redis
+make wasmtime db=neon realtime=redis
+make spin db=neon realtime=redis
+make wasmtime db=supabase realtime=redis
+make spin db=supabase realtime=redis
+make wasmtime db=turso realtime=redis
+make spin db=turso realtime=redis
+make wasmtime db=mysql realtime=redis
+make spin db=mysql realtime=redis
+make wasmtime db=redis realtime=redis
+make spin db=redis realtime=redis
+```
+
 Spin uses the Spin Redis client:
 
 ```bash
@@ -176,6 +196,45 @@ Environment variables:
 | `REDIS_URL` | `redis://127.0.0.1:6379` | Redis connection URL. |
 | `REDIS_CHANNEL` | `counter-events` | Channel used for Redis notification publishing. |
 
+Runtime setup checklist:
+
+| Runtime | Required setup |
+| :--- | :--- |
+| Spin without Redis realtime | Use `spin.toml`, pass `DATABASE_BACKEND`, derived `DATABASE_URL`, derived `DATABASE_AUTH_TOKEN`, and `REALTIME_BACKEND=off` or `polling`. |
+| Spin with Redis realtime | Use `spin.redis.toml`, pass the same database env plus `REALTIME_BACKEND=redis`, `REDIS_URL`, and `REDIS_CHANNEL`; set Spin variables `redis_url` and `redis_channel` for the Redis trigger. |
+| Wasmtime without Redis realtime | Enable Preview 3, HTTP, TCP, inherited network, DNS lookup, mount `target/site/pkg` at `/`, mount `./data` at `/data`, and pass database env values. |
+| Wasmtime with Redis realtime | Use the Wasmtime setup above plus `REALTIME_BACKEND=redis`, `REDIS_URL`, and `REDIS_CHANNEL`; there is no Redis trigger sidecar under Wasmtime. |
+
+Spin outbound permissions must include the protocols and hosts used by the
+selected durable backend and by Redis realtime. The counter app manifests allow:
+
+```toml
+allowed_outbound_hosts = [
+  "*://*.turso.io:*",
+  "*://*.neon.tech:*",
+  "*://*.supabase.co:*",
+  "*://localhost:*",
+  "*://127.0.0.1:*",
+  "postgres://*:*",
+  "postgresql://*:*",
+  "mysql://*:*",
+  "redis://*:*",
+  "rediss://*:*",
+]
+```
+
+The Makefile derives the internal runtime values from backend-specific public
+variables:
+
+| `db` | Public variable | Runtime value |
+| :--- | :--- | :--- |
+| `postgres` | `POSTGRES_URL` | `DATABASE_URL` |
+| `neon` | `NEON_DB_URL` | `DATABASE_URL` |
+| `supabase` | `SUPABASE_URL`, `SUPABASE_SECRET_KEY` | `DATABASE_URL`, `DATABASE_AUTH_TOKEN` |
+| `turso` | `TURSO_URL`, `TURSO_AUTH_TOKEN` | `DATABASE_URL`, `DATABASE_AUTH_TOKEN` |
+| `mysql` | `MYSQL_URL` | `DATABASE_URL` |
+| `redis` | `REDIS_URL` | `DATABASE_URL` |
+
 The SSE endpoint is:
 
 ```text
@@ -198,15 +257,15 @@ transport. Each browser request registers a short-TTL Redis list queue. After
 commands commit and projections update, the publisher sends a notification to
 `REDIS_CHANNEL` and fans one wake message out to every live queue. The SSE
 handler treats that wake as notification-only and reads durable events after the
-client's `last_sequence` before emitting one `counter` event and closing the
+client's `last_sequence` before emitting one `counter` event on the open
 response.
 
 Idle clients do not reconnect every few hundred milliseconds. On Spin, the
 handler waits inside `BRPOP` for up to 25 seconds, emits one SSE comment
-keepalive with a 1 second EventSource retry interval, and closes. On Wasmtime,
-the handler uses repeated `RPOP` calls with WASI async sleeps so the component
-can continue serving ordinary HTTP requests while it waits for Redis wake
-messages.
+keepalive with a 1 second EventSource retry interval, and continues waiting. On
+Wasmtime, the handler uses repeated `RPOP` calls with WASI async sleeps so the
+component can continue serving ordinary HTTP requests while it waits for Redis
+wake messages.
 
 Redis publishing remains a notification hook. On Spin, the optional Redis
 trigger sidecar observes the same pub/sub notifications and records health
@@ -215,6 +274,9 @@ the trigger cannot write into an already-open HTTP response owned by the HTTP
 component. The HTTP route does not perform a blocking Redis `SUBSCRIBE`; it uses
 the existing outbound Redis command path so Spin and Wasmtime share the same
 browser delivery model.
+Redis wake delivery is not an exactly-once guarantee. Duplicate or missed wake
+messages must be harmless because clients recover by replaying durable events
+or read models from the last observed sequence.
 
 For the counter app's Redis backend, read-model updates and checkpoint updates
 are applied together with one Lua command per event. The generic projection

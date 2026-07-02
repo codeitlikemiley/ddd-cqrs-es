@@ -19,7 +19,7 @@ Add the crate as a dependency in your `Cargo.toml`:
 ddd_cqrs_es = { git = "https://github.com/hexuria/ddd-cqrs-es" }
 
 # Or from crates.io (once published):
-# ddd_cqrs_es = "0.1.0"
+# ddd_cqrs_es = "0.2.0"
 ```
 
 ### Feature Flags
@@ -47,12 +47,19 @@ The root crate provides durable stores, checkpoints, idempotency stores, and not
 * **Redis:** Provides experimental async persistence plus notification-only pub/sub wake messages. Durable replay remains the source of truth.
 * **MySQL:** MySQL does not provide a built-in pub/sub stream in this library; pair it with Redis, an outbox worker, binlog CDC, NATS, Kafka, or WebSocket fan-out when low-latency push notifications are required.
 
+#### API Notes:
+* Aggregates are loaded by the repository using the external stream ID; the `Aggregate` trait does not require an `id()` method.
+* `EventType` is a serde-transparent newtype. Convert it with `as_str()` or `into_string()` when a database, UI, or protocol needs a plain string.
+* `SqlSchemaConfig` table-name builders validate eagerly and return `Result`.
+* Process managers can be coordinated by `ProcessManagerRunner` or `AsyncProcessManagerRunner`.
+* `execute_idempotent(...)` is portable but not crash-atomic across separate stores. Use `execute_idempotent_atomic(...)` with native SQL stores for production request idempotency.
+
 | Feature | Description | Third-Party Dependencies |
 | :--- | :--- | :--- |
 | **`default`** | Standard local, thread-safe in-memory event store and memory projection runners. | None |
-| **`sqlite`** | Stable SQLite event store, checkpoint store, and idempotency store. | `rusqlite` |
-| **`postgres`** | Stable PostgreSQL event store, checkpoint store, and idempotency store. | `postgres` |
-| **`mysql`** | Stable MySQL event store, checkpoint store, and idempotency store. | `mysql` |
+| **`sqlite`** | Stable SQLite event store, checkpoint store, idempotency store, snapshot store, and atomic idempotent append. | `rusqlite` |
+| **`postgres`** | Stable PostgreSQL event store, checkpoint store, idempotency store, snapshot store, and atomic idempotent append. | `postgres` |
+| **`mysql`** | Stable MySQL event store, checkpoint store, idempotency store, snapshot store, and atomic idempotent append. | `mysql` |
 | **`wasi-mysql`** | Experimental raw TCP MySQL query helper for generic Wasmtime/WASI runtimes. | `rsa`, `sha1`, `sha2`, `getrandom` |
 | **`spin-mysql`** | Experimental Spin SDK MySQL query helper. | `spin-sdk` |
 | **`redis`** | Experimental async Redis event store, checkpoint store, pub/sub publisher, and command executor trait. | None |
@@ -118,7 +125,7 @@ We structured our guides as a structured, chronological path designed to take yo
 * **What you'll learn:** Assemble your domain parts. Wire up the local [InMemoryEventStore](./config-app/event-store.md), write a custom [Query Projection](./config-app/simple-query.md), and [Assemble them together](./config-app/assembly.md) into a working execution loop.
 
 ### Module 5: [Building an Application](./production/persisted-store.md) (Production)
-* **What you'll learn:** Move to production. Deploy durable [SQLite and PostgreSQL stores](./production/persisted-store.md), configure asynchronous [Projections with Checkpoint tracking](./production/persisted-views.md), use experimental [Redis persistence and realtime notifications](./production/redis.md), attach [Metadata trace headers](./production/metadata.md), write custom [Event Upcasters](./production/upcasters.md) for schema evolution, and [Integrate with Web Frameworks (Axum)](./production/axum-integration.md).
+* **What you'll learn:** Move to production. Start with [Production Guarantees](./production/guarantees.md), deploy durable [SQLite, PostgreSQL, and MySQL stores](./production/persisted-store.md), configure asynchronous [Projections with Checkpoint tracking](./production/persisted-views.md), review production [Database Query Patterns](./production/db-query-patterns.md), use experimental [Redis persistence and realtime notifications](./production/redis.md), attach [Metadata trace headers](./production/metadata.md), write custom [Event Upcasters](./production/upcasters.md) for schema evolution, and [Integrate with Web Frameworks (Axum)](./production/axum-integration.md).
 
 ### Module 6: [Leptos WASM SSR + Spin SQLite CQRS](./tutorial/leptos-ssr.md) (Full-Stack Showcase)
 * **What you'll learn:** Put everything together. Architect a full-stack, real-time-like reactive UI inside a WebAssembly server-side rendered (SSR) Leptos application deployed to Fermyon Spin. Learn how to write custom WASM SQLite store adapters, checkpointed projections, and reactive forms with optimistic updates.

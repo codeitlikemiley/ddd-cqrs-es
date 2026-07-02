@@ -1,5 +1,5 @@
 ---
-title: 5.7. Troubleshooting & Driver Pitfalls
+title: 5.8. Troubleshooting & Driver Pitfalls
 description: Common integration issues, database driver quirks, and serialization pitfalls when deploying to WebAssembly runtimes.
 ---
 
