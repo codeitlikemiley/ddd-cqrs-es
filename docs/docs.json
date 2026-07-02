@@ -96,8 +96,7 @@
         "icon": "book-open",
         "expanded": true,
         "pages": [
-          "PRD",
-          "README"
+          "PRD"
         ]
       }
     ]
