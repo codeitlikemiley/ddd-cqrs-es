@@ -43,13 +43,29 @@ async fn on_message(message: Vec<u8>) -> Result<()> {
     let connection = Connection::open(&redis_url)
         .await
         .map_err(|error| anyhow!("failed to open Redis connection: {error:?}"))?;
+    let sequence = message.last_sequence.to_string();
+    let count = message.view.count.to_string();
+    let previous_sequence = connection
+        .get(LAST_SEQUENCE_KEY)
+        .await
+        .map_err(|error| anyhow!("failed to read Redis trigger last sequence: {error:?}"))?;
+    let previous_count = connection
+        .get(LAST_COUNT_KEY)
+        .await
+        .map_err(|error| anyhow!("failed to read Redis trigger last count: {error:?}"))?;
+
+    if previous_sequence.as_deref() == Some(sequence.as_bytes())
+        && previous_count.as_deref() == Some(count.as_bytes())
+    {
+        return Ok(());
+    }
 
     connection
-        .set(LAST_SEQUENCE_KEY, message.last_sequence.to_string())
+        .set(LAST_SEQUENCE_KEY, sequence)
         .await
         .map_err(|error| anyhow!("failed to write Redis trigger last sequence: {error:?}"))?;
     connection
-        .set(LAST_COUNT_KEY, message.view.count.to_string())
+        .set(LAST_COUNT_KEY, count)
         .await
         .map_err(|error| anyhow!("failed to write Redis trigger last count: {error:?}"))?;
     connection

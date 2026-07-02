@@ -13,7 +13,7 @@ executor = { type = "http" }
 
 [component.counter-app]
 source = "target/wasm32-wasip2/release/counter_app.wasm"
-allowed_outbound_hosts = ["*://*.turso.io:*", "*://*.neon.tech:*", "*://*.supabase.co:*", "*://localhost:*", "*://127.0.0.1:*", "mysql://*:*", "redis://*:*", "rediss://*:*"]
+allowed_outbound_hosts = ["*://*.turso.io:*", "*://*.neon.tech:*", "*://*.supabase.co:*", "*://localhost:*", "*://127.0.0.1:*", "postgres://*:*", "postgresql://*:*", "mysql://*:*", "redis://*:*", "rediss://*:*"]
 key_value_stores = ["default"]
 sqlite_databases = ["default"]
 files = [
@@ -21,6 +21,8 @@ files = [
 ]
 
 [component.counter-app.build]
+# The Makefile is the canonical matrix entrypoint for db/realtime selection.
+# This fallback is for plain `spin build --from spin.toml`.
 command = "WASI_RUNTIME=spin cargo leptos build --release && WASI_RUNTIME=spin LEPTOS_OUTPUT_NAME=counter_app cargo build --lib --target wasm32-wasip2 --release --no-default-features --features ssr"
 watch = ["src/**/*.rs", "Cargo.toml"]
 

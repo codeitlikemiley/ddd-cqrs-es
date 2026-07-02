@@ -35,6 +35,23 @@ pub struct CounterRealtimeMessage {
     pub last_sequence: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClientCounterCommand {
+    Increment(i32),
+    Decrement(i32),
+    Reset,
+}
+
+impl ClientCounterCommand {
+    fn apply_to(self, value: i32) -> i32 {
+        match self {
+            Self::Increment(amount) => value.saturating_add(amount),
+            Self::Decrement(amount) => value.saturating_sub(amount),
+            Self::Reset => 0,
+        }
+    }
+}
+
 #[cfg(feature = "ssr")]
 pub fn shell(options: LeptosOptions) -> impl IntoView {
     view! {
@@ -85,6 +102,9 @@ fn HomePage() -> impl IntoView {
     let increment_action = ServerAction::<IncrementCount>::new();
     let decrement_action = ServerAction::<DecrementCount>::new();
     let reset_action = ServerAction::<ResetCount>::new();
+    let increment_pending = increment_action.pending();
+    let decrement_pending = decrement_action.pending();
+    let reset_pending = reset_action.pending();
 
     let (custom_amount, set_custom_amount) = signal(5);
 
@@ -92,7 +112,9 @@ fn HomePage() -> impl IntoView {
     let (current_view, set_current_view) = signal(None::<CounterViewDto>);
     let (optimistic_count, set_optimistic_count) = signal(None::<i32>);
     let (last_seen_sequence, set_last_seen_sequence) = signal(0_u64);
-    let (pending_after_sequence, set_pending_after_sequence) = signal(None::<u64>);
+    let (pending_until_sequence, set_pending_until_sequence) = signal(None::<u64>);
+    let (deferred_realtime_message, set_deferred_realtime_message) =
+        signal(None::<CounterRealtimeMessage>);
 
     // Hydrate from local cache while the first server read is in flight.
     Effect::new(move |_| {
@@ -117,19 +139,34 @@ fn HomePage() -> impl IntoView {
 
     Effect::new(move |_| {
         if let Some(Ok(view_data)) = counter_view.get() {
-            set_optimistic_count.set(Some(view_data.count));
+            if current_view
+                .get_untracked()
+                .is_some_and(|current| view_data.last_sequence < current.last_sequence)
+            {
+                return;
+            }
+            let caught_up = pending_until_sequence
+                .get_untracked()
+                .is_none_or(|sequence| view_data.last_sequence >= sequence);
+
+            if caught_up {
+                set_optimistic_count.set(Some(view_data.count));
+                set_pending_until_sequence.set(None);
+                set_deferred_realtime_message.set(None);
+            }
             set_last_seen_sequence.set(view_data.last_sequence);
             set_current_view.set(Some(view_data.clone()));
-            set_pending_after_sequence.set(None);
 
             #[cfg(feature = "hydrate")]
+            if caught_up
+                && let Some(window) = window()
+                && let Ok(Some(storage)) = window.local_storage()
             {
-                if let Some(window) = window()
-                    && let Ok(Some(storage)) = window.local_storage() {
-                        let _ = storage.set_item("counter_app_count", &view_data.count.to_string());
-                        let _ = storage
-                            .set_item("counter_app_last_sequence", &view_data.last_sequence.to_string());
-                    }
+                let _ = storage.set_item("counter_app_count", &view_data.count.to_string());
+                let _ = storage.set_item(
+                    "counter_app_last_sequence",
+                    &view_data.last_sequence.to_string(),
+                );
             }
         }
     });
@@ -157,24 +194,54 @@ fn HomePage() -> impl IntoView {
             }
         }
 
-        if completed_action {
-            set_pending_after_sequence.set(None);
+        let local_pending =
+            increment_pending.get() || decrement_pending.get() || reset_pending.get();
+        let has_deferred_realtime = deferred_realtime_message.get_untracked().is_some();
+        if completed_action
+            && !local_pending
+            && !has_deferred_realtime
+            && pending_until_sequence.get_untracked().is_some()
+        {
+            counter_view.refetch();
         }
 
         if let Some(view_data) = next_view {
-            set_optimistic_count.set(Some(view_data.count));
+            if current_view
+                .get_untracked()
+                .is_some_and(|current| view_data.last_sequence < current.last_sequence)
+            {
+                return;
+            }
+            let caught_up = pending_until_sequence
+                .get_untracked()
+                .is_none_or(|sequence| view_data.last_sequence >= sequence);
+            if !local_pending && !has_deferred_realtime && caught_up {
+                set_optimistic_count.set(Some(view_data.count));
+                set_pending_until_sequence.set(None);
+            }
             set_last_seen_sequence.set(view_data.last_sequence);
             set_current_view.set(Some(view_data.clone()));
 
             #[cfg(feature = "hydrate")]
+            if caught_up
+                && let Some(window) = window()
+                && let Ok(Some(storage)) = window.local_storage()
             {
-                if let Some(window) = window()
-                    && let Ok(Some(storage)) = window.local_storage() {
-                        let _ = storage.set_item("counter_app_count", &view_data.count.to_string());
-                        let _ = storage
-                            .set_item("counter_app_last_sequence", &view_data.last_sequence.to_string());
-                }
+                let _ = storage.set_item("counter_app_count", &view_data.count.to_string());
+                let _ = storage.set_item(
+                    "counter_app_last_sequence",
+                    &view_data.last_sequence.to_string(),
+                );
             }
+        } else if completed_action
+            && !local_pending
+            && !has_deferred_realtime
+            && let Some(view_data) = current_view.get_untracked()
+            && pending_until_sequence
+                .get_untracked()
+                .is_none_or(|sequence| view_data.last_sequence >= sequence)
+        {
+            set_optimistic_count.set(Some(view_data.count));
         }
     });
 
@@ -197,17 +264,37 @@ fn HomePage() -> impl IntoView {
             let Ok(message) = serde_json::from_str::<CounterRealtimeMessage>(&payload) else {
                 return;
             };
-            set_optimistic_count.set(Some(message.view.count));
+            if current_view
+                .get_untracked()
+                .is_some_and(|current| message.last_sequence < current.last_sequence)
+            {
+                return;
+            }
             set_last_seen_sequence.set(message.last_sequence);
             set_current_view.set(Some(message.view.clone()));
-            if pending_after_sequence
+            let local_pending = increment_pending.get_untracked()
+                || decrement_pending.get_untracked()
+                || reset_pending.get_untracked();
+            let caught_up = pending_until_sequence
                 .get_untracked()
-                .is_some_and(|sequence| message.last_sequence > sequence)
-            {
-                set_pending_after_sequence.set(None);
+                .is_none_or(|sequence| message.last_sequence >= sequence);
+            if local_pending && caught_up {
+                set_deferred_realtime_message.update(|deferred| {
+                    if deferred
+                        .as_ref()
+                        .is_none_or(|current| message.last_sequence >= current.last_sequence)
+                    {
+                        *deferred = Some(message.clone());
+                    }
+                });
+            } else if !local_pending && caught_up {
+                set_optimistic_count.set(Some(message.view.count));
+                set_deferred_realtime_message.set(None);
+                set_pending_until_sequence.set(None);
             }
 
-            if let Some(window) = window()
+            if caught_up
+                && let Some(window) = window()
                 && let Ok(Some(storage)) = window.local_storage() {
                     let _ = storage.set_item("counter_app_count", &message.view.count.to_string());
                     let _ = storage
@@ -222,6 +309,40 @@ fn HomePage() -> impl IntoView {
         Owner::on_cleanup(move || cleanup_source.close());
     });
 
+    #[cfg(feature = "hydrate")]
+    Effect::new(move |_| {
+        let local_pending = increment_pending.get() || decrement_pending.get() || reset_pending.get();
+        if local_pending {
+            return;
+        }
+
+        let Some(message) = deferred_realtime_message.get() else {
+            return;
+        };
+        if pending_until_sequence
+            .get_untracked()
+            .is_some_and(|sequence| message.last_sequence < sequence)
+        {
+            return;
+        }
+
+        set_last_seen_sequence.set(message.last_sequence);
+        set_current_view.set(Some(message.view.clone()));
+        set_optimistic_count.set(Some(message.view.count));
+        set_pending_until_sequence.set(None);
+        set_deferred_realtime_message.set(None);
+
+        if let Some(window) = window()
+            && let Ok(Some(storage)) = window.local_storage()
+        {
+            let _ = storage.set_item("counter_app_count", &message.view.count.to_string());
+            let _ = storage.set_item(
+                "counter_app_last_sequence",
+                &message.last_sequence.to_string(),
+            );
+        }
+    });
+
     let display_count = move || {
         if let Some(opt_count) = optimistic_count.get() {
             opt_count.to_string()
@@ -231,7 +352,11 @@ fn HomePage() -> impl IntoView {
     };
 
     let is_pending = move || {
-        pending_after_sequence.get().is_some()
+        pending_until_sequence.get().is_some()
+            || deferred_realtime_message.get().is_some()
+            || increment_pending.get()
+            || decrement_pending.get()
+            || reset_pending.get()
     };
 
     let latest_error = move || {
@@ -256,46 +381,51 @@ fn HomePage() -> impl IntoView {
         }
     };
 
-    // Button click handlers
+    let apply_optimistic_command = move |command: ClientCounterCommand| {
+        let base_count = optimistic_count
+            .get_untracked()
+            .or_else(|| current_view.get_untracked().map(|view| view.count))
+            .unwrap_or_default();
+        set_optimistic_count.set(Some(command.apply_to(base_count)));
+        let base_sequence = pending_until_sequence
+            .get_untracked()
+            .or_else(|| current_view.get_untracked().map(|view| view.last_sequence))
+            .unwrap_or_else(|| last_seen_sequence.get_untracked());
+        set_pending_until_sequence.set(Some(base_sequence.saturating_add(1)));
+    };
+
+    // Button click handlers. Local state updates immediately while every click
+    // is sent to the server immediately; server-side retry handles stale
+    // expected revisions under bursty writes.
     let on_inc = move |_| {
-        if pending_after_sequence.get_untracked().is_some() {
-            return;
-        }
-        set_pending_after_sequence.set(Some(last_seen_sequence.get_untracked()));
+        let command = ClientCounterCommand::Increment(1);
+        apply_optimistic_command(command);
         increment_action.dispatch(IncrementCount { amount: 1 });
     };
 
     let on_dec = move |_| {
-        if pending_after_sequence.get_untracked().is_some() {
-            return;
-        }
-        set_pending_after_sequence.set(Some(last_seen_sequence.get_untracked()));
+        let command = ClientCounterCommand::Decrement(1);
+        apply_optimistic_command(command);
         decrement_action.dispatch(DecrementCount { amount: 1 });
     };
 
     let on_reset = move |_| {
-        if pending_after_sequence.get_untracked().is_some() {
-            return;
-        }
-        set_pending_after_sequence.set(Some(last_seen_sequence.get_untracked()));
+        let command = ClientCounterCommand::Reset;
+        apply_optimistic_command(command);
         reset_action.dispatch(ResetCount {});
     };
 
     let on_custom_inc = move |_| {
-        if pending_after_sequence.get_untracked().is_some() {
-            return;
-        }
         let val = custom_amount.get();
-        set_pending_after_sequence.set(Some(last_seen_sequence.get_untracked()));
+        let command = ClientCounterCommand::Increment(val);
+        apply_optimistic_command(command);
         increment_action.dispatch(IncrementCount { amount: val });
     };
 
     let on_custom_dec = move |_| {
-        if pending_after_sequence.get_untracked().is_some() {
-            return;
-        }
         let val = custom_amount.get();
-        set_pending_after_sequence.set(Some(last_seen_sequence.get_untracked()));
+        let command = ClientCounterCommand::Decrement(val);
+        apply_optimistic_command(command);
         decrement_action.dispatch(DecrementCount { amount: val });
     };
 
@@ -332,14 +462,6 @@ fn HomePage() -> impl IntoView {
                             "Live Aggregate Value"
                         </div>
 
-                        <Show when=is_pending>
-                            <div class="absolute inset-0 flex items-center justify-center bg-slate-900/40 rounded-2xl backdrop-blur-[1px] transition-all">
-                                <div class="relative w-12 h-12">
-                                    <div class="absolute inset-0 rounded-full border-4 border-slate-800"></div>
-                                    <div class="absolute inset-0 rounded-full border-4 border-sky-400 border-t-transparent animate-spin"></div>
-                                </div>
-                            </div>
-                        </Show>
                     </div>
 
                     <Show when=move || latest_error().is_some()>
@@ -359,7 +481,6 @@ fn HomePage() -> impl IntoView {
                     <div class="grid grid-cols-3 gap-3">
                         <button
                             on:click=on_dec
-                            disabled=is_pending
                             class="rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-100 font-bold p-4 border border-slate-700/50 shadow transition-all disabled:opacity-40 disabled:cursor-not-allowed group flex flex-col items-center gap-1"
                         >
                             <span class="text-lg group-hover:scale-110 transition-transform font-black">"- 1"</span>
@@ -368,7 +489,6 @@ fn HomePage() -> impl IntoView {
                         
                         <button
                             on:click=on_reset
-                            disabled=is_pending
                             class="rounded-xl bg-amber-500/10 hover:bg-amber-500/20 active:scale-95 text-amber-400 font-bold p-4 border border-amber-500/20 shadow transition-all disabled:opacity-40 disabled:cursor-not-allowed group flex flex-col items-center gap-1"
                         >
                             <span class="text-lg group-hover:rotate-45 transition-transform font-black">"↺"</span>
@@ -377,7 +497,6 @@ fn HomePage() -> impl IntoView {
 
                         <button
                             on:click=on_inc
-                            disabled=is_pending
                             class="rounded-xl bg-sky-500/10 hover:bg-sky-500/20 active:scale-95 text-sky-400 font-bold p-4 border border-sky-500/20 shadow transition-all disabled:opacity-40 disabled:cursor-not-allowed group flex flex-col items-center gap-1"
                         >
                             <span class="text-lg group-hover:scale-110 transition-transform font-black font-extrabold animate-pulse">"+ 1"</span>
@@ -420,14 +539,12 @@ fn HomePage() -> impl IntoView {
                         <div class="grid grid-cols-2 gap-3">
                             <button
                                 on:click=on_custom_dec
-                                disabled=is_pending
                                 class="rounded-lg bg-slate-800/80 hover:bg-slate-800 text-slate-200 hover:text-white font-semibold text-xs py-2 px-3 border border-slate-700/50 shadow-sm transition-all disabled:opacity-40"
                             >
                                 "Batch Dec (-" {custom_amount} ")"
                             </button>
                             <button
                                 on:click=on_custom_inc
-                                disabled=is_pending
                                 class="rounded-lg bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 font-semibold text-xs py-2 px-3 border border-sky-500/20 shadow-sm transition-all disabled:opacity-40"
                             >
                                 "Batch Inc (+" {custom_amount} ")"
@@ -555,68 +672,68 @@ pub async fn get_counter_view_db() -> Result<CounterViewDto, ServerFnError> {
 
 #[cfg(feature = "ssr")]
 async fn run_cqrs_command(command: crate::domain::CounterCommand) -> Result<CounterViewDto, ServerFnError> {
-    use crate::store::{MultiBackendEventStore, MultiBackendCheckpointStore, MultiBackendCounterProjection};
     use crate::domain::{Counter, CounterId};
+    use crate::store::MultiBackendEventStore;
     use ddd_cqrs_es::AsyncRepository;
 
     let event_store = MultiBackendEventStore::<Counter>::new();
-    let repository = AsyncRepository::new(event_store.clone());
+    let repository = AsyncRepository::new(event_store);
     let aggregate_id = CounterId("global".to_string());
 
-    // Execute command via AsyncRepository (which loads the stream, handles the command, and appends new events)
-    let committed_events = repository.execute(
-        &aggregate_id,
-        command,
-        ddd_cqrs_es::Metadata::default(),
-    ).await.map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    // Advance projection asynchronously
-    let checkpoint_store = MultiBackendCheckpointStore::new();
-    let mut projection = MultiBackendCounterProjection::new();
-
-    // Contiguous path projection optimization
-    let last_sequence = checkpoint_store.load_checkpoint_async("counter_projection").await
-        .unwrap_or(None)
-        .unwrap_or(0);
-
-    let mut contiguous = true;
-    let mut expected_seq = last_sequence + 1;
-    for env in &committed_events {
-        if let Some(seq) = env.sequence {
-            if seq == expected_seq {
-                expected_seq = seq + 1;
-            } else {
-                contiguous = false;
-                break;
+    const COMMAND_CONCURRENCY_RETRIES: usize = 6;
+    let mut attempts = 0;
+    let (loaded, committed_events) = loop {
+        match repository
+            .execute_returning_state(
+                &aggregate_id,
+                command.clone(),
+                ddd_cqrs_es::Metadata::default(),
+            )
+            .await
+        {
+            Ok(outcome) => break outcome,
+            Err(error)
+                if attempts < COMMAND_CONCURRENCY_RETRIES
+                    && is_retryable_counter_write_conflict(&error) =>
+            {
+                attempts += 1;
+                wasip3::clocks::monotonic_clock::wait_for(attempts as u64 * 5_000_000).await;
             }
-        } else {
-            contiguous = false;
-            break;
+            Err(error) => return Err(ServerFnError::new(error.to_string())),
         }
-    }
+    };
 
-    if crate::store::get_backend() == "redis" {
-        crate::store::run_projections_async(&event_store, &checkpoint_store, &mut projection).await
-            .map_err(ServerFnError::new)?;
-    } else if contiguous && !committed_events.is_empty() {
-        for env in &committed_events {
-            projection.apply_async(env).await
-                .map_err(|e| ServerFnError::new(e.to_string()))?;
-        }
-        let last_committed_seq = committed_events.last().and_then(|env| env.sequence).unwrap();
-        checkpoint_store.save_checkpoint_async("counter_projection", last_committed_seq).await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
-    } else {
-        crate::store::run_projections_async(&event_store, &checkpoint_store, &mut projection).await
-            .map_err(ServerFnError::new)?;
+    let mut view = get_counter_view_db().await?;
+    view.count = loaded.state.value;
+    if let Some(last_sequence) = committed_events.last().and_then(|event| event.sequence) {
+        view.last_sequence = last_sequence;
     }
-
-    let view = get_counter_view_db().await?;
     crate::store::publish_counter_realtime(&view).await;
+    if let Err(error) = crate::store::catch_up_counter_projection().await {
+        eprintln!("failed to catch up counter projection: {error}");
+    }
 
     Ok(view)
 }
 
+#[cfg(feature = "ssr")]
+fn is_retryable_counter_write_conflict(
+    error: &ddd_cqrs_es::RepositoryError<String, ddd_cqrs_es::EventStoreError>,
+) -> bool {
+    match error {
+        ddd_cqrs_es::RepositoryError::Concurrency(_) => true,
+        ddd_cqrs_es::RepositoryError::Store(ddd_cqrs_es::EventStoreError::Backend(message)) => {
+            let message = message.to_ascii_lowercase();
+            (message.contains("unique")
+                || message.contains("duplicate")
+                || message.contains("constraint"))
+                && (message.contains("revision")
+                    || message.contains("aggregate")
+                    || message.contains("idx_aggregate_revision"))
+        }
+        _ => false,
+    }
+}
 
 #[server(prefix = "/api")]
 pub async fn get_counter_view() -> Result<CounterViewDto, ServerFnError> {

@@ -161,7 +161,7 @@ CREATE TABLE events (
     metadata LONGTEXT NOT NULL,
     recorded_at_ms BIGINT NOT NULL,
     UNIQUE KEY (aggregate_type, aggregate_id, revision),
-    INDEX (aggregate_type, aggregate_id, revision)
+    INDEX events_global_replay_idx (aggregate_type, sequence)
 );
 
 CREATE TABLE checkpoints (
@@ -201,6 +201,7 @@ CREATE TABLE events (
     recorded_at_ms BIGINT NOT NULL,
     UNIQUE (aggregate_type, aggregate_id, revision)
 );
+CREATE INDEX events_global_replay_idx ON events (aggregate_type, sequence);
 
 CREATE TABLE checkpoints (
     projection_name VARCHAR(255) PRIMARY KEY,
@@ -213,6 +214,72 @@ CREATE TABLE counter_read_model (
 );
 EOF
     echo "PostgreSQL schema successfully dropped and re-created."
+    ;;
+
+  supabase)
+    if [ -z "$DATABASE_URL" ]; then
+      echo "Error: DATABASE_URL environment variable is not set." >&2
+      exit 1
+    fi
+    if [ -z "$DATABASE_AUTH_TOKEN" ]; then
+      echo "Error: DATABASE_AUTH_TOKEN or SUPABASE_SECRET_KEY is required for Supabase reset." >&2
+      exit 1
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+      echo "Error: python3 is required to build Supabase reset payloads." >&2
+      exit 1
+    fi
+
+    RPC_URL="$DATABASE_URL"
+    if [[ "$RPC_URL" != */rest/v1/rpc/execute_sql ]]; then
+      RPC_URL="${RPC_URL%/}/rest/v1/rpc/execute_sql"
+    fi
+
+    supabase_execute_sql() {
+      local sql="$1"
+      local payload
+      payload="$(SQL_TEXT="$sql" python3 - <<'PY'
+import json
+import os
+
+print(json.dumps({"query_text": os.environ["SQL_TEXT"], "query_params": []}))
+PY
+)"
+      curl -s -f -X POST \
+        -H "Content-Type: application/json" \
+        -H "apikey: $DATABASE_AUTH_TOKEN" \
+        -H "Authorization: Bearer $DATABASE_AUTH_TOKEN" \
+        -d "$payload" \
+        "$RPC_URL" > /dev/null
+    }
+
+    echo "Resetting Supabase database via execute_sql RPC..."
+    supabase_execute_sql "DROP TABLE IF EXISTS events;"
+    supabase_execute_sql "DROP TABLE IF EXISTS checkpoints;"
+    supabase_execute_sql "DROP TABLE IF EXISTS counter_read_model;"
+    supabase_execute_sql "CREATE TABLE events (
+      sequence BIGSERIAL PRIMARY KEY,
+      event_id TEXT NOT NULL UNIQUE,
+      aggregate_id TEXT NOT NULL,
+      aggregate_type TEXT NOT NULL,
+      revision BIGINT NOT NULL,
+      event_type TEXT NOT NULL,
+      event_version INT NOT NULL,
+      payload JSONB NOT NULL,
+      metadata JSONB NOT NULL,
+      recorded_at_ms BIGINT NOT NULL,
+      UNIQUE (aggregate_type, aggregate_id, revision)
+    );"
+    supabase_execute_sql "CREATE INDEX events_global_replay_idx ON events (aggregate_type, sequence);"
+    supabase_execute_sql "CREATE TABLE checkpoints (
+      projection_name VARCHAR(255) PRIMARY KEY,
+      last_sequence BIGINT NOT NULL
+    );"
+    supabase_execute_sql "CREATE TABLE counter_read_model (
+      id VARCHAR(255) PRIMARY KEY,
+      value BIGINT NOT NULL
+    );"
+    echo "Supabase schema successfully dropped and re-created."
     ;;
 
   libsql|turso)
@@ -263,7 +330,13 @@ EOF
     {
       "type": "execute",
       "stmt": {
-        "sql": "CREATE TABLE events (event_id TEXT NOT NULL UNIQUE, aggregate_id TEXT NOT NULL, aggregate_type TEXT NOT NULL, revision INTEGER NOT NULL, sequence INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL, event_version INTEGER NOT NULL, payload TEXT NOT NULL, metadata TEXT NOT NULL, recorded_at_ms INTEGER NOT NULL, UNIQUE (aggregate_id, aggregate_type, revision));"
+        "sql": "CREATE TABLE events (event_id TEXT NOT NULL UNIQUE, aggregate_id TEXT NOT NULL, aggregate_type TEXT NOT NULL, revision INTEGER NOT NULL, sequence INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL, event_version INTEGER NOT NULL, payload TEXT NOT NULL, metadata TEXT NOT NULL, recorded_at_ms INTEGER NOT NULL, UNIQUE (aggregate_type, aggregate_id, revision));"
+      }
+    },
+    {
+      "type": "execute",
+      "stmt": {
+        "sql": "CREATE INDEX events_global_replay_idx ON events (aggregate_type, sequence);"
       }
     },
     {

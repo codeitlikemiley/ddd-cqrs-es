@@ -24,7 +24,7 @@ component = "counter-app-redis-trigger"
 
 [component.counter-app]
 source = "target/wasm32-wasip2/release/counter_app.wasm"
-allowed_outbound_hosts = ["*://*.turso.io:*", "*://*.neon.tech:*", "*://*.supabase.co:*", "*://localhost:*", "*://127.0.0.1:*", "mysql://*:*", "redis://*:*", "rediss://*:*"]
+allowed_outbound_hosts = ["*://*.turso.io:*", "*://*.neon.tech:*", "*://*.supabase.co:*", "*://localhost:*", "*://127.0.0.1:*", "postgres://*:*", "postgresql://*:*", "mysql://*:*", "redis://*:*", "rediss://*:*"]
 key_value_stores = ["default"]
 sqlite_databases = ["default"]
 files = [
@@ -32,6 +32,10 @@ files = [
 ]
 
 [component.counter-app.build]
+# The Makefile is the canonical matrix entrypoint for db/realtime selection.
+# This fallback keeps plain `spin build --from spin.redis.toml` working for
+# the Redis durable-store demo. Use `make spin db=<backend> realtime=redis`
+# for other durable backends with Redis wake notifications.
 command = "WASI_RUNTIME=spin DATABASE_BACKEND=redis REALTIME_BACKEND=redis cargo leptos build --release --lib-features hydrate --bin-features ssr,redis,spin-redis && WASI_RUNTIME=spin DATABASE_BACKEND=redis REALTIME_BACKEND=redis LEPTOS_OUTPUT_NAME=counter_app cargo build --lib --target wasm32-wasip2 --release --no-default-features --features ssr,redis,spin-redis"
 watch = ["src/**/*.rs", "Cargo.toml"]
 

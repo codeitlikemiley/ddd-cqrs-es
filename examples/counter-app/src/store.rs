@@ -1,7 +1,11 @@
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
-#[cfg(any(runtime_spin, runtime_wasmtime))]
+#[cfg(any(
+    runtime_wasmtime,
+    all(feature = "spin-redis", runtime_spin),
+    all(feature = "wasi-redis", runtime_wasmtime)
+))]
 use ddd_cqrs_es::AsyncCheckpointStore;
 use ddd_cqrs_es::{Aggregate, EventEnvelope, EventId, ExpectedRevision, NewEvent};
 use ddd_cqrs_es::error::EventStoreError;
@@ -13,6 +17,7 @@ use async_trait::async_trait;
 
 static SCHEMA_INITIALIZED: AtomicBool = AtomicBool::new(false);
 static SCHEMA_INIT_LOCK: OnceLock<futures::lock::Mutex<()>> = OnceLock::new();
+static PROJECTION_RUN_LOCK: OnceLock<futures::lock::Mutex<()>> = OnceLock::new();
 
 // =========================================================================
 // ENVIRONMENT CONFIGURATION HELPERS
@@ -102,6 +107,17 @@ fn redis_realtime_queue_key(subscriber_id: &str) -> String {
 #[allow(dead_code)]
 fn redis_realtime_alive_key(queue_key: &str) -> String {
     format!("{queue_key}:alive")
+}
+
+#[cfg(any(
+    all(feature = "spin-redis", runtime_spin),
+    all(feature = "wasi-redis", runtime_wasmtime)
+))]
+fn redis_projection_lock_key() -> String {
+    format!(
+        "counter:realtime:{}:projection-lock",
+        redis_realtime_suffix()
+    )
 }
 
 pub fn get_realtime_backend() -> String {
@@ -464,10 +480,10 @@ where
                         serde_json::Value::String(agg_id_str),
                     ];
                     let rows = ddd_cqrs_es::adapters::execute_spin_sqlite(query, params).await
-                        .map_err(|e| EventStoreError::Backend(e))?;
+                        .map_err(EventStoreError::Backend)?;
                     let mut envelopes = Vec::new();
                     for r in rows {
-                        envelopes.push(ddd_cqrs_es::adapters::row_to_envelope::<A::Event, A::Id>(&r).map_err(|e| EventStoreError::Deserialization(e))?);
+                        envelopes.push(ddd_cqrs_es::adapters::row_to_envelope::<A::Event, A::Id>(&r).map_err(EventStoreError::Deserialization)?);
                     }
                     return Ok(envelopes);
                 }
@@ -554,7 +570,7 @@ where
                         serde_json::Value::String(agg_id_str.clone()),
                     ];
                     let rows_rev = ddd_cqrs_es::adapters::execute_spin_sqlite(query_rev, params_rev).await
-                        .map_err(|e| EventStoreError::Backend(e))?;
+                        .map_err(EventStoreError::Backend)?;
                     
                     let current_revision = rows_rev.first()
                         .and_then(|r| r.get("max_rev"))
@@ -592,7 +608,7 @@ where
                             serde_json::Value::String(agg_id_str.clone()),
                             serde_json::Value::String(A::aggregate_type().to_string()),
                             serde_json::Value::Number(revision.into()),
-                            serde_json::Value::String(event.event_type.clone()),
+                            serde_json::Value::String(event.event_type.as_str().to_owned()),
                             serde_json::Value::Number(event.event_version.into()),
                             serde_json::Value::String(payload_str),
                             serde_json::Value::String(metadata_str),
@@ -600,17 +616,15 @@ where
                         ];
 
                         let insert_rows = ddd_cqrs_es::adapters::execute_spin_sqlite(insert_query, params_insert).await
-                            .map_err(|e| EventStoreError::Backend(e))?;
+                            .map_err(EventStoreError::Backend)?;
 
                         let sequence = insert_rows.first()
                             .and_then(|r| r.get("sequence"))
                             .and_then(|v| {
                                 if let Some(u) = v.as_u64() {
                                     Some(u)
-                                } else if let Some(i) = v.as_i64() {
-                                    Some(i as u64)
                                 } else {
-                                    None
+                                    v.as_i64().map(|i| i as u64)
                                 }
                             });
 
@@ -704,7 +718,7 @@ where
                 serde_json::Value::String(agg_id_str.clone()),
                 serde_json::Value::String(A::aggregate_type().to_string()),
                 serde_json::Value::Number(revision.into()),
-                serde_json::Value::String(event.event_type.clone()),
+                serde_json::Value::String(event.event_type.as_str().to_owned()),
                 serde_json::Value::Number(event.event_version.into()),
                 payload_val,
                 metadata_val,
@@ -786,10 +800,10 @@ where
                     let query = "SELECT sequence, event_id, aggregate_id, aggregate_type, revision, event_type, event_version, payload, metadata, recorded_at_ms FROM events WHERE sequence > ? ORDER BY sequence ASC";
                     let params = vec![serde_json::Value::Number(seq.into())];
                     let rows = ddd_cqrs_es::adapters::execute_spin_sqlite(query, params).await
-                        .map_err(|e| EventStoreError::Backend(e))?;
+                        .map_err(EventStoreError::Backend)?;
                     let mut envelopes = Vec::new();
                     for r in rows {
-                        envelopes.push(ddd_cqrs_es::adapters::row_to_envelope::<A::Event, A::Id>(&r).map_err(|e| EventStoreError::Deserialization(e))?);
+                        envelopes.push(ddd_cqrs_es::adapters::row_to_envelope::<A::Event, A::Id>(&r).map_err(EventStoreError::Deserialization)?);
                     }
                     return Ok(envelopes);
                 }
@@ -880,13 +894,12 @@ impl MultiBackendCheckpointStore {
                     let query = "SELECT last_sequence FROM checkpoints WHERE projection_name = ?";
                     let params = vec![serde_json::Value::String(projection_name.to_string())];
                     let rows = ddd_cqrs_es::adapters::execute_spin_sqlite(query, params).await
-                        .map_err(|e| EventStoreError::Backend(e))?;
-                    if let Some(r) = rows.first() {
-                        if let Some(val) = r.get("last_sequence") {
-                            if let Some(u) = val.as_u64() {
-                                return Ok(Some(u));
-                            }
-                        }
+                        .map_err(EventStoreError::Backend)?;
+                    if let Some(r) = rows.first()
+                        && let Some(val) = r.get("last_sequence")
+                        && let Some(u) = val.as_u64()
+                    {
+                        return Ok(Some(u));
                     }
                     return Ok(None);
                 }
@@ -959,13 +972,13 @@ impl MultiBackendCheckpointStore {
             {
                 #[cfg(feature = "sqlite")]
                 {
-                    let query = "INSERT INTO checkpoints (projection_name, last_sequence) VALUES (?, ?) ON CONFLICT(projection_name) DO UPDATE SET last_sequence = excluded.last_sequence";
+                    let query = "INSERT INTO checkpoints (projection_name, last_sequence) VALUES (?, ?) ON CONFLICT(projection_name) DO UPDATE SET last_sequence = CASE WHEN excluded.last_sequence > checkpoints.last_sequence THEN excluded.last_sequence ELSE checkpoints.last_sequence END";
                     let params = vec![
                         serde_json::Value::String(projection_name.to_string()),
                         serde_json::Value::Number(sequence.into()),
                     ];
                     ddd_cqrs_es::adapters::execute_spin_sqlite(query, params).await
-                        .map_err(|e| EventStoreError::Backend(e))?;
+                        .map_err(EventStoreError::Backend)?;
                     return Ok(());
                 }
                 #[cfg(not(feature = "sqlite"))]
@@ -981,7 +994,7 @@ impl MultiBackendCheckpointStore {
         }
 
         if backend == "mysql" {
-            let sql_mysql = "INSERT INTO checkpoints (projection_name, last_sequence) VALUES (?, ?) ON DUPLICATE KEY UPDATE last_sequence = VALUES(last_sequence)";
+            let sql_mysql = "INSERT INTO checkpoints (projection_name, last_sequence) VALUES (?, ?) ON DUPLICATE KEY UPDATE last_sequence = GREATEST(last_sequence, VALUES(last_sequence))";
             let params = vec![
                 serde_json::Value::String(projection_name.to_string()),
                 serde_json::Value::Number(sequence.into()),
@@ -993,8 +1006,8 @@ impl MultiBackendCheckpointStore {
             return Ok(());
         }
 
-        let sql_sqlite = "INSERT INTO checkpoints (projection_name, last_sequence) VALUES (?, ?) ON CONFLICT(projection_name) DO UPDATE SET last_sequence = excluded.last_sequence";
-        let sql_postgres = "INSERT INTO checkpoints (projection_name, last_sequence) VALUES ($1, $2) ON CONFLICT(projection_name) DO UPDATE SET last_sequence = EXCLUDED.last_sequence";
+        let sql_sqlite = "INSERT INTO checkpoints (projection_name, last_sequence) VALUES (?, ?) ON CONFLICT(projection_name) DO UPDATE SET last_sequence = CASE WHEN excluded.last_sequence > checkpoints.last_sequence THEN excluded.last_sequence ELSE checkpoints.last_sequence END";
+        let sql_postgres = "INSERT INTO checkpoints (projection_name, last_sequence) VALUES ($1, $2) ON CONFLICT(projection_name) DO UPDATE SET last_sequence = GREATEST(checkpoints.last_sequence, EXCLUDED.last_sequence)";
 
         let params = vec![
             serde_json::Value::String(projection_name.to_string()),
@@ -1115,7 +1128,7 @@ impl MultiBackendCounterProjection {
                         serde_json::Value::Number(param_val.into()),
                     ];
                     ddd_cqrs_es::adapters::execute_spin_sqlite(sql, params).await
-                        .map_err(|e| EventStoreError::Backend(e))?;
+                        .map_err(EventStoreError::Backend)?;
                     return Ok(());
                 }
                 #[cfg(not(feature = "sqlite"))]
@@ -1342,7 +1355,7 @@ fn event_log_from_envelope(
 
     crate::app::EventLogDto {
         sequence: envelope.sequence.unwrap_or(0),
-        event_type: envelope.event_type.clone(),
+        event_type: envelope.event_type.as_str().to_owned(),
         revision: envelope.revision,
         payload,
         recorded_at: format!("+{}ms", recorded_at_ms % 100000),
@@ -1385,6 +1398,36 @@ fn event_logs_from_value(value: Option<&serde_json::Value>) -> Result<Vec<crate:
 }
 
 pub async fn get_counter_view_db() -> Result<crate::app::CounterViewDto, String> {
+    get_counter_event_sourced_view_db().await
+}
+
+pub async fn get_counter_event_sourced_view_db() -> Result<crate::app::CounterViewDto, String> {
+    let event_store = MultiBackendEventStore::<crate::domain::Counter>::new();
+    let aggregate_id = crate::domain::CounterId("global".to_string());
+    let mut events = event_store
+        .load(&aggregate_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let loaded = crate::domain::Counter::replay(&events);
+
+    events.sort_by_key(|event| event.sequence.unwrap_or(0));
+    events.reverse();
+    let latest_events = events
+        .iter()
+        .take(5)
+        .map(event_log_from_envelope)
+        .collect::<Vec<_>>();
+    let last_sequence = latest_events.first().map(|event| event.sequence).unwrap_or(0);
+
+    Ok(crate::app::CounterViewDto {
+        count: loaded.state.value,
+        latest_events,
+        last_sequence,
+        realtime_enabled: get_realtime_backend() != "off",
+    })
+}
+
+pub async fn get_counter_read_model_view_db() -> Result<crate::app::CounterViewDto, String> {
     let backend = get_backend();
 
     if backend == "sqlite" || backend == "redis" || backend == "mysql" {
@@ -1748,6 +1791,34 @@ pub async fn run_projections_async(
     Ok(count)
 }
 
+pub async fn catch_up_counter_projection() -> Result<usize, String> {
+    #[cfg(any(
+        all(feature = "spin-redis", runtime_spin),
+        all(feature = "wasi-redis", runtime_wasmtime)
+    ))]
+    let redis_lock = RedisProjectionLock::acquire().await?;
+
+    let result = {
+        let lock = PROJECTION_RUN_LOCK.get_or_init(|| futures::lock::Mutex::new(()));
+        let _guard = lock.lock().await;
+
+        let event_store = MultiBackendEventStore::<crate::domain::Counter>::new();
+        let checkpoint_store = MultiBackendCheckpointStore::new();
+        let mut projection = MultiBackendCounterProjection::new();
+        run_projections_async(&event_store, &checkpoint_store, &mut projection).await
+    };
+
+    #[cfg(any(
+        all(feature = "spin-redis", runtime_spin),
+        all(feature = "wasi-redis", runtime_wasmtime)
+    ))]
+    if let Some(redis_lock) = redis_lock {
+        redis_lock.release().await;
+    }
+
+    result
+}
+
 #[cfg(any(
     all(feature = "spin-redis", runtime_spin),
     all(feature = "wasi-redis", runtime_wasmtime)
@@ -1814,6 +1885,90 @@ end
 
 return pushed
 "#;
+
+#[cfg(any(
+    all(feature = "spin-redis", runtime_spin),
+    all(feature = "wasi-redis", runtime_wasmtime)
+))]
+const REDIS_PROJECTION_LOCK_TTL_MS: u64 = 10_000;
+
+#[cfg(any(
+    all(feature = "spin-redis", runtime_spin),
+    all(feature = "wasi-redis", runtime_wasmtime)
+))]
+const REDIS_PROJECTION_LOCK_WAIT_ATTEMPTS: usize = 200;
+
+#[cfg(any(
+    all(feature = "spin-redis", runtime_spin),
+    all(feature = "wasi-redis", runtime_wasmtime)
+))]
+const REDIS_PROJECTION_LOCK_RELEASE_LUA: &str = r#"
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('DEL', KEYS[1])
+end
+
+return 0
+"#;
+
+#[cfg(any(
+    all(feature = "spin-redis", runtime_spin),
+    all(feature = "wasi-redis", runtime_wasmtime)
+))]
+struct RedisProjectionLock {
+    key: String,
+    token: String,
+}
+
+#[cfg(any(
+    all(feature = "spin-redis", runtime_spin),
+    all(feature = "wasi-redis", runtime_wasmtime)
+))]
+impl RedisProjectionLock {
+    async fn acquire() -> Result<Option<Self>, String> {
+        if get_realtime_backend() != "redis" && get_backend() != "redis" {
+            return Ok(None);
+        }
+
+        let key = redis_projection_lock_key();
+        let token = EventId::new().as_str().to_owned();
+        for _ in 0..REDIS_PROJECTION_LOCK_WAIT_ATTEMPTS {
+            let value = redis_execute(
+                "SET",
+                vec![
+                    key.as_bytes().to_vec(),
+                    token.as_bytes().to_vec(),
+                    b"NX".to_vec(),
+                    b"PX".to_vec(),
+                    REDIS_PROJECTION_LOCK_TTL_MS.to_string().into_bytes(),
+                ],
+            )
+            .await?;
+            if redis_value_strings(&value)
+                .iter()
+                .any(|value| value.eq_ignore_ascii_case("OK"))
+            {
+                return Ok(Some(Self { key, token }));
+            }
+
+            wasip3::clocks::monotonic_clock::wait_for(50_000_000).await;
+        }
+
+        Err("timed out waiting for Redis projection lock".to_string())
+    }
+
+    async fn release(self) {
+        let _ = redis_execute(
+            "EVAL",
+            vec![
+                REDIS_PROJECTION_LOCK_RELEASE_LUA.as_bytes().to_vec(),
+                b"1".to_vec(),
+                self.key.into_bytes(),
+                self.token.into_bytes(),
+            ],
+        )
+        .await;
+    }
+}
 
 #[cfg(any(
     all(feature = "spin-redis", runtime_spin),
@@ -1919,11 +2074,10 @@ pub async fn counter_realtime_message_after(
         return Ok(None);
     }
 
-    let checkpoint_store = MultiBackendCheckpointStore::new();
-    let mut projection = MultiBackendCounterProjection::new();
-    run_projections_async(&event_store, &checkpoint_store, &mut projection).await?;
-
     let view = get_counter_view_db().await?;
+    if let Err(error) = catch_up_counter_projection().await {
+        eprintln!("failed to catch up counter projection for realtime stream: {error}");
+    }
     Ok(Some(crate::app::CounterRealtimeMessage {
         last_sequence: view.last_sequence,
         view,

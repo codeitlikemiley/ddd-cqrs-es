@@ -69,14 +69,6 @@ impl Aggregate for Counter {
         "counter"
     }
 
-    fn id(&self) -> Option<&Self::Id> {
-        if self.id.0.is_empty() {
-            None
-        } else {
-            Some(&self.id)
-        }
-    }
-
     fn revision(&self) -> u64 {
         self.revision
     }
@@ -249,13 +241,13 @@ mod tests {
     }
 
     #[test]
-    fn test_replay_events() {
+    fn test_replay_raw_events_from_zero() {
         let events = vec![
             CounterEvent::Incremented { amount: 15 },
             CounterEvent::Decremented { amount: 5 },
             CounterEvent::Incremented { amount: 2 },
         ];
-        let loaded = Counter::replay_events(&events);
+        let loaded = Counter::replay_raw_events_from_zero(&events);
         assert_eq!(loaded.state.value, 12);
         assert_eq!(loaded.revision, 3);
     }
