@@ -26,6 +26,7 @@ use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::marker::PhantomData;
 #[cfg(feature = "wasi-redis")]
 use std::net::TcpStream;
+use std::num::NonZeroUsize;
 #[cfg(feature = "wasi-redis")]
 use std::time::Duration;
 use std::time::SystemTime;
@@ -408,6 +409,37 @@ where
                     self.global_key().into_bytes(),
                     format!("({min_sequence}").into_bytes(),
                     b"+inf".to_vec(),
+                ],
+            )
+            .await
+            .map_err(map_executor_error)?;
+
+        let sequences = redis_sequence_list(&value)?;
+        let mut events = Vec::with_capacity(sequences.len());
+        for sequence in sequences {
+            events.push(self.load_sequence(sequence).await?);
+        }
+
+        Ok(events)
+    }
+
+    async fn load_global_after_limited(
+        &self,
+        sequence: Option<u64>,
+        limit: NonZeroUsize,
+    ) -> Result<EventStream<A>, Self::Error> {
+        let min_sequence = sequence.unwrap_or_default();
+        let value = self
+            .client
+            .execute(
+                "ZRANGEBYSCORE",
+                vec![
+                    self.global_key().into_bytes(),
+                    format!("({min_sequence}").into_bytes(),
+                    b"+inf".to_vec(),
+                    b"LIMIT".to_vec(),
+                    b"0".to_vec(),
+                    limit.get().to_string().into_bytes(),
                 ],
             )
             .await

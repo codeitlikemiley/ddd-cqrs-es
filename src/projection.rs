@@ -2,6 +2,7 @@ use crate::aggregate::Aggregate;
 use crate::event::EventEnvelope;
 use crate::event_store::EventStore;
 use std::fmt::{Display, Formatter};
+use std::num::NonZeroUsize;
 
 #[cfg(feature = "async")]
 use async_trait::async_trait;
@@ -65,6 +66,59 @@ pub trait Projection<E, Id> {
 
     /// Applies one committed event to the projection.
     fn apply(&mut self, event: &EventEnvelope<E, Id>) -> Result<(), Self::Error>;
+}
+
+/// Default maximum event count for bounded projection catch-up.
+pub const DEFAULT_PROJECTION_BATCH_SIZE: usize = 500;
+
+/// Controls bounded projection replay.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProjectionBatchConfig {
+    batch_size: NonZeroUsize,
+}
+
+impl ProjectionBatchConfig {
+    /// Creates a new projection batch configuration.
+    pub const fn new(batch_size: NonZeroUsize) -> Self {
+        Self { batch_size }
+    }
+
+    /// Returns the maximum number of events loaded and applied in one batch.
+    pub const fn batch_size(self) -> NonZeroUsize {
+        self.batch_size
+    }
+}
+
+impl Default for ProjectionBatchConfig {
+    fn default() -> Self {
+        Self {
+            batch_size: NonZeroUsize::new(DEFAULT_PROJECTION_BATCH_SIZE)
+                .expect("default projection batch size must be non-zero"),
+        }
+    }
+}
+
+/// Result of one bounded projection replay pass.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProjectionBatchOutcome {
+    /// Number of events applied in this batch.
+    pub applied: usize,
+    /// Last global sequence successfully applied in this batch.
+    pub last_sequence: Option<u64>,
+    /// Whether the runner observed fewer events than the configured batch size.
+    pub caught_up: bool,
+}
+
+fn projection_batch_outcome(
+    applied: usize,
+    last_sequence: Option<u64>,
+    config: ProjectionBatchConfig,
+) -> ProjectionBatchOutcome {
+    ProjectionBatchOutcome {
+        applied,
+        last_sequence,
+        caught_up: applied < config.batch_size().get(),
+    }
 }
 
 /// In-memory projection runner with a sequence checkpoint.
@@ -182,6 +236,46 @@ impl<P> InMemoryProjectionRunner<P> {
         }
 
         Ok(applied)
+    }
+
+    /// Loads at most `config.batch_size()` global events after the current
+    /// checkpoint and applies them.
+    pub fn run_batch<A, S>(
+        &mut self,
+        store: &S,
+        config: ProjectionBatchConfig,
+    ) -> Result<ProjectionBatchOutcome, ProjectionRunnerError<P::Error, S::Error>>
+    where
+        A: Aggregate,
+        S: EventStore<A>,
+        P: Projection<A::Event, A::Id>,
+    {
+        #[cfg(feature = "tracing")]
+        let _span = tracing::debug_span!(
+            "projection.run_batch",
+            runner = "in_memory",
+            projection = self.projection.name(),
+            aggregate_type = A::aggregate_type(),
+            batch_size = config.batch_size().get()
+        )
+        .entered();
+
+        let events = store
+            .load_global_after_limited(self.checkpoint, config.batch_size())
+            .map_err(ProjectionRunnerError::Store)?;
+        let mut applied = 0;
+        let mut last_sequence = None;
+
+        for event in events {
+            self.projection
+                .apply(&event)
+                .map_err(ProjectionRunnerError::Projection)?;
+            self.checkpoint = event.sequence;
+            last_sequence = event.sequence;
+            applied += 1;
+        }
+
+        Ok(projection_batch_outcome(applied, last_sequence, config))
     }
 }
 
@@ -348,6 +442,57 @@ where
 
         Ok(applied)
     }
+
+    /// Loads at most `config.batch_size()` global events after the persistent
+    /// checkpoint, applies them, and saves checkpoints after successful events.
+    #[allow(clippy::type_complexity)]
+    pub fn run_batch<A, S>(
+        &mut self,
+        store: &S,
+        config: ProjectionBatchConfig,
+    ) -> Result<ProjectionBatchOutcome, ProjectionRunnerError<P::Error, S::Error, C::Error>>
+    where
+        A: Aggregate,
+        S: EventStore<A>,
+        P: Projection<A::Event, A::Id>,
+    {
+        let name = self.projection.name();
+        #[cfg(feature = "tracing")]
+        let _span = tracing::debug_span!(
+            "projection.run_batch",
+            runner = "persisted",
+            projection = name,
+            aggregate_type = A::aggregate_type(),
+            batch_size = config.batch_size().get()
+        )
+        .entered();
+
+        let checkpoint = self
+            .checkpoint_store
+            .load_checkpoint(name)
+            .map_err(ProjectionRunnerError::Checkpoint)?;
+
+        let events = store
+            .load_global_after_limited(checkpoint, config.batch_size())
+            .map_err(ProjectionRunnerError::Store)?;
+        let mut applied = 0;
+        let mut last_sequence = None;
+
+        for event in events {
+            self.projection
+                .apply(&event)
+                .map_err(ProjectionRunnerError::Projection)?;
+            if let Some(seq) = event.sequence {
+                self.checkpoint_store
+                    .save_checkpoint(name, seq)
+                    .map_err(ProjectionRunnerError::Checkpoint)?;
+            }
+            last_sequence = event.sequence;
+            applied += 1;
+        }
+
+        Ok(projection_batch_outcome(applied, last_sequence, config))
+    }
 }
 
 /// An async projection runner that uses a persistent `AsyncCheckpointStore` to coordinate progress.
@@ -432,6 +577,50 @@ where
         }
 
         Ok(applied)
+    }
+
+    /// Loads at most `config.batch_size()` global events after the persistent
+    /// checkpoint, applies them, and saves checkpoints after successful events.
+    #[allow(clippy::type_complexity)]
+    pub async fn run_batch<A, S>(
+        &mut self,
+        store: &S,
+        config: ProjectionBatchConfig,
+    ) -> Result<ProjectionBatchOutcome, ProjectionRunnerError<P::Error, S::Error, C::Error>>
+    where
+        A: Aggregate + Send + Sync,
+        S: crate::async_api::AsyncEventStore<A>,
+        P: Projection<A::Event, A::Id>,
+    {
+        let name = self.projection.name();
+        let checkpoint = self
+            .checkpoint_store
+            .load_checkpoint(name)
+            .await
+            .map_err(ProjectionRunnerError::Checkpoint)?;
+
+        let events = store
+            .load_global_after_limited(checkpoint, config.batch_size())
+            .await
+            .map_err(ProjectionRunnerError::Store)?;
+        let mut applied = 0;
+        let mut last_sequence = None;
+
+        for event in events {
+            self.projection
+                .apply(&event)
+                .map_err(ProjectionRunnerError::Projection)?;
+            if let Some(seq) = event.sequence {
+                self.checkpoint_store
+                    .save_checkpoint(name, seq)
+                    .await
+                    .map_err(ProjectionRunnerError::Checkpoint)?;
+            }
+            last_sequence = event.sequence;
+            applied += 1;
+        }
+
+        Ok(projection_batch_outcome(applied, last_sequence, config))
     }
 }
 
@@ -533,6 +722,51 @@ impl<P> CheckpointedProjectionRunner<P> {
 
         Ok(applied)
     }
+
+    /// Loads at most `config.batch_size()` global events after the projection's
+    /// checkpoint and applies each event through the projection-owned checkpoint operation.
+    #[allow(clippy::type_complexity)]
+    pub fn run_batch<A, S>(
+        &mut self,
+        store: &S,
+        config: ProjectionBatchConfig,
+    ) -> Result<ProjectionBatchOutcome, ProjectionRunnerError<P::Error, S::Error, P::Error>>
+    where
+        A: Aggregate,
+        S: EventStore<A>,
+        P: CheckpointedProjection<A::Event, A::Id>,
+    {
+        #[cfg(feature = "tracing")]
+        let _span = tracing::debug_span!(
+            "projection.run_batch",
+            runner = "checkpointed",
+            projection = self.projection.name(),
+            aggregate_type = A::aggregate_type(),
+            batch_size = config.batch_size().get()
+        )
+        .entered();
+
+        let checkpoint = self
+            .projection
+            .load_checkpoint()
+            .map_err(ProjectionRunnerError::Checkpoint)?;
+
+        let events = store
+            .load_global_after_limited(checkpoint, config.batch_size())
+            .map_err(ProjectionRunnerError::Store)?;
+        let mut applied = 0;
+        let mut last_sequence = None;
+
+        for event in events {
+            self.projection
+                .apply_and_checkpoint(&event)
+                .map_err(ProjectionRunnerError::Projection)?;
+            last_sequence = event.sequence;
+            applied += 1;
+        }
+
+        Ok(projection_batch_outcome(applied, last_sequence, config))
+    }
 }
 
 /// A projection that commits read-model updates and checkpoint movement in one transaction.
@@ -627,6 +861,51 @@ impl<P> TransactionalCheckpointedProjectionRunner<P> {
         }
 
         Ok(applied)
+    }
+
+    /// Loads at most `config.batch_size()` global events after the projection's
+    /// checkpoint and applies each read-model update with its checkpoint transaction.
+    #[allow(clippy::type_complexity)]
+    pub fn run_batch<A, S>(
+        &mut self,
+        store: &S,
+        config: ProjectionBatchConfig,
+    ) -> Result<ProjectionBatchOutcome, ProjectionRunnerError<P::Error, S::Error, P::Error>>
+    where
+        A: Aggregate,
+        S: EventStore<A>,
+        P: TransactionalCheckpointedProjection<A::Event, A::Id>,
+    {
+        #[cfg(feature = "tracing")]
+        let _span = tracing::debug_span!(
+            "projection.run_batch",
+            runner = "transactional",
+            projection = self.projection.name(),
+            aggregate_type = A::aggregate_type(),
+            batch_size = config.batch_size().get()
+        )
+        .entered();
+
+        let checkpoint = self
+            .projection
+            .load_checkpoint()
+            .map_err(ProjectionRunnerError::Checkpoint)?;
+
+        let events = store
+            .load_global_after_limited(checkpoint, config.batch_size())
+            .map_err(ProjectionRunnerError::Store)?;
+        let mut applied = 0;
+        let mut last_sequence = None;
+
+        for event in events {
+            self.projection
+                .apply_and_checkpoint_transactionally(&event)
+                .map_err(ProjectionRunnerError::Projection)?;
+            last_sequence = event.sequence;
+            applied += 1;
+        }
+
+        Ok(projection_batch_outcome(applied, last_sequence, config))
     }
 }
 
@@ -757,6 +1036,43 @@ impl<P> AsyncTransactionalCheckpointedProjectionRunner<P> {
 
         Ok(applied)
     }
+
+    /// Loads at most `config.batch_size()` global events after the projection's
+    /// checkpoint and applies each read-model update with its checkpoint transaction.
+    pub async fn run_batch<A, S>(
+        &mut self,
+        store: &S,
+        config: ProjectionBatchConfig,
+    ) -> Result<ProjectionBatchOutcome, ProjectionRunnerError<P::Error, S::Error, P::Error>>
+    where
+        A: Aggregate + Send + Sync,
+        S: crate::async_api::AsyncEventStore<A>,
+        P: AsyncTransactionalCheckpointedProjection<A::Event, A::Id> + Send + Sync,
+    {
+        let checkpoint = self
+            .projection
+            .load_checkpoint()
+            .await
+            .map_err(ProjectionRunnerError::Checkpoint)?;
+
+        let events = store
+            .load_global_after_limited(checkpoint, config.batch_size())
+            .await
+            .map_err(ProjectionRunnerError::Store)?;
+        let mut applied = 0;
+        let mut last_sequence = None;
+
+        for event in events {
+            self.projection
+                .apply_and_checkpoint_transactionally(&event)
+                .await
+                .map_err(ProjectionRunnerError::Projection)?;
+            last_sequence = event.sequence;
+            applied += 1;
+        }
+
+        Ok(projection_batch_outcome(applied, last_sequence, config))
+    }
 }
 
 #[cfg(feature = "async")]
@@ -817,5 +1133,43 @@ impl<P> AsyncCheckpointedProjectionRunner<P> {
         }
 
         Ok(applied)
+    }
+
+    /// Loads at most `config.batch_size()` global events after the projection's
+    /// checkpoint and applies each event through the projection-owned checkpoint operation.
+    #[allow(clippy::type_complexity)]
+    pub async fn run_batch<A, S>(
+        &mut self,
+        store: &S,
+        config: ProjectionBatchConfig,
+    ) -> Result<ProjectionBatchOutcome, ProjectionRunnerError<P::Error, S::Error, P::Error>>
+    where
+        A: Aggregate + Send + Sync,
+        S: crate::async_api::AsyncEventStore<A>,
+        P: AsyncCheckpointedProjection<A::Event, A::Id> + Send + Sync,
+    {
+        let checkpoint = self
+            .projection
+            .load_checkpoint()
+            .await
+            .map_err(ProjectionRunnerError::Checkpoint)?;
+
+        let events = store
+            .load_global_after_limited(checkpoint, config.batch_size())
+            .await
+            .map_err(ProjectionRunnerError::Store)?;
+        let mut applied = 0;
+        let mut last_sequence = None;
+
+        for event in events {
+            self.projection
+                .apply_and_checkpoint(&event)
+                .await
+                .map_err(ProjectionRunnerError::Projection)?;
+            last_sequence = event.sequence;
+            applied += 1;
+        }
+
+        Ok(projection_batch_outcome(applied, last_sequence, config))
     }
 }

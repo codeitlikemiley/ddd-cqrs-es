@@ -16,6 +16,7 @@ use crate::sql_common::{
 use crate::upcast::UpcasterRegistry;
 use ::postgres::{Client, NoTls};
 use std::marker::PhantomData;
+use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
@@ -284,6 +285,35 @@ where
             .map(|row| row_to_envelope::<A>(&upcasters, row))
             .collect()
     }
+
+    fn load_global_after_limited(
+        &self,
+        sequence: Option<u64>,
+        limit: NonZeroUsize,
+    ) -> Result<EventStream<A>, Self::Error> {
+        let sequence = sequence.unwrap_or_default();
+        let sequence = i64::try_from(sequence).map_err(|_| {
+            EventStoreError::Deserialization("global sequence exceeds BIGINT".to_owned())
+        })?;
+        let limit = i64::try_from(limit.get()).map_err(|_| {
+            EventStoreError::Deserialization("event replay limit exceeds BIGINT".to_owned())
+        })?;
+        let mut client = self.client.lock().map_err(|_| EventStoreError::Poisoned)?;
+        let query = format!(
+            "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
+             event_version, payload, metadata, recorded_at_ms FROM {table} \
+             WHERE aggregate_type = $1 AND sequence > $2 ORDER BY sequence ASC LIMIT $3",
+            table = self.table_name
+        );
+        let rows = client
+            .query(&query, &[&A::aggregate_type(), &sequence, &limit])
+            .map_err(map_postgres_error)?;
+
+        let upcasters = self.upcasters.clone();
+        rows.into_iter()
+            .map(|row| row_to_envelope::<A>(&upcasters, row))
+            .collect()
+    }
 }
 
 impl<A> AtomicIdempotentEventStore<A> for PostgresEventStore<A>
@@ -530,6 +560,19 @@ where
         tokio::task::spawn_blocking(move || EventStore::load_global_after(&this, sequence))
             .await
             .map_err(|error| EventStoreError::Backend(error.to_string()))?
+    }
+
+    async fn load_global_after_limited(
+        &self,
+        sequence: Option<u64>,
+        limit: NonZeroUsize,
+    ) -> Result<EventStream<A>, Self::Error> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || {
+            EventStore::load_global_after_limited(&this, sequence, limit)
+        })
+        .await
+        .map_err(|error| EventStoreError::Backend(error.to_string()))?
     }
 }
 

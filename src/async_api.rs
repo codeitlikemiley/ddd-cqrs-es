@@ -11,6 +11,7 @@ use crate::metadata::Metadata;
 use crate::snapshot::{Snapshot, SnapshotRepositoryError};
 use async_trait::async_trait;
 use std::marker::PhantomData;
+use std::num::NonZeroUsize;
 
 /// Async event persistence abstraction for one aggregate type.
 #[async_trait]
@@ -48,6 +49,21 @@ where
     /// Loads globally ordered events after a global sequence number.
     async fn load_global_after(&self, sequence: Option<u64>)
         -> Result<EventStream<A>, Self::Error>;
+
+    /// Loads at most `limit` globally ordered events after a global sequence number.
+    ///
+    /// Adapters should override this with backend-native limits. The default
+    /// implementation preserves compatibility for custom stores by loading the
+    /// unbounded tail and truncating it.
+    async fn load_global_after_limited(
+        &self,
+        sequence: Option<u64>,
+        limit: NonZeroUsize,
+    ) -> Result<EventStream<A>, Self::Error> {
+        let mut events = self.load_global_after(sequence).await?;
+        events.truncate(limit.get());
+        Ok(events)
+    }
 }
 
 /// Async event store extension for transaction-aware idempotent appends.

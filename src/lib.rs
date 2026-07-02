@@ -158,8 +158,9 @@ pub use projection::{
 };
 pub use projection::{
     CheckpointStore, CheckpointedProjection, CheckpointedProjectionRunner,
-    InMemoryProjectionRunner, PersistedProjectionRunner, Projection, ProjectionRunnerError,
-    TransactionalCheckpointedProjection, TransactionalCheckpointedProjectionRunner,
+    InMemoryProjectionRunner, PersistedProjectionRunner, Projection, ProjectionBatchConfig,
+    ProjectionBatchOutcome, ProjectionRunnerError, TransactionalCheckpointedProjection,
+    TransactionalCheckpointedProjectionRunner, DEFAULT_PROJECTION_BATCH_SIZE,
 };
 #[cfg(feature = "spin-redis")]
 pub use redis::SpinRedisClient;

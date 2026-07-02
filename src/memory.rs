@@ -3,6 +3,7 @@ use crate::error::{ConcurrencyError, EventStoreError};
 use crate::event::{EventEnvelope, EventId, ExpectedRevision, NewEvent};
 use crate::event_store::{EventStore, EventStream};
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::sync::{Arc, RwLock};
 use std::time::SystemTime;
 
@@ -220,6 +221,25 @@ where
             .cloned()
             .collect())
     }
+
+    fn load_global_after_limited(
+        &self,
+        sequence: Option<u64>,
+        limit: NonZeroUsize,
+    ) -> Result<EventStream<A>, Self::Error> {
+        let state = self.state.read().map_err(|_| EventStoreError::Poisoned)?;
+        Ok(state
+            .global
+            .iter()
+            .filter(|event| match (sequence, event.sequence) {
+                (Some(checkpoint), Some(current)) => current > checkpoint,
+                (Some(_), None) => false,
+                (None, _) => true,
+            })
+            .take(limit.get())
+            .cloned()
+            .collect())
+    }
 }
 
 #[cfg(feature = "async")]
@@ -248,5 +268,13 @@ where
         sequence: Option<u64>,
     ) -> Result<EventStream<A>, Self::Error> {
         EventStore::load_global_after(self, sequence)
+    }
+
+    async fn load_global_after_limited(
+        &self,
+        sequence: Option<u64>,
+        limit: NonZeroUsize,
+    ) -> Result<EventStream<A>, Self::Error> {
+        EventStore::load_global_after_limited(self, sequence, limit)
     }
 }

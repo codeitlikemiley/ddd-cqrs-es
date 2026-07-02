@@ -227,6 +227,13 @@ pub fn get_migrations(dialect: SqlDialect) -> Vec<SchemaMigration> {
                         ON {events_table} (aggregate_type, sequence);
                 "#,
             },
+            SchemaMigration {
+                version: 6,
+                description: "drop_duplicate_events_stream_index",
+                up_sql: r#"
+                    DROP INDEX IF EXISTS {events_table}_stream_idx;
+                "#,
+            },
         ],
         SqlDialect::Postgres => vec![
             SchemaMigration {
@@ -291,6 +298,13 @@ pub fn get_migrations(dialect: SqlDialect) -> Vec<SchemaMigration> {
                 up_sql: r#"
                     CREATE INDEX IF NOT EXISTS {events_table}_global_replay_idx
                         ON {events_table} (aggregate_type, sequence);
+                "#,
+            },
+            SchemaMigration {
+                version: 6,
+                description: "drop_duplicate_events_stream_index",
+                up_sql: r#"
+                    DROP INDEX IF EXISTS {events_table}_stream_idx;
                 "#,
             },
         ],
@@ -359,6 +373,11 @@ pub fn get_migrations(dialect: SqlDialect) -> Vec<SchemaMigration> {
                         ON {events_table} (aggregate_type, sequence);
                 "#,
             },
+            SchemaMigration {
+                version: 6,
+                description: "drop_duplicate_events_stream_index",
+                up_sql: "SELECT 1;",
+            },
         ],
     }
 }
@@ -371,6 +390,7 @@ fn get_target_table_name(version: i32, config: &SqlSchemaConfig) -> &str {
         3 => &config.idempotency_table,
         4 => &config.snapshots_table,
         5 => &config.events_table,
+        6 => &config.events_table,
         _ => "",
     }
 }
@@ -712,6 +732,31 @@ impl SchemaMigrator {
                         .unwrap_or(false);
                     if !index_exists {
                         conn.query_drop(&sql)
+                            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+                    }
+                } else if m.version == 6 {
+                    let events_table = self.config.events_table.as_str();
+                    let duplicate_indexes_query = r#"
+                        SELECT index_name
+                        FROM information_schema.statistics
+                        WHERE table_schema = DATABASE()
+                          AND table_name = ?
+                          AND non_unique = 1
+                        GROUP BY index_name
+                        HAVING GROUP_CONCAT(column_name ORDER BY seq_in_index SEPARATOR ',') =
+                            'aggregate_type,aggregate_id,revision';
+                    "#;
+                    let duplicate_indexes: Vec<String> = conn
+                        .exec(duplicate_indexes_query, (events_table,))
+                        .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+
+                    let quoted_events_table = format!("`{}`", events_table.replace('`', "``"));
+                    for index_name in duplicate_indexes {
+                        let quoted_index_name = format!("`{}`", index_name.replace('`', "``"));
+                        let drop_index = format!(
+                            "ALTER TABLE {quoted_events_table} DROP INDEX {quoted_index_name};"
+                        );
+                        conn.query_drop(drop_index)
                             .map_err(|e| EventStoreError::Backend(e.to_string()))?;
                     }
                 } else {

@@ -4,6 +4,7 @@ use crate::event::{EventEnvelope, ExpectedRevision, NewEvent};
 use crate::idempotency::IdempotencyKey;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::num::NonZeroUsize;
 
 /// Committed events for one aggregate type.
 pub type EventStream<A> = Vec<EventEnvelope<<A as Aggregate>::Event, <A as Aggregate>::Id>>;
@@ -117,6 +118,21 @@ where
 
     /// Loads globally ordered events after a global sequence number.
     fn load_global_after(&self, sequence: Option<u64>) -> Result<EventStream<A>, Self::Error>;
+
+    /// Loads at most `limit` globally ordered events after a global sequence number.
+    ///
+    /// Adapters should override this with backend-native limits. The default
+    /// implementation preserves compatibility for custom stores by loading the
+    /// unbounded tail and truncating it.
+    fn load_global_after_limited(
+        &self,
+        sequence: Option<u64>,
+        limit: NonZeroUsize,
+    ) -> Result<EventStream<A>, Self::Error> {
+        let mut events = self.load_global_after(sequence)?;
+        events.truncate(limit.get());
+        Ok(events)
+    }
 }
 
 /// Event store extension for crash-atomic idempotent appends.
