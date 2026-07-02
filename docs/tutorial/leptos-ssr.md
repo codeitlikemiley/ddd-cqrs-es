@@ -17,8 +17,8 @@ sequenceDiagram
     participant Client as 🖥️ Leptos Client (WASM)
     participant Server as ⚙️ Leptos Server (WASI)
     participant Domain as 🧠 Aggregate (Counter)
-    database EventDB as 🗄️ Event Store (SQLite)
-    database ReadDB as 📊 Read Model (SQLite)
+    participant EventDB as 🗄️ Event Store (SQLite)
+    participant ReadDB as 📊 Read Model (SQLite)
 
     %% 1. Command Dispatch
     User->>Client: Clicks "+1" button

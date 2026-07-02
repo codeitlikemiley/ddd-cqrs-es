@@ -20,8 +20,8 @@ sequenceDiagram
     participant Client as 🖥️ Leptos Client (WASM)
     participant Server as ⚙️ Leptos Server (WASI)
     participant Domain as 🧠 Aggregate (Domain)
-    database EventDB as 🗄️ Event Store
-    database ReadDB as 📊 Read Model
+    participant EventDB as 🗄️ Event Store
+    participant ReadDB as 📊 Read Model
     
     User->>Client: Clicks command button
     Client->>Server: HTTP POST /api/command_name (Server Function)
