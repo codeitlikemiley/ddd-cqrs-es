@@ -3,10 +3,12 @@ use ddd_cqrs_es::{
     EventStore, EventStoreContractOptions, EventStoreError, EventStream, EventType,
     ExpectedRevision, IdempotencyKey, IdempotencyState, IdempotencyStore, IdempotencyWaitConfig,
     InMemoryEventStore, InMemoryIdempotencyStore, InMemoryProjectionRunner, InMemorySnapshotStore,
-    Metadata, NewEvent, Projection, Repository, RepositoryError, Snapshot, SnapshotStore,
+    Metadata, NewEvent, Projection, ProjectionBatchConfig, Repository, RepositoryError, Snapshot,
+    SnapshotStore,
 };
 use std::collections::HashMap;
 use std::error::Error;
+use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -168,6 +170,8 @@ impl Aggregate for Counter {
 struct LoadCountingStore {
     inner: InMemoryEventStore<Counter>,
     load_count: Arc<AtomicUsize>,
+    limited_global_load_count: Arc<AtomicUsize>,
+    last_limited_global_limit: Arc<AtomicUsize>,
 }
 
 impl LoadCountingStore {
@@ -175,11 +179,21 @@ impl LoadCountingStore {
         Self {
             inner,
             load_count: Arc::new(AtomicUsize::new(0)),
+            limited_global_load_count: Arc::new(AtomicUsize::new(0)),
+            last_limited_global_limit: Arc::new(AtomicUsize::new(0)),
         }
     }
 
     fn load_count(&self) -> usize {
         self.load_count.load(Ordering::SeqCst)
+    }
+
+    fn limited_global_load_count(&self) -> usize {
+        self.limited_global_load_count.load(Ordering::SeqCst)
+    }
+
+    fn last_limited_global_limit(&self) -> usize {
+        self.last_limited_global_limit.load(Ordering::SeqCst)
     }
 }
 
@@ -206,6 +220,18 @@ impl EventStore<Counter> for LoadCountingStore {
     ) -> Result<EventStream<Counter>, Self::Error> {
         self.inner.load_global_after(sequence)
     }
+
+    fn load_global_after_limited(
+        &self,
+        sequence: Option<u64>,
+        limit: NonZeroUsize,
+    ) -> Result<EventStream<Counter>, Self::Error> {
+        self.limited_global_load_count
+            .fetch_add(1, Ordering::SeqCst);
+        self.last_limited_global_limit
+            .store(limit.get(), Ordering::SeqCst);
+        self.inner.load_global_after_limited(sequence, limit)
+    }
 }
 
 #[cfg(feature = "async")]
@@ -231,6 +257,14 @@ impl ddd_cqrs_es::async_api::AsyncEventStore<Counter> for LoadCountingStore {
         sequence: Option<u64>,
     ) -> Result<EventStream<Counter>, Self::Error> {
         EventStore::load_global_after(self, sequence)
+    }
+
+    async fn load_global_after_limited(
+        &self,
+        sequence: Option<u64>,
+        limit: NonZeroUsize,
+    ) -> Result<EventStream<Counter>, Self::Error> {
+        EventStore::load_global_after_limited(self, sequence, limit)
     }
 }
 
@@ -591,6 +625,96 @@ fn postgres_idempotency_store_passes_contract_when_url_is_provided() {
         .unwrap();
 }
 
+#[cfg(feature = "postgres")]
+#[test]
+fn postgres_query_plans_use_expected_indexes_when_url_is_provided() {
+    let Ok(database_url) = std::env::var("DDD_CQRS_ES_POSTGRES_URL") else {
+        eprintln!("skipping live Postgres query-plan test: DDD_CQRS_ES_POSTGRES_URL is not set");
+        return;
+    };
+    let table_name = format!(
+        "events_plan_{}_{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+
+    let store = ddd_cqrs_es::PostgresEventStore::<Counter>::connect_with_table_name(
+        &database_url,
+        table_name.clone(),
+    )
+    .unwrap();
+    store.initialize_schema().unwrap();
+
+    let repo = Repository::new(store);
+    for index in 0..50 {
+        let counter_id = format!("postgres-plan-counter-{index}");
+        repo.execute(&counter_id, CounterCommand::Create, Metadata::default())
+            .unwrap();
+        repo.execute(
+            &counter_id,
+            CounterCommand::Increment { by: 1 },
+            Metadata::default(),
+        )
+        .unwrap();
+    }
+
+    let mut client = postgres::Client::connect(&database_url, postgres::NoTls).unwrap();
+    client.batch_execute("SET enable_seqscan = off;").unwrap();
+
+    let global_plan_rows = client
+        .query(
+            &format!(
+                "EXPLAIN (FORMAT TEXT, COSTS FALSE)
+                 SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, event_version, payload, metadata, recorded_at_ms
+                 FROM {table_name}
+                 WHERE aggregate_type = $1 AND sequence > $2
+                 ORDER BY sequence ASC
+                 LIMIT $3"
+            ),
+            &[&"counter", &0i64, &10i64],
+        )
+        .unwrap();
+    let global_plan = global_plan_rows
+        .iter()
+        .map(|row| row.get::<_, String>(0))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        global_plan.contains(&format!("{table_name}_global_replay_idx")),
+        "expected Postgres global replay query to use the global replay index, got:\n{global_plan}"
+    );
+
+    let aggregate_id = serde_json::to_string("postgres-plan-counter-1").unwrap();
+    let stream_plan_rows = client
+        .query(
+            &format!(
+                "EXPLAIN (FORMAT TEXT, COSTS FALSE)
+                 SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, event_version, payload, metadata, recorded_at_ms
+                 FROM {table_name}
+                 WHERE aggregate_type = $1 AND aggregate_id = $2
+                 ORDER BY revision ASC"
+            ),
+            &[&"counter", &aggregate_id],
+        )
+        .unwrap();
+    let stream_plan = stream_plan_rows
+        .iter()
+        .map(|row| row.get::<_, String>(0))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        stream_plan.contains("Index Scan"),
+        "expected Postgres stream query to use an index scan, got:\n{stream_plan}"
+    );
+
+    client
+        .batch_execute(&format!("DROP TABLE IF EXISTS {table_name};"))
+        .unwrap();
+}
+
 #[cfg(feature = "json")]
 #[test]
 fn postgres_interpolation_escapes_strings_and_rejects_bad_parameter_indexes() {
@@ -660,6 +784,39 @@ fn metadata_and_global_sequence_are_preserved() {
     let global = store.load_global_after(None).unwrap();
     assert_eq!(global.len(), 1);
     assert_eq!(global[0].sequence, Some(1));
+}
+
+#[test]
+fn event_store_limited_global_replay_returns_bounded_tail() {
+    let store = InMemoryEventStore::<Counter>::new();
+    let repo = Repository::new(store.clone());
+    let counter_id = "counter-limited-replay".to_owned();
+
+    repo.execute(&counter_id, CounterCommand::Create, Metadata::default())
+        .unwrap();
+    repo.execute(
+        &counter_id,
+        CounterCommand::Increment { by: 1 },
+        Metadata::default(),
+    )
+    .unwrap();
+    repo.execute(
+        &counter_id,
+        CounterCommand::Increment { by: 2 },
+        Metadata::default(),
+    )
+    .unwrap();
+
+    let limit = NonZeroUsize::new(2).unwrap();
+    let first_batch = store.load_global_after_limited(None, limit).unwrap();
+    assert_eq!(first_batch.len(), 2);
+    assert_eq!(first_batch[0].sequence, Some(1));
+    assert_eq!(first_batch[1].sequence, Some(2));
+
+    let second_batch = store.load_global_after_limited(Some(1), limit).unwrap();
+    assert_eq!(second_batch.len(), 2);
+    assert_eq!(second_batch[0].sequence, Some(2));
+    assert_eq!(second_batch[1].sequence, Some(3));
 }
 
 #[test]
@@ -944,6 +1101,49 @@ fn projection_runner_resumes_from_checkpoint() {
     assert_eq!(runner.projection().values[&counter_id], 4);
 }
 
+#[test]
+fn projection_runner_batch_applies_only_configured_limit() {
+    let inner = InMemoryEventStore::<Counter>::new();
+    let repo = Repository::new(inner.clone());
+    let counter_id = "counter-batched-projection".to_owned();
+
+    repo.execute(&counter_id, CounterCommand::Create, Metadata::default())
+        .unwrap();
+    repo.execute(
+        &counter_id,
+        CounterCommand::Increment { by: 1 },
+        Metadata::default(),
+    )
+    .unwrap();
+    repo.execute(
+        &counter_id,
+        CounterCommand::Increment { by: 2 },
+        Metadata::default(),
+    )
+    .unwrap();
+
+    let store = LoadCountingStore::new(inner);
+    let observed_store = store.clone();
+    let mut runner = InMemoryProjectionRunner::new(CounterProjection::default());
+    let config = ProjectionBatchConfig::new(NonZeroUsize::new(2).unwrap());
+
+    let first = runner.run_batch::<Counter, _>(&store, config).unwrap();
+    assert_eq!(first.applied, 2);
+    assert_eq!(first.last_sequence, Some(2));
+    assert!(!first.caught_up);
+    assert_eq!(runner.checkpoint(), Some(2));
+    assert_eq!(observed_store.limited_global_load_count(), 1);
+    assert_eq!(observed_store.last_limited_global_limit(), 2);
+    assert_eq!(runner.projection().values[&counter_id], 1);
+
+    let second = runner.run_batch::<Counter, _>(&store, config).unwrap();
+    assert_eq!(second.applied, 1);
+    assert_eq!(second.last_sequence, Some(3));
+    assert!(second.caught_up);
+    assert_eq!(runner.checkpoint(), Some(3));
+    assert_eq!(runner.projection().values[&counter_id], 3);
+}
+
 #[cfg(feature = "sqlite")]
 #[test]
 fn transactional_projection_rolls_back_read_model_and_checkpoint_together() {
@@ -1226,6 +1426,154 @@ fn sqlite_schema_creates_replay_index_without_duplicate_stream_index() {
 
     assert_eq!(replay_index_count, 1);
     assert_eq!(duplicate_stream_index_count, 0);
+}
+
+#[cfg(feature = "sqlite")]
+#[test]
+fn sqlite_schema_migration_v6_drops_legacy_duplicate_stream_index() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        r#"
+        CREATE TABLE custom_events (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL UNIQUE,
+            aggregate_id TEXT NOT NULL,
+            aggregate_type TEXT NOT NULL,
+            revision INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            event_version INTEGER NOT NULL,
+            payload TEXT NOT NULL,
+            metadata TEXT NOT NULL,
+            recorded_at_ms INTEGER NOT NULL,
+            UNIQUE (aggregate_type, aggregate_id, revision)
+        );
+        CREATE INDEX custom_events_stream_idx
+            ON custom_events (aggregate_type, aggregate_id, revision);
+        "#,
+    )
+    .unwrap();
+
+    let config = ddd_cqrs_es::SqlSchemaConfig::new(ddd_cqrs_es::SqlDialect::Sqlite)
+        .with_events_table("custom_events")
+        .unwrap();
+    let migrator = ddd_cqrs_es::SchemaMigrator::new(config);
+
+    migrator.run_sqlite(&conn).unwrap();
+
+    let legacy_stream_index_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'custom_events_stream_idx'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let replay_index_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'custom_events_global_replay_idx'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    assert_eq!(legacy_stream_index_count, 0);
+    assert_eq!(replay_index_count, 1);
+}
+
+#[cfg(feature = "sqlite")]
+fn sqlite_query_plan(conn: &rusqlite::Connection, query: &str) -> String {
+    let explain = format!("EXPLAIN QUERY PLAN {query}");
+    let mut statement = conn.prepare(&explain).unwrap();
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(3))
+        .unwrap();
+    rows.collect::<Result<Vec<_>, _>>().unwrap().join("\n")
+}
+
+#[cfg(feature = "sqlite")]
+fn assert_sqlite_plan_uses_index(plan: &str) {
+    let plan = plan.to_ascii_lowercase();
+    assert!(
+        plan.contains("using index") || plan.contains("using covering index"),
+        "expected SQLite query plan to use an index, got:\n{plan}"
+    );
+}
+
+#[cfg(feature = "sqlite")]
+#[test]
+fn sqlite_query_plans_use_expected_access_paths() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    let config = ddd_cqrs_es::SqlSchemaConfig::new(ddd_cqrs_es::SqlDialect::Sqlite)
+        .with_events_table("qp_events")
+        .unwrap()
+        .with_checkpoints_table("qp_checkpoints")
+        .unwrap()
+        .with_idempotency_table("qp_idempotency")
+        .unwrap()
+        .with_snapshots_table("qp_snapshots")
+        .unwrap();
+    let migrator = ddd_cqrs_es::SchemaMigrator::new(config);
+    migrator.run_sqlite(&conn).unwrap();
+
+    let stream_plan = sqlite_query_plan(
+        &conn,
+        "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, event_version, payload, metadata, recorded_at_ms
+         FROM qp_events
+         WHERE aggregate_type = 'counter' AND aggregate_id = '\"counter-1\"'
+         ORDER BY revision ASC",
+    );
+    assert_sqlite_plan_uses_index(&stream_plan);
+
+    let revision_plan = sqlite_query_plan(
+        &conn,
+        "SELECT COALESCE(MAX(revision), 0)
+         FROM qp_events
+         WHERE aggregate_type = 'counter' AND aggregate_id = '\"counter-1\"'",
+    );
+    assert_sqlite_plan_uses_index(&revision_plan);
+
+    let global_replay_plan = sqlite_query_plan(
+        &conn,
+        "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, event_version, payload, metadata, recorded_at_ms
+         FROM qp_events
+         WHERE aggregate_type = 'counter' AND sequence > 10
+         ORDER BY sequence ASC
+         LIMIT 5",
+    );
+    assert!(
+        global_replay_plan
+            .to_ascii_lowercase()
+            .contains("qp_events_global_replay_idx"),
+        "expected global replay plan to use qp_events_global_replay_idx, got:\n{global_replay_plan}"
+    );
+
+    let latest_ledger_plan = sqlite_query_plan(
+        &conn,
+        "SELECT sequence, event_type, revision, payload, recorded_at_ms
+         FROM qp_events
+         ORDER BY sequence DESC
+         LIMIT 5",
+    );
+    assert!(
+        !latest_ledger_plan
+            .to_ascii_lowercase()
+            .contains("use temp b-tree"),
+        "latest ledger query should not need a temp b-tree, got:\n{latest_ledger_plan}"
+    );
+
+    assert_sqlite_plan_uses_index(&sqlite_query_plan(
+        &conn,
+        "SELECT sequence FROM qp_checkpoints WHERE projection_name = 'counter_projection'",
+    ));
+    assert_sqlite_plan_uses_index(&sqlite_query_plan(
+        &conn,
+        "SELECT state, value FROM qp_idempotency WHERE idempotency_key = 'key-1'",
+    ));
+    assert_sqlite_plan_uses_index(&sqlite_query_plan(
+        &conn,
+        "SELECT revision, state, metadata, recorded_at_ms
+         FROM qp_snapshots
+         WHERE aggregate_type = 'counter' AND aggregate_id = '\"counter-1\"'",
+    ));
 }
 
 #[test]
@@ -2047,6 +2395,126 @@ fn test_mysql_store_passes_reusable_contract_when_url_is_provided() {
         CounterEvent::Created,
         CounterEvent::Incremented { by: 1 },
         EventStoreContractOptions::default(),
+    );
+}
+
+#[cfg(feature = "mysql")]
+#[test]
+fn test_mysql_query_plans_and_v6_duplicate_index_cleanup() {
+    let _guard = MYSQL_TEST_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(db) = mysql_test_db_or_skip("query-plan test") else {
+        return;
+    };
+    use mysql::prelude::Queryable;
+
+    let table_name = unique_mysql_table("events_plan");
+    let _cleanup = MySqlTableCleanup::new(&db.test_url, vec![table_name.clone()]);
+
+    let store = ddd_cqrs_es::MySqlEventStore::<Counter>::connect_with_table_name(
+        &db.test_url,
+        table_name.clone(),
+    )
+    .unwrap();
+    store.initialize_schema().unwrap();
+
+    let mut conn = mysql::Conn::new(db.test_url.as_str()).unwrap();
+    let duplicate_index_name = format!("{table_name}_stream_idx");
+    conn.query_drop(format!(
+        "CREATE INDEX {duplicate_index_name} ON {table_name} (aggregate_type, aggregate_id, revision);"
+    ))
+    .unwrap();
+    conn.exec_drop(
+        "DELETE FROM schema_migrations WHERE version = ? AND table_name = ?;",
+        (6i32, table_name.as_str()),
+    )
+    .unwrap();
+    let config = ddd_cqrs_es::SqlSchemaConfig::new(ddd_cqrs_es::SqlDialect::MySql)
+        .with_events_table(table_name.clone())
+        .unwrap();
+    ddd_cqrs_es::SchemaMigrator::new(config)
+        .run_mysql(&mut conn)
+        .unwrap();
+
+    let duplicate_index_count: u64 = conn
+        .exec_first(
+            "SELECT COUNT(1)
+             FROM information_schema.statistics
+             WHERE table_schema = DATABASE()
+               AND table_name = ?
+               AND index_name = ?;",
+            (table_name.as_str(), duplicate_index_name.as_str()),
+        )
+        .unwrap()
+        .unwrap_or(0);
+    assert_eq!(duplicate_index_count, 0);
+
+    let repo = Repository::new(store);
+    for index in 0..50 {
+        let counter_id = format!("mysql-plan-counter-{index}");
+        repo.execute(&counter_id, CounterCommand::Create, Metadata::default())
+            .unwrap();
+        repo.execute(
+            &counter_id,
+            CounterCommand::Increment { by: 1 },
+            Metadata::default(),
+        )
+        .unwrap();
+    }
+
+    let global_plan: String = conn
+        .exec_first(
+            format!(
+                "EXPLAIN FORMAT=JSON
+                 SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, event_version, payload, metadata, recorded_at_ms
+                 FROM {table_name}
+                 WHERE aggregate_type = ? AND sequence > ?
+                 ORDER BY sequence ASC
+                 LIMIT ?"
+            ),
+            ("counter", 0i64, 10u64),
+        )
+        .unwrap()
+        .unwrap();
+    assert!(
+        global_plan.contains(&format!("{table_name}_global_replay_idx")),
+        "expected MySQL global replay query to use the global replay index, got:\n{global_plan}"
+    );
+
+    let aggregate_id = serde_json::to_string("mysql-plan-counter-1").unwrap();
+    let stream_plan: String = conn
+        .exec_first(
+            format!(
+                "EXPLAIN FORMAT=JSON
+                 SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, event_version, payload, metadata, recorded_at_ms
+                 FROM {table_name}
+                 WHERE aggregate_type = ? AND aggregate_id = ?
+                 ORDER BY revision ASC"
+            ),
+            ("counter", aggregate_id.as_str()),
+        )
+        .unwrap()
+        .unwrap();
+    let stream_plan = stream_plan.to_ascii_lowercase();
+    assert!(
+        stream_plan.contains("\"key\": \"aggregate_type\""),
+        "expected MySQL stream query to use the unique stream key, got:\n{stream_plan}"
+    );
+
+    let latest_plan: String = conn
+        .query_first(format!(
+            "EXPLAIN FORMAT=JSON
+             SELECT sequence, event_type, revision, payload, recorded_at_ms
+             FROM {table_name}
+             ORDER BY sequence DESC
+             LIMIT 5"
+        ))
+        .unwrap()
+        .unwrap();
+    assert!(
+        latest_plan.to_ascii_lowercase().contains("primary"),
+        "expected MySQL latest-ledger query to use the primary key order, got:\n{latest_plan}"
     );
 }
 
