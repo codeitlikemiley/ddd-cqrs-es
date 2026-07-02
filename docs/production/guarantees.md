@@ -117,7 +117,7 @@ Then run it with `TransactionalCheckpointedProjectionRunner`. The library provid
 
 Redis pub/sub, SSE, WebSocket, and polling are delivery mechanisms. They are not the source of truth for event delivery.
 
-The durable event store and checkpoint tables are the source of truth. Realtime notifications should wake clients or workers, then those clients or workers should replay durable events or reload read models from the last known sequence. See [Database Query Patterns](./db-query-patterns.md) for the query and indexing rules behind that replay model.
+The durable event store and checkpoint tables are the source of truth. Realtime notifications should wake clients or workers, then those clients or workers should replay durable events or reload read models from the last known sequence. See [Database Query Patterns](./db-query-patterns) for the query and indexing rules behind that replay model.
 
 The counter app follows this rule:
 
@@ -129,7 +129,7 @@ The counter app follows this rule:
 
 `EventStoreError` keeps stable display messages while exposing sources for backend, connection, serialization, and deserialization failures when the adapter has a concrete cause.
 
-For application and transport mapping, see [Error Handling and Transport Mapping](./error-handling.md). That guide covers preserving `RepositoryError` and `EventStoreError` classifications, then adapting them to REST, Leptos server functions, Spin gRPC, and tracing.
+For application and transport mapping, see [Error Handling and Transport Mapping](./error-handling). That guide covers preserving `RepositoryError` and `EventStoreError` classifications, then adapting them to REST, Leptos server functions, Spin gRPC, and tracing.
 
 Adapter authors should use the contract helpers in `ddd_cqrs_es::testing`:
 

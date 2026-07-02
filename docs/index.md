@@ -108,25 +108,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 We structured our guides as a structured, chronological path designed to take you from a complete beginner to building full-scale, distributed production applications:
 
-### Module 1: [The Patterns](./theory/ddd.md) (Theory)
-* **What you'll learn:** The architectural foundations. Read about [Domain-Driven Design](./theory/ddd.md) (aggregate boundaries, Ubiquitous Language), [CQRS](./theory/cqrs.md) (separating write vs read pipelines), [State Changes](./theory/state-changes.md) (command validation vs event application), [Queries](./theory/queries.md) (read models), and [Event Sourcing mechanics](./theory/event-sourcing.md).
+### Module 1: [The Patterns](./theory/ddd) (Theory)
+* **What you'll learn:** The architectural foundations. Read about [Domain-Driven Design](./theory/ddd) (aggregate boundaries, Ubiquitous Language), [CQRS](./theory/cqrs) (separating write vs read pipelines), [State Changes](./theory/state-changes) (command validation vs event application), [Queries](./theory/queries) (read models), and [Event Sourcing mechanics](./theory/event-sourcing).
 
-### Module 2: [Domain Modeling (Tutorial)](./tutorial/commands.md)
-* **What you'll learn:** Build a fully validated Bank Account domain step-by-step. Implement [Commands](./tutorial/commands.md), [Events](./tutorial/events.md) (implementing `DomainEvent`), [Errors](./tutorial/errors.md) (handling invariants), and the core [Aggregate Root](./tutorial/aggregate.md) struct.
+### Module 2: [Domain Modeling (Tutorial)](./tutorial/commands)
+* **What you'll learn:** Build a fully validated Bank Account domain step-by-step. Implement [Commands](./tutorial/commands), [Events](./tutorial/events) (implementing `DomainEvent`), [Errors](./tutorial/errors) (handling invariants), and the core [Aggregate Root](./tutorial/aggregate) struct.
 
-### Module 3: [Domain Tests](./testing/complex-logic.md)
-* **What you'll learn:** Write bulletproof business validations in microseconds. Learn why Event Sourcing is a unit-testing superpower and write elegant Given-When-Then tests using the [Aggregate Test Fixture](./testing/complex-logic.md) API.
+### Module 3: [Domain Tests](./testing/complex-logic)
+* **What you'll learn:** Write bulletproof business validations in microseconds. Learn why Event Sourcing is a unit-testing superpower and write elegant Given-When-Then tests using the [Aggregate Test Fixture](./testing/complex-logic) API.
 
-### Module 4: [Configuring an Application](./config-app/event-store.md)
-* **What you'll learn:** Assemble your domain parts. Wire up the local [InMemoryEventStore](./config-app/event-store.md), write a custom [Query Projection](./config-app/simple-query.md), and [Assemble them together](./config-app/assembly.md) into a working execution loop.
+### Module 4: [Configuring an Application](./config-app/event-store)
+* **What you'll learn:** Assemble your domain parts. Wire up the local [InMemoryEventStore](./config-app/event-store), write a custom [Query Projection](./config-app/simple-query), and [Assemble them together](./config-app/assembly) into a working execution loop.
 
-### Module 5: [Building an Application](./production/persisted-store.md) (Production)
-* **What you'll learn:** Move to production. Start with [Production Guarantees](./production/guarantees.md), define [Error Handling and Transport Mapping](./production/error-handling.md), deploy durable [SQLite, PostgreSQL, and MySQL stores](./production/persisted-store.md), configure asynchronous [Projections with Checkpoint tracking](./production/persisted-views.md), review production [Database Query Patterns](./production/db-query-patterns.md), use experimental [Redis persistence and realtime notifications](./production/redis.md), attach [Metadata trace headers](./production/metadata.md), write custom [Event Upcasters](./production/upcasters.md) for schema evolution, and [Integrate with Web Frameworks (Axum)](./production/axum-integration.md).
+### Module 5: [Building an Application](./production/persisted-store) (Production)
+* **What you'll learn:** Move to production. Start with [Production Guarantees](./production/guarantees), define [Error Handling and Transport Mapping](./production/error-handling), deploy durable [SQLite, PostgreSQL, and MySQL stores](./production/persisted-store), configure asynchronous [Projections with Checkpoint tracking](./production/persisted-views), review production [Database Query Patterns](./production/db-query-patterns), use experimental [Redis persistence and realtime notifications](./production/redis), attach [Metadata trace headers](./production/metadata), write custom [Event Upcasters](./production/upcasters) for schema evolution, and [Integrate with Web Frameworks (Axum)](./production/axum-integration).
 
-### Module 6: [Leptos WASM SSR + Spin SQLite CQRS](./tutorial/leptos-ssr.md) (Full-Stack Showcase)
+### Module 6: [Leptos WASM SSR + Spin SQLite CQRS](./tutorial/leptos-ssr) (Full-Stack Showcase)
 * **What you'll learn:** Put everything together. Architect a full-stack, real-time-like reactive UI inside a WebAssembly server-side rendered (SSR) Leptos application deployed to Fermyon Spin. Learn how to write custom WASM SQLite store adapters, checkpointed projections, and reactive forms with optimistic updates.
 
-### Module 7: [Runtimes & Cloud Deployment (Spin vs. Wasmtime)](./wasmtime-vs-spin-comparison.md)
+### Module 7: [Runtimes & Cloud Deployment (Spin vs. Wasmtime)](./wasmtime-vs-spin-comparison)
 * **What you'll learn:** Production runtimes and connection engineering. Understand the performance differences between Wasmtime CLI and Fermyon Spin connection pooling. Read our best practice architectural recommendations for database proximity, and learn how to deploy serverless WASM applications to Fermyon Cloud and SpinKube on AWS EKS, GCP GKE, and Azure AKS.
 
 For documentation site indexing details (including where `PRD` and full tutorial pages are registered), see `docs/docs.json`.

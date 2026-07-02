@@ -267,7 +267,7 @@ data: {"view":{"count":1,"latest_events":[...],"last_sequence":1,"realtime_enabl
 The counter app keeps storage, projection, and realtime failures as typed
 application errors until the transport boundary. REST returns structured JSON
 errors, gRPC maps the same errors to `tonic::Code`, and server functions convert
-to `ServerFnError` only after logging. See [Error Handling and Transport Mapping](./error-handling.md) for the full contract. Internal details are written through `tracing`; set `RUST_LOG=info,counter_app=debug` when running local proof commands.
+to `ServerFnError` only after logging. See [Error Handling and Transport Mapping](./error-handling) for the full contract. Internal details are written through `tracing`; set `RUST_LOG=info,counter_app=debug` when running local proof commands.
 
 To prove Redis realtime from a terminal command to an already-open browser,
 start the Spin app and open `http://localhost:3000/`:

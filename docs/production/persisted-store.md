@@ -9,7 +9,7 @@ A durable event store acts as our application's **immutable ledger**. It is high
 1. **Load Stream:** Fetch all committed event envelopes for a specific Aggregate ID, ordered sequentially by their stream version.
 2. **Append Stream:** Append a block of new events to the stream in a single transaction.
 
-Read [Production Guarantees](./guarantees.md) before choosing APIs for a production command path. The generic APIs are portable; the native SQL adapters add transaction-aware idempotent append, durable snapshots, and transaction-friendly projection patterns. Read [Database Query Patterns](./db-query-patterns.md) before adding custom SQL or application read models.
+Read [Production Guarantees](./guarantees) before choosing APIs for a production command path. The generic APIs are portable; the native SQL adapters add transaction-aware idempotent append, durable snapshots, and transaction-friendly projection patterns. Read [Database Query Patterns](./db-query-patterns) before adding custom SQL or application read models.
 
 ---
 
@@ -181,5 +181,5 @@ let repo = AsyncRepository::new(store);
 Redis pub/sub helpers are notification-only. Consumers should use pub/sub or
 SSE to wake clients, then read durable events or read models for truth.
 
-See [Redis Event Store and Realtime](./redis.md) for the Redis key layout,
+See [Redis Event Store and Realtime](./redis) for the Redis key layout,
 feature flags, runtime clients, counter-app commands, and current limitations.

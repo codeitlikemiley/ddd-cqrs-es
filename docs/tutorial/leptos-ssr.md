@@ -849,7 +849,7 @@ pub async fn execute_counter_command(
 The counter app keeps typed errors until the transport boundary. REST serializes
 `{"error":{"code":"...","message":"..."}}`, gRPC maps the same error to a
 `tonic::Code`, and server functions convert it to `ServerFnError` only after
-logging through `tracing`. See [Error Handling and Transport Mapping](../production/error-handling.md) for the complete production guide.
+logging through `tracing`. See [Error Handling and Transport Mapping](../production/error-handling) for the complete production guide.
 
 ### 5.3 Curlable REST and Spin gRPC APIs
 

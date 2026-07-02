@@ -107,7 +107,7 @@ pub async fn deposit_money(
 
 ## 4. Translating Errors to HTTP Status Codes
 
-To prevent leakage of internal system details and provide high-fidelity API responses, map typed domain errors (`BankAccountError`) and repository errors (`RepositoryError`) to application responses at the web boundary. See [Error Handling and Transport Mapping](./error-handling.md) for the full REST, Leptos server-function, Spin gRPC, and tracing contract.
+To prevent leakage of internal system details and provide high-fidelity API responses, map typed domain errors (`BankAccountError`) and repository errors (`RepositoryError`) to application responses at the web boundary. See [Error Handling and Transport Mapping](./error-handling) for the full REST, Leptos server-function, Spin gRPC, and tracing contract.
 
 ```rust
 use axum::response::Response;
