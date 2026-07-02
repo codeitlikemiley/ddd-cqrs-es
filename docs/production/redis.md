@@ -1,5 +1,5 @@
 ---
-title: 5.4. Redis Event Store and Realtime
+title: 5.5. Redis Event Store and Realtime
 description: Experimental async Redis persistence and notification support.
 ---
 
@@ -173,6 +173,18 @@ Spin uses the Spin Redis client:
 make spin db=redis realtime=redis
 ```
 
+Spin gRPC is controlled separately by `transport=<mode>`. Use
+`transport=both` when a single Spin component should serve the browser UI, REST
+APIs, SSE realtime, and gRPC:
+
+```bash
+make spin db=sqlite transport=both realtime=redis
+```
+
+`transport=grpc` serves only the gRPC endpoints. Wasmtime currently supports
+the HTTP transport only and fails fast for `transport=grpc` or
+`transport=both`.
+
 When `realtime=redis`, the Spin example uses `spin.redis.toml` and starts a
 separate Redis trigger component subscribed to `REDIS_CHANNEL`. The trigger
 parses each `CounterRealtimeMessage` and records health markers in Redis:
@@ -250,6 +262,59 @@ It emits frames like:
 ```text
 event: counter
 data: {"view":{"count":1,"latest_events":[...],"last_sequence":1,"realtime_enabled":true},"last_sequence":1}
+```
+
+The counter app keeps storage, projection, and realtime failures as typed
+application errors until the transport boundary. REST returns structured JSON
+errors, gRPC maps the same errors to `tonic::Code`, and server functions convert
+to `ServerFnError` only after logging. See [Error Handling and Transport Mapping](./error-handling.md) for the full contract. Internal details are written through `tracing`; set `RUST_LOG=info,counter_app=debug` when running local proof commands.
+
+To prove Redis realtime from a terminal command to an already-open browser,
+start the Spin app and open `http://localhost:3000/`:
+
+```bash
+cd examples/counter-app
+redis-cli ping
+RUST_LOG=info,counter_app=debug make spin db=sqlite transport=both realtime=redis
+```
+
+Read the baseline view:
+
+```bash
+curl -sS http://127.0.0.1:3000/api/counter/view
+```
+
+Run a REST command:
+
+```bash
+curl -sS -X POST -H 'content-type: application/json' \
+  -d '{"amount":1}' \
+  http://127.0.0.1:3000/api/counter/increment
+```
+
+The JSON response count should increase by `1`, the browser should update to
+the same count without refresh, and the event ledger should show the new
+sequence.
+
+Run the same proof through gRPC:
+
+```bash
+grpcurl -plaintext \
+  -import-path proto \
+  -proto counter.proto \
+  -d '{"amount":1}' \
+  localhost:3000 \
+  counter.v1.CounterService/Increment
+```
+
+The gRPC response count should increase by `1`, the browser should update to the
+same count without refresh, and Spin logs should show the Redis trigger
+observing the new sequence.
+
+To inspect SSE directly, run this in a second terminal before either command:
+
+```bash
+curl -N 'http://127.0.0.1:3000/api/counter/stream?last_sequence=0'
 ```
 
 Do not set `Connection: keep-alive` manually on this endpoint. WASIp3 rejects

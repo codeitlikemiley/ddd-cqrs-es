@@ -1,5 +1,5 @@
 ---
-title: 5.1. Persisted Event Store
+title: 5.2. Persisted Event Store
 description: Setup a persistent SQLite or PostgreSQL event store with Optimistic Concurrency Control.
 ---
 

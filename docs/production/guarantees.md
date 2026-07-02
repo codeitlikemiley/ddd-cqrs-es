@@ -129,6 +129,8 @@ The counter app follows this rule:
 
 `EventStoreError` keeps stable display messages while exposing sources for backend, connection, serialization, and deserialization failures when the adapter has a concrete cause.
 
+For application and transport mapping, see [Error Handling and Transport Mapping](./error-handling.md). That guide covers preserving `RepositoryError` and `EventStoreError` classifications, then adapting them to REST, Leptos server functions, Spin gRPC, and tracing.
+
 Adapter authors should use the contract helpers in `ddd_cqrs_es::testing`:
 
 - `assert_event_store_contract`

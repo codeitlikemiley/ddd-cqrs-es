@@ -173,6 +173,127 @@ You can inspect it directly:
 curl -N 'http://127.0.0.1:3000/api/counter/stream?last_sequence=0'
 ```
 
+## HTTP and gRPC APIs
+
+The UI buttons use Leptos server functions under `/api`, but those endpoints are
+framework-owned. For curlable integration checks, the app also exposes explicit
+JSON counter endpoints through the same WASI HTTP trigger:
+
+```bash
+curl -sS http://127.0.0.1:3000/api/counter/view
+curl -sS -X POST -H 'content-type: application/json' \
+  -d '{"amount":1}' \
+  http://127.0.0.1:3000/api/counter/increment
+curl -sS -X POST 'http://127.0.0.1:3000/api/counter/decrement?amount=1'
+curl -sS -X POST http://127.0.0.1:3000/api/counter/reset
+```
+
+Spin can also expose the counter gRPC service from the same HTTP trigger. Use
+`transport=both` when you want the browser UI, REST APIs, SSE realtime, and gRPC
+in one component:
+
+```bash
+make spin db=sqlite transport=both
+grpcurl -plaintext \
+  -import-path proto \
+  -proto counter.proto \
+  localhost:3000 \
+  counter.v1.CounterService/GetCounterView
+grpcurl -plaintext \
+  -import-path proto \
+  -proto counter.proto \
+  -d '{"amount":1}' \
+  localhost:3000 \
+  counter.v1.CounterService/Increment
+```
+
+`transport=grpc` serves only the gRPC endpoints. `transport=both` keeps HTTP UI,
+REST, SSE, and gRPC active. gRPC transport is Spin-first; Wasmtime fails fast
+for `transport=grpc` or `transport=both`.
+
+The REST, gRPC, and server-function command paths all call the same application
+service. With `realtime=redis`, triggering any of these command endpoints should
+publish the same wake message and update other open browser sessions through
+`/api/counter/stream`.
+
+### Error Mapping and Tracing
+
+The counter app uses a typed application error before adapting to each
+transport:
+
+- REST returns JSON in the shape
+  `{"error":{"code":"validation","message":"amount must be positive"}}`.
+- gRPC maps validation/domain errors to `InvalidArgument`, optimistic
+  concurrency to `Aborted`, unavailable storage/configuration to `Unavailable`,
+  and internal store/projection/realtime failures to `Internal`.
+- Leptos server functions convert the same typed error into `ServerFnError`
+  after logging it.
+
+Internal storage, projection, and realtime details are logged with `tracing`
+instead of being exposed in public error bodies. To see those logs in local
+Spin or Wasmtime runs, prefix the Make command with `RUST_LOG`:
+
+```bash
+RUST_LOG=info,counter_app=debug make spin db=sqlite transport=both realtime=redis
+```
+
+## Realtime Proof from Terminal to Browser
+
+Start Redis and the Spin app with HTTP, REST, SSE, and gRPC enabled:
+
+```bash
+redis-cli ping
+RUST_LOG=info,counter_app=debug make spin db=sqlite transport=both realtime=redis
+```
+
+Open the browser at `http://localhost:3000/`, then read the baseline counter
+view:
+
+```bash
+curl -sS http://127.0.0.1:3000/api/counter/view
+```
+
+Run a REST command from the terminal:
+
+```bash
+curl -sS -X POST -H 'content-type: application/json' \
+  -d '{"amount":1}' \
+  http://127.0.0.1:3000/api/counter/increment
+```
+
+The JSON response count should increase by `1`, the browser should update to
+the same count without refresh, and the event ledger should show the new
+sequence.
+
+Run the same proof through gRPC:
+
+```bash
+grpcurl -plaintext \
+  -import-path proto \
+  -proto counter.proto \
+  -d '{"amount":1}' \
+  localhost:3000 \
+  counter.v1.CounterService/Increment
+```
+
+The gRPC response count should increase by `1`, the browser should update to the
+same count without refresh, and Spin logs should show the Redis trigger
+observing the new sequence.
+
+To inspect the browser stream directly, open this in a second terminal before
+running either command:
+
+```bash
+curl -N 'http://127.0.0.1:3000/api/counter/stream?last_sequence=0'
+```
+
+Expected SSE frames include:
+
+```text
+event: counter
+data: {"view":...,"last_sequence":...}
+```
+
 Server actions return the updated `CounterViewDto`, so the client updates the
 count and latest events from the mutation response immediately. The SSE stream
 then keeps other browser sessions current without forcing a refetch after every

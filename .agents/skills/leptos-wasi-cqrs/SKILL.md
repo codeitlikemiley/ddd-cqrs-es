@@ -11,7 +11,7 @@ This skill provides step-by-step instructions and reference patterns for an AI a
 
 ## 🗺️ High-Level Architectural Flow
 
-In this architecture, incoming write operations (Commands) are dispatched via **Leptos Server Functions**, validated by the pure business domain (Aggregate), and persisted as immutable history (Events) in the Event Store. The server action returns a unified read view immediately, then projections and realtime notifications catch up from durable event history:
+In this architecture, incoming write operations (Commands) can enter through **Leptos Server Functions**, explicit JSON REST endpoints, or Spin gRPC. All command surfaces delegate to the same application service, validate through the pure business domain (Aggregate), and persist immutable history (Events) in the Event Store. The command response returns a unified read view immediately, then projections and realtime notifications catch up from durable event history:
 
 ```mermaid
 sequenceDiagram
@@ -23,8 +23,8 @@ sequenceDiagram
     participant EventDB as 🗄️ Event Store
     participant ReadDB as 📊 Read Model
     
-    User->>Client: Clicks command button
-    Client->>Server: HTTP POST /api/command_name (Server Function)
+    User->>Client: Clicks command button or calls REST/gRPC
+    Client->>Server: Server Function, REST, or gRPC command
     Server->>EventDB: Fetch historical Event Stream for Aggregate ID
     EventDB-->>Server: [Historical Events...]
     Server->>Domain: Replay events to reconstruct current aggregate state
@@ -44,9 +44,13 @@ sequenceDiagram
 When working in this repo, keep these boundaries separate:
 
 - `domain.rs`: pure commands, events, IDs, errors, and `Aggregate` implementations. No database, HTTP, Redis, Leptos, logging side effects, or runtime-specific APIs belong here.
-- `app.rs`: Leptos UI, server functions, DTOs, optimistic UI reconciliation, and the server-side command orchestration that calls the repository.
+- `error.rs`: typed counter-app application errors plus REST, server-function, and gRPC mapping helpers. Do not erase shared-service failures with `to_string()` before this boundary.
+- `app.rs`: Leptos UI, server functions, DTOs, and optimistic UI reconciliation. Server functions delegate command execution to `application.rs`.
+- `application.rs`: shared command/read application service used by Leptos server functions, REST, and gRPC. Keep repository execution, realtime publish, and projection catch-up here.
+- `rest.rs`: explicit JSON REST endpoints for curlable integration checks: `/api/counter/view`, `/api/counter/increment`, `/api/counter/decrement`, and `/api/counter/reset`.
+- `grpc.rs`: Spin-only gRPC service generated from `proto/counter.proto` and served through the Spin HTTP trigger with `spin-sdk/grpc`.
 - `store.rs`: backend selection, schema initialization, event-store/checkpoint/read-model adapters, projection catch-up, SSE stream response, and Redis wake publishing.
-- `server.rs`: WASI HTTP routing, static file serving, one-time schema initialization before dynamic requests, manual `/api/counter/stream` routing, and Leptos server-function registration.
+- `server.rs`: WASI HTTP routing, static file serving, one-time schema initialization before dynamic requests, gRPC detection, transport guards, REST routing, manual `/api/counter/stream` routing, and Leptos server-function registration.
 - `Makefile`: canonical build/run/reset entrypoint. Do not invent alternate public commands; validate with `make help`, `make help-db`, `make help-realtime`, and `make help-matrix`.
 
 Current API names to prefer:
@@ -56,6 +60,7 @@ Current API names to prefer:
 - Command execution that returns updated aggregate state: `execute_returning_state`.
 - Production SQL request idempotency: `execute_idempotent_atomic` / async `execute_idempotent_atomic` with SQLite, PostgreSQL, or MySQL event stores.
 - Unified counter read call: `get_counter_view` / `CounterViewDto`.
+- Shared command application service: `execute_counter_command`.
 - Realtime transport: SSE/EventSource in the browser; Redis is a wake/notification transport unless `db=redis` is selected.
 
 Avoid stale APIs and command names:
@@ -209,18 +214,19 @@ Schema initialization belongs in `initialize_schema_async()` and must be guarded
 
 ---
 
-## ⚡ 3. Server-Side Integration & Command Runner (`app.rs`)
+## ⚡ 3. Server-Side Integration & Command Runner (`application.rs`)
 
-Handle write commands atomically using a unified server-side handler. Use `AsyncRepository::execute_returning_state` so the command path loads the aggregate once, appends events, and returns the authoritative aggregate state for the response. The read model can catch up afterward from durable events.
+Handle write commands through a unified application service. Use `AsyncRepository::execute_returning_state` so the command path loads the aggregate once, appends events, and returns the authoritative aggregate state for the response. The read model can catch up afterward from durable events. Leptos server functions, explicit REST routes, and Spin gRPC must all call this same service instead of duplicating command execution.
 
-In Leptos, protect server-only SSR imports behind `#[cfg(feature = "ssr")]`:
+In the shared server-side application layer, protect server-only code behind `#[cfg(feature = "ssr")]` at module boundaries:
 
 ```rust
 #[cfg(feature = "ssr")]
-async fn run_cqrs_command(
+pub async fn execute_counter_command(
     command: crate::domain::CounterCommand,
-) -> Result<CounterViewDto, ServerFnError> {
+) -> crate::error::CounterAppResult<CounterViewDto> {
     use crate::domain::{Counter, CounterId};
+    use crate::error::CounterAppError;
     use crate::store::MultiBackendEventStore;
     use ddd_cqrs_es::AsyncRepository;
 
@@ -247,22 +253,55 @@ async fn run_cqrs_command(
                 attempts += 1;
                 wasip3::clocks::monotonic_clock::wait_for(attempts as u64 * 5_000_000).await;
             }
-            Err(error) => return Err(ServerFnError::new(error.to_string())),
+            Err(error) => return Err(CounterAppError::from_repository_error(error)),
         }
     }
 
-    let mut view = get_counter_view_db().await?;
+    let mut view = get_counter_view().await?;
     view.count = loaded.state.value;
     if let Some(last_sequence) = committed_events.last().and_then(|event| event.sequence) {
         view.last_sequence = last_sequence;
     }
 
-    crate::store::publish_counter_realtime(&view).await;
+    if let Err(error) = crate::store::publish_counter_realtime(&view).await {
+        tracing::error!(error = %error, error_code = error.public_code());
+    }
     if let Err(error) = crate::store::catch_up_counter_projection().await {
-        eprintln!("failed to catch up counter projection: {error}");
+        tracing::error!(error = %error, error_code = error.public_code());
     }
 
     Ok(view)
+}
+```
+
+Error handling rules:
+
+- Preserve `RepositoryError` and `EventStoreError` classifications in the shared application service.
+- Map typed errors to JSON REST status/body, `ServerFnError`, or `tonic::Status` only at the transport edge.
+- Use `tracing` for internal error details; public transport messages should be stable and safe.
+
+Leptos server functions should remain thin adapters around the shared service:
+
+```rust
+#[server(prefix = "/api")]
+pub async fn increment_count(amount: i32) -> Result<CounterViewDto, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        if amount <= 0 {
+            return Err(crate::error::CounterAppError::validation("amount must be positive")
+                .server_fn_error());
+        }
+        crate::application::execute_counter_command(
+            crate::domain::CounterCommand::Increment { amount },
+        )
+        .await
+        .map_err(|error| error.server_fn_error())
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = amount;
+        unreachable!()
+    }
 }
 ```
 
@@ -301,11 +340,44 @@ pub async fn get_counter_view() -> Result<CounterViewDto, ServerFnError> {
 
 For optimistic UI, dispatch server actions directly from button handlers and update a local count immediately. Track `pending_until_sequence` so older server-action or SSE snapshots cannot rewind the visible count during bursty clicks. Buttons should not be disabled just because one command is in flight.
 
+### 3.1 Curlable REST and Spin gRPC surfaces
+
+The REST routes are for stable curlable integration checks:
+
+```bash
+curl -sS http://127.0.0.1:3000/api/counter/view
+curl -sS -X POST -H 'content-type: application/json' \
+  -d '{"amount":1}' \
+  http://127.0.0.1:3000/api/counter/increment
+curl -sS -X POST 'http://127.0.0.1:3000/api/counter/decrement?amount=1'
+curl -sS -X POST http://127.0.0.1:3000/api/counter/reset
+```
+
+Spin gRPC is generated from `proto/counter.proto` and is enabled by
+`transport=grpc` or `transport=both`:
+
+```bash
+grpcurl -plaintext \
+  -import-path proto \
+  -proto counter.proto \
+  -d '{"amount":1}' \
+  localhost:3000 \
+  counter.v1.CounterService/Increment
+```
+
 ---
 
 ## 🌐 4. WASI Server Handler & Boot Migrations (`server.rs`)
 
-Database schema creation statements (`CREATE TABLE IF NOT EXISTS`) are blocking and prone to transaction conflicts under concurrency. Keep migrations out of hot command handlers. Run `initialize_schema_async()` once for dynamic requests using the store-level async guard, and skip it for static `/pkg/` assets. The counter SSE route is not a Leptos server function; route `/api/counter/stream` to `counter_stream_response` before the Leptos handler.
+Database schema creation statements (`CREATE TABLE IF NOT EXISTS`) are blocking and prone to transaction conflicts under concurrency. Keep migrations out of hot command handlers. Run `initialize_schema_async()` once for dynamic requests using the store-level async guard, and skip it for static `/pkg/` assets.
+
+The counter app serves several HTTP-triggered surfaces. Keep this routing order in `src/server.rs`:
+
+1. Spin gRPC route detection.
+2. `transport=grpc` HTTP guard.
+3. Explicit JSON REST counter routes.
+4. `/api/counter/stream` SSE realtime route.
+5. Leptos static-file, UI, and server-function handler.
 
 ```rust
 use leptos_wasi::prelude::Handler;
@@ -322,15 +394,38 @@ impl wasip3::exports::http::handler::Guest for LeptosServer {
 
         if !request_path.starts_with("/pkg/")
             && let Err(e) = crate::store::initialize_schema_async().await {
-                eprintln!("Error executing boot schema migrations: {:?}", e);
+                tracing::error!(error = %e, "failed to execute boot schema migrations");
                 return Err(ErrorCode::InternalError(None));
             }
+
+        #[cfg(all(feature = "spin-grpc", runtime_spin))]
+        if crate::grpc::is_grpc_request(&req) {
+            return crate::grpc::serve(req).await;
+        }
+
+        if transport_mode() == "grpc" {
+            return plain_text_response(
+                http::StatusCode::NOT_FOUND,
+                "This component is running with transport=grpc. Use the gRPC service endpoint.",
+            );
+        }
+
+        if crate::rest::is_rest_request(&req) {
+            let response = crate::rest::serve(req)
+                .await
+                .map_err(|_| ErrorCode::InternalError(None))?;
+            return wasip3::http_compat::http_into_wasi_response(response);
+        }
 
         if request_path == "/api/counter/stream" {
             let response = crate::store::counter_stream_response(&req)
                 .await
-                .map_err(|e| {
-                    eprintln!("Error building counter stream response: {:?}", e);
+                .map_err(|error| {
+                    tracing::error!(
+                        error = %error,
+                        error_code = error.public_code(),
+                        "failed to build counter stream response"
+                    );
                     ErrorCode::InternalError(None)
                 })?;
             return wasip3::http_compat::http_into_wasi_response(response);
@@ -361,6 +456,8 @@ wasip3::http::service::export!(LeptosServer);
 SSE/Redis rules:
 
 - Browser realtime uses SSE/EventSource at `/api/counter/stream?last_sequence=...`.
+- REST commands use `/api/counter/view`, `/api/counter/increment`, `/api/counter/decrement`, and `/api/counter/reset`.
+- Spin gRPC uses the HTTP trigger and `proto/counter.proto`; no separate gRPC trigger is needed.
 - `realtime=polling` uses durable event-store catch-up.
 - `realtime=redis` uses Redis wake queues/pub/sub, then still replays durable events by sequence.
 - Spin `realtime=redis` also starts a Redis trigger sidecar from `spin.redis.toml`; it is a smoke-test subscriber and does not own browser delivery or projections.
@@ -372,11 +469,12 @@ SSE/Redis rules:
 
 Before editing this app:
 
-1. Read `examples/counter-app/Makefile`, `src/domain.rs`, `src/app.rs`, `src/store.rs`, and `src/server.rs` for current wiring.
-2. Use `make help`, `make help-db`, `make help-realtime`, and `make help-matrix` as the public command source of truth.
+1. Read `examples/counter-app/Makefile`, `src/domain.rs`, `src/app.rs`, `src/application.rs`, `src/rest.rs`, `src/grpc.rs`, `src/store.rs`, and `src/server.rs` for current wiring.
+2. Use `make help`, `make help-db`, `make help-realtime`, `make help-transport`, and `make help-matrix` as the public command source of truth.
 3. If changing backend/realtime behavior, update `examples/counter-app/README.md`, `docs/tutorial/leptos-ssr.md`, `docs/production/redis.md`, and this skill together.
 4. Validate docs commands against the Makefile's `validate-params` target rather than assuming a command is supported.
 5. For runtime compile checks, match the Makefile shape with `WASI_RUNTIME=spin` or `WASI_RUNTIME=wasmtime`; one runtime cfg does not prove the other.
+6. For realtime changes, prove at least one terminal command updates the browser: REST with `curl` or gRPC with `grpcurl`, plus optional direct SSE inspection with `curl -N`.
 
 ## 🛠️ 5. Build, Test & Execute Commands
 
@@ -395,7 +493,13 @@ make spin db=turso realtime=redis
 make spin db=mysql realtime=polling
 make spin db=mysql realtime=redis
 make spin db=redis realtime=redis
+make spin db=sqlite transport=both realtime=redis
 ```
+
+`transport=http` is the default HTTP UI, REST, and SSE mode. `transport=grpc`
+serves only the Spin gRPC endpoints. `transport=both` serves HTTP UI, REST,
+SSE, and gRPC in the same Spin component. Wasmtime currently supports only
+`transport=http` and fails fast for `transport=grpc` or `transport=both`.
 
 ### 5.2 Generic Wasmtime Runtime
 Builds CSS/WASM and serves using generic wasmtime sandbox capabilities:
@@ -428,4 +532,58 @@ make db=supabase fresh
 make db=turso fresh
 make db=mysql fresh
 make db=redis fresh
+```
+
+### 5.4 Realtime Smoke Tests
+
+From `examples/counter-app`, start Redis and Spin:
+
+```bash
+redis-cli ping
+RUST_LOG=info,counter_app=debug make spin db=sqlite transport=both realtime=redis
+```
+
+Open `http://localhost:3000/`, then capture a baseline:
+
+```bash
+curl -sS http://127.0.0.1:3000/api/counter/view
+```
+
+REST proof:
+
+```bash
+curl -sS -X POST -H 'content-type: application/json' \
+  -d '{"amount":1}' \
+  http://127.0.0.1:3000/api/counter/increment
+```
+
+Expected result: the JSON response count increases by `1`, the browser updates
+to the same count without refresh, and the event ledger shows the new sequence.
+
+gRPC proof:
+
+```bash
+grpcurl -plaintext \
+  -import-path proto \
+  -proto counter.proto \
+  -d '{"amount":1}' \
+  localhost:3000 \
+  counter.v1.CounterService/Increment
+```
+
+Expected result: the gRPC response count increases by `1`, the browser updates
+to the same count without refresh, and Spin logs show the Redis trigger
+observing the new sequence.
+
+Optional direct SSE proof:
+
+```bash
+curl -N 'http://127.0.0.1:3000/api/counter/stream?last_sequence=0'
+```
+
+Then run either REST or gRPC increment. The SSE output should include:
+
+```text
+event: counter
+data: {"view":...,"last_sequence":...}
 ```

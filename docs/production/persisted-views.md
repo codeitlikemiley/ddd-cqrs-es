@@ -1,5 +1,5 @@
 ---
-title: 5.2. Queries with Persisted Views
+title: 5.3. Queries with Persisted Views
 description: Scale your read models reliably using sequence checkpoint offsets.
 ---
 

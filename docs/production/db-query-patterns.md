@@ -1,5 +1,5 @@
 ---
-title: 5.3. Database Query Patterns
+title: 5.4. Database Query Patterns
 description: Design event-store, checkpoint, snapshot, and read-model queries without accidental scans or misleading consistency claims.
 ---
 

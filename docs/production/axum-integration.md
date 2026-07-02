@@ -1,5 +1,5 @@
 ---
-title: 5.7. Integration with Web Frameworks (Axum)
+title: 5.8. Integration with Web Frameworks (Axum)
 description: Build a production-grade, asynchronous REST API on top of your event-sourced domain using Axum.
 ---
 
@@ -107,7 +107,7 @@ pub async fn deposit_money(
 
 ## 4. Translating Errors to HTTP Status Codes
 
-To prevent leakage of internal system details and provide high-fidelity API responses, we map our typed domain errors (`BankAccountError`) and repository errors (`RepositoryError`) to Axum HTTP responses:
+To prevent leakage of internal system details and provide high-fidelity API responses, map typed domain errors (`BankAccountError`) and repository errors (`RepositoryError`) to application responses at the web boundary. See [Error Handling and Transport Mapping](./error-handling.md) for the full REST, Leptos server-function, Spin gRPC, and tracing contract.
 
 ```rust
 use axum::response::Response;
@@ -150,10 +150,10 @@ impl IntoResponse for AppError {
                 "concurrency_collision",
                 "The stream was modified by another request. Please retry.".to_owned(),
             ),
-            AppError::Internal(err) => (
+            AppError::Internal(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal_server_error",
-                err,
+                "The request failed. Check server logs for details.".to_owned(),
             ),
         };
 
@@ -173,7 +173,6 @@ impl From<RepositoryError<BankAccountError>> for AppError {
             RepositoryError::Domain(e) => AppError::Domain(e),
             RepositoryError::Concurrency(_) => AppError::Concurrency,
             RepositoryError::Store(e) => AppError::Internal(e.to_string()),
-            _ => AppError::Internal("Unknown repository error occurred.".to_owned()),
         }
     }
 }
