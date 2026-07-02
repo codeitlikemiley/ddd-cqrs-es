@@ -1,4 +1,4 @@
-# ddd_cqrs_es
+# Domain Driven Design + CQRS + ES
 
 [![ci](https://github.com/codeitlikemiley/ddd-cqrs-es/actions/workflows/ci.yml/badge.svg)](https://github.com/codeitlikemiley/ddd-cqrs-es/actions/workflows/ci.yml)
 
