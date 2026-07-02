@@ -160,7 +160,7 @@ mod tests {
         let counter = Counter::new();
         assert_eq!(counter.value, 0);
         assert_eq!(counter.revision, 0);
-        assert_eq!(counter.id(), None);
+        assert_eq!(counter.id, CounterId(String::new()));
     }
 
     #[test]

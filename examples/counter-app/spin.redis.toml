@@ -37,7 +37,7 @@ files = [
 # the Redis durable-store demo. Use `make spin db=<backend> realtime=redis`
 # for other durable backends with Redis wake notifications.
 command = "WASI_RUNTIME=spin DATABASE_BACKEND=redis REALTIME_BACKEND=redis cargo leptos build --release --lib-features hydrate --bin-features ssr,redis,spin-redis && WASI_RUNTIME=spin DATABASE_BACKEND=redis REALTIME_BACKEND=redis LEPTOS_OUTPUT_NAME=counter_app cargo build --lib --target wasm32-wasip2 --release --no-default-features --features ssr,redis,spin-redis"
-watch = ["src/**/*.rs", "Cargo.toml"]
+watch = ["src/**/*.rs", "Cargo.toml", "proto/**/*.proto"]
 
 [component.counter-app-redis-trigger]
 source = "redis-trigger/target/wasm32-wasip2/release/counter_app_redis_trigger.wasm"

@@ -5,9 +5,9 @@ use leptos_router::*;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "hydrate")]
-use wasm_bindgen::{closure::Closure, JsCast};
+use wasm_bindgen::{JsCast, closure::Closure};
 #[cfg(feature = "hydrate")]
-use web_sys::{window, EventSource, MessageEvent};
+use web_sys::{EventSource, MessageEvent, window};
 
 #[allow(dead_code)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -122,17 +122,20 @@ fn HomePage() -> impl IntoView {
             #[cfg(feature = "hydrate")]
             {
                 if let Some(window) = window()
-                    && let Ok(Some(storage)) = window.local_storage() {
-                        if let Ok(Some(cached_count_str)) = storage.get_item("counter_app_count")
-                            && let Ok(cached_count) = cached_count_str.parse::<i32>() {
-                                set_optimistic_count.set(Some(cached_count));
-                            }
-                        if let Ok(Some(cached_sequence_str)) =
-                            storage.get_item("counter_app_last_sequence")
-                            && let Ok(cached_sequence) = cached_sequence_str.parse::<u64>() {
-                                set_last_seen_sequence.set(cached_sequence);
-                            }
+                    && let Ok(Some(storage)) = window.local_storage()
+                {
+                    if let Ok(Some(cached_count_str)) = storage.get_item("counter_app_count")
+                        && let Ok(cached_count) = cached_count_str.parse::<i32>()
+                    {
+                        set_optimistic_count.set(Some(cached_count));
                     }
+                    if let Ok(Some(cached_sequence_str)) =
+                        storage.get_item("counter_app_last_sequence")
+                        && let Ok(cached_sequence) = cached_sequence_str.parse::<u64>()
+                    {
+                        set_last_seen_sequence.set(cached_sequence);
+                    }
+                }
             }
         }
     });
@@ -253,7 +256,10 @@ fn HomePage() -> impl IntoView {
         if !view_data.realtime_enabled {
             return;
         }
-        let url = format!("/api/counter/stream?last_sequence={}", view_data.last_sequence);
+        let url = format!(
+            "/api/counter/stream?last_sequence={}",
+            view_data.last_sequence
+        );
         let Ok(source) = EventSource::new(&url) else {
             return;
         };
@@ -295,11 +301,14 @@ fn HomePage() -> impl IntoView {
 
             if caught_up
                 && let Some(window) = window()
-                && let Ok(Some(storage)) = window.local_storage() {
-                    let _ = storage.set_item("counter_app_count", &message.view.count.to_string());
-                    let _ = storage
-                        .set_item("counter_app_last_sequence", &message.last_sequence.to_string());
-                }
+                && let Ok(Some(storage)) = window.local_storage()
+            {
+                let _ = storage.set_item("counter_app_count", &message.view.count.to_string());
+                let _ = storage.set_item(
+                    "counter_app_last_sequence",
+                    &message.last_sequence.to_string(),
+                );
+            }
         });
         let callback = onmessage.as_ref().unchecked_ref();
         source.set_onmessage(Some(callback));
@@ -311,7 +320,8 @@ fn HomePage() -> impl IntoView {
 
     #[cfg(feature = "hydrate")]
     Effect::new(move |_| {
-        let local_pending = increment_pending.get() || decrement_pending.get() || reset_pending.get();
+        let local_pending =
+            increment_pending.get() || decrement_pending.get() || reset_pending.get();
         if local_pending {
             return;
         }
@@ -433,7 +443,7 @@ fn HomePage() -> impl IntoView {
         <div class="min-h-screen bg-[#0f172a] text-slate-100 flex flex-col md:flex-row items-center justify-center p-6 md:p-12 gap-8 font-sans">
             <div class="bg-[#1e293b] rounded-2xl shadow-2xl p-8 md:p-10 max-w-lg w-full border border-slate-700/60 relative overflow-hidden transition-all duration-300 hover:shadow-[#38bdf8]/10 hover:shadow-2xl">
                 <div class="absolute top-0 right-0 w-32 h-32 bg-sky-500/10 rounded-full blur-3xl -mr-16 -mt-16"></div>
-                
+
                 <div class="text-center space-y-6 relative z-10">
                     <div class="space-y-2">
                         <div class="flex items-center justify-center gap-3">
@@ -486,7 +496,7 @@ fn HomePage() -> impl IntoView {
                             <span class="text-lg group-hover:scale-110 transition-transform font-black">"- 1"</span>
                             <span class="text-[10px] uppercase text-slate-400 font-medium">"Decrement"</span>
                         </button>
-                        
+
                         <button
                             on:click=on_reset
                             class="rounded-xl bg-amber-500/10 hover:bg-amber-500/20 active:scale-95 text-amber-400 font-bold p-4 border border-amber-500/20 shadow transition-all disabled:opacity-40 disabled:cursor-not-allowed group flex flex-col items-center gap-1"
@@ -665,74 +675,36 @@ fn NotFound() -> impl IntoView {
 
 #[cfg(feature = "ssr")]
 pub async fn get_counter_view_db() -> Result<CounterViewDto, ServerFnError> {
-    crate::store::get_counter_view_db()
+    crate::application::get_counter_view()
         .await
-        .map_err(ServerFnError::new)
+        .map_err(server_fn_error)
 }
 
 #[cfg(feature = "ssr")]
-async fn run_cqrs_command(command: crate::domain::CounterCommand) -> Result<CounterViewDto, ServerFnError> {
-    use crate::domain::{Counter, CounterId};
-    use crate::store::MultiBackendEventStore;
-    use ddd_cqrs_es::AsyncRepository;
-
-    let event_store = MultiBackendEventStore::<Counter>::new();
-    let repository = AsyncRepository::new(event_store);
-    let aggregate_id = CounterId("global".to_string());
-
-    const COMMAND_CONCURRENCY_RETRIES: usize = 6;
-    let mut attempts = 0;
-    let (loaded, committed_events) = loop {
-        match repository
-            .execute_returning_state(
-                &aggregate_id,
-                command.clone(),
-                ddd_cqrs_es::Metadata::default(),
-            )
-            .await
-        {
-            Ok(outcome) => break outcome,
-            Err(error)
-                if attempts < COMMAND_CONCURRENCY_RETRIES
-                    && is_retryable_counter_write_conflict(&error) =>
-            {
-                attempts += 1;
-                wasip3::clocks::monotonic_clock::wait_for(attempts as u64 * 5_000_000).await;
-            }
-            Err(error) => return Err(ServerFnError::new(error.to_string())),
-        }
-    };
-
-    let mut view = get_counter_view_db().await?;
-    view.count = loaded.state.value;
-    if let Some(last_sequence) = committed_events.last().and_then(|event| event.sequence) {
-        view.last_sequence = last_sequence;
-    }
-    crate::store::publish_counter_realtime(&view).await;
-    if let Err(error) = crate::store::catch_up_counter_projection().await {
-        eprintln!("failed to catch up counter projection: {error}");
-    }
-
-    Ok(view)
+async fn run_cqrs_command(
+    command: crate::domain::CounterCommand,
+) -> Result<CounterViewDto, ServerFnError> {
+    crate::application::execute_counter_command(command)
+        .await
+        .map_err(server_fn_error)
 }
 
 #[cfg(feature = "ssr")]
-fn is_retryable_counter_write_conflict(
-    error: &ddd_cqrs_es::RepositoryError<String, ddd_cqrs_es::EventStoreError>,
-) -> bool {
-    match error {
-        ddd_cqrs_es::RepositoryError::Concurrency(_) => true,
-        ddd_cqrs_es::RepositoryError::Store(ddd_cqrs_es::EventStoreError::Backend(message)) => {
-            let message = message.to_ascii_lowercase();
-            (message.contains("unique")
-                || message.contains("duplicate")
-                || message.contains("constraint"))
-                && (message.contains("revision")
-                    || message.contains("aggregate")
-                    || message.contains("idx_aggregate_revision"))
-        }
-        _ => false,
+fn server_fn_error(error: crate::error::CounterAppError) -> ServerFnError {
+    if error.is_client_error() {
+        tracing::warn!(
+            error = %error,
+            error_code = error.public_code(),
+            "counter server function rejected request"
+        );
+    } else {
+        tracing::error!(
+            error = %error,
+            error_code = error.public_code(),
+            "counter server function failed"
+        );
     }
+    error.server_fn_error()
 }
 
 #[server(prefix = "/api")]
@@ -752,7 +724,9 @@ pub async fn increment_count(amount: i32) -> Result<CounterViewDto, ServerFnErro
     #[cfg(feature = "ssr")]
     {
         if amount <= 0 {
-            return Err(ServerFnError::new("Amount must be positive"));
+            return Err(server_fn_error(crate::error::CounterAppError::validation(
+                "amount must be positive",
+            )));
         }
         run_cqrs_command(crate::domain::CounterCommand::Increment { amount }).await
     }
@@ -768,7 +742,9 @@ pub async fn decrement_count(amount: i32) -> Result<CounterViewDto, ServerFnErro
     #[cfg(feature = "ssr")]
     {
         if amount <= 0 {
-            return Err(ServerFnError::new("Amount must be positive"));
+            return Err(server_fn_error(crate::error::CounterAppError::validation(
+                "amount must be positive",
+            )));
         }
         run_cqrs_command(crate::domain::CounterCommand::Decrement { amount }).await
     }

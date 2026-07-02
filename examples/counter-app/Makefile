@@ -1,14 +1,16 @@
 # Makefile for building app for different WASI runtimes
-.PHONY: help help-db help-realtime help-matrix help-env db realtime matrix env spin wasmtime clean run fresh db-reset validate-params validate-env
+.PHONY: help help-db help-realtime help-transport help-matrix help-env db realtime transport matrix env spin wasmtime clean run fresh db-reset validate-params validate-env
 
 DB_BACKENDS := sqlite postgres neon supabase turso mysql redis
 REALTIME_BACKENDS := off polling redis
-HELP_SUBGOALS := $(filter db realtime matrix env,$(MAKECMDGOALS))
+TRANSPORTS := http grpc both
+HELP_SUBGOALS := $(filter db realtime transport matrix env,$(MAKECMDGOALS))
 
 empty :=
 space := $(empty) $(empty)
 DB_BACKEND_CASE := $(subst $(space),|,$(strip $(DB_BACKENDS)))
 REALTIME_BACKEND_CASE := $(subst $(space),|,$(strip $(REALTIME_BACKENDS)))
+TRANSPORT_CASE := $(subst $(space),|,$(strip $(TRANSPORTS)))
 
 ifneq ($(origin realime),undefined)
   $(error Unknown parameter `realime`; did you mean `realtime`?)
@@ -68,6 +70,7 @@ unexport DATABASE_URL DATABASE_AUTH_TOKEN
 # Initialize db if not defined on command line.
 db ?= $(if $(DATABASE_BACKEND),$(DATABASE_BACKEND),sqlite)
 realtime ?= $(if $(REALTIME_BACKEND),$(REALTIME_BACKEND),off)
+transport ?= http
 
 # Map database backend aliases to runtime backend names.
 ifeq ($(db), sqlite)
@@ -136,6 +139,9 @@ ifeq ($(DATABASE_BACKEND), mysql)
   SPIN_CARGO_FEATURES := $(SPIN_CARGO_FEATURES),spin-mysql
   WASMTIME_CARGO_FEATURES := $(WASMTIME_CARGO_FEATURES),wasi-mysql
 endif
+ifneq (,$(filter grpc both,$(transport)))
+  SPIN_CARGO_FEATURES := $(SPIN_CARGO_FEATURES),spin-grpc
+endif
 
 SPIN_MANIFEST := spin.toml
 ifeq ($(REALTIME_BACKEND), redis)
@@ -196,17 +202,18 @@ help:
 		case "$(topic)" in \
 			db) $(MAKE) --no-print-directory help-db ;; \
 			realtime) $(MAKE) --no-print-directory help-realtime ;; \
+			transport) $(MAKE) --no-print-directory help-transport ;; \
 			matrix|combos|combinations) $(MAKE) --no-print-directory help-matrix ;; \
 			env) $(MAKE) --no-print-directory help-env ;; \
-			*) echo "Unknown help topic: $(topic). Use db, realtime, matrix, or env."; exit 2 ;; \
+			*) echo "Unknown help topic: $(topic). Use db, realtime, transport, matrix, or env."; exit 2 ;; \
 		esac; \
 	elif [ -n "$(HELP_SUBGOALS)" ]; then \
 		:; \
 	else \
 		echo "Usage:"; \
-		echo "  make <target> [db=<backend>] [realtime=<mode>]"; \
-		echo "  make help topic=db|realtime|matrix|env"; \
-		echo "  make help-db | make help-realtime | make help-matrix | make help-env"; \
+		echo "  make <target> [db=<backend>] [realtime=<mode>] [transport=<mode>]"; \
+		echo "  make help topic=db|realtime|transport|matrix|env"; \
+		echo "  make help-db | make help-realtime | make help-transport | make help-matrix | make help-env"; \
 		echo ""; \
 		echo "Available targets:"; \
 		echo "  make help                    - Show this help"; \
@@ -219,6 +226,7 @@ help:
 		echo "Supported parameter values:"; \
 		echo "  db=$(DB_BACKENDS)"; \
 		echo "  realtime=$(REALTIME_BACKENDS)"; \
+		echo "  transport=$(TRANSPORTS)"; \
 		echo ""; \
 		echo "Common examples:"; \
 		echo "  make wasmtime db=postgres"; \
@@ -240,6 +248,7 @@ help:
 		echo "  make wasmtime db=mysql realtime=redis"; \
 		echo "  make spin db=mysql realtime=polling"; \
 		echo "  make spin db=mysql realtime=redis"; \
+		echo "  make spin db=sqlite transport=both"; \
 		echo "  make wasmtime db=redis realtime=redis"; \
 		echo "  make spin db=redis realtime=redis"; \
 		echo "  make db=postgres fresh"; \
@@ -287,10 +296,22 @@ help-realtime:
 	@echo ""
 	@echo "The parameter name is realtime. A typo like realime=redis fails fast."
 
+help-transport:
+	@echo "Supported transport=<mode> values:"
+	@echo "  http - default; Leptos server functions and browser UI"
+	@echo "  grpc - Spin gRPC service only, served through the Spin HTTP trigger"
+	@echo "  both - Spin HTTP UI/API and gRPC service in the same component"
+	@echo ""
+	@echo "gRPC transport is supported on Spin first. Wasmtime builds fail fast for transport=grpc or transport=both."
+	@echo ""
+	@echo "After starting Spin from examples/counter-app:"
+	@echo "  grpcurl -plaintext -import-path proto -proto counter.proto localhost:3000 counter.v1.CounterService/GetCounterView"
+
 help-matrix:
 	@echo "Supported runtime/db/realtime matrix:"
 	@echo "  make wasmtime db=<$(DB_BACKENDS)> realtime=<$(REALTIME_BACKENDS)>"
 	@echo "  make spin     db=<$(DB_BACKENDS)> realtime=<$(REALTIME_BACKENDS)>"
+	@echo "  make spin     db=<$(DB_BACKENDS)> realtime=<$(REALTIME_BACKENDS)> transport=<$(TRANSPORTS)>"
 	@echo ""
 	@echo "Notes:"
 	@echo "  db=sqlite uses JSON files under ./data on Wasmtime and Spin SQLite on Spin."
@@ -326,11 +347,14 @@ help-env:
 	@echo ""
 	@echo "DATABASE_URL and DATABASE_AUTH_TOKEN are internal runtime env derived by make."
 	@echo "Do not set them in .env for normal counter-app workflows."
+	@echo "RUST_LOG is forwarded to the running component when set, for example:"
+	@echo "  RUST_LOG=info,counter_app=debug make spin db=sqlite transport=both realtime=redis"
 	@echo ""
 	@echo "db=<backend> and realtime=<mode> override .env for one command."
 
 db: help-db
 realtime: help-realtime
+transport: help-transport
 matrix: help-matrix
 env: help-env
 
@@ -345,6 +369,12 @@ validate-params:
 		echo "Error: unsupported realtime=$(realtime)."; \
 		echo "Supported realtime values: $(REALTIME_BACKENDS)"; \
 		echo "Run 'make help-realtime' for details."; \
+		exit 2; \
+	esac
+	@case "$(transport)" in $(TRANSPORT_CASE)) ;; *) \
+		echo "Error: unsupported transport=$(transport)."; \
+		echo "Supported transport values: $(TRANSPORTS)"; \
+		echo "Run 'make help-transport' for details."; \
 		exit 2; \
 	esac
 
@@ -365,17 +395,17 @@ fresh: db-reset
 
 # Build and run with Spin
 spin: validate-env
-	@echo "Building for Spin runtime with DB: $(DATABASE_BACKEND), realtime: $(REALTIME_BACKEND)..."
+	@echo "Building for Spin runtime with DB: $(DATABASE_BACKEND), realtime: $(REALTIME_BACKEND), transport: $(transport)..."
 	@mkdir -p .spin
-	WASI_RUNTIME=spin DATABASE_BACKEND=$(DATABASE_BACKEND) REALTIME_BACKEND=$(REALTIME_BACKEND) cargo leptos build --release --lib-features hydrate --bin-features $(SPIN_CARGO_FEATURES)
-	WASI_RUNTIME=spin DATABASE_BACKEND=$(DATABASE_BACKEND) REALTIME_BACKEND=$(REALTIME_BACKEND) LEPTOS_OUTPUT_NAME=counter_app cargo build --lib --target wasm32-wasip2 --release --no-default-features --features $(SPIN_CARGO_FEATURES)
+	WASI_RUNTIME=spin DATABASE_BACKEND=$(DATABASE_BACKEND) REALTIME_BACKEND=$(REALTIME_BACKEND) TRANSPORT_MODE=$(transport) cargo leptos build --release --lib-features hydrate --bin-features $(SPIN_CARGO_FEATURES)
+	WASI_RUNTIME=spin DATABASE_BACKEND=$(DATABASE_BACKEND) REALTIME_BACKEND=$(REALTIME_BACKEND) TRANSPORT_MODE=$(transport) LEPTOS_OUTPUT_NAME=counter_app cargo build --lib --target wasm32-wasip2 --release --no-default-features --features $(SPIN_CARGO_FEATURES)
 	@if [ "$(REALTIME_BACKEND)" = "redis" ]; then \
 		cargo build --manifest-path redis-trigger/Cargo.toml --target wasm32-wasip2 --release; \
 	fi
 	@echo "Built: target/wasm32-wasip2/release/counter_app.wasm (for Spin)"
 	@echo "Starting Spin..."
 	@$(RESOLVE_RUNTIME_ENV); \
-	set -- --from $(SPIN_MANIFEST) --env DATABASE_BACKEND=$(DATABASE_BACKEND) --env REALTIME_BACKEND=$(REALTIME_BACKEND); \
+		set -- --from $(SPIN_MANIFEST) --env DATABASE_BACKEND=$(DATABASE_BACKEND) --env REALTIME_BACKEND=$(REALTIME_BACKEND) --env TRANSPORT_MODE=$(transport); \
 	if [ -n "$$DATABASE_URL_VALUE" ] && [ "$(DATABASE_BACKEND)" != "redis" ]; then \
 		set -- "$$@" --env DATABASE_URL="$$DATABASE_URL_VALUE"; \
 	fi; \
@@ -388,6 +418,9 @@ spin: validate-env
 	if [ -n "$$REDIS_CHANNEL_VALUE" ]; then \
 		set -- "$$@" --env REDIS_CHANNEL="$$REDIS_CHANNEL_VALUE"; \
 	fi; \
+	if [ -n "$$RUST_LOG" ]; then \
+		set -- "$$@" --env RUST_LOG="$$RUST_LOG"; \
+	fi; \
 	if [ "$(REALTIME_BACKEND)" = "redis" ]; then \
 		set -- "$$@" --variable redis_url="$$REDIS_URL_VALUE" --variable redis_channel="$$REDIS_CHANNEL_VALUE"; \
 	fi; \
@@ -395,6 +428,11 @@ spin: validate-env
 
 # Build and run with Wasmtime
 wasmtime: validate-env
+	@if [ "$(transport)" != "http" ]; then \
+		echo "Error: transport=$(transport) is currently supported only by the Spin target."; \
+		echo "Use 'make spin ... transport=$(transport)' or 'make wasmtime ... transport=http'."; \
+		exit 2; \
+	fi
 	@echo "Building for Wasmtime runtime with DB: $(DATABASE_BACKEND), realtime: $(REALTIME_BACKEND)..."
 	WASI_RUNTIME=wasmtime DATABASE_BACKEND=$(DATABASE_BACKEND) REALTIME_BACKEND=$(REALTIME_BACKEND) cargo leptos build --release --lib-features hydrate --bin-features $(WASMTIME_CARGO_FEATURES)
 	WASI_RUNTIME=wasmtime DATABASE_BACKEND=$(DATABASE_BACKEND) REALTIME_BACKEND=$(REALTIME_BACKEND) LEPTOS_OUTPUT_NAME=counter_app cargo build --lib --target wasm32-wasip2 --release --no-default-features --features $(WASMTIME_CARGO_FEATURES) --target-dir target/wasmtime
@@ -429,6 +467,9 @@ wasmtime: validate-env
 	fi; \
 	if [ -n "$$REDIS_CHANNEL_VALUE" ]; then \
 		set -- "$$@" --env=REDIS_CHANNEL="$$REDIS_CHANNEL_VALUE"; \
+	fi; \
+	if [ -n "$$RUST_LOG" ]; then \
+		set -- "$$@" --env=RUST_LOG="$$RUST_LOG"; \
 	fi; \
 	set -- "$$@" --addr 127.0.0.1:3000 target/wasmtime/wasm32-wasip2/release/counter_app.wasm; \
 	wasmtime "$$@"

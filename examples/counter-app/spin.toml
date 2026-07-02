@@ -24,7 +24,7 @@ files = [
 # The Makefile is the canonical matrix entrypoint for db/realtime selection.
 # This fallback is for plain `spin build --from spin.toml`.
 command = "WASI_RUNTIME=spin cargo leptos build --release && WASI_RUNTIME=spin LEPTOS_OUTPUT_NAME=counter_app cargo build --lib --target wasm32-wasip2 --release --no-default-features --features ssr"
-watch = ["src/**/*.rs", "Cargo.toml"]
+watch = ["src/**/*.rs", "Cargo.toml", "proto/**/*.proto"]
 
 [[trigger.http]]
 route = "/pkg/..."

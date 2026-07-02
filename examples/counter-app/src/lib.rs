@@ -1,5 +1,17 @@
-pub mod domain;
 mod app;
+pub mod domain;
+
+#[cfg(feature = "ssr")]
+mod application;
+
+#[cfg(feature = "ssr")]
+mod error;
+
+#[cfg(all(feature = "spin-grpc", runtime_spin))]
+mod grpc;
+
+#[cfg(feature = "ssr")]
+mod rest;
 
 #[cfg(feature = "ssr")]
 pub mod store;

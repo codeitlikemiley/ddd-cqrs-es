@@ -6,6 +6,14 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(runtime_wasmtime)");
     println!("cargo::rerun-if-env-changed=WASI_RUNTIME");
     println!("cargo::rerun-if-env-changed=SPIN_BUILD");
+    println!("cargo::rerun-if-changed=proto/counter.proto");
+
+    if env::var_os("CARGO_FEATURE_SPIN_GRPC").is_some() {
+        tonic_build::configure()
+            .build_transport(false)
+            .compile_protos(&["proto/counter.proto"], &["proto"])
+            .unwrap();
+    }
 
     // Check for WASI_RUNTIME environment variable
     let runtime = env::var("WASI_RUNTIME").unwrap_or_else(|_| "wasmtime".to_string());
@@ -24,7 +32,10 @@ fn main() {
         }
         _ => {
             println!("cargo:rustc-cfg=runtime_wasmtime");
-            println!("cargo:warning=Unknown runtime '{}', defaulting to Wasmtime", runtime);
+            println!(
+                "cargo:warning=Unknown runtime '{}', defaulting to Wasmtime",
+                runtime
+            );
         }
     }
 

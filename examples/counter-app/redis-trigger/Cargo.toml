@@ -13,3 +13,5 @@ anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 spin-sdk = { version = "6.0.0", features = ["redis"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3.18", features = ["fmt", "env-filter"] }

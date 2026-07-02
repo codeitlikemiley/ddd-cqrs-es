@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package counter.v1;
+
+service CounterService {
+  rpc GetCounterView(GetCounterViewRequest) returns (CounterView);
+  rpc Increment(ChangeCounterRequest) returns (CounterView);
+  rpc Decrement(ChangeCounterRequest) returns (CounterView);
+  rpc Reset(ResetCounterRequest) returns (CounterView);
+  rpc WatchCounter(WatchCounterRequest) returns (stream CounterRealtimeMessage);
+}
+
+message GetCounterViewRequest {}
+
+message ChangeCounterRequest {
+  int32 amount = 1;
+}
+
+message ResetCounterRequest {}
+
+message WatchCounterRequest {
+  uint64 last_sequence = 1;
+}
+
+message CounterView {
+  int32 count = 1;
+  repeated EventLog latest_events = 2;
+  uint64 last_sequence = 3;
+  bool realtime_enabled = 4;
+}
+
+message EventLog {
+  uint64 sequence = 1;
+  string event_type = 2;
+  uint64 revision = 3;
+  string payload = 4;
+  string recorded_at = 5;
+}
+
+message CounterRealtimeMessage {
+  CounterView view = 1;
+  uint64 last_sequence = 2;
+}

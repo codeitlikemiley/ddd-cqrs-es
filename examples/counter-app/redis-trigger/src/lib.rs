@@ -27,14 +27,19 @@ struct CounterView {
 /// checkpoints, and browser SSE delivery remain owned by the HTTP component.
 #[redis_subscriber]
 async fn on_message(message: Vec<u8>) -> Result<()> {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
     let Ok(message) = serde_json::from_slice::<CounterRealtimeMessage>(&message) else {
-        eprintln!("counter Redis trigger received malformed realtime payload");
+        tracing::warn!("counter Redis trigger received malformed realtime payload");
         return Ok(());
     };
     if message.view.last_sequence != message.last_sequence {
-        eprintln!(
-            "counter Redis trigger received mismatched sequences: view={} message={}",
-            message.view.last_sequence, message.last_sequence
+        tracing::warn!(
+            view_sequence = message.view.last_sequence,
+            message_sequence = message.last_sequence,
+            "counter Redis trigger received mismatched sequences"
         );
         return Ok(());
     }
@@ -73,9 +78,10 @@ async fn on_message(message: Vec<u8>) -> Result<()> {
         .await
         .map_err(|error| anyhow!("failed to increment Redis trigger count: {error:?}"))?;
 
-    println!(
-        "counter Redis trigger observed sequence {} count {}",
-        message.last_sequence, message.view.count
+    tracing::info!(
+        sequence = message.last_sequence,
+        count = message.view.count,
+        "counter Redis trigger observed realtime message"
     );
     Ok(())
 }

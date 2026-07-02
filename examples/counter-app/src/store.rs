@@ -12,6 +12,7 @@ use ddd_cqrs_es::{Aggregate, EventEnvelope, EventId, ExpectedRevision, NewEvent}
 use ddd_cqrs_es::error::EventStoreError;
 use ddd_cqrs_es::async_api::AsyncEventStore;
 use async_trait::async_trait;
+use crate::error::{CounterAppError, CounterAppResult};
 
 // #[cfg(feature = "postgres")]
 // pub use ddd_cqrs_es::{PostgresEventStore, PostgresCheckpointStore};
@@ -1474,17 +1475,17 @@ fn event_logs_from_value(value: Option<&serde_json::Value>) -> Result<Vec<crate:
     Ok(rows.iter().map(event_log_from_row).collect())
 }
 
-pub async fn get_counter_view_db() -> Result<crate::app::CounterViewDto, String> {
+pub async fn get_counter_view_db() -> CounterAppResult<crate::app::CounterViewDto> {
     get_counter_event_sourced_view_db().await
 }
 
-pub async fn get_counter_event_sourced_view_db() -> Result<crate::app::CounterViewDto, String> {
+pub async fn get_counter_event_sourced_view_db() -> CounterAppResult<crate::app::CounterViewDto> {
     let event_store = MultiBackendEventStore::<crate::domain::Counter>::new();
     let aggregate_id = crate::domain::CounterId("global".to_string());
     let mut events = event_store
         .load(&aggregate_id)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(CounterAppError::from_event_store_error)?;
     let loaded = crate::domain::Counter::replay(&events);
 
     events.sort_by_key(|event| event.sequence.unwrap_or(0));
@@ -1504,12 +1505,14 @@ pub async fn get_counter_event_sourced_view_db() -> Result<crate::app::CounterVi
     })
 }
 
-pub async fn get_counter_read_model_view_db() -> Result<crate::app::CounterViewDto, String> {
+pub async fn get_counter_read_model_view_db() -> CounterAppResult<crate::app::CounterViewDto> {
     let backend = get_backend();
 
     if backend == "sqlite" || backend == "redis" || backend == "mysql" {
-        let count = get_count_db().await?;
-        let latest_events = get_latest_events_db().await?;
+        let count = get_count_db().await.map_err(CounterAppError::read_model)?;
+        let latest_events = get_latest_events_db()
+            .await
+            .map_err(CounterAppError::read_model)?;
         let last_sequence = latest_events.first().map(|event| event.sequence).unwrap_or(0);
         return Ok(crate::app::CounterViewDto {
             count,
@@ -1520,7 +1523,8 @@ pub async fn get_counter_read_model_view_db() -> Result<crate::app::CounterViewD
     }
 
     let aggregate_id = crate::domain::CounterId("global".to_string());
-    let aggregate_id_str = serde_json::to_string(&aggregate_id).map_err(|e| e.to_string())?;
+    let aggregate_id_str =
+        serde_json::to_string(&aggregate_id).map_err(|e| CounterAppError::serialization(e.to_string()))?;
     let params = vec![serde_json::Value::String(aggregate_id_str)];
 
     let query_sqlite = r#"
@@ -1562,7 +1566,9 @@ pub async fn get_counter_read_model_view_db() -> Result<crate::app::CounterViewD
             ), '[]'::json) AS latest_events
     "#;
 
-    let rows = execute_query_routed(query_sqlite, query_postgres, params).await?;
+    let rows = execute_query_routed(query_sqlite, query_postgres, params)
+        .await
+        .map_err(CounterAppError::read_model)?;
     let Some(row) = rows.first() else {
         return Ok(crate::app::CounterViewDto {
             count: 0,
@@ -1572,7 +1578,8 @@ pub async fn get_counter_read_model_view_db() -> Result<crate::app::CounterViewD
         });
     };
     tracing::debug!("[get_counter_view_db] row: {}", serde_json::to_string(row).unwrap_or_default());
-    let latest_events = event_logs_from_value(row.get("latest_events"))?;
+    let latest_events =
+        event_logs_from_value(row.get("latest_events")).map_err(CounterAppError::read_model)?;
     let last_sequence = latest_events.first().map(|event| event.sequence).unwrap_or(0);
 
     Ok(crate::app::CounterViewDto {
@@ -1877,12 +1884,14 @@ pub async fn run_projections_async(
     Ok(count)
 }
 
-pub async fn catch_up_counter_projection() -> Result<usize, String> {
+pub async fn catch_up_counter_projection() -> CounterAppResult<usize> {
     #[cfg(any(
         all(feature = "spin-redis", runtime_spin),
         all(feature = "wasi-redis", runtime_wasmtime)
     ))]
-    let redis_lock = RedisProjectionLock::acquire().await?;
+    let redis_lock = RedisProjectionLock::acquire()
+        .await
+        .map_err(CounterAppError::projection)?;
 
     let result = {
         let lock = PROJECTION_RUN_LOCK.get_or_init(|| futures::lock::Mutex::new(()));
@@ -1891,7 +1900,9 @@ pub async fn catch_up_counter_projection() -> Result<usize, String> {
         let event_store = MultiBackendEventStore::<crate::domain::Counter>::new();
         let checkpoint_store = MultiBackendCheckpointStore::new();
         let mut projection = MultiBackendCounterProjection::new();
-        run_projections_async(&event_store, &checkpoint_store, &mut projection).await
+        run_projections_async(&event_store, &checkpoint_store, &mut projection)
+            .await
+            .map_err(CounterAppError::projection)
     };
 
     #[cfg(any(
@@ -2100,9 +2111,9 @@ async fn redis_publish_realtime_wake(payload: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn publish_counter_realtime(_view: &crate::app::CounterViewDto) {
+pub async fn publish_counter_realtime(_view: &crate::app::CounterViewDto) -> CounterAppResult<()> {
     if get_realtime_backend() != "redis" {
-        return;
+        return Ok(());
     }
 
     #[cfg(feature = "redis")]
@@ -2116,45 +2127,46 @@ pub async fn publish_counter_realtime(_view: &crate::app::CounterViewDto) {
                 view: _view.clone(),
                 last_sequence: _view.last_sequence,
             };
-            let payload = match serde_json::to_vec(&message) {
-                Ok(payload) => payload,
-                Err(error) => {
-                    eprintln!("failed to serialize Redis realtime notification: {error}");
-                    return;
-                }
-            };
+            let payload = serde_json::to_vec(&message)
+                .map_err(|error| CounterAppError::serialization(error.to_string()))?;
 
             let publisher =
                 ddd_cqrs_es::RedisPubSubPublisher::new(redis_client(), get_redis_channel());
-            if let Err(error) = publisher.publish(&payload).await {
-                eprintln!("failed to publish Redis realtime notification: {error}");
-            }
-            if let Err(error) = redis_publish_realtime_wake(&payload).await {
-                eprintln!("failed to wake Redis realtime SSE subscribers: {error}");
-            }
+            publisher
+                .publish(&payload)
+                .await
+                .map_err(|error| CounterAppError::realtime(error.to_string()))?;
+            redis_publish_realtime_wake(&payload)
+                .await
+                .map_err(CounterAppError::realtime)?;
+            Ok(())
         }
         #[cfg(not(any(
                     all(feature = "spin-redis", runtime_spin),
                     all(feature = "wasi-redis", runtime_wasmtime)
                 )))]
         {
-            eprintln!("redis realtime requires WASI_RUNTIME=spin or WASI_RUNTIME=wasmtime");
+            Err(CounterAppError::configuration(
+                "redis realtime requires WASI_RUNTIME=spin or WASI_RUNTIME=wasmtime",
+            ))
         }
     }
     #[cfg(not(feature = "redis"))]
     {
-        eprintln!("redis realtime requested but redis feature is not enabled");
+        Err(CounterAppError::configuration(
+            "redis realtime requested but redis feature is not enabled",
+        ))
     }
 }
 
 pub async fn counter_realtime_message_after(
     last_sequence: u64,
-) -> Result<Option<crate::app::CounterRealtimeMessage>, String> {
+) -> CounterAppResult<Option<crate::app::CounterRealtimeMessage>> {
     let event_store = MultiBackendEventStore::<crate::domain::Counter>::new();
     let newer_events = event_store
         .load_global_after(Some(last_sequence))
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(CounterAppError::from_event_store_error)?;
 
     if newer_events.is_empty() {
         return Ok(None);
@@ -2162,7 +2174,11 @@ pub async fn counter_realtime_message_after(
 
     let view = get_counter_view_db().await?;
     if let Err(error) = catch_up_counter_projection().await {
-        eprintln!("failed to catch up counter projection for realtime stream: {error}");
+        tracing::error!(
+            error = %error,
+            error_code = error.public_code(),
+            "failed to catch up counter projection for realtime stream"
+        );
     }
     Ok(Some(crate::app::CounterRealtimeMessage {
         last_sequence: view.last_sequence,
@@ -2208,11 +2224,18 @@ impl CounterStreamState {
         match self.next_message().await {
             Ok(Some(message)) => counter_sse_frame(&message),
             Ok(None) => counter_sse_keepalive_frame(),
-            Err(error) => counter_sse_error_frame(&error),
+            Err(error) => {
+                tracing::error!(
+                    error = %error,
+                    error_code = error.public_code(),
+                    "counter SSE stream failed"
+                );
+                counter_sse_error_frame(&error.public_message())
+            }
         }
     }
 
-    async fn next_message(&mut self) -> Result<Option<crate::app::CounterRealtimeMessage>, String> {
+    async fn next_message(&mut self) -> CounterAppResult<Option<crate::app::CounterRealtimeMessage>> {
         if !self.checked_initial_catchup {
             self.checked_initial_catchup = true;
             if let Some(message) = counter_realtime_message_after(self.last_sequence).await? {
@@ -2225,7 +2248,12 @@ impl CounterStreamState {
             return Ok(None);
         };
 
-        if subscriber.next_payload().await?.is_none() {
+        if subscriber
+            .next_payload()
+            .await
+            .map_err(CounterAppError::realtime)?
+            .is_none()
+        {
             return Ok(None);
         }
 
@@ -2259,7 +2287,10 @@ impl CounterRedisSubscriber {
         if let Err(error) =
             redis_touch_realtime_subscriber(&subscriber.queue_key, &subscriber.alive_key).await
         {
-            eprintln!("failed to register Redis realtime SSE subscriber: {error}");
+            tracing::error!(
+                error = %error,
+                "failed to register Redis realtime SSE subscriber"
+            );
             return None;
         }
 
@@ -2336,7 +2367,7 @@ pub async fn counter_stream_response(
     req: &http::Request<wasip3::http_compat::IncomingRequestBody>,
 ) -> Result<
     http::Response<http_body_util::combinators::UnsyncBoxBody<bytes::Bytes, std::io::Error>>,
-    String,
+    CounterAppError,
 > {
     use http_body_util::BodyExt;
 
@@ -2403,7 +2434,12 @@ pub async fn counter_stream_response(
                     }
                     Err(error) => {
                         wasip3::clocks::monotonic_clock::wait_for(1_000_000_000).await;
-                        let frame = counter_sse_error_frame(&error);
+                        tracing::error!(
+                            error = %error,
+                            error_code = error.public_code(),
+                            "counter SSE polling failed"
+                        );
+                        let frame = counter_sse_error_frame(&error.public_message());
                         return Some((
                             Ok::<_, std::io::Error>(http_body::Frame::data(bytes::Bytes::from(frame))),
                             state,
@@ -2427,5 +2463,5 @@ pub async fn counter_stream_response(
         .header(http::header::CACHE_CONTROL, "no-cache, no-transform")
         .header("X-Accel-Buffering", "no")
         .body(body)
-        .map_err(|e| e.to_string())
+        .map_err(|e| CounterAppError::transport(e.to_string()))
 }
