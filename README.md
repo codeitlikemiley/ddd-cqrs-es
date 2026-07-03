@@ -24,7 +24,7 @@ It gives you stable domain primitives, repositories, event stores, checkpoints, 
 Install the CLI:
 
 ```bash
-cargo install ddd-cli --locked
+cargo install ddd-cqrs-es-cli --locked
 ```
 
 Create a domain-first project:

@@ -12,7 +12,7 @@ This repository ships repository-local skills used by agent workflows.
     - extending generated apps with `ddd add ...`
     - enabling capabilities with `ddd enable ...`
     - previewing operations for agents/MCP with `--dry-run --format json`
-    - release/version flows that publish `ddd_cqrs_es` and `ddd-cli` together
+    - release/version flows that publish `ddd_cqrs_es` and `ddd-cqrs-es-cli` together
 
 - `leptos-wasi-cqrs`
   - Location: `.agents/skills/leptos-wasi-cqrs/SKILL.md`

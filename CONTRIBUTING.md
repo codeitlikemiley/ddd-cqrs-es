@@ -1,19 +1,18 @@
 # Contributing Guide
 
-## Environment and command wrapper
+## Environment
 
-Repository AGENTS guidance requires workspace commands to be prefixed with `rtk`.
-Use `rtk` for Makefile and command-line execution in this repo context.
+Run commands from the repository root unless a section says otherwise.
 
 ## Core development workflow
 
 - Start from `examples/counter-app` for runtime-focused changes.
 - Use the Makefile as the backend command source of truth:
-  - `rtk make help`
-  - `rtk make help-db`
-  - `rtk make help-realtime`
-  - `rtk make help-matrix`
-  - `rtk make help-env`
+  - `make help`
+  - `make help-db`
+  - `make help-realtime`
+  - `make help-matrix`
+  - `make help-env`
 
 ## Backend contract defaults
 
@@ -49,23 +48,24 @@ When updating the `ddd` CLI command surface, generated templates, runtime matrix
 
 Run this before docs-focused PRs:
 
-- `rtk node -v` (environment sanity check, if needed)
-- `rtk jq -r '.navigation.groups[].pages[]' docs/docs.json | sort` and compare against `docs/**/*.md`
-- `rtk scripts/verify-docs.sh`
+- `node -v` (environment sanity check, if needed)
+- `jq -r '.navigation.groups[].pages[]' docs/docs.json | sort` and compare against `docs/**/*.md`
+- `scripts/verify-docs.sh`
 
 ## Release process (crates.io)
 
 For a release to [crates.io](https://crates.io), publish the library and CLI as a same-version pair:
 
 - Dry run:
-  - `rtk make publish dry-run` or `rtk make publish -- --dry-run`
+  - `make publish dry-run` or `make publish -- --dry-run`
 - Publish:
-  - `CARGO_REGISTRY_TOKEN=<token> rtk make publish`
+  - `make publish` after `cargo login`
+  - or `CARGO_REGISTRY_TOKEN=<token> make publish`
 
 The release script validates and publishes both packages in order:
 
 - `ddd_cqrs_es`
-- `ddd-cli` (binary name: `ddd`)
+- `ddd-cqrs-es-cli` (binary name: `ddd`)
 
 ## Versioning and example shortcuts
 

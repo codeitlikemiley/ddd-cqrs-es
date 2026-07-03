@@ -1,6 +1,6 @@
 [package]
-name = "ddd-cli"
-version = "0.2.5"
+name = "ddd-cqrs-es-cli"
+version = "0.2.6"
 edition = "2021"
 rust-version = "1.93.0"
 authors = ["Uriah G"]
@@ -11,6 +11,10 @@ repository = "https://github.com/codeitlikemiley/ddd-cqrs-es"
 [[bin]]
 name = "ddd"
 path = "src/main.rs"
+
+[lib]
+name = "ddd_cli"
+path = "src/lib.rs"
 
 [dependencies]
 anyhow = "1"

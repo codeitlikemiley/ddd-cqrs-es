@@ -7,7 +7,7 @@ Usage: scripts/release-crates-io.sh <dry-run|publish>
 
 Modes:
   dry-run   Run all checks and validate publishability without uploading.
-  publish   Run all checks and publish to crates.io (requires CARGO_REGISTRY_TOKEN).
+  publish   Run all checks and publish to crates.io (requires cargo login or CARGO_REGISTRY_TOKEN).
 USAGE
   exit 1
 }
@@ -22,12 +22,7 @@ if ! command -v cargo >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ "$MODE" == "publish" && -z "${CARGO_REGISTRY_TOKEN:-}" ]]; then
-  echo "Error: publish mode requires CARGO_REGISTRY_TOKEN environment variable." >&2
-  exit 1
-fi
-
-PACKAGES=("ddd_cqrs_es" "ddd-cli")
+PACKAGES=("ddd_cqrs_es" "ddd-cqrs-es-cli")
 
 read_manifest_version() {
   local manifest="$1"
@@ -41,7 +36,7 @@ if [[ -z "$LIB_VERSION" || -z "$CLI_VERSION" ]]; then
   exit 1
 fi
 if [[ "$LIB_VERSION" != "$CLI_VERSION" ]]; then
-  echo "Error: ddd_cqrs_es ($LIB_VERSION) and ddd-cli ($CLI_VERSION) versions must match." >&2
+  echo "Error: ddd_cqrs_es ($LIB_VERSION) and ddd-cqrs-es-cli ($CLI_VERSION) versions must match." >&2
   exit 1
 fi
 
@@ -62,7 +57,17 @@ echo "Running library doc tests..."
 cargo test --doc --all-features -p ddd_cqrs_es
 
 echo "Running CLI tests..."
-cargo test --all-targets -p ddd-cli
+cargo test --all-targets -p ddd-cqrs-es-cli
+
+crate_version_published() {
+  local package="$1"
+  local version="$2"
+
+  command -v curl >/dev/null 2>&1 || return 1
+  curl -fsS -A "ddd-cqrs-es-release-script" \
+    "https://crates.io/api/v1/crates/${package}/${version}" \
+    -o /dev/null
+}
 
 if [[ "$MODE" == "dry-run" ]]; then
   echo "Running crates.io dry-run publish checks..."
@@ -73,8 +78,12 @@ if [[ "$MODE" == "dry-run" ]]; then
 else
   echo "Publishing packages to crates.io..."
   for package in "${PACKAGES[@]}"; do
+    if crate_version_published "$package" "$LIB_VERSION"; then
+      echo "Skipping $package v$LIB_VERSION; already published."
+      continue
+    fi
     echo "Publishing $package..."
-    cargo publish -p "$package" --allow-dirty --token "$CARGO_REGISTRY_TOKEN"
+    cargo publish -p "$package" --allow-dirty
   done
 fi
 

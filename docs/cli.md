@@ -5,7 +5,7 @@ description: Scaffold, extend, validate, and run ddd_cqrs_es applications from a
 
 The `ddd` CLI is the fastest way to start a `ddd_cqrs_es` application and keep generated projects consistent as they grow.
 
-It is published by the `ddd-cli` crate, installs a binary named `ddd`, and is released with the same version as `ddd_cqrs_es`.
+It is published by the `ddd-cqrs-es-cli` crate, installs a binary named `ddd`, and is released with the same version as `ddd_cqrs_es`.
 
 Use it for:
 
@@ -20,7 +20,7 @@ Use it for:
 Install the published CLI:
 
 ```bash
-cargo install ddd-cli --locked
+cargo install ddd-cqrs-es-cli --locked
 ```
 
 Check that it is available:
@@ -33,13 +33,13 @@ ddd capabilities --json
 When developing this repository locally, use the workspace binary instead:
 
 ```bash
-cargo run -p ddd-cli -- <args>
+cargo run -p ddd-cqrs-es-cli -- <args>
 ```
 
 For example:
 
 ```bash
-cargo run -p ddd-cli -- init billing --preset basic --domain Invoice
+cargo run -p ddd-cqrs-es-cli -- init billing --preset basic --domain Invoice
 ```
 
 ## Quick Start
@@ -360,10 +360,12 @@ make publish -- --dry-run
 Real publish:
 
 ```bash
-CARGO_REGISTRY_TOKEN=<token> make publish
+make publish
 ```
 
-The release script validates that `ddd_cqrs_es` and `ddd-cli` have matching versions, then publishes `ddd_cqrs_es` before `ddd-cli`.
+Run `cargo login` first, or provide `CARGO_REGISTRY_TOKEN` in the environment.
+
+The release script validates that `ddd_cqrs_es` and `ddd-cqrs-es-cli` have matching versions, then publishes `ddd_cqrs_es` before `ddd-cqrs-es-cli`.
 
 ## Troubleshooting
 

@@ -80,8 +80,8 @@ fi
 update_manifest_version "$LIB_MANIFEST" "$CURRENT_VERSION" "$target_version"
 update_manifest_version "$CLI_MANIFEST" "$CLI_CURRENT_VERSION" "$target_version"
 update_lock_version "ddd_cqrs_es" "$CURRENT_VERSION" "$target_version"
-update_lock_version "ddd-cli" "$CLI_CURRENT_VERSION" "$target_version"
+update_lock_version "ddd-cqrs-es-cli" "$CLI_CURRENT_VERSION" "$target_version"
 
 echo "Version updated:"
 echo "  ddd_cqrs_es: ${CURRENT_VERSION} -> ${target_version}"
-echo "  ddd-cli: ${CLI_CURRENT_VERSION} -> ${target_version}"
+echo "  ddd-cqrs-es-cli: ${CLI_CURRENT_VERSION} -> ${target_version}"
