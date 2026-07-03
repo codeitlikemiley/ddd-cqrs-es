@@ -15,7 +15,7 @@ Add the crate as a dependency in your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ddd_cqrs_es = "0.2.0"
+ddd_cqrs_es = "0.2.2"
 ```
 
 ### Feature Flags
@@ -107,6 +107,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## 🗺️ How to Navigate This Documentation
 
 We structured our guides as a structured, chronological path designed to take you from a complete beginner to building full-scale, distributed production applications:
+
+### Start with the CLI: [ddd CLI](./cli)
+* **What you'll learn:** Install the `ddd` command, scaffold a new app with `ddd init`, add domain events and commands with `ddd add`, enable Redis/gRPC/tracing capabilities, run Spin-focused apps, and use dry-run JSON for agent/MCP workflows.
 
 ### Module 1: [The Patterns](./theory/ddd) (Theory)
 * **What you'll learn:** The architectural foundations. Read about [Domain-Driven Design](./theory/ddd) (aggregate boundaries, Ubiquitous Language), [CQRS](./theory/cqrs) (separating write vs read pipelines), [State Changes](./theory/state-changes) (command validation vs event application), [Queries](./theory/queries) (read models), and [Event Sourcing mechanics](./theory/event-sourcing).

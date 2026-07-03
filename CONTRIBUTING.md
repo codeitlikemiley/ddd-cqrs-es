@@ -38,6 +38,13 @@ When updating backend or realtime behavior, keep docs in sync in all of these lo
 - `docs/production/redis.md`
 - `.agents/skills/leptos-wasi-cqrs/SKILL.md`
 
+When updating the `ddd` CLI command surface, generated templates, runtime matrix, or release behavior, keep these in sync:
+
+- `docs/cli.md`
+- `SKILLS.md`
+- `.agents/skills/ddd-cli/SKILL.md`
+- `crates/ddd-cli/tests/cli.rs`
+
 ## Documentation quality checks
 
 Run this before docs-focused PRs:
@@ -48,19 +55,21 @@ Run this before docs-focused PRs:
 
 ## Release process (crates.io)
 
-For a release to [crates.io](https://crates.io):
+For a release to [crates.io](https://crates.io), publish the library and CLI as a same-version pair:
 
 - Dry run:
   - `rtk make publish dry-run` or `rtk make publish -- --dry-run`
 - Publish:
   - `CARGO_REGISTRY_TOKEN=<token> rtk make publish`
-- Or trigger GitHub Actions manually:
-  - Workflow: `release-crates-io`
-  - Mode: `dry-run` or `publish`
+
+The release script validates and publishes both packages in order:
+
+- `ddd_cqrs_es`
+- `ddd-cli` (binary name: `ddd`)
 
 ## Versioning and example shortcuts
 
-- Bump version:
+- Bump both workspace package versions:
   - `make version` (auto-increment patch)
   - `make version 0.2.1` (explicit version)
 - Run example with same pattern as app Makefile:

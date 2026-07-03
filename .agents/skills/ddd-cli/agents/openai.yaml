@@ -1,0 +1,4 @@
+interface:
+  display_name: "ddd CLI"
+  short_description: "Scaffold DDD apps with the ddd CLI"
+  default_prompt: "Use $ddd-cli to scaffold or extend a ddd_cqrs_es app with dry-run JSON first."

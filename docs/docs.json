@@ -22,7 +22,8 @@
         "icon": "flag",
         "expanded": true,
         "pages": [
-          "index"
+          "index",
+          "cli"
         ]
       },
       {

@@ -25,8 +25,8 @@ PUBLISH_MODE := $(if $(filter dry-run --dry-run,$(MAKECMDGOALS)),dry-run,publish
 
 help:
 	@echo "Usage:"
-	@echo "  make version [<version>]            bump crate version (auto-increments patch if omitted)"
-	@echo "  make publish [dry-run]              run crates.io publish flow (or: make publish -- --dry-run)"
+	@echo "  make version [<version>]            bump library and CLI versions (auto-increments patch if omitted)"
+	@echo "  make publish [dry-run]              publish library and CLI to crates.io (or: make publish -- --dry-run)"
 	@echo "  make example <spin|wasmtime|run>    run counter-app example with db/realtime args"
 	@echo "  make preflight                      check required local tools before running CI/release/example commands"
 	@echo ""

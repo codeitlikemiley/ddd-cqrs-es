@@ -73,6 +73,30 @@ WASI, Spin, and Redis features provide runtime-specific helpers and async notifi
 See full runtime/feature details in the docs.
 
 ---
+## CLI scaffolding
+
+This repository now includes a workspace CLI package that builds a `ddd` binary for app scaffolding:
+
+```bash
+cargo install ddd-cli --locked
+```
+
+During local development, run it from the workspace:
+
+```bash
+cargo run -p ddd-cli -- init my-app --preset basic --domain Invoice
+cargo run -p ddd-cli -- init my-app --preset leptos-wasi --db sqlite --runtime spin
+cargo run -p ddd-cli -- --cwd my-app add event Invoice InvoicePaid --field amount:i64
+cargo run -p ddd-cli -- matrix
+cargo run -p ddd-cli -- capabilities --json
+```
+
+The CLI writes a `ddd.toml` manifest and supports dry-run JSON output for agent/MCP workflows:
+
+```bash
+cargo run -p ddd-cli -- --dry-run --format json init my-app
+```
+
 ## You probably want this before shipping
 
 - This is an **architectural crate**, not an end-user application template.

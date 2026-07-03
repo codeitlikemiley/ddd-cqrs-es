@@ -13,6 +13,11 @@ keywords = ["ddd", "cqrs", "event-sourcing", "events"]
 categories = ["development-tools", "rust-patterns"]
 exclude = [".agents/**"]
 
+[workspace]
+members = [".", "crates/ddd-cli"]
+default-members = [".", "crates/ddd-cli"]
+resolver = "2"
+
 [lib]
 name = "ddd_cqrs_es"
 path = "src/lib.rs"
