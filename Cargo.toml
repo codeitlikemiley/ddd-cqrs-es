@@ -16,6 +16,7 @@ exclude = [".agents/**"]
 [workspace]
 members = [".", "crates/ddd-cli"]
 default-members = [".", "crates/ddd-cli"]
+exclude = ["examples/counter-app", "examples/counter-app/redis-trigger"]
 resolver = "2"
 
 [lib]

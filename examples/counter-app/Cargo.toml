@@ -7,6 +7,8 @@ authors = ["codeitlikemiley <codeitlikemiley@gmail.com>"]
 description = "A Leptos application running as a WASIp3 Component"
 build = "build.rs"
 
+[workspace]
+
 [lib]
 crate-type = ["cdylib"]
 
