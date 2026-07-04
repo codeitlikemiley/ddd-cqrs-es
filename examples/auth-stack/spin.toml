@@ -1,0 +1,369 @@
+spin_manifest_version = 2
+
+[application]
+name = "auth-stack"
+version = "0.1.0"
+authors = ["codeitlikemiley <codeitlikemiley@gmail.com>"]
+description = "Fullstack authentication and authorization services for ddd_cqrs_es on Spin"
+
+[variables]
+database_backend = { default = "sqlite" }
+database_url = { default = "" }
+auth_transport = { default = "both" }
+auth_production_mode = { default = "false" }
+auth_enable_password_login = { default = "true" }
+auth_password_min_length = { default = "8" }
+auth_jwt_issuer = { default = "http://127.0.0.1:3008" }
+auth_jwt_audience = { default = "auth-stack" }
+auth_jwt_kid = { default = "auth-stack-dev-hs256" }
+auth_jwt_secret = { default = "dev-auth-stack-secret-change-me" }
+auth_jwt_algorithm = { default = "HS256" }
+auth_jwt_private_key_der_base64 = { default = "" }
+auth_jwt_public_jwks_json = { default = "" }
+auth_jwt_key_ring_json = { default = "" }
+auth_admin_token = { default = "" }
+auth_session_ttl_seconds = { default = "3600" }
+auth_access_token_ttl_seconds = { default = "900" }
+auth_refresh_token_ttl_seconds = { default = "2592000" }
+auth_storage_auto_catch_up = { default = "true" }
+auth_cookie_secure = { default = "false" }
+auth_public_base_url = { default = "http://127.0.0.1:3008" }
+auth_enable_oauth = { default = "false" }
+auth_oauth_development_callback_bypass = { default = "false" }
+auth_enable_passkeys = { default = "false" }
+auth_passkey_rp_id = { default = "localhost" }
+auth_passkey_rp_name = { default = "ddd-auth" }
+auth_passkey_origin = { default = "http://localhost:3008" }
+auth_passkey_require_user_verification = { default = "true" }
+auth_passkey_require_user_handle = { default = "false" }
+auth_passkey_strict_base64 = { default = "true" }
+auth_passkey_authenticator_attachment = { default = "platform" }
+auth_passkey_challenge_ttl_seconds = { default = "300" }
+auth_google_enabled = { default = "false" }
+auth_google_client_id = { default = "" }
+auth_google_client_secret = { default = "" }
+auth_google_issuer = { default = "https://accounts.google.com" }
+auth_google_authorization_url = { default = "https://accounts.google.com/o/oauth2/v2/auth" }
+auth_google_token_url = { default = "https://oauth2.googleapis.com/token" }
+auth_google_jwks_url = { default = "https://www.googleapis.com/oauth2/v3/certs" }
+auth_google_jwks_json = { default = "" }
+auth_google_userinfo_url = { default = "https://openidconnect.googleapis.com/v1/userinfo" }
+auth_google_scopes = { default = "openid email profile" }
+auth_google_redirect_uri = { default = "http://127.0.0.1:3008/api/auth/oauth/google/callback" }
+auth_facebook_enabled = { default = "false" }
+auth_facebook_client_id = { default = "" }
+auth_facebook_client_secret = { default = "" }
+auth_facebook_issuer = { default = "https://www.facebook.com" }
+auth_facebook_authorization_url = { default = "https://www.facebook.com/v20.0/dialog/oauth" }
+auth_facebook_token_url = { default = "https://graph.facebook.com/v20.0/oauth/access_token" }
+auth_facebook_userinfo_url = { default = "https://graph.facebook.com/v20.0/me?fields=id,email,name" }
+auth_facebook_scopes = { default = "email public_profile" }
+auth_facebook_redirect_uri = { default = "http://127.0.0.1:3008/api/auth/oauth/facebook/callback" }
+auth_apple_enabled = { default = "false" }
+auth_apple_client_id = { default = "" }
+auth_apple_generated_client_secret = { default = "" }
+auth_apple_team_id = { default = "" }
+auth_apple_key_id = { default = "" }
+auth_apple_private_key = { default = "" }
+auth_apple_client_secret_ttl_seconds = { default = "86400" }
+auth_apple_issuer = { default = "https://appleid.apple.com" }
+auth_apple_authorization_url = { default = "https://appleid.apple.com/auth/authorize" }
+auth_apple_token_url = { default = "https://appleid.apple.com/auth/token" }
+auth_apple_jwks_url = { default = "https://appleid.apple.com/auth/keys" }
+auth_apple_jwks_json = { default = "" }
+auth_apple_scopes = { default = "openid email name" }
+auth_apple_redirect_uri = { default = "http://127.0.0.1:3008/api/auth/oauth/apple/callback" }
+
+[[trigger.http]]
+route = "/api/auth/..."
+component = "auth-api"
+executor = { type = "http" }
+
+[[trigger.http]]
+route = "/api/authz/..."
+component = "authz-api"
+executor = { type = "http" }
+
+[[trigger.http]]
+route = "/pkg/..."
+component = "auth-static"
+
+[[trigger.http]]
+route = "/..."
+component = "auth-ui"
+executor = { type = "http" }
+
+[component.auth-api]
+source = "target/wasm32-wasip2/release/auth_stack.wasm"
+allowed_outbound_hosts = [
+  "https://accounts.google.com:443",
+  "https://oauth2.googleapis.com:443",
+  "https://www.googleapis.com:443",
+  "https://appleid.apple.com:443",
+  "https://www.facebook.com:443",
+  "https://graph.facebook.com:443",
+  "postgres://*:*",
+  "postgresql://*:*",
+  "mysql://*:*",
+  "*://localhost:*",
+  "*://127.0.0.1:*"
+]
+key_value_stores = ["default"]
+sqlite_databases = ["default"]
+files = [
+  { source = "Cargo.toml", destination = "/Cargo.toml" }
+]
+
+[component.auth-api.variables]
+database_backend = "{{ database_backend }}"
+database_url = "{{ database_url }}"
+auth_transport = "{{ auth_transport }}"
+auth_production_mode = "{{ auth_production_mode }}"
+auth_enable_password_login = "{{ auth_enable_password_login }}"
+auth_password_min_length = "{{ auth_password_min_length }}"
+auth_jwt_issuer = "{{ auth_jwt_issuer }}"
+auth_jwt_audience = "{{ auth_jwt_audience }}"
+auth_jwt_kid = "{{ auth_jwt_kid }}"
+auth_jwt_secret = "{{ auth_jwt_secret }}"
+auth_jwt_algorithm = "{{ auth_jwt_algorithm }}"
+auth_jwt_private_key_der_base64 = "{{ auth_jwt_private_key_der_base64 }}"
+auth_jwt_public_jwks_json = "{{ auth_jwt_public_jwks_json }}"
+auth_jwt_key_ring_json = "{{ auth_jwt_key_ring_json }}"
+auth_admin_token = "{{ auth_admin_token }}"
+auth_session_ttl_seconds = "{{ auth_session_ttl_seconds }}"
+auth_access_token_ttl_seconds = "{{ auth_access_token_ttl_seconds }}"
+auth_refresh_token_ttl_seconds = "{{ auth_refresh_token_ttl_seconds }}"
+auth_storage_auto_catch_up = "{{ auth_storage_auto_catch_up }}"
+auth_cookie_secure = "{{ auth_cookie_secure }}"
+auth_public_base_url = "{{ auth_public_base_url }}"
+auth_enable_oauth = "{{ auth_enable_oauth }}"
+auth_oauth_development_callback_bypass = "{{ auth_oauth_development_callback_bypass }}"
+auth_enable_passkeys = "{{ auth_enable_passkeys }}"
+auth_passkey_rp_id = "{{ auth_passkey_rp_id }}"
+auth_passkey_rp_name = "{{ auth_passkey_rp_name }}"
+auth_passkey_origin = "{{ auth_passkey_origin }}"
+auth_passkey_require_user_verification = "{{ auth_passkey_require_user_verification }}"
+auth_passkey_require_user_handle = "{{ auth_passkey_require_user_handle }}"
+auth_passkey_strict_base64 = "{{ auth_passkey_strict_base64 }}"
+auth_passkey_authenticator_attachment = "{{ auth_passkey_authenticator_attachment }}"
+auth_passkey_challenge_ttl_seconds = "{{ auth_passkey_challenge_ttl_seconds }}"
+auth_google_enabled = "{{ auth_google_enabled }}"
+auth_google_client_id = "{{ auth_google_client_id }}"
+auth_google_client_secret = "{{ auth_google_client_secret }}"
+auth_google_issuer = "{{ auth_google_issuer }}"
+auth_google_authorization_url = "{{ auth_google_authorization_url }}"
+auth_google_token_url = "{{ auth_google_token_url }}"
+auth_google_jwks_url = "{{ auth_google_jwks_url }}"
+auth_google_jwks_json = "{{ auth_google_jwks_json }}"
+auth_google_userinfo_url = "{{ auth_google_userinfo_url }}"
+auth_google_scopes = "{{ auth_google_scopes }}"
+auth_google_redirect_uri = "{{ auth_google_redirect_uri }}"
+auth_facebook_enabled = "{{ auth_facebook_enabled }}"
+auth_facebook_client_id = "{{ auth_facebook_client_id }}"
+auth_facebook_client_secret = "{{ auth_facebook_client_secret }}"
+auth_facebook_issuer = "{{ auth_facebook_issuer }}"
+auth_facebook_authorization_url = "{{ auth_facebook_authorization_url }}"
+auth_facebook_token_url = "{{ auth_facebook_token_url }}"
+auth_facebook_userinfo_url = "{{ auth_facebook_userinfo_url }}"
+auth_facebook_scopes = "{{ auth_facebook_scopes }}"
+auth_facebook_redirect_uri = "{{ auth_facebook_redirect_uri }}"
+auth_apple_enabled = "{{ auth_apple_enabled }}"
+auth_apple_client_id = "{{ auth_apple_client_id }}"
+auth_apple_generated_client_secret = "{{ auth_apple_generated_client_secret }}"
+auth_apple_team_id = "{{ auth_apple_team_id }}"
+auth_apple_key_id = "{{ auth_apple_key_id }}"
+auth_apple_private_key = "{{ auth_apple_private_key }}"
+auth_apple_client_secret_ttl_seconds = "{{ auth_apple_client_secret_ttl_seconds }}"
+auth_apple_issuer = "{{ auth_apple_issuer }}"
+auth_apple_authorization_url = "{{ auth_apple_authorization_url }}"
+auth_apple_token_url = "{{ auth_apple_token_url }}"
+auth_apple_jwks_url = "{{ auth_apple_jwks_url }}"
+auth_apple_jwks_json = "{{ auth_apple_jwks_json }}"
+auth_apple_scopes = "{{ auth_apple_scopes }}"
+auth_apple_redirect_uri = "{{ auth_apple_redirect_uri }}"
+
+[component.auth-api.build]
+command = "WASI_RUNTIME=spin AUTH_TRANSPORT=both cargo leptos build --release --frontend-only && WASI_RUNTIME=spin AUTH_TRANSPORT=both LEPTOS_OUTPUT_NAME=auth_stack cargo build --lib --target wasm32-wasip2 --release --no-default-features --features ${AUTH_STACK_FEATURES:-ssr,sqlite,spin-grpc}"
+watch = ["src/**/*.rs", "Cargo.toml", "proto/**/*.proto"]
+
+[component.authz-api]
+source = "target/wasm32-wasip2/release/auth_stack.wasm"
+allowed_outbound_hosts = [
+  "https://accounts.google.com:443",
+  "https://oauth2.googleapis.com:443",
+  "https://www.googleapis.com:443",
+  "https://appleid.apple.com:443",
+  "https://www.facebook.com:443",
+  "https://graph.facebook.com:443",
+  "postgres://*:*",
+  "postgresql://*:*",
+  "mysql://*:*",
+  "*://localhost:*",
+  "*://127.0.0.1:*"
+]
+key_value_stores = ["default"]
+sqlite_databases = ["default"]
+files = [
+  { source = "Cargo.toml", destination = "/Cargo.toml" }
+]
+
+[component.authz-api.variables]
+database_backend = "{{ database_backend }}"
+database_url = "{{ database_url }}"
+auth_transport = "{{ auth_transport }}"
+auth_production_mode = "{{ auth_production_mode }}"
+auth_enable_password_login = "{{ auth_enable_password_login }}"
+auth_password_min_length = "{{ auth_password_min_length }}"
+auth_jwt_issuer = "{{ auth_jwt_issuer }}"
+auth_jwt_audience = "{{ auth_jwt_audience }}"
+auth_jwt_kid = "{{ auth_jwt_kid }}"
+auth_jwt_secret = "{{ auth_jwt_secret }}"
+auth_jwt_algorithm = "{{ auth_jwt_algorithm }}"
+auth_jwt_private_key_der_base64 = "{{ auth_jwt_private_key_der_base64 }}"
+auth_jwt_public_jwks_json = "{{ auth_jwt_public_jwks_json }}"
+auth_jwt_key_ring_json = "{{ auth_jwt_key_ring_json }}"
+auth_admin_token = "{{ auth_admin_token }}"
+auth_session_ttl_seconds = "{{ auth_session_ttl_seconds }}"
+auth_access_token_ttl_seconds = "{{ auth_access_token_ttl_seconds }}"
+auth_refresh_token_ttl_seconds = "{{ auth_refresh_token_ttl_seconds }}"
+auth_storage_auto_catch_up = "{{ auth_storage_auto_catch_up }}"
+auth_cookie_secure = "{{ auth_cookie_secure }}"
+auth_public_base_url = "{{ auth_public_base_url }}"
+auth_enable_oauth = "{{ auth_enable_oauth }}"
+auth_oauth_development_callback_bypass = "{{ auth_oauth_development_callback_bypass }}"
+auth_enable_passkeys = "{{ auth_enable_passkeys }}"
+auth_passkey_rp_id = "{{ auth_passkey_rp_id }}"
+auth_passkey_rp_name = "{{ auth_passkey_rp_name }}"
+auth_passkey_origin = "{{ auth_passkey_origin }}"
+auth_passkey_require_user_verification = "{{ auth_passkey_require_user_verification }}"
+auth_passkey_require_user_handle = "{{ auth_passkey_require_user_handle }}"
+auth_passkey_strict_base64 = "{{ auth_passkey_strict_base64 }}"
+auth_passkey_authenticator_attachment = "{{ auth_passkey_authenticator_attachment }}"
+auth_passkey_challenge_ttl_seconds = "{{ auth_passkey_challenge_ttl_seconds }}"
+auth_google_enabled = "{{ auth_google_enabled }}"
+auth_google_client_id = "{{ auth_google_client_id }}"
+auth_google_client_secret = "{{ auth_google_client_secret }}"
+auth_google_issuer = "{{ auth_google_issuer }}"
+auth_google_authorization_url = "{{ auth_google_authorization_url }}"
+auth_google_token_url = "{{ auth_google_token_url }}"
+auth_google_jwks_url = "{{ auth_google_jwks_url }}"
+auth_google_jwks_json = "{{ auth_google_jwks_json }}"
+auth_google_userinfo_url = "{{ auth_google_userinfo_url }}"
+auth_google_scopes = "{{ auth_google_scopes }}"
+auth_google_redirect_uri = "{{ auth_google_redirect_uri }}"
+auth_facebook_enabled = "{{ auth_facebook_enabled }}"
+auth_facebook_client_id = "{{ auth_facebook_client_id }}"
+auth_facebook_client_secret = "{{ auth_facebook_client_secret }}"
+auth_facebook_issuer = "{{ auth_facebook_issuer }}"
+auth_facebook_authorization_url = "{{ auth_facebook_authorization_url }}"
+auth_facebook_token_url = "{{ auth_facebook_token_url }}"
+auth_facebook_userinfo_url = "{{ auth_facebook_userinfo_url }}"
+auth_facebook_scopes = "{{ auth_facebook_scopes }}"
+auth_facebook_redirect_uri = "{{ auth_facebook_redirect_uri }}"
+auth_apple_enabled = "{{ auth_apple_enabled }}"
+auth_apple_client_id = "{{ auth_apple_client_id }}"
+auth_apple_generated_client_secret = "{{ auth_apple_generated_client_secret }}"
+auth_apple_team_id = "{{ auth_apple_team_id }}"
+auth_apple_key_id = "{{ auth_apple_key_id }}"
+auth_apple_private_key = "{{ auth_apple_private_key }}"
+auth_apple_client_secret_ttl_seconds = "{{ auth_apple_client_secret_ttl_seconds }}"
+auth_apple_issuer = "{{ auth_apple_issuer }}"
+auth_apple_authorization_url = "{{ auth_apple_authorization_url }}"
+auth_apple_token_url = "{{ auth_apple_token_url }}"
+auth_apple_jwks_url = "{{ auth_apple_jwks_url }}"
+auth_apple_jwks_json = "{{ auth_apple_jwks_json }}"
+auth_apple_scopes = "{{ auth_apple_scopes }}"
+auth_apple_redirect_uri = "{{ auth_apple_redirect_uri }}"
+
+[component.auth-ui]
+source = "target/wasm32-wasip2/release/auth_stack.wasm"
+allowed_outbound_hosts = [
+  "https://accounts.google.com:443",
+  "https://oauth2.googleapis.com:443",
+  "https://www.googleapis.com:443",
+  "https://appleid.apple.com:443",
+  "https://www.facebook.com:443",
+  "https://graph.facebook.com:443",
+  "postgres://*:*",
+  "postgresql://*:*",
+  "mysql://*:*",
+  "*://localhost:*",
+  "*://127.0.0.1:*"
+]
+key_value_stores = ["default"]
+sqlite_databases = ["default"]
+files = [
+  { source = "Cargo.toml", destination = "/Cargo.toml" }
+]
+
+[component.auth-ui.variables]
+database_backend = "{{ database_backend }}"
+database_url = "{{ database_url }}"
+auth_transport = "{{ auth_transport }}"
+auth_production_mode = "{{ auth_production_mode }}"
+auth_enable_password_login = "{{ auth_enable_password_login }}"
+auth_password_min_length = "{{ auth_password_min_length }}"
+auth_jwt_issuer = "{{ auth_jwt_issuer }}"
+auth_jwt_audience = "{{ auth_jwt_audience }}"
+auth_jwt_kid = "{{ auth_jwt_kid }}"
+auth_jwt_secret = "{{ auth_jwt_secret }}"
+auth_jwt_algorithm = "{{ auth_jwt_algorithm }}"
+auth_jwt_private_key_der_base64 = "{{ auth_jwt_private_key_der_base64 }}"
+auth_jwt_public_jwks_json = "{{ auth_jwt_public_jwks_json }}"
+auth_jwt_key_ring_json = "{{ auth_jwt_key_ring_json }}"
+auth_admin_token = "{{ auth_admin_token }}"
+auth_session_ttl_seconds = "{{ auth_session_ttl_seconds }}"
+auth_access_token_ttl_seconds = "{{ auth_access_token_ttl_seconds }}"
+auth_refresh_token_ttl_seconds = "{{ auth_refresh_token_ttl_seconds }}"
+auth_storage_auto_catch_up = "{{ auth_storage_auto_catch_up }}"
+auth_cookie_secure = "{{ auth_cookie_secure }}"
+auth_public_base_url = "{{ auth_public_base_url }}"
+auth_enable_oauth = "{{ auth_enable_oauth }}"
+auth_oauth_development_callback_bypass = "{{ auth_oauth_development_callback_bypass }}"
+auth_enable_passkeys = "{{ auth_enable_passkeys }}"
+auth_passkey_rp_id = "{{ auth_passkey_rp_id }}"
+auth_passkey_rp_name = "{{ auth_passkey_rp_name }}"
+auth_passkey_origin = "{{ auth_passkey_origin }}"
+auth_passkey_require_user_verification = "{{ auth_passkey_require_user_verification }}"
+auth_passkey_require_user_handle = "{{ auth_passkey_require_user_handle }}"
+auth_passkey_strict_base64 = "{{ auth_passkey_strict_base64 }}"
+auth_passkey_authenticator_attachment = "{{ auth_passkey_authenticator_attachment }}"
+auth_passkey_challenge_ttl_seconds = "{{ auth_passkey_challenge_ttl_seconds }}"
+auth_google_enabled = "{{ auth_google_enabled }}"
+auth_google_client_id = "{{ auth_google_client_id }}"
+auth_google_client_secret = "{{ auth_google_client_secret }}"
+auth_google_issuer = "{{ auth_google_issuer }}"
+auth_google_authorization_url = "{{ auth_google_authorization_url }}"
+auth_google_token_url = "{{ auth_google_token_url }}"
+auth_google_jwks_url = "{{ auth_google_jwks_url }}"
+auth_google_jwks_json = "{{ auth_google_jwks_json }}"
+auth_google_userinfo_url = "{{ auth_google_userinfo_url }}"
+auth_google_scopes = "{{ auth_google_scopes }}"
+auth_google_redirect_uri = "{{ auth_google_redirect_uri }}"
+auth_facebook_enabled = "{{ auth_facebook_enabled }}"
+auth_facebook_client_id = "{{ auth_facebook_client_id }}"
+auth_facebook_client_secret = "{{ auth_facebook_client_secret }}"
+auth_facebook_issuer = "{{ auth_facebook_issuer }}"
+auth_facebook_authorization_url = "{{ auth_facebook_authorization_url }}"
+auth_facebook_token_url = "{{ auth_facebook_token_url }}"
+auth_facebook_userinfo_url = "{{ auth_facebook_userinfo_url }}"
+auth_facebook_scopes = "{{ auth_facebook_scopes }}"
+auth_facebook_redirect_uri = "{{ auth_facebook_redirect_uri }}"
+auth_apple_enabled = "{{ auth_apple_enabled }}"
+auth_apple_client_id = "{{ auth_apple_client_id }}"
+auth_apple_generated_client_secret = "{{ auth_apple_generated_client_secret }}"
+auth_apple_team_id = "{{ auth_apple_team_id }}"
+auth_apple_key_id = "{{ auth_apple_key_id }}"
+auth_apple_private_key = "{{ auth_apple_private_key }}"
+auth_apple_client_secret_ttl_seconds = "{{ auth_apple_client_secret_ttl_seconds }}"
+auth_apple_issuer = "{{ auth_apple_issuer }}"
+auth_apple_authorization_url = "{{ auth_apple_authorization_url }}"
+auth_apple_token_url = "{{ auth_apple_token_url }}"
+auth_apple_jwks_url = "{{ auth_apple_jwks_url }}"
+auth_apple_jwks_json = "{{ auth_apple_jwks_json }}"
+auth_apple_scopes = "{{ auth_apple_scopes }}"
+auth_apple_redirect_uri = "{{ auth_apple_redirect_uri }}"
+
+[component.auth-static]
+source = { url = "https://github.com/fermyon/spin-fileserver/releases/download/v0.1.0/spin_static_fs.wasm", digest = "sha256:96c76d9af86420b39eb6cd7be5550e3cb5d4cc4de572ce0fd1f6a29471536cb4" }
+files = [{ source = "target/site/pkg", destination = "/" }]
