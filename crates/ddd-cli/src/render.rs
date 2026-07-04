@@ -3,11 +3,55 @@ use crate::model::{AppSelection, Preset};
 use crate::operation::{write_operation, FileOperation};
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use include_dir::{include_dir, Dir};
+use std::path::{Path, PathBuf};
 
 static TEMPLATE_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/templates");
 
 fn framework_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
+}
+
+fn local_workspace_root() -> Option<PathBuf> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()?
+        .parent()?
+        .to_path_buf();
+
+    [
+        "Cargo.toml",
+        "crates/ddd-auth/Cargo.toml",
+        "crates/ddd-authz/Cargo.toml",
+    ]
+    .iter()
+    .all(|path| root.join(path).is_file())
+    .then_some(root)
+}
+
+fn toml_path_value(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+}
+
+fn render_local_auth_stack_patches() -> String {
+    let Some(root) = local_workspace_root() else {
+        return String::new();
+    };
+
+    format!(
+        r#"
+# Local source-checkout patches keep generated auth-stack projects compilable
+# before ddd-auth and ddd-authz are published. Published CLI builds omit this
+# section and use the crates.io versions declared above.
+[patch.crates-io]
+ddd_cqrs_es = {{ path = "{framework_path}" }}
+ddd-auth = {{ path = "{auth_path}" }}
+ddd-authz = {{ path = "{authz_path}" }}
+"#,
+        framework_path = toml_path_value(&root),
+        auth_path = toml_path_value(&root.join("crates/ddd-auth")),
+        authz_path = toml_path_value(&root.join("crates/ddd-authz"))
+    )
 }
 
 #[derive(Clone, Debug)]
@@ -78,29 +122,35 @@ pub fn render_init(input: &InitRenderInput) -> Vec<FileOperation> {
             false,
             "project README",
         ),
-        write_operation(
-            "src/domain/mod.rs",
-            render_domain_mod(&names),
-            false,
-            "domain module registry",
-        ),
-        write_operation(
-            format!("src/domain/{}.rs", names.module),
-            render_aggregate(&names),
-            false,
-            "aggregate, command, and event module",
-        ),
-        write_operation(
-            format!("tests/{}_domain.rs", names.module),
-            render_domain_test(input, &names),
-            false,
-            "aggregate fixture test",
-        ),
     ];
+
+    if input.selection.preset != Preset::AuthStack {
+        operations.extend([
+            write_operation(
+                "src/domain/mod.rs",
+                render_domain_mod(&names),
+                false,
+                "domain module registry",
+            ),
+            write_operation(
+                format!("src/domain/{}.rs", names.module),
+                render_aggregate(&names),
+                false,
+                "aggregate, command, and event module",
+            ),
+            write_operation(
+                format!("tests/{}_domain.rs", names.module),
+                render_domain_test(input, &names),
+                false,
+                "aggregate fixture test",
+            ),
+        ]);
+    }
 
     match input.selection.preset {
         Preset::Basic | Preset::Custom => operations.extend(render_basic(input, &names)),
         Preset::LeptosWasi => operations.extend(render_leptos_wasi(input, &names)),
+        Preset::AuthStack => operations.extend(render_auth_stack(input)),
         Preset::NativeApi => operations.extend(render_native_api(input, &names)),
         Preset::Worker => operations.extend(render_worker(input, &names)),
     }
@@ -268,6 +318,86 @@ fn render_leptos_wasi(input: &InitRenderInput, names: &NameParts) -> Vec<FileOpe
     ]
 }
 
+fn render_auth_stack(input: &InitRenderInput) -> Vec<FileOperation> {
+    let mut operations = vec![write_operation(
+        "Cargo.toml",
+        render_auth_stack_cargo(input),
+        false,
+        "auth stack Cargo manifest",
+    )];
+    append_auth_stack_template_operations(auth_stack_template_dir(), input, &mut operations);
+    operations
+}
+
+fn auth_stack_template_dir() -> &'static Dir<'static> {
+    TEMPLATE_DIR
+        .get_dir("auth-stack")
+        .expect("auth-stack template directory must be embedded")
+}
+
+fn append_auth_stack_template_operations(
+    dir: &Dir<'_>,
+    input: &InitRenderInput,
+    operations: &mut Vec<FileOperation>,
+) {
+    for file in dir.files() {
+        let relative_path = file
+            .path()
+            .strip_prefix("auth-stack")
+            .expect("auth-stack template files must be under auth-stack");
+        let relative_path_string = relative_path.display().to_string();
+        if relative_path_string == "README.md" || relative_path_string == "Cargo.toml" {
+            continue;
+        }
+        let content = render_auth_stack_template_content(
+            &relative_path_string,
+            file.contents_utf8()
+                .expect("auth-stack template files must be UTF-8"),
+            input,
+        );
+        operations.push(write_operation(
+            relative_path,
+            content,
+            false,
+            "auth stack template file",
+        ));
+    }
+
+    for child in dir.dirs() {
+        append_auth_stack_template_operations(child, input, operations);
+    }
+}
+
+fn render_auth_stack_template_content(
+    relative_path: &str,
+    raw: &str,
+    input: &InitRenderInput,
+) -> String {
+    let crate_name = input.package_name.replace('-', "_");
+    let mut content = raw.replace("/pkg/auth_stack.css", &format!("/pkg/{crate_name}.css"));
+
+    if matches!(
+        relative_path,
+        "spin.toml" | "spin.production.toml.example" | "package.json" | "package-lock.json"
+    ) {
+        content = content.replace("auth_stack.wasm", &format!("{crate_name}.wasm"));
+        content = content.replace(
+            "LEPTOS_OUTPUT_NAME=auth_stack",
+            &format!("LEPTOS_OUTPUT_NAME={crate_name}"),
+        );
+        content = content.replace(
+            r#""name": "auth-stack""#,
+            &format!(r#""name": "{}""#, input.package_name),
+        );
+        content = content.replace(
+            r#"name = "auth-stack""#,
+            &format!(r#"name = "{}""#, input.package_name),
+        );
+    }
+
+    content
+}
+
 fn render_native_api(input: &InitRenderInput, names: &NameParts) -> Vec<FileOperation> {
     vec![
         write_operation(
@@ -315,6 +445,13 @@ fn render_worker(input: &InitRenderInput, names: &NameParts) -> Vec<FileOperatio
 }
 
 fn render_readme(input: &InitRenderInput, names: &NameParts) -> String {
+    if input.selection.preset == Preset::AuthStack {
+        return format!(
+            "# {package}\n\nGenerated with `ddd init --preset auth-stack`.\n\nThis project is a Spin fullstack authentication and authorization service with Leptos pages, REST endpoints, and gRPC service contracts.\n\n- Runtime: `spin`\n- DB: `{db}`\n- Transport: `both`\n- UI: `leptos`\n- Auth: email/password enabled by default\n- OAuth and passkeys: feature-flagged until credentials are configured\n\nStart with `.env.example`, then run:\n\n```bash\nmake spin\nmake smoke\nmake browser-smoke\n```\n\nFor production, start from `spin.production.toml.example` and replace the example auth domain and database hosts with exact deployment hosts.\n\nAfter OAuth provider credentials and callback URLs are configured, run `make oauth-preflight` before the browser callback smoke. Use `make oauth-browser-smoke` to complete the provider login in a browser, or `make oauth-callback` with an issued session cookie to capture final callback evidence manually.\n\nUse `ddd enable oauth-provider google`, `apple`, or `facebook` to record provider placeholders in `ddd.toml` without writing secrets.\n",
+            package = input.package_name,
+            db = input.selection.db
+        );
+    }
     format!(
         "# {}\n\nGenerated with `ddd init --preset {}`.\n\n- Aggregate: `{}`\n- Runtime: `{}`\n- DB: `{}`\n- Realtime: `{}`\n- Transport: `{}`\n\nUse `ddd add ...` to extend this generated project.\n",
         input.package_name,
@@ -375,6 +512,135 @@ spin-grpc = []
         package = input.package_name,
         framework_version = framework_version(),
         db_feature = input.selection.db.feature(input.selection.runtime)
+    )
+}
+
+fn render_auth_stack_cargo(input: &InitRenderInput) -> String {
+    format!(
+        r#"[package]
+name = "{package}"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93.0"
+description = "A Spin fullstack authentication and authorization service for ddd_cqrs_es"
+build = "build.rs"
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+any_spawner = {{ version = "0.3.0", features = ["futures-executor"] }}
+bytes = "1.7.2"
+base64 = "0.22"
+console_error_panic_hook = "0.1"
+futures = "0.3.30"
+hmac = "0.12"
+http = "1.1.0"
+http-body = {{ version = "1.0", optional = true }}
+http-body-util = {{ version = "0.1.2", optional = true }}
+hydration_context = "0.3.0"
+leptos = "0.8.19"
+leptos_meta = "0.8.6"
+leptos_router = "0.8.13"
+leptos_wasi = {{ version = "0.3.1", default-features = false, features = ["wasip3"], optional = true }}
+server_fn = {{ version = "0.8.12", features = ["axum-no-default"] }}
+spin-sdk = {{ version = "6.0.0", optional = true }}
+wasip3 = {{ version = "0.6.0", features = ["http-compat"], optional = true }}
+wit-bindgen = {{ version = "0.57.1", features = ["inter-task-wakeup"], optional = true }}
+wasm-bindgen = {{ version = "=0.2.125", optional = true }}
+wasm-bindgen-futures = {{ version = "0.4", optional = true }}
+web-sys = {{ version = "0.3", features = ["Location", "Storage", "Window"], optional = true }}
+serde = {{ version = "1.0", features = ["derive"] }}
+serde_json = "1.0"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = {{ version = "0.3.18", features = ["fmt", "env-filter"], optional = true }}
+prost = {{ version = "0.13", optional = true }}
+pbkdf2 = "0.12"
+sha2 = "0.10"
+tonic = {{ version = "0.12", default-features = false, features = ["codegen", "prost"], optional = true }}
+ddd_cqrs_es = {{ version = "{framework_version}", default-features = false, features = ["json", "serde", "async", "tracing", "json-file"] }}
+ddd-auth = {{ version = "0.1.0", default-features = false, features = ["json", "jwt", "oauth", "passkeys", "wasi", "tracing"] }}
+ddd-authz = {{ version = "0.1.0", default-features = false, features = ["json", "wasi", "tracing"] }}
+{local_dependency_patches}
+
+[build-dependencies]
+tonic-build = {{ version = "0.12", default-features = false, features = ["prost"] }}
+
+[features]
+default = []
+hydrate = [
+  "leptos/hydrate",
+  "dep:wasm-bindgen",
+  "dep:wasm-bindgen-futures",
+  "dep:web-sys",
+]
+ssr = [
+  "leptos/ssr",
+  "leptos_meta/ssr",
+  "leptos_router/ssr",
+  "dep:leptos_wasi",
+  "dep:wasip3",
+  "dep:wit-bindgen",
+  "dep:http-body",
+  "dep:http-body-util",
+  "dep:tracing-subscriber",
+]
+sqlite = [
+  "ssr",
+  "dep:spin-sdk",
+  "spin-sdk/variables",
+  "ddd_cqrs_es/spin-sqlite",
+]
+postgres = [
+  "ssr",
+  "dep:spin-sdk",
+  "spin-sdk/variables",
+  "ddd_cqrs_es/spin-postgres",
+]
+mysql = [
+  "ssr",
+  "dep:spin-sdk",
+  "spin-sdk/variables",
+  "spin-sdk/mysql",
+  "ddd_cqrs_es/spin-mysql",
+]
+spin-grpc = [
+  "ssr",
+  "dep:spin-sdk",
+  "spin-sdk/grpc",
+  "spin-sdk/variables",
+  "dep:prost",
+  "dep:tonic",
+]
+oauth-providers = []
+passkeys = []
+
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[package.metadata.leptos]
+output-name = "{crate_name}"
+tailwind-input-file = "input.css"
+assets-dir = "public"
+
+lib-profile-release = "wasm-release"
+lib-features = ["hydrate"]
+
+bin-profile-release = "wasm-release"
+bin-target-triple = "wasm32-wasip2"
+bin-features = ["ssr"]
+"#,
+        package = input.package_name,
+        crate_name = input.package_name.replace('-', "_"),
+        framework_version = framework_version(),
+        local_dependency_patches = render_local_auth_stack_patches()
     )
 }
 

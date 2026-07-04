@@ -107,6 +107,7 @@ Choose a preset with `ddd init --preset <preset>`.
 | --- | --- | --- |
 | `basic` | Learning the framework or building a pure domain crate. | Aggregate, command, event, fixture test, and in-memory example. |
 | `leptos-wasi` | Full-stack app scaffolding for Leptos WASI on Spin. | Domain/application/store/server boundaries with REST/SSE and optional gRPC. |
+| `auth-stack` | Reusable Spin authentication and authorization service. | Leptos auth pages, OAuth provider boundary, signing-key lifecycle config, REST endpoints, gRPC proto contracts, `.env.example`, and auth/authz manifest sections. |
 | `native-api` | Native Rust API service shape. | Axum-style API scaffold with native SQL adapter features. |
 | `worker` | Projection or process-manager workers. | Worker entrypoint plus projection/process-manager-oriented stubs. |
 | `custom` | A minimal base for explicit, agent-chosen capabilities. | Starts from the basic shape and lets you add capabilities intentionally. |
@@ -117,10 +118,26 @@ Examples:
 ddd init billing --preset basic --domain Invoice
 ddd init counter-app --preset leptos-wasi --domain Counter --db sqlite --runtime spin --transport http --ui leptos
 ddd init counter-grpc --preset leptos-wasi --domain Counter --db postgres --runtime spin --transport both --ui leptos
+ddd init auth-stack --preset auth-stack --runtime spin --db sqlite --transport both --ui leptos
 ddd init projector --preset worker --domain Invoice --db mysql --realtime polling
 ```
 
 Current CLI-generated apps are Spin-focused. The runtime value is `spin`.
+The `auth-stack` preset is intentionally fullstack; it defaults to
+`transport=both` and `ui=leptos`, and rejects narrower transport/UI shapes.
+Generated auth-stack projects include the same Leptos, REST, gRPC, storage,
+OAuth, passkey, smoke-test, and rollout script surface as the reference
+`examples/auth-stack` app. They also include `spin.production.toml.example`
+with exact OAuth/database outbound hosts to use as the production hardening
+starting point. The generated Makefile includes `oauth-credentials`,
+`oauth-preflight`, `oauth-evidence`, `oauth-dev-browser-smoke`,
+`oauth-browser-smoke`, `oauth-callback`, `browser-smoke`, and
+`passkey-browser-smoke` targets for local OAuth UI regression checks, live
+provider readiness, redacted event evidence, callback evidence, page checks,
+and WebAuthn checks. When the CLI is run from this repository before
+`ddd-auth` and `ddd-authz` are published, generated auth-stack manifests include
+local `[patch.crates-io]` overrides so disposable projects can compile against
+the source checkout. Published CLI builds use the declared crates.io versions.
 
 ## Generated Manifest
 
@@ -147,6 +164,80 @@ module = "invoice"
 commands = ["CreateInvoice"]
 events = ["InvoiceCreated"]
 ```
+
+Auth-stack projects also include stable auth configuration sections. Provider
+entries reference environment variable names only; the CLI never writes OAuth
+client secrets into source files.
+
+Passkeys are disabled by default until `AUTH_ENABLE_PASSKEYS=true`. Configure
+`AUTH_PASSKEY_RP_ID`, `AUTH_PASSKEY_RP_NAME`, `AUTH_PASSKEY_ORIGIN`, and
+`AUTH_PASSKEY_CHALLENGE_TTL_SECONDS` in `.env` or Spin variables before testing
+WebAuthn in a browser. For local browser passkeys, use `localhost` as the RP ID
+and visit `http://localhost:3008`, not the numeric loopback URL.
+
+```toml
+[auth]
+issuer = "http://127.0.0.1:3008"
+audience = "auth-stack"
+jwt_algorithm = "HS256"
+jwt_key_id = "auth-stack-dev-hs256"
+production_mode_env = "AUTH_PRODUCTION_MODE"
+admin_token_env = "AUTH_ADMIN_TOKEN"
+key_ring_env = "AUTH_JWT_KEY_RING_JSON"
+session_ttl_seconds = 3600
+access_token_ttl_seconds = 900
+refresh_token_ttl_seconds = 2592000
+cookie_mode = "http-only"
+cookie_secure_env = "AUTH_COOKIE_SECURE"
+
+[[auth.providers]]
+provider_id = "google"
+issuer = "https://accounts.google.com"
+scopes = ["openid", "email", "profile"]
+enabled_env = "AUTH_GOOGLE_ENABLED"
+client_id_env = "AUTH_GOOGLE_CLIENT_ID"
+client_secret_env = "AUTH_GOOGLE_CLIENT_SECRET"
+userinfo_url_env = "AUTH_GOOGLE_USERINFO_URL"
+
+[[auth.providers]]
+provider_id = "facebook"
+issuer = "https://www.facebook.com"
+scopes = ["email", "public_profile"]
+enabled_env = "AUTH_FACEBOOK_ENABLED"
+client_id_env = "AUTH_FACEBOOK_CLIENT_ID"
+client_secret_env = "AUTH_FACEBOOK_CLIENT_SECRET"
+userinfo_url_env = "AUTH_FACEBOOK_USERINFO_URL"
+
+[[auth.providers]]
+provider_id = "apple"
+issuer = "https://appleid.apple.com"
+scopes = ["openid", "email", "name"]
+enabled_env = "AUTH_APPLE_ENABLED"
+client_id_env = "AUTH_APPLE_CLIENT_ID"
+generated_client_secret_env = "AUTH_APPLE_GENERATED_CLIENT_SECRET"
+team_id_env = "AUTH_APPLE_TEAM_ID"
+key_id_env = "AUTH_APPLE_KEY_ID"
+private_key_env = "AUTH_APPLE_PRIVATE_KEY"
+client_secret_ttl_seconds_env = "AUTH_APPLE_CLIENT_SECRET_TTL_SECONDS"
+
+[authz]
+active_model = "default"
+default_decision = "deny"
+```
+
+`AUTH_PRODUCTION_MODE=false` keeps the generated stack simple for local
+development. Set `AUTH_PRODUCTION_MODE=true` only with a pre-provisioned
+`AUTH_JWT_KEY_RING_JSON` containing RS256 keys and a non-empty
+`AUTH_ADMIN_TOKEN`; production mode rejects runtime HS256 defaults and shared
+secret key rings.
+
+Generated auth-stack projects also expose `AUTH_COOKIE_SECURE`. Keep it
+`false` for local HTTP development and set it to `true` for HTTPS deployments
+so browser sessions are issued with `Secure`, `HttpOnly`, and `SameSite=Lax`.
+The generated Makefile and Spin manifests pass the declared auth variables into
+the runtime components; changing JWT, OAuth, passkey, admin-token, cookie, or
+public-base-url values in `.env` or Spin variables is intended to affect the
+running auth stack.
 
 If a project does not have `ddd.toml`, treat it as outside the supported generated-project patching path unless you intentionally adopt it.
 
@@ -220,6 +311,12 @@ ddd enable realtime redis
 ddd enable grpc
 ddd enable rest
 ddd enable leptos
+ddd enable auth
+ddd enable authz
+ddd enable passkeys
+ddd enable oauth-provider google
+ddd enable oauth-provider apple
+ddd enable oauth-provider facebook
 ddd enable idempotency
 ddd enable snapshots
 ddd enable tracing

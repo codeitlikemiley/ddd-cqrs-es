@@ -1,0 +1,101 @@
+syntax = "proto3";
+
+package authz.v1;
+
+service AuthzService {
+  rpc Check(CheckRequest) returns (CheckResponse);
+  rpc BatchCheck(BatchCheckRequest) returns (BatchCheckResponse);
+  rpc ListObjects(ListObjectsRequest) returns (ListObjectsResponse);
+  rpc Expand(ExpandRequest) returns (ExpandResponse);
+  rpc WriteAuthorizationModel(WriteAuthorizationModelRequest) returns (WriteAuthorizationModelResponse);
+  rpc ActivateAuthorizationModel(ActivateAuthorizationModelRequest) returns (WriteAuthorizationModelResponse);
+  rpc ReadAuthorizationModel(ReadAuthorizationModelRequest) returns (ReadAuthorizationModelResponse);
+  rpc WriteRelationshipTuples(RelationshipTupleWriteRequest) returns (RelationshipTupleWriteResponse);
+  rpc DeleteRelationshipTuples(RelationshipTupleWriteRequest) returns (RelationshipTupleWriteResponse);
+  rpc ReadRelationshipTuples(ReadRelationshipTuplesRequest) returns (ReadRelationshipTuplesResponse);
+}
+
+message CheckRequest {
+  string tenant = 1;
+  string subject = 2;
+  string object = 3;
+  string relation = 4;
+  map<string, string> context = 5;
+}
+
+message CheckResponse {
+  bool allowed = 1;
+  string reason = 2;
+  string model_id = 3;
+}
+
+message BatchCheckRequest {
+  repeated CheckRequest checks = 1;
+}
+
+message BatchCheckResponse {
+  repeated CheckResponse results = 1;
+}
+
+message ListObjectsRequest {
+  string tenant = 1;
+  string subject = 2;
+  string relation = 3;
+  string object_type = 4;
+}
+
+message ListObjectsResponse {
+  repeated string objects = 1;
+}
+
+message ExpandRequest {
+  string tenant = 1;
+  string object = 2;
+  string relation = 3;
+}
+
+message ExpandResponse {
+  string graph_json = 1;
+}
+
+message WriteAuthorizationModelRequest {
+  string model_id = 1;
+  string schema_json = 2;
+}
+
+message ActivateAuthorizationModelRequest {
+  string model_id = 1;
+}
+
+message ReadAuthorizationModelRequest {
+  string model_id = 1;
+}
+
+message ReadAuthorizationModelResponse {
+  string model_id = 1;
+  string schema_json = 2;
+  bool active = 3;
+}
+
+message WriteAuthorizationModelResponse {
+  string model_id = 1;
+  bool active = 2;
+}
+
+message RelationshipTupleWriteRequest {
+  string tuples_json = 1;
+}
+
+message RelationshipTupleWriteResponse {
+  uint32 accepted = 1;
+}
+
+message ReadRelationshipTuplesRequest {
+  string tenant = 1;
+  string object = 2;
+  string relation = 3;
+}
+
+message ReadRelationshipTuplesResponse {
+  string tuples_json = 1;
+}

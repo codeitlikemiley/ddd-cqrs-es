@@ -5,8 +5,8 @@ mod render;
 
 use crate::manifest::{DomainRecord, ProjectManifest, MANIFEST_FILE};
 use crate::model::{
-    defaults_for_preset, AppSelection, DbBackend, OutputFormat, Preset, Realtime, Runtime,
-    Transport, Ui,
+    defaults_for_preset, AppSelection, DbBackend, OAuthProviderKind, OutputFormat, Preset,
+    Realtime, Runtime, Transport, Ui,
 };
 use crate::operation::{apply_operations, write_operation, CommandReport, FileOperation};
 use crate::render::{
@@ -147,12 +147,23 @@ struct EnableArgs {
 #[derive(Debug, Subcommand)]
 #[command(rename_all = "kebab-case")]
 enum EnableCommand {
-    Db { backend: DbBackend },
+    Db {
+        backend: DbBackend,
+    },
     RedisStore,
-    Realtime { mode: Realtime },
+    Realtime {
+        mode: Realtime,
+    },
     Grpc,
     Rest,
     Leptos,
+    Auth,
+    Authz,
+    Passkeys,
+    #[command(name = "oauth-provider")]
+    OAuthProvider {
+        provider: OAuthProviderKind,
+    },
     Idempotency,
     Snapshots,
     Tracing,
@@ -484,6 +495,10 @@ fn enable_capability(ctx: &ExecutionContext, command: EnableCommand) -> Result<C
             manifest.ui = Ui::Leptos;
             manifest.add_capability("leptos");
         }
+        EnableCommand::Auth => manifest.enable_auth(),
+        EnableCommand::Authz => manifest.enable_authz(),
+        EnableCommand::Passkeys => manifest.enable_passkeys(),
+        EnableCommand::OAuthProvider { provider } => manifest.enable_oauth_provider(provider),
         EnableCommand::Idempotency => manifest.add_capability("idempotency"),
         EnableCommand::Snapshots => manifest.add_capability("snapshots"),
         EnableCommand::Tracing => {
@@ -611,11 +626,51 @@ fn doctor(_ctx: &ExecutionContext) -> Result<CommandReport> {
 fn check_project(ctx: &ExecutionContext) -> Result<CommandReport> {
     let manifest = ProjectManifest::read_from(&ctx.cwd)?;
     manifest.selection().validate()?;
-    let files = [MANIFEST_FILE, "Cargo.toml", "src/domain/mod.rs"];
+    let base_files = [MANIFEST_FILE, "Cargo.toml", "src/domain/mod.rs"];
+    let auth_stack_files = [
+        ".env.example",
+        "build.rs",
+        "input.css",
+        "Makefile",
+        "package.json",
+        "spin.toml",
+        "spin.production.toml.example",
+        "src/app.rs",
+        "src/application.rs",
+        "src/contracts.rs",
+        "src/error.rs",
+        "src/grpc.rs",
+        "src/lib.rs",
+        "src/main.rs",
+        "src/oauth.rs",
+        "src/rest.rs",
+        "src/server.rs",
+        "src/store.rs",
+        "proto/auth.proto",
+        "proto/authz.proto",
+        "scripts/report_oauth_evidence.sh",
+        "scripts/reset_db.sh",
+        "scripts/verify_auth_oauth_dev_browser.mjs",
+        "scripts/verify_auth_pages.mjs",
+        "scripts/verify_auth_passkeys.mjs",
+        "scripts/verify_auth_stack.sh",
+        "scripts/verify_live_oauth_browser.mjs",
+        "scripts/verify_live_oauth_callback.sh",
+        "scripts/verify_live_oauth_preflight.sh",
+        "scripts/verify_oauth_credentials.sh",
+    ];
+    let files = if manifest.preset == Preset::AuthStack {
+        [MANIFEST_FILE, "Cargo.toml"]
+            .into_iter()
+            .chain(auth_stack_files)
+            .collect::<Vec<_>>()
+    } else {
+        base_files.into_iter().collect::<Vec<_>>()
+    };
     let missing = files
         .iter()
         .filter(|file| !ctx.cwd.join(file).exists())
-        .copied()
+        .map(|file| file.to_string())
         .collect::<Vec<_>>();
     if !missing.is_empty() {
         anyhow::bail!("missing generated project files: {}", missing.join(", "));
@@ -654,6 +709,20 @@ fn capabilities() -> Result<CommandReport> {
         "realtime": Realtime::ALL.map(|value| value.as_str()),
         "transports": Transport::ALL.map(|value| value.as_str()),
         "ui": Ui::ALL.map(|value| value.as_str()),
+        "auth": {
+            "capabilities": [
+                "auth",
+                "authz",
+                "passkeys",
+                "oauth:google",
+                "oauth:apple",
+                "oauth:facebook"
+            ],
+            "oauth_providers": OAuthProviderKind::ALL.map(|value| value.as_str()),
+            "default_preset": "auth-stack",
+            "default_transport": "both",
+            "default_ui": "leptos"
+        },
         "commands": [
             "init", "add", "enable", "serve", "watch", "fresh", "doctor", "check", "matrix", "capabilities"
         ],

@@ -1,0 +1,212 @@
+syntax = "proto3";
+
+package auth.v1;
+
+service AuthService {
+  rpc GetCapabilities(GetCapabilitiesRequest) returns (AuthCapabilitiesResponse);
+  rpc ListProviders(ListProvidersRequest) returns (ListProvidersResponse);
+  rpc RegisterPassword(EmailPasswordRegisterRequest) returns (LoginCompletionResponse);
+  rpc LoginPassword(EmailPasswordLoginRequest) returns (LoginCompletionResponse);
+  rpc StartPasswordReset(PasswordResetStartRequest) returns (PasswordResetStartResponse);
+  rpc CompletePasswordReset(PasswordResetCompleteRequest) returns (LoginCompletionResponse);
+  rpc StartOAuthLogin(StartOAuthLoginRequest) returns (OAuthStartResponse);
+  rpc CompleteOAuthCallback(CompleteOAuthCallbackRequest) returns (LoginCompletionResponse);
+  rpc StartPasskeyRegistration(PasskeyStartRequest) returns (PasskeyStartResponse);
+  rpc VerifyPasskeyRegistration(PasskeyVerifyRequest) returns (LoginCompletionResponse);
+  rpc StartPasskeyLogin(PasskeyStartRequest) returns (PasskeyStartResponse);
+  rpc VerifyPasskeyLogin(PasskeyVerifyRequest) returns (LoginCompletionResponse);
+  rpc GetSession(GetSessionRequest) returns (SessionView);
+  rpc RefreshToken(RefreshTokenRequest) returns (TokenRefreshResponse);
+  rpc VerifyToken(TokenVerifyRequest) returns (TokenVerifyResponse);
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+  rpc GetJwks(GetJwksRequest) returns (JwksDocument);
+  rpc ListSigningKeys(ListSigningKeysRequest) returns (SigningKeyListResponse);
+  rpc RotateSigningKey(SigningKeyRotateRequest) returns (SigningKeyRotateResponse);
+}
+
+message GetCapabilitiesRequest {}
+
+message AuthCapabilitiesResponse {
+  bool password_enabled = 1;
+  bool oauth_enabled = 2;
+  bool passkeys_enabled = 3;
+  repeated AuthProvider providers = 4;
+}
+
+message ListProvidersRequest {}
+
+message ListProvidersResponse {
+  repeated AuthProvider providers = 1;
+}
+
+message AuthProvider {
+  string provider_id = 1;
+  string display_name = 2;
+  string login_url = 3;
+  bool enabled = 4;
+}
+
+message StartOAuthLoginRequest {
+  string provider_id = 1;
+  string redirect_url = 2;
+}
+
+message OAuthStartResponse {
+  string provider_id = 1;
+  string authorization_url = 2;
+  string state = 3;
+}
+
+message CompleteOAuthCallbackRequest {
+  string provider_id = 1;
+  string code = 2;
+  string state = 3;
+  string redirect_url = 4;
+}
+
+message LoginCompletionResponse {
+  bool authenticated = 1;
+  string redirect_url = 2;
+  string session_id = 3;
+  string access_token = 4;
+  string refresh_token = 5;
+  uint64 expires_in_seconds = 6;
+}
+
+message EmailPasswordRegisterRequest {
+  string email = 1;
+  string password = 2;
+  string redirect_url = 3;
+}
+
+message EmailPasswordLoginRequest {
+  string email = 1;
+  string password = 2;
+  string redirect_url = 3;
+}
+
+message PasswordResetStartRequest {
+  string email = 1;
+  string redirect_url = 2;
+}
+
+message PasswordResetStartResponse {
+  bool accepted = 1;
+  string reset_url = 2;
+  uint64 expires_in_seconds = 3;
+}
+
+message PasswordResetCompleteRequest {
+  string token = 1;
+  string password = 2;
+  string redirect_url = 3;
+}
+
+message PasskeyStartRequest {
+  string email = 1;
+  string redirect_url = 2;
+}
+
+message PasskeyStartResponse {
+  string challenge_id = 1;
+  string public_key_options_json = 2;
+  string redirect_url = 3;
+}
+
+message PasskeyVerifyRequest {
+  string challenge_id = 1;
+  string credential_json = 2;
+  string redirect_url = 3;
+}
+
+message GetSessionRequest {
+  string session_id = 1;
+}
+
+message SessionView {
+  bool authenticated = 1;
+  string tenant_id = 2;
+  string user_id = 3;
+  string primary_email = 4;
+  string expires_at = 5;
+  repeated string permissions = 6;
+}
+
+message RefreshTokenRequest {
+  string session_id = 1;
+  string refresh_token = 2;
+}
+
+message TokenRefreshResponse {
+  string access_token = 1;
+  string refresh_token = 2;
+  uint64 expires_in_seconds = 3;
+}
+
+message TokenVerifyRequest {
+  string access_token = 1;
+}
+
+message TokenVerifyResponse {
+  bool active = 1;
+  string subject = 2;
+  string tenant_id = 3;
+  string session_id = 4;
+  uint64 expires_at = 5;
+  repeated string scopes = 6;
+}
+
+message LogoutRequest {
+  string session_id = 1;
+}
+
+message LogoutResponse {
+  string redirect_url = 1;
+}
+
+message GetJwksRequest {}
+
+message ListSigningKeysRequest {
+  string admin_token = 1;
+}
+
+message SigningKeyRotateRequest {
+  string admin_token = 1;
+  string kid = 2;
+  bool retire_previous = 3;
+}
+
+message SigningKeyRotateResponse {
+  string active_kid = 1;
+  string previous_kid = 2;
+  bool retired_previous = 3;
+  repeated SigningKeySummary keys = 4;
+}
+
+message SigningKeyListResponse {
+  repeated SigningKeySummary keys = 1;
+}
+
+message SigningKeySummary {
+  string kid = 1;
+  string alg = 2;
+  string status = 3;
+  bool active = 4;
+  string source = 5;
+  uint64 created_at_ms = 6;
+  uint64 activated_at_ms = 7;
+  uint64 retired_at_ms = 8;
+  uint64 revoked_at_ms = 9;
+}
+
+message JwksDocument {
+  repeated JwksKey keys = 1;
+}
+
+message JwksKey {
+  string kid = 1;
+  string kty = 2;
+  string alg = 3;
+  string use = 4;
+  map<string, string> public_parameters = 5;
+}
