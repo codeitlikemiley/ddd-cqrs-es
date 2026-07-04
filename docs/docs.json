@@ -77,6 +77,8 @@
           "production/persisted-store",
           "production/persisted-views",
           "production/db-query-patterns",
+          "production/auth-storage-rollout",
+          "production/auth-oauth-rollout",
           "production/redis",
           "production/metadata",
           "production/upcasters",
@@ -107,6 +109,22 @@
         "expanded": true,
         "pages": [
           "PRD"
+        ]
+      },
+      {
+        "group": "8. Product Roadmaps",
+        "icon": "map",
+        "expanded": true,
+        "pages": [
+          "prd/auth-implementation-tracker",
+          "prd/auth-surface-contracts",
+          "prd/ddd-auth",
+          "prd/ddd-authz",
+          "prd/spin-auth-stack",
+          "prd/leptos-auth-ui",
+          "prd/cli-auth-templates",
+          "prd/auth-storage-and-migrations",
+          "prd/auth-verification-rollout"
         ]
       }
     ]
