@@ -1,0 +1,37 @@
+[package]
+name = "ddd-auth"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.93.0"
+authors = ["Uriah G"]
+description = "Authentication primitives for ddd_cqrs_es applications"
+license = "MIT"
+repository = "https://github.com/codeitlikemiley/ddd-cqrs-es"
+
+[lib]
+name = "ddd_auth"
+path = "src/lib.rs"
+
+[features]
+default = ["std"]
+std = []
+serde = ["dep:serde", "ddd_cqrs_es/serde"]
+json = ["serde", "dep:serde_json", "ddd_cqrs_es/json"]
+jwt = ["json", "dep:jsonwebtoken"]
+oauth = ["serde", "dep:oauth2", "dep:openidconnect"]
+passkeys = ["serde", "dep:passkey", "dep:passkey-auth"]
+webauthn-rs = ["passkeys", "dep:webauthn-rs"]
+wasi = []
+tracing = ["dep:tracing", "ddd_cqrs_es/tracing"]
+
+[dependencies]
+ddd_cqrs_es = { path = "../..", default-features = false }
+jsonwebtoken = { version = "10.4.0", default-features = false, features = ["rust_crypto", "use_pem"], optional = true }
+oauth2 = { version = "5.0.0", default-features = false, features = ["pkce-plain"], optional = true }
+openidconnect = { version = "4.0.1", default-features = false, optional = true }
+passkey = { version = "0.5.0", optional = true }
+passkey-auth = { version = "0.1.3", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+tracing = { version = "0.1", optional = true }
+webauthn-rs = { version = "0.6.1-dev", default-features = false, optional = true }

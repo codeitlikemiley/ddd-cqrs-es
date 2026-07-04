@@ -1,0 +1,26 @@
+[package]
+name = "ddd-authz"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.93.0"
+authors = ["Uriah G"]
+description = "Authorization primitives for ddd_cqrs_es applications"
+license = "MIT"
+repository = "https://github.com/codeitlikemiley/ddd-cqrs-es"
+
+[lib]
+name = "ddd_authz"
+path = "src/lib.rs"
+
+[features]
+default = ["std"]
+std = []
+serde = ["dep:serde"]
+json = ["serde", "dep:serde_json"]
+wasi = []
+tracing = ["dep:tracing"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+tracing = { version = "0.1", optional = true }

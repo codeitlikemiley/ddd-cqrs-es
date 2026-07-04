@@ -14,8 +14,8 @@ categories = ["development-tools", "rust-patterns"]
 exclude = [".agents/**"]
 
 [workspace]
-members = [".", "crates/ddd-cli"]
-default-members = [".", "crates/ddd-cli"]
+members = [".", "crates/ddd-auth", "crates/ddd-authz", "crates/ddd-cli"]
+default-members = [".", "crates/ddd-auth", "crates/ddd-authz", "crates/ddd-cli"]
 exclude = ["examples/counter-app", "examples/counter-app/redis-trigger"]
 resolver = "2"
 
