@@ -2,12 +2,15 @@
 
 use crate::aggregate::{Aggregate, LoadedAggregate};
 use crate::error::{EventStoreFailure, RepositoryError};
-use crate::event::{EventEnvelope, ExpectedRevision, NewEvent};
+use crate::event::{ExpectedRevision, NewEvent};
 use crate::event_store::{EventStream, IdempotentAppendError};
 use crate::idempotency::{
     IdempotencyKey, IdempotencyState, IdempotencyWaitConfig, IdempotentRepositoryError,
 };
 use crate::metadata::Metadata;
+use crate::repository_support::{
+    apply_committed_events, handle_command_as_new_events, new_events_with_metadata,
+};
 use crate::snapshot::{Snapshot, SnapshotRepositoryError};
 use async_trait::async_trait;
 use std::marker::PhantomData;
@@ -207,14 +210,8 @@ where
         tracing::debug!(aggregate_type = A::aggregate_type(), "executing command");
 
         let loaded = self.load(aggregate_id).await?;
-        let events = loaded
-            .state
-            .handle(command)
+        let events = handle_command_as_new_events::<A>(&loaded.state, command, &metadata)
             .map_err(RepositoryError::Domain)?;
-        let events = events
-            .into_iter()
-            .map(|event| NewEvent::new(event, metadata.clone()))
-            .collect();
 
         self.store
             .append(
@@ -242,10 +239,7 @@ where
             "appending aggregate events"
         );
 
-        let events = events
-            .into_iter()
-            .map(|event| NewEvent::new(event, metadata.clone()))
-            .collect();
+        let events = new_events_with_metadata::<A>(events, &metadata);
 
         self.store
             .append(
@@ -288,11 +282,9 @@ where
         );
 
         let loaded = self.load(aggregate_id).await?;
-        let events = loaded
-            .state
-            .handle(command)
+        let events = handle_command_as_new_events::<A>(&loaded.state, command, &metadata)
             .map_err(RepositoryError::Domain)?;
-        let committed = self.save(aggregate_id, &loaded, events, metadata).await?;
+        let committed = self.save_new_events(aggregate_id, &loaded, events).await?;
         let updated = apply_committed_events(loaded, &committed);
         Ok((updated, committed))
     }
@@ -349,14 +341,8 @@ where
         SS: AsyncSnapshotStore<A>,
     {
         let loaded = self.load_with_snapshot(aggregate_id, snapshots).await?;
-        let events = loaded
-            .state
-            .handle(command)
+        let events = handle_command_as_new_events::<A>(&loaded.state, command, &metadata)
             .map_err(SnapshotRepositoryError::Domain)?;
-        let events = events
-            .into_iter()
-            .map(|event| NewEvent::new(event, metadata.clone()))
-            .collect();
 
         self.store
             .append(
@@ -464,14 +450,8 @@ where
                 }
                 RepositoryError::Store(error) => IdempotentRepositoryError::Store(error),
             })?;
-            let events = loaded
-                .state
-                .handle(command)
+            let events = handle_command_as_new_events::<A>(&loaded.state, command, &metadata)
                 .map_err(IdempotentRepositoryError::Domain)?;
-            let events = events
-                .into_iter()
-                .map(|event| NewEvent::new(event, metadata.clone()))
-                .collect();
             let committed = self
                 .store
                 .append(
@@ -546,14 +526,8 @@ where
             RepositoryError::Concurrency(error) => IdempotentRepositoryError::Concurrency(error),
             RepositoryError::Store(error) => IdempotentRepositoryError::Store(error),
         })?;
-        let events = loaded
-            .state
-            .handle(command)
+        let events = handle_command_as_new_events::<A>(&loaded.state, command, &metadata)
             .map_err(IdempotentRepositoryError::Domain)?;
-        let events = events
-            .into_iter()
-            .map(|event| NewEvent::new(event, metadata.clone()))
-            .collect::<Vec<_>>();
         let expected_revision = ExpectedRevision::Exact(loaded.revision);
         let started = std::time::Instant::now();
 
@@ -584,21 +558,6 @@ where
             }
         }
     }
-}
-
-fn apply_committed_events<A>(
-    mut loaded: LoadedAggregate<A>,
-    committed: &[EventEnvelope<A::Event, A::Id>],
-) -> LoadedAggregate<A>
-where
-    A: Aggregate,
-{
-    for envelope in committed {
-        loaded.state.apply(&envelope.payload);
-        loaded.revision = envelope.revision;
-    }
-
-    loaded
 }
 
 /// Async snapshot persistence abstraction.

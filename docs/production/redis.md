@@ -54,6 +54,13 @@ Append is performed by one Lua `EVAL` script. The script validates the expected
 revision, allocates global sequence numbers, updates the stream revision, stores
 event hashes, and updates stream/global indexes atomically.
 
+This append atomicity is scoped to event writes. Redis currently does not
+implement `AsyncAtomicIdempotentEventStore`, so
+`AsyncRepository::execute_idempotent_atomic` is available for the SQL adapters
+only. Use SQLite, PostgreSQL, or MySQL when command handling requires the
+idempotency key reservation, event append, and completed result to commit in one
+backing-store transaction.
+
 ---
 
 ## Basic Usage
@@ -362,6 +369,7 @@ ordering, recovery, and operational behavior under production traffic.
 Known boundaries:
 
 * `WasiRedisClient` supports plain `redis://` TCP URLs. It does not implement TLS, Sentinel, Cluster, or RESP3-specific behavior.
+* `RedisEventStore` has async append/load/global replay coverage, and `RedisCheckpointStore` has async checkpoint coverage, but Redis does not implement `AsyncAtomicIdempotentEventStore`.
 * Redis pub/sub is lossy notification, not durable delivery.
 * Counter SSE wake queues are best-effort notification. Durable events remain the source of truth, and clients recover through `last_sequence` replay.
 * The event store is async-only.

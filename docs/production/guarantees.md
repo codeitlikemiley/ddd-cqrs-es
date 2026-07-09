@@ -60,6 +60,12 @@ let committed = repo.execute_idempotent_atomic(
 
 Async applications can use the matching `AsyncRepository::execute_idempotent_atomic` path with stores that implement `AsyncAtomicIdempotentEventStore`.
 
+| API | Store requirements | Use when | Crash-atomic idempotency |
+| :--- | :--- | :--- | :--- |
+| `Repository::execute` / `AsyncRepository::execute` | Any sync or async event store | The command is not retried by a stable request key, or the caller handles duplicate prevention. | No |
+| `Repository::execute_idempotent` / `AsyncRepository::execute_idempotent` | Event store plus separate idempotency store | You need portable retry deduplication across custom stores and can reconcile a pending key after a crash. | No |
+| `Repository::execute_idempotent_atomic` / `AsyncRepository::execute_idempotent_atomic` | Store implements `AtomicIdempotentEventStore` or `AsyncAtomicIdempotentEventStore` | Production SQL command handlers need the key reservation, append, and completed result in one backing-store transaction. | Yes, for SQLite, PostgreSQL, and MySQL |
+
 ## Durable Snapshots
 
 Snapshots are optional accelerators for long streams. They must never replace the event log.

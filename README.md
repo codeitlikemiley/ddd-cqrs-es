@@ -62,14 +62,14 @@ Add the crate to `Cargo.toml`:
 
 ```toml
 [dependencies]
-ddd_cqrs_es = "0.2.3"
+ddd_cqrs_es = "0.2.6"
 ```
 
 Enable only the adapters you need:
 
 ```toml
 [dependencies]
-ddd_cqrs_es = { version = "0.2.3", features = ["serde", "json", "sqlite"] }
+ddd_cqrs_es = { version = "0.2.6", features = ["serde", "json", "sqlite"] }
 ```
 
 Common features:

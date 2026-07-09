@@ -10,8 +10,9 @@ DOCS_JSON="docs/docs.json"
 
 nav_pages=$(mktemp)
 fs_pages=$(mktemp)
+version_refs=$(mktemp)
 cleanup() {
-  rm -f "$nav_pages" "$fs_pages"
+  rm -f "$nav_pages" "$fs_pages" "$version_refs"
 }
 trap cleanup EXIT
 
@@ -33,4 +34,25 @@ if ! diff -u "$nav_pages" "$fs_pages" > /tmp/verify-docs.diff; then
   exit 1
 fi
 
-echo "docs.json navigation and docs/**/*.md are aligned."
+crate_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+if [ -z "$crate_version" ]; then
+  echo "Unable to determine root crate version from Cargo.toml." >&2
+  exit 1
+fi
+
+{
+  printf '%s\n' README.md
+  find docs -type f -name '*.md' | sort
+} | while IFS= read -r file; do
+  grep -nE 'ddd_cqrs_es = (\{ version = )?"[0-9]+\.[0-9]+\.[0-9]+"' "$file" \
+    | sed "s#^#$file:#" || true
+done > "$version_refs"
+
+if mismatches=$(awk -v version="$crate_version" '$0 !~ "ddd_cqrs_es = .*\"" version "\"" { print; bad = 1 } END { exit bad ? 0 : 1 }' "$version_refs"); then
+  echo "Documentation crate version mismatch detected." >&2
+  echo "Expected ddd_cqrs_es install snippets to use version $crate_version." >&2
+  echo "$mismatches" >&2
+  exit 1
+fi
+
+echo "docs.json navigation, docs/**/*.md, and ddd_cqrs_es install snippets are aligned."

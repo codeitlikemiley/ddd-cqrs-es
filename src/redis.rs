@@ -1630,31 +1630,25 @@ mod tests {
 
     #[cfg(feature = "wasi-redis")]
     #[tokio::test]
-    async fn live_redis_append_and_load_round_trips_events() {
+    async fn live_redis_async_event_store_passes_reusable_contract() {
         let Some(client) = live_client() else {
             eprintln!("skipping live Redis test: DDD_CQRS_ES_REDIS_URL or REDIS_URL is not set");
             return;
         };
-        let prefix = unique_prefix("round_trip");
+        let prefix = unique_prefix("async_contract");
         cleanup_prefix(&client, &prefix).await;
         let store =
             RedisEventStore::<TestAggregate, _>::with_prefix(client.clone(), prefix.clone())
                 .unwrap();
 
-        let committed = store
-            .append(
-                &"stream-1".to_owned(),
-                ExpectedRevision::NoStream,
-                vec![NewEvent::new(
-                    TestEvent::Created { value: 11 },
-                    Metadata::default(),
-                )],
-            )
-            .await
-            .unwrap();
-        let loaded = store.load(&"stream-1".to_owned()).await.unwrap();
-
-        assert_eq!(committed[0].payload, loaded[0].payload);
+        crate::testing::assert_async_event_store_contract::<TestAggregate, _>(
+            store,
+            "stream-1".to_owned(),
+            TestEvent::Created { value: 11 },
+            TestEvent::Updated { value: 12 },
+            crate::testing::EventStoreContractOptions::default(),
+        )
+        .await;
         cleanup_prefix(&client, &prefix).await;
     }
 
@@ -1763,6 +1757,12 @@ mod tests {
             RedisEventStore::<TestAggregate, _>::with_prefix(client.clone(), prefix.clone())
                 .unwrap();
         let checkpoint = RedisCheckpointStore::with_prefix(client.clone(), prefix.clone()).unwrap();
+
+        crate::testing::assert_async_checkpoint_store_contract(
+            checkpoint.clone(),
+            "projection_contract",
+        )
+        .await;
 
         store
             .append(

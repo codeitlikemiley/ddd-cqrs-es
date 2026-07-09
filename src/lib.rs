@@ -107,6 +107,7 @@ pub mod projection;
 #[cfg(feature = "redis")]
 pub mod redis;
 pub mod repository;
+mod repository_support;
 pub mod schema;
 pub mod snapshot;
 mod sql_common;
@@ -207,6 +208,12 @@ pub use snapshot::{
 /// SQLite persistence adapters for events, checkpoints, idempotency, and snapshots.
 pub use sqlite::{
     SqliteCheckpointStore, SqliteEventStore, SqliteIdempotencyStore, SqliteSnapshotStore,
+};
+#[cfg(feature = "async")]
+/// Async contract tests for async adapters.
+pub use testing::{
+    assert_async_checkpoint_store_contract, assert_async_event_store_contract,
+    assert_async_idempotency_store_contract,
 };
 /// Contract tests for adapters and supporting test utilities.
 pub use testing::{

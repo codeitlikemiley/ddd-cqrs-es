@@ -89,6 +89,12 @@ store.register_upcaster("account_opened", AccountOpenedUpcaster);
 
 If multiple upcasters are registered for the same event type (e.g., `v1 -> v2` and `v2 -> v3`), the engine automatically constructs an upcaster chain and applies them sequentially when replaying events.
 
+Upcasters run in adapters that deserialize stored event payload bytes, including
+the SQL stores and Redis. `InMemoryEventStore` stores already-typed Rust events
+and intentionally does not run raw-byte upcasters. For tests that need to prove
+event schema migration behavior, use `SqliteEventStore::in_memory()` or the same
+SQL adapter family that production uses instead of `InMemoryEventStore`.
+
 ---
 
 ## Upcasting Design Guidelines
