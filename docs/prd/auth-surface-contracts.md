@@ -155,8 +155,9 @@ Session context:
 - Browser page middleware reads the `ddd_auth_session` httpOnly cookie before
   rendering guest-only or protected routes.
 - REST smoke and service-to-service callers may pass `x-auth-session`, the
-  `ddd_auth_session` cookie, or `?session_id=...` for cookie/session-backed
-  flows.
+  `ddd_auth_session` cookie, or `Authorization: Bearer <access_jwt>`.
+  Query-string credentials such as `?session_id=...` and `?admin_token=...`
+  are not supported.
 - Access-token callers use `POST /api/auth/token/verify` with a signed JWT
   access token. The verifier checks `kid`, signature, issuer, audience, expiry,
   and backing session state.

@@ -25,6 +25,7 @@ milestones, and verification while the auth stack is designed and built.
 | [CLI auth templates](./cli-auth-templates.md) | implemented | CLI agent | `ddd` capabilities, presets, templates, and dry-run support. |
 | [Auth storage and migrations](./auth-storage-and-migrations.md) | implemented | Storage agent | Event-sourced aggregates, projections, schema bootstrap, and migrations. |
 | [Auth verification and rollout](./auth-verification-rollout.md) | implemented | Verification agent | Compile matrix, REST/gRPC smoke checks, UI checks, and release gates. |
+| [Auth production hardening plan](./auth-production-hardening-plan.md) | in_progress | Security hardening agent | Integrated post-A36 production security plan (A37–A48): surface enforcement, secrets hygiene, CSRF, KDF, OAuth PKCE, tenant fail-closed, abuse limits, and security smoke. |
 
 ## Milestone Order
 
@@ -38,6 +39,8 @@ milestones, and verification while the auth stack is designed and built.
 5. Add CLI generation support for auth-enabled projects.
 6. Add verification scripts, smoke tests, and docs updates before marking any
    PRD `implemented`.
+7. Execute [Auth production hardening plan](./auth-production-hardening-plan.md)
+   (A37–A48) before treating the auth-stack example as production-grade.
 
 ## Update Rules
 

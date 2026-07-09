@@ -99,12 +99,14 @@ rtk curl -sS -I http://127.0.0.1:3008/auth/forbidden
 rtk curl -sS -I http://127.0.0.1:3008/auth/session-expired
 rtk curl -sS http://127.0.0.1:3008/api/auth/.well-known/jwks.json
 rtk curl -sS -X POST -H 'content-type: application/json' \
-  -d '{"subject":"user:alice","relation":"viewer","object":"project:demo"}' \
+  -H 'authorization: Bearer <access_jwt>' \
+  -d '{"tenant":"tenant:default","subject":"user:alice","relation":"viewer","object":"project:demo","model_ref":{"kind":"active"}}' \
   http://127.0.0.1:3008/api/authz/check
 rtk grpcurl -plaintext -import-path examples/auth-stack/proto -proto auth.proto \
   localhost:3008 auth.v1.AuthService/GetJwks
 rtk grpcurl -plaintext -import-path examples/auth-stack/proto -proto authz.proto \
-  -d '{"subject":"user:alice","relation":"viewer","object":"project:demo"}' \
+  -H 'authorization: Bearer <access_jwt>' \
+  -d '{"tenant":"tenant:default","subject":"user:alice","relation":"viewer","object":"project:demo","model_ref_kind":"active"}' \
   localhost:3008 authz.v1.AuthzService/Check
 ```
 

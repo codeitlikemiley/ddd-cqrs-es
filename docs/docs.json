@@ -124,7 +124,8 @@
           "prd/leptos-auth-ui",
           "prd/cli-auth-templates",
           "prd/auth-storage-and-migrations",
-          "prd/auth-verification-rollout"
+          "prd/auth-verification-rollout",
+          "prd/auth-production-hardening-plan"
         ]
       }
     ]
