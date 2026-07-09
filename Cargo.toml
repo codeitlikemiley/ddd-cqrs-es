@@ -61,6 +61,9 @@ serde_json = { version = "1", optional = true }
 tokio = { version = "1", features = ["time", "sync", "rt"], optional = true }
 tracing = { version = "0.1", optional = true }
 uuid = { version = "1", features = ["serde", "v4"], optional = true }
+# Keep wasip3 aligned with spin-sdk 6.0.0 and leptos_wasi 0.3.1.
+# wasip3 0.7.0 compiles here but breaks Spin at runtime with a
+# wasi:http/types resource mismatch (`response` has the wrong type).
 wasip3 = { version = "0.6.0", features = ["http-compat"], optional = true }
 http = { version = "1.1.0", optional = true }
 http-body-util = { version = "0.1.2", optional = true }

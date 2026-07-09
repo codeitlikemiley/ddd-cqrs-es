@@ -27,6 +27,9 @@ spin-sdk = { version = "6.0.0", optional = true }
 http = "1.1.0"
 http-body = { version = "1.0", optional = true }
 http-body-util = { version = "0.1.2", optional = true }
+# Keep wasip3 aligned with spin-sdk 6.0.0 and leptos_wasi 0.3.1.
+# wasip3 0.7.0 compiles but breaks Spin at runtime with a
+# wasi:http/types resource mismatch (`response` has the wrong type).
 wasip3 = { version = "0.6.0", features = ["http-compat"], optional = true }
 wit-bindgen = { version = "0.57.1", features = ["inter-task-wakeup"], optional = true }
 wasm-bindgen = { version = "=0.2.125", optional = true }
