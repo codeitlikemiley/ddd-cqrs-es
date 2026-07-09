@@ -98,9 +98,26 @@ assert_redirect() {
 json_post() {
   local path="$1"
   local body="$2"
+  shift 2
   curl -sS -X POST "$BASE_URL$path" \
     -H 'content-type: application/json' \
+    "$@" \
     --data "$body"
+}
+
+json_post_bearer() {
+  local path="$1"
+  local body="$2"
+  local token="$3"
+  shift 3
+  json_post "$path" "$body" -H "authorization: Bearer $token" "$@"
+}
+
+json_post_admin() {
+  local path="$1"
+  local body="$2"
+  shift 2
+  json_post "$path" "$body" -H "x-auth-admin-token: ${AUTH_ADMIN_TOKEN:-}" "$@"
 }
 
 run_oauth_state_check() {
@@ -469,7 +486,7 @@ curl -sS "$BASE_URL/api/auth/session" -H "$session_cookie" \
 if [[ "$CHECK_REFRESH_TOKEN_EXPIRY" == "1" ]]; then
   sleep "$REFRESH_EXPIRY_WAIT_SECONDS"
   assert_error 401 session_expired POST "$BASE_URL/api/auth/token/refresh" \
-    -H "$session_cookie" \
+    -H "x-auth-session: $session_id" \
     -H 'content-type: application/json' \
     --data "{\"refresh_token\":\"$refresh_token\"}"
   echo "auth-stack smoke: refresh expiry passed"
@@ -526,13 +543,13 @@ assert_error 401 session_expired POST "$BASE_URL/api/auth/token/verify" \
   --data "{\"access_token\":\"$expired_token\"}"
 
 refresh_response="$(curl -sS -X POST "$BASE_URL/api/auth/token/refresh" \
-  -H "$session_cookie" \
+  -H "x-auth-session: $session_id" \
   -H 'content-type: application/json' \
   --data "{\"refresh_token\":\"$refresh_token\"}")"
 next_refresh_token="$(jq -r '.refresh_token' <<<"$refresh_response")"
 jq -e '.access_token != null and .refresh_token != null and .expires_in_seconds > 0' <<<"$refresh_response" >/dev/null
 assert_error 401 invalid_token POST "$BASE_URL/api/auth/token/refresh" \
-  -H "$session_cookie" \
+  -H "x-auth-session: $session_id" \
   -H 'content-type: application/json' \
   --data "{\"refresh_token\":\"$refresh_token\"}"
 access_token="$(jq -r '.access_token' <<<"$refresh_response")"
@@ -555,23 +572,29 @@ assert_error 400 validation POST "$BASE_URL/api/auth/password/reset/complete" \
 start_reset_response="$(json_post /api/auth/password/reset/start \
   "{\"email\":\"$email\",\"redirect_url\":\"/dashboard\"}")"
 reset_url="$(jq -r '.reset_url' <<<"$start_reset_response")"
-reset_token="${reset_url#/reset-password?token=}"
-if [[ -z "$reset_token" || "$reset_token" == "null" || "$reset_token" == "$reset_url" ]]; then
-  echo "Reset start did not return a usable reset_url: $start_reset_response" >&2
-  exit 1
+if [[ "$reset_url" != "null" && -n "$reset_url" ]]; then
+  reset_token="${reset_url#/reset-password?token=}"
+  if [[ -z "$reset_token" || "$reset_token" == "$reset_url" ]]; then
+    echo "Reset start returned an invalid reset_url: $start_reset_response" >&2
+    exit 1
+  fi
+
+  complete_reset_response="$(json_post /api/auth/password/reset/complete \
+    "{\"token\":\"$reset_token\",\"password\":\"$new_password\",\"redirect_url\":\"/dashboard\"}")"
+  jq -e '.authenticated == true and .redirect_url == "/dashboard"' <<<"$complete_reset_response" >/dev/null
+
+  assert_error 400 validation POST "$BASE_URL/api/auth/password/reset/complete" \
+    -H 'content-type: application/json' \
+    --data "{\"token\":\"$reset_token\",\"password\":\"$new_password\",\"redirect_url\":\"/dashboard\"}"
+
+  assert_status 401 POST "$BASE_URL/api/auth/password/login" \
+    -H 'content-type: application/json' \
+    --data "{\"email\":\"$email\",\"password\":\"$old_password\",\"redirect_url\":\"/dashboard\"}"
+else
+  jq -e '.accepted == true and .reset_url == null and .expires_in_seconds > 0' \
+    <<<"$start_reset_response" >/dev/null
+  new_password="$old_password"
 fi
-
-complete_reset_response="$(json_post /api/auth/password/reset/complete \
-  "{\"token\":\"$reset_token\",\"password\":\"$new_password\",\"redirect_url\":\"/dashboard\"}")"
-jq -e '.authenticated == true and .redirect_url == "/dashboard"' <<<"$complete_reset_response" >/dev/null
-
-assert_error 400 validation POST "$BASE_URL/api/auth/password/reset/complete" \
-  -H 'content-type: application/json' \
-  --data "{\"token\":\"$reset_token\",\"password\":\"$new_password\",\"redirect_url\":\"/dashboard\"}"
-
-assert_status 401 POST "$BASE_URL/api/auth/password/login" \
-  -H 'content-type: application/json' \
-  --data "{\"email\":\"$email\",\"password\":\"$old_password\",\"redirect_url\":\"/dashboard\"}"
 
 login_response="$(json_post /api/auth/password/login \
   "{\"email\":\"$email\",\"password\":\"$new_password\",\"redirect_url\":\"/dashboard\"}")"
@@ -585,37 +608,53 @@ json_post /api/auth/token/verify "{\"access_token\":\"$access_token\"}" \
 
 curl -sS -f "$BASE_URL/api/auth/.well-known/jwks.json" | jq -e '.keys | type == "array"' >/dev/null
 
-json_post /api/authz/check \
-  '{"tenant":"tenant:default","subject":"user:alice","relation":"viewer","object":"project:demo","context":{}}' \
+assert_error 401 auth_required POST "$BASE_URL/api/authz/check" \
+  -H 'content-type: application/json' \
+  --data '{"tenant":"tenant:default","subject":"user:alice","relation":"viewer","object":"project:demo","model_ref":{"kind":"active"},"context":{}}'
+
+json_post_bearer /api/authz/check \
+  '{"tenant":"tenant:default","subject":"user:alice","relation":"viewer","object":"project:demo","model_ref":{"kind":"active"},"context":{}}' \
+  "$access_token" \
   | jq -e '.allowed == false and (.model_id | length > 0)' >/dev/null
 
-authz_model_json='{"model_id":"authz-smoke-model","schema_version":"1.0","types":{"project":{"name":"project","relations":{"viewer":{"rewrite":{"type":"direct"}}}}}}'
-authz_model_payload="$(jq -n --arg model_id "authz-smoke-model" --arg schema_json "$authz_model_json" \
-  '{model_id:$model_id,schema_json:$schema_json}')"
-json_post /api/authz/models "$authz_model_payload" \
-  | jq -e '.model_id == "authz-smoke-model" and .active == false' >/dev/null
-json_post /api/authz/models/authz-smoke-model/activate '{}' \
-  | jq -e '.model_id == "authz-smoke-model" and .active == true' >/dev/null
+if [[ -n "${AUTH_ADMIN_TOKEN:-}" ]]; then
+  authz_model_json='{"model_id":"authz-smoke-model","schema_version":"1.0","types":{"project":{"name":"project","relations":{"viewer":{"rewrite":{"type":"direct"}}}}}}'
+  authz_model_payload="$(jq -n --arg model_id "authz-smoke-model" --arg schema_json "$authz_model_json" \
+    '{model_id:$model_id,schema_json:$schema_json,idempotency_key:"authz-smoke-model-write"}')"
+  json_post_admin /api/authz/models "$authz_model_payload" \
+    | jq -e '.model_id == "authz-smoke-model" and .active == false' >/dev/null
+  json_post_admin /api/authz/models/authz-smoke-model/activate '{}' \
+    -H 'idempotency-key: authz-smoke-model-activate' \
+    | jq -e '.model_id == "authz-smoke-model" and .active == true' >/dev/null
 
-tuple_payload='{"tuples_json":"[{\"tenant\":\"tenant:default\",\"subject\":\"user:alice\",\"object\":\"project:demo\",\"relation\":\"viewer\"}]"}'
-json_post /api/authz/tuples/write "$tuple_payload" \
-  | jq -e '.accepted == 1' >/dev/null
-json_post /api/authz/check \
-  '{"tenant":"tenant:default","subject":"user:alice","relation":"viewer","object":"project:demo","context":{}}' \
-  | jq -e '.allowed == true and .model_id == "authz-smoke-model"' >/dev/null
-json_post /api/authz/list-objects \
-  '{"tenant":"tenant:default","subject":"user:alice","relation":"viewer","object_type":"project","context":{}}' \
-  | jq -e '.objects == ["project:demo"]' >/dev/null
-json_post /api/authz/expand \
-  '{"tenant":"tenant:default","relation":"viewer","object":"project:demo","context":{}}' \
-  | jq -e '.graph_json | fromjson | .rewrite == "direct" and (.subjects | index("user:alice"))' >/dev/null
-json_post /api/authz/tuples/delete "$tuple_payload" \
-  | jq -e '.accepted == 1' >/dev/null
+  tuple_payload='{"tuples_json":"[{\"tenant\":\"tenant:default\",\"subject\":\"user:alice\",\"object\":\"project:demo\",\"relation\":\"viewer\"}]","idempotency_key":"authz-smoke-tuples-write"}'
+  json_post_admin /api/authz/tuples/write "$tuple_payload" \
+    | jq -e '.accepted == 1' >/dev/null
+  json_post_bearer /api/authz/check \
+    '{"tenant":"tenant:default","subject":"user:alice","relation":"viewer","object":"project:demo","model_ref":{"kind":"active"},"context":{}}' \
+    "$access_token" \
+    | jq -e '.allowed == true and .model_id == "authz-smoke-model"' >/dev/null
+  json_post_bearer /api/authz/list-objects \
+    '{"tenant":"tenant:default","subject":"user:alice","relation":"viewer","object_type":"project","model_ref":{"kind":"active"},"context":{}}' \
+    "$access_token" \
+    | jq -e '.objects == ["project:demo"]' >/dev/null
+  json_post_bearer /api/authz/expand \
+    '{"tenant":"tenant:default","relation":"viewer","object":"project:demo","model_ref":{"kind":"active"},"context":{}}' \
+    "$access_token" \
+    | jq -e '.graph_json | fromjson | .rewrite == "direct" and (.subjects | index("user:alice"))' >/dev/null
+  json_post_admin /api/authz/tuples/delete \
+    '{"tuples_json":"[{\"tenant\":\"tenant:default\",\"subject\":\"user:alice\",\"object\":\"project:demo\",\"relation\":\"viewer\"}]","idempotency_key":"authz-smoke-tuples-delete"}' \
+    | jq -e '.accepted == 1' >/dev/null
+else
+  assert_error 401 auth_required POST "$BASE_URL/api/authz/models" \
+    -H 'content-type: application/json' \
+    --data '{"model_id":"authz-smoke-model","schema_json":"{}","idempotency_key":"authz-smoke-model-write"}'
+fi
 
-logout_response="$(curl -sS -X POST "$BASE_URL/api/auth/logout" -H "$session_cookie")"
+logout_response="$(curl -sS -X POST "$BASE_URL/api/auth/logout" -H "x-auth-session: $session_id")"
 jq -e '.redirect_url == "/login"' <<<"$logout_response" >/dev/null
 assert_error 401 auth_required POST "$BASE_URL/api/auth/token/refresh" \
-  -H "$session_cookie" \
+  -H "x-auth-session: $session_id" \
   -H 'content-type: application/json' \
   --data "{\"refresh_token\":\"$refresh_token\"}"
 assert_error 401 auth_required POST "$BASE_URL/api/auth/token/verify" \

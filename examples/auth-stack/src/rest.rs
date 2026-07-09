@@ -27,6 +27,8 @@ pub async fn serve(req: RestRequest) -> AuthStackResult<RestResponse> {
     let uri = req.uri().clone();
     let path = uri.path().to_string();
     let session_id = session_id_from_request(&req);
+    let cookie_session_id = cookie_session_id_from_request(&req);
+    let request_auth = request_auth_from_request(&req);
 
     tracing::debug!(
         method = %method,
@@ -103,7 +105,11 @@ pub async fn serve(req: RestRequest) -> AuthStackResult<RestResponse> {
         (Method::GET, "/api/auth/session") => {
             json_result(crate::application::get_current_session_for(session_id).await)
         }
+        (Method::GET, "/api/auth/csrf") => {
+            json_result(crate::application::csrf_token_for_session(cookie_session_id).await)
+        }
         (Method::POST, "/api/auth/token/refresh") => {
+            validate_csrf_if_cookie_authenticated(&req, &request_auth).await?;
             let payload = parse_json::<TokenRefreshRequest>(req).await?;
             json_result(
                 crate::application::refresh_token_for(session_id, Some(payload.refresh_token))
@@ -115,6 +121,7 @@ pub async fn serve(req: RestRequest) -> AuthStackResult<RestResponse> {
             json_result(crate::application::verify_access_token(payload).await)
         }
         (Method::POST, "/api/auth/logout") => {
+            validate_csrf_if_cookie_authenticated(&req, &request_auth).await?;
             json_result(crate::application::logout_session(session_id).await)
         }
         (Method::GET, "/api/auth/.well-known/jwks.json") => {
@@ -145,37 +152,64 @@ pub async fn serve(req: RestRequest) -> AuthStackResult<RestResponse> {
             json_result(crate::application::rotate_signing_key(payload).await)
         }
         (Method::POST, "/api/authz/check") => {
+            crate::application::require_permission_for("authz:check", request_auth.clone()).await?;
             let payload = parse_json(req).await?;
             json_result(crate::application::check_authorization(payload).await)
         }
         (Method::POST, "/api/authz/batch-check") => {
+            crate::application::require_permission_for("authz:check", request_auth.clone()).await?;
             let payload = parse_json::<AuthzBatchCheckRequest>(req).await?;
             json_result(crate::application::batch_check_authorization(payload).await)
         }
         (Method::POST, "/api/authz/list-objects") => {
+            crate::application::require_permission_for("authz:check", request_auth.clone()).await?;
             let payload = parse_json::<AuthzListObjectsRequest>(req).await?;
             json_result(crate::application::list_authorized_objects(payload).await)
         }
         (Method::POST, "/api/authz/expand") => {
+            crate::application::require_permission_for("authz:check", request_auth.clone()).await?;
             let payload = parse_json::<AuthzExpandRequest>(req).await?;
             json_result(crate::application::expand_authorization(payload).await)
         }
         (Method::POST, "/api/authz/models") => {
-            let payload = parse_json::<AuthzModelWriteRequest>(req).await?;
+            crate::application::require_permission_for("authz:model:write", request_auth.clone()).await?;
+            validate_csrf_if_cookie_authenticated(&req, &request_auth).await?;
+            let idempotency_key = header_value(&req, "idempotency-key");
+            let mut payload = parse_json::<AuthzModelWriteRequest>(req).await?;
+            if payload.idempotency_key.is_none() {
+                payload.idempotency_key = idempotency_key;
+            }
             json_result(crate::application::write_authorization_model(payload).await)
         }
         (Method::POST, path)
             if path.starts_with("/api/authz/models/") && path.ends_with("/activate") =>
         {
+            crate::application::require_permission_for("authz:model:write", request_auth.clone()).await?;
+            validate_csrf_if_cookie_authenticated(&req, &request_auth).await?;
             let model_id = model_id_from_activate_path(path)?;
-            json_result(crate::application::activate_authorization_model(model_id).await)
+            json_result(crate::application::activate_authorization_model(
+                model_id,
+                header_value(&req, "idempotency-key"),
+            ).await)
         }
         (Method::POST, "/api/authz/tuples/write") => {
-            let payload = parse_json::<RelationshipTupleWriteRequest>(req).await?;
+            crate::application::require_permission_for("authz:tuple:write", request_auth.clone()).await?;
+            validate_csrf_if_cookie_authenticated(&req, &request_auth).await?;
+            let idempotency_key = header_value(&req, "idempotency-key");
+            let mut payload = parse_json::<RelationshipTupleWriteRequest>(req).await?;
+            if payload.idempotency_key.is_none() {
+                payload.idempotency_key = idempotency_key;
+            }
             json_result(crate::application::write_relationship_tuples(payload).await)
         }
         (Method::POST, "/api/authz/tuples/delete") => {
-            let payload = parse_json::<RelationshipTupleWriteRequest>(req).await?;
+            crate::application::require_permission_for("authz:tuple:write", request_auth.clone()).await?;
+            validate_csrf_if_cookie_authenticated(&req, &request_auth).await?;
+            let idempotency_key = header_value(&req, "idempotency-key");
+            let mut payload = parse_json::<RelationshipTupleWriteRequest>(req).await?;
+            if payload.idempotency_key.is_none() {
+                payload.idempotency_key = idempotency_key;
+            }
             json_result(crate::application::delete_relationship_tuples(payload).await)
         }
         (_, known_path) if known_rest_path(known_path) => validation_error_response(
@@ -368,7 +402,53 @@ fn session_id_from_request(req: &RestRequest) -> Option<String> {
                 .and_then(|value| value.to_str().ok())
                 .and_then(session_id_from_cookie_header)
         })
-        .or_else(|| query_value(req.uri(), "session_id").and_then(|value| non_empty_string(&value)))
+}
+
+fn cookie_session_id_from_request(req: &RestRequest) -> Option<String> {
+    req.headers()
+        .get(http::header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(session_id_from_cookie_header)
+}
+
+fn access_token_from_request(req: &RestRequest) -> Option<String> {
+    req.headers()
+        .get(http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(bearer_token)
+}
+
+fn request_auth_from_request(req: &RestRequest) -> crate::application::RequestAuth {
+    crate::application::RequestAuth::from_parts(
+        session_id_from_request(req),
+        access_token_from_request(req),
+        admin_token_from_request(req),
+    )
+}
+
+async fn validate_csrf_if_cookie_authenticated(
+    req: &RestRequest,
+    auth: &crate::application::RequestAuth,
+) -> AuthStackResult<()> {
+    if auth.admin_token.is_some() || auth.access_token.is_some() {
+        return Ok(());
+    }
+    let cookie_session_id = cookie_session_id_from_request(req);
+    if cookie_session_id.is_none() {
+        return Ok(());
+    }
+    crate::application::validate_csrf_token_for_session(
+        cookie_session_id,
+        header_value(req, "x-csrf-token"),
+    )
+    .await
+}
+
+fn bearer_token(value: &str) -> Option<String> {
+    value
+        .trim()
+        .strip_prefix("Bearer ")
+        .and_then(non_empty_string)
 }
 
 fn admin_token_from_request(req: &RestRequest) -> Option<String> {
@@ -376,7 +456,13 @@ fn admin_token_from_request(req: &RestRequest) -> Option<String> {
         .get("x-auth-admin-token")
         .and_then(|value| value.to_str().ok())
         .and_then(non_empty_string)
-        .or_else(|| query_value(req.uri(), "admin_token").and_then(|value| non_empty_string(&value)))
+}
+
+fn header_value(req: &RestRequest, name: &str) -> Option<String> {
+    req.headers()
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .and_then(non_empty_string)
 }
 
 fn session_id_from_cookie_header(cookie_header: &str) -> Option<String> {
@@ -404,6 +490,7 @@ fn known_rest_path(path: &str) -> bool {
         path,
         "/api/auth/capabilities"
             | "/api/auth/providers"
+            | "/api/auth/csrf"
             | "/api/auth/password/register"
             | "/api/auth/password/login"
             | "/api/auth/password/reset/start"

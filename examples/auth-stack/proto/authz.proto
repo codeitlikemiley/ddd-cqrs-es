@@ -21,6 +21,8 @@ message CheckRequest {
   string object = 3;
   string relation = 4;
   map<string, string> context = 5;
+  string model_ref_kind = 6;
+  string model_ref_model_id = 7;
 }
 
 message CheckResponse {
@@ -42,6 +44,8 @@ message ListObjectsRequest {
   string subject = 2;
   string relation = 3;
   string object_type = 4;
+  string model_ref_kind = 5;
+  string model_ref_model_id = 6;
 }
 
 message ListObjectsResponse {
@@ -52,6 +56,8 @@ message ExpandRequest {
   string tenant = 1;
   string object = 2;
   string relation = 3;
+  string model_ref_kind = 4;
+  string model_ref_model_id = 5;
 }
 
 message ExpandResponse {
@@ -61,10 +67,13 @@ message ExpandResponse {
 message WriteAuthorizationModelRequest {
   string model_id = 1;
   string schema_json = 2;
+  string tenant = 3;
+  string idempotency_key = 4;
 }
 
 message ActivateAuthorizationModelRequest {
   string model_id = 1;
+  string idempotency_key = 2;
 }
 
 message ReadAuthorizationModelRequest {
@@ -84,6 +93,7 @@ message WriteAuthorizationModelResponse {
 
 message RelationshipTupleWriteRequest {
   string tuples_json = 1;
+  string idempotency_key = 2;
 }
 
 message RelationshipTupleWriteResponse {

@@ -15,6 +15,11 @@ auth_transport = { default = "both" }
 auth_production_mode = { default = "true" }
 auth_enable_password_login = { default = "true" }
 auth_password_min_length = { default = "8" }
+auth_password_kdf = { default = "argon2id" }
+auth_password_argon2_memory_kib = { default = "19456" }
+auth_password_argon2_iterations = { default = "2" }
+auth_password_argon2_parallelism = { default = "1" }
+auth_password_pbkdf2_iterations = { default = "600000" }
 auth_jwt_issuer = { default = "https://auth.example.com" }
 auth_jwt_audience = { default = "auth-stack" }
 auth_jwt_kid = { default = "" }
@@ -24,6 +29,9 @@ auth_jwt_private_key_der_base64 = { default = "" }
 auth_jwt_public_jwks_json = { default = "" }
 auth_jwt_key_ring_json = { default = "" }
 auth_admin_token = { default = "" }
+auth_bootstrap_admin_emails = { default = "" }
+auth_csrf_secret = { default = "" }
+auth_dev_tools = { default = "false" }
 auth_session_ttl_seconds = { default = "3600" }
 auth_access_token_ttl_seconds = { default = "900" }
 auth_refresh_token_ttl_seconds = { default = "2592000" }
@@ -108,6 +116,11 @@ auth_transport = "{{ auth_transport }}"
 auth_production_mode = "{{ auth_production_mode }}"
 auth_enable_password_login = "{{ auth_enable_password_login }}"
 auth_password_min_length = "{{ auth_password_min_length }}"
+auth_password_kdf = "{{ auth_password_kdf }}"
+auth_password_argon2_memory_kib = "{{ auth_password_argon2_memory_kib }}"
+auth_password_argon2_iterations = "{{ auth_password_argon2_iterations }}"
+auth_password_argon2_parallelism = "{{ auth_password_argon2_parallelism }}"
+auth_password_pbkdf2_iterations = "{{ auth_password_pbkdf2_iterations }}"
 auth_jwt_issuer = "{{ auth_jwt_issuer }}"
 auth_jwt_audience = "{{ auth_jwt_audience }}"
 auth_jwt_kid = "{{ auth_jwt_kid }}"
@@ -117,6 +130,9 @@ auth_jwt_private_key_der_base64 = "{{ auth_jwt_private_key_der_base64 }}"
 auth_jwt_public_jwks_json = "{{ auth_jwt_public_jwks_json }}"
 auth_jwt_key_ring_json = "{{ auth_jwt_key_ring_json }}"
 auth_admin_token = "{{ auth_admin_token }}"
+auth_bootstrap_admin_emails = "{{ auth_bootstrap_admin_emails }}"
+auth_csrf_secret = "{{ auth_csrf_secret }}"
+auth_dev_tools = "{{ auth_dev_tools }}"
 auth_session_ttl_seconds = "{{ auth_session_ttl_seconds }}"
 auth_access_token_ttl_seconds = "{{ auth_access_token_ttl_seconds }}"
 auth_refresh_token_ttl_seconds = "{{ auth_refresh_token_ttl_seconds }}"
@@ -183,6 +199,11 @@ auth_transport = "{{ auth_transport }}"
 auth_production_mode = "{{ auth_production_mode }}"
 auth_enable_password_login = "{{ auth_enable_password_login }}"
 auth_password_min_length = "{{ auth_password_min_length }}"
+auth_password_kdf = "{{ auth_password_kdf }}"
+auth_password_argon2_memory_kib = "{{ auth_password_argon2_memory_kib }}"
+auth_password_argon2_iterations = "{{ auth_password_argon2_iterations }}"
+auth_password_argon2_parallelism = "{{ auth_password_argon2_parallelism }}"
+auth_password_pbkdf2_iterations = "{{ auth_password_pbkdf2_iterations }}"
 auth_jwt_issuer = "{{ auth_jwt_issuer }}"
 auth_jwt_audience = "{{ auth_jwt_audience }}"
 auth_jwt_kid = "{{ auth_jwt_kid }}"
@@ -192,6 +213,9 @@ auth_jwt_private_key_der_base64 = "{{ auth_jwt_private_key_der_base64 }}"
 auth_jwt_public_jwks_json = "{{ auth_jwt_public_jwks_json }}"
 auth_jwt_key_ring_json = "{{ auth_jwt_key_ring_json }}"
 auth_admin_token = "{{ auth_admin_token }}"
+auth_bootstrap_admin_emails = "{{ auth_bootstrap_admin_emails }}"
+auth_csrf_secret = "{{ auth_csrf_secret }}"
+auth_dev_tools = "{{ auth_dev_tools }}"
 auth_session_ttl_seconds = "{{ auth_session_ttl_seconds }}"
 auth_access_token_ttl_seconds = "{{ auth_access_token_ttl_seconds }}"
 auth_refresh_token_ttl_seconds = "{{ auth_refresh_token_ttl_seconds }}"
@@ -264,6 +288,11 @@ auth_transport = "{{ auth_transport }}"
 auth_production_mode = "{{ auth_production_mode }}"
 auth_enable_password_login = "{{ auth_enable_password_login }}"
 auth_password_min_length = "{{ auth_password_min_length }}"
+auth_password_kdf = "{{ auth_password_kdf }}"
+auth_password_argon2_memory_kib = "{{ auth_password_argon2_memory_kib }}"
+auth_password_argon2_iterations = "{{ auth_password_argon2_iterations }}"
+auth_password_argon2_parallelism = "{{ auth_password_argon2_parallelism }}"
+auth_password_pbkdf2_iterations = "{{ auth_password_pbkdf2_iterations }}"
 auth_jwt_issuer = "{{ auth_jwt_issuer }}"
 auth_jwt_audience = "{{ auth_jwt_audience }}"
 auth_jwt_kid = "{{ auth_jwt_kid }}"
@@ -273,6 +302,9 @@ auth_jwt_private_key_der_base64 = "{{ auth_jwt_private_key_der_base64 }}"
 auth_jwt_public_jwks_json = "{{ auth_jwt_public_jwks_json }}"
 auth_jwt_key_ring_json = "{{ auth_jwt_key_ring_json }}"
 auth_admin_token = "{{ auth_admin_token }}"
+auth_bootstrap_admin_emails = "{{ auth_bootstrap_admin_emails }}"
+auth_csrf_secret = "{{ auth_csrf_secret }}"
+auth_dev_tools = "{{ auth_dev_tools }}"
 auth_session_ttl_seconds = "{{ auth_session_ttl_seconds }}"
 auth_access_token_ttl_seconds = "{{ auth_access_token_ttl_seconds }}"
 auth_refresh_token_ttl_seconds = "{{ auth_refresh_token_ttl_seconds }}"

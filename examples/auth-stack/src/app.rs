@@ -642,7 +642,7 @@ fn ForgotPasswordForm() -> impl IntoView {
                 <p class="auth-kicker">"Password reset"</p>
                 <h1 class="auth-title">"Recover access"</h1>
                 <p class="auth-copy">
-                    "Enter your email and the local auth service will issue a short-lived reset link."
+                    "Enter your email and we will send reset instructions if an account exists."
                 </p>
             </div>
             <form class="auth-fields" on:submit=move |event| {
@@ -699,21 +699,12 @@ fn PasswordResetStartResult(
     view! {
         {move || match result() {
             Some(Ok(response)) => {
-                let reset_url = response.reset_url;
-                if let Some(reset_url) = reset_url {
-                    view! {
-                        <div class="auth-success">
-                            <p>"If the account exists, a reset link is ready."</p>
-                            <a class="auth-text-link" href=reset_url>"Open reset link"</a>
-                        </div>
-                    }.into_any()
-                } else {
-                    view! {
-                        <div class="auth-success">
-                            <p>"If the account exists, a reset link is ready."</p>
-                        </div>
-                    }.into_any()
-                }
+                let _ = response;
+                view! {
+                    <div class="auth-success">
+                        <p>"If an account exists, reset instructions are ready to send."</p>
+                    </div>
+                }.into_any()
             }
             Some(Err(error)) => view! { <p class="auth-error">{server_error_text(error)}</p> }.into_any(),
             None => view! {}.into_any(),
@@ -1639,6 +1630,10 @@ fn optional_text(value: String) -> Option<String> {
     if value.is_empty() { None } else { Some(value) }
 }
 
+fn ui_idempotency_key(prefix: &str) -> String {
+    format!("{prefix}:ui-action")
+}
+
 #[cfg(feature = "hydrate")]
 fn passkey_js_string(value: JsValue) -> Result<String, String> {
     value
@@ -1736,6 +1731,11 @@ fn current_session_id_from_cookie() -> Option<String> {
     let parts = use_context::<http::request::Parts>()?;
     let cookie_header = parts.headers.get(COOKIE)?.to_str().ok()?;
     session_id_from_cookie_header(cookie_header)
+}
+
+#[cfg(feature = "ssr")]
+fn server_fn_request_auth() -> crate::application::RequestAuth {
+    crate::application::RequestAuth::from_parts(current_session_id_from_cookie(), None, None)
 }
 
 #[cfg(feature = "ssr")]
@@ -2115,6 +2115,12 @@ pub async fn save_auth_provider(
 ) -> Result<AuthProviderSummary, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
+        crate::application::require_permission_for(
+            "auth:provider:write",
+            server_fn_request_auth(),
+        )
+        .await
+        .map_err(server_fn_error)?;
         crate::application::save_auth_provider_config(provider_id, enabled)
             .await
             .map_err(server_fn_error)
@@ -2130,6 +2136,12 @@ pub async fn save_auth_provider(
 pub async fn save_redirect_allowlist(redirects_json: String) -> Result<bool, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
+        crate::application::require_permission_for(
+            "auth:redirect:write",
+            server_fn_request_auth(),
+        )
+        .await
+        .map_err(server_fn_error)?;
         crate::application::save_redirect_allowlist(redirects_json)
             .await
             .map_err(server_fn_error)
@@ -2186,9 +2198,17 @@ pub async fn write_authorization_model(
 ) -> Result<AuthzModelWriteResponse, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
+        crate::application::require_permission_for(
+            "authz:model:write",
+            server_fn_request_auth(),
+        )
+        .await
+        .map_err(server_fn_error)?;
         crate::application::write_authorization_model(AuthzModelWriteRequest {
+            tenant: None,
             model_id,
             schema_json,
+            idempotency_key: Some(ui_idempotency_key("authz-model-write")),
         })
         .await
         .map_err(server_fn_error)
@@ -2206,7 +2226,16 @@ pub async fn activate_authorization_model(
 ) -> Result<AuthzModelWriteResponse, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
-        crate::application::activate_authorization_model(model_id)
+        crate::application::require_permission_for(
+            "authz:model:write",
+            server_fn_request_auth(),
+        )
+        .await
+        .map_err(server_fn_error)?;
+        crate::application::activate_authorization_model(
+            model_id,
+            Some(ui_idempotency_key("authz-model-activate")),
+        )
             .await
             .map_err(server_fn_error)
     }
@@ -2223,7 +2252,16 @@ pub async fn write_relationship_tuples(
 ) -> Result<RelationshipTupleWriteResponse, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
-        crate::application::write_relationship_tuples(RelationshipTupleWriteRequest { tuples_json })
+        crate::application::require_permission_for(
+            "authz:tuple:write",
+            server_fn_request_auth(),
+        )
+        .await
+        .map_err(server_fn_error)?;
+        crate::application::write_relationship_tuples(RelationshipTupleWriteRequest {
+            tuples_json,
+            idempotency_key: Some(ui_idempotency_key("authz-tuples-write")),
+        })
             .await
             .map_err(server_fn_error)
     }
@@ -2240,8 +2278,15 @@ pub async fn delete_relationship_tuples(
 ) -> Result<RelationshipTupleWriteResponse, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
+        crate::application::require_permission_for(
+            "authz:tuple:write",
+            server_fn_request_auth(),
+        )
+        .await
+        .map_err(server_fn_error)?;
         crate::application::delete_relationship_tuples(RelationshipTupleWriteRequest {
             tuples_json,
+            idempotency_key: Some(ui_idempotency_key("authz-tuples-delete")),
         })
         .await
         .map_err(server_fn_error)
@@ -2262,11 +2307,15 @@ pub async fn run_authorization_check(
 ) -> Result<AuthzCheckResponse, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
+        crate::application::require_permission_for("authz:check", server_fn_request_auth())
+            .await
+            .map_err(server_fn_error)?;
         crate::application::check_authorization(AuthzCheckRequest {
             tenant,
             subject,
             object,
             relation,
+            model_ref: Some(crate::contracts::AuthzModelRef::active()),
             context: BTreeMap::new(),
         })
         .await

@@ -30,6 +30,11 @@ pub struct SessionView {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CsrfTokenResponse {
+    pub token: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OAuthStartResponse {
     pub provider_id: String,
     pub authorization_url: String,
@@ -63,6 +68,7 @@ pub struct PasswordResetStartRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PasswordResetStartResponse {
     pub accepted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reset_url: Option<String>,
     pub expires_in_seconds: u64,
 }
@@ -176,11 +182,29 @@ pub struct SigningKeyRotateResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AuthzModelRef {
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+}
+
+impl AuthzModelRef {
+    pub fn active() -> Self {
+        Self {
+            kind: "active".to_string(),
+            model_id: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AuthzCheckRequest {
     pub tenant: String,
     pub subject: String,
     pub object: String,
     pub relation: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_ref: Option<AuthzModelRef>,
     #[serde(default)]
     pub context: BTreeMap<String, String>,
 }
@@ -208,6 +232,8 @@ pub struct AuthzListObjectsRequest {
     pub subject: String,
     pub relation: String,
     pub object_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_ref: Option<AuthzModelRef>,
     #[serde(default)]
     pub context: BTreeMap<String, String>,
 }
@@ -222,6 +248,8 @@ pub struct AuthzExpandRequest {
     pub tenant: String,
     pub object: String,
     pub relation: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_ref: Option<AuthzModelRef>,
     #[serde(default)]
     pub context: BTreeMap<String, String>,
 }
@@ -233,8 +261,12 @@ pub struct AuthzExpandResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AuthzModelWriteRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<String>,
     pub model_id: String,
     pub schema_json: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -253,6 +285,8 @@ pub struct AuthzModelWriteResponse {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RelationshipTupleWriteRequest {
     pub tuples_json: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
