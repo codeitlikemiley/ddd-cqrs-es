@@ -541,12 +541,17 @@ http = "1.1.0"
 http-body = {{ version = "1.0", optional = true }}
 http-body-util = {{ version = "0.1.2", optional = true }}
 hydration_context = "0.3.0"
+argon2 = {{ version = "0.5", default-features = false, features = ["alloc"] }}
+getrandom = "0.2"
 leptos = "0.8.19"
 leptos_meta = "0.8.6"
 leptos_router = "0.8.13"
 leptos_wasi = {{ version = "0.3.1", default-features = false, features = ["wasip3"], optional = true }}
 server_fn = {{ version = "0.8.12", features = ["axum-no-default"] }}
 spin-sdk = {{ version = "6.0.0", optional = true }}
+# Keep wasip3 aligned with spin-sdk 6.0.0 and leptos_wasi 0.3.1.
+# wasip3 0.7.0 compiles but breaks Spin at runtime with a
+# wasi:http/types resource mismatch (`response` has the wrong type).
 wasip3 = {{ version = "0.6.0", features = ["http-compat"], optional = true }}
 wit-bindgen = {{ version = "0.57.1", features = ["inter-task-wakeup"], optional = true }}
 wasm-bindgen = {{ version = "=0.2.125", optional = true }}

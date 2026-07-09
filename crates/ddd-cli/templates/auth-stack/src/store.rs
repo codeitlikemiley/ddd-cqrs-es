@@ -4,6 +4,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use argon2::{Algorithm as Argon2Algorithm, Argon2, Params as Argon2Params, Version as Argon2Version};
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use ddd_auth::{
@@ -59,7 +60,12 @@ const DEFAULT_PASSKEY_RP_ID: &str = "localhost";
 const DEFAULT_PASSKEY_RP_NAME: &str = "ddd-auth";
 const DEFAULT_PASSKEY_ORIGIN: &str = "http://localhost:3008";
 const PASSWORD_HASH_ALGORITHM: &str = "pbkdf2-sha256";
-const PASSWORD_HASH_ITERATIONS: u32 = 100_000;
+const DEFAULT_PASSWORD_KDF: &str = "argon2id";
+const DEFAULT_PASSWORD_ARGON2_MEMORY_KIB: u32 = 19_456;
+const DEFAULT_PASSWORD_ARGON2_ITERATIONS: u32 = 2;
+const DEFAULT_PASSWORD_ARGON2_PARALLELISM: u32 = 1;
+const DEFAULT_PASSWORD_PBKDF2_ITERATIONS: u32 = 600_000;
+const MIN_PRODUCTION_PASSWORD_PBKDF2_ITERATIONS: u32 = 600_000;
 const PASSWORD_SALT_BYTES: usize = 16;
 const PASSWORD_HASH_BYTES: usize = 32;
 const AUTH_STORAGE_PROJECTION_CHECKPOINT: &str = "auth.storage.read_models";
@@ -243,7 +249,7 @@ pub async fn register_email_password(
 
     let now = now_ms();
     let user_id = user_id_from_email(&email);
-    let password_hash = hash_password(&request.password)?;
+    let password_hash = hash_password(&request.password).await?;
 
     upsert_user_email_identity(&email, &user_id, now).await?;
     execute_sql(
@@ -290,8 +296,36 @@ pub async fn login_email_password(
     if record.disabled || record.revoked_at_ms.is_some() {
         return Err(AuthStackError::InvalidCredentials);
     }
-    if !verify_password(&request.password, &record.password_hash)? {
-        return Err(AuthStackError::InvalidCredentials);
+    match verify_password(&request.password, &record.password_hash).await? {
+        PasswordVerification::Invalid => {
+            return Err(AuthStackError::InvalidCredentials);
+        }
+        PasswordVerification::ValidCurrent => {}
+        PasswordVerification::ValidNeedsRehash => {
+            let password_hash = hash_password(&request.password).await?;
+            execute_sql(
+                "UPDATE auth_password_credentials \
+                 SET password_hash = ?1, updated_at_ms = ?2 \
+                 WHERE tenant_id = ?3 AND user_id = ?4",
+                vec![
+                    json!(&password_hash),
+                    json!(now_ms()),
+                    json!(DEFAULT_TENANT_ID),
+                    json!(&record.user_id),
+                ],
+            )
+            .await?;
+            append_storage_event(
+                "auth_user",
+                &record.user_id,
+                "auth_password_hash_rehashed",
+                json!({
+                    "tenant_id": DEFAULT_TENANT_ID,
+                    "user_id": &record.user_id,
+                }),
+            )
+            .await?;
+        }
     }
 
     execute_sql(
@@ -342,7 +376,7 @@ pub async fn start_password_reset(
     }
 
     let now = now_ms();
-    let grant_id = storage_id("password_reset", &email);
+    let grant_id = secure_storage_id("password_reset")?;
     let expires_at_ms = now.saturating_add(PASSWORD_RESET_TTL_MS);
     let payload_json = json!({
         "email": record.primary_email,
@@ -383,7 +417,7 @@ pub async fn start_password_reset(
 
     Ok(PasswordResetStartResponse {
         accepted: true,
-        reset_url: Some(format!("/reset-password?token={grant_id}")),
+        reset_url: dev_password_reset_url(&grant_id).await,
         expires_in_seconds: PASSWORD_RESET_TTL_SECONDS,
     })
 }
@@ -437,7 +471,7 @@ pub async fn complete_password_reset(
     }
 
     let now = now_ms();
-    let password_hash = hash_password(&request.password)?;
+    let password_hash = hash_password(&request.password).await?;
     execute_sql(
         "UPDATE auth_password_credentials \
          SET password_hash = ?1, updated_at_ms = ?2, revoked_at_ms = NULL \
@@ -476,7 +510,7 @@ pub async fn complete_password_reset(
 pub async fn create_oauth_grant(provider_id: &str, redirect_url: &str) -> AuthStackResult<String> {
     initialize_schema_async().await?;
     let now = now_ms();
-    let grant_id = storage_id("oauth", provider_id);
+    let grant_id = secure_storage_id("oauth")?;
     let expires_at_ms = now.saturating_add(OAUTH_STATE_TTL_MS);
     let payload_json = json!({
         "provider_id": provider_id,
@@ -617,7 +651,7 @@ async fn create_passkey_registration_challenge(
     };
     let payload_json = serde_json::to_string(&payload)
         .map_err(|error| AuthStackError::serialization(error.to_string()))?;
-    let challenge_id = storage_id("passkey_registration", &email);
+    let challenge_id = secure_storage_id("passkey_registration")?;
     let expires_at_ms = now.saturating_add(passkey_challenge_ttl_ms().await);
 
     upsert_user_email_identity(&email, &user_id, now).await?;
@@ -686,7 +720,7 @@ async fn create_passkey_login_challenge(
     };
     let payload_json = serde_json::to_string(&payload)
         .map_err(|error| AuthStackError::serialization(error.to_string()))?;
-    let challenge_id = storage_id("passkey_login", &email);
+    let challenge_id = secure_storage_id("passkey_login")?;
     let expires_at_ms = now.saturating_add(passkey_challenge_ttl_ms().await);
 
     execute_sql(
@@ -932,11 +966,11 @@ async fn issue_session_for_email(
     let now = now_ms();
     let email = normalize_email(email);
     let user_id = user_id_from_email(&email);
-    let session_id = storage_id("session", &email);
+    let session_id = secure_storage_id("session")?;
     let expires_at_ms = now.saturating_add(session_ttl_ms().await);
     let refresh_token_ttl_ms = refresh_token_ttl_ms().await;
     let access_token_ttl_seconds = access_token_ttl_seconds().await;
-    let permissions = default_session_permissions();
+    let permissions = session_permissions_for_email(&email).await;
     let permissions_json = serde_json::to_string(&permissions)
         .map_err(|error| AuthStackError::serialization(error.to_string()))?;
 
@@ -964,7 +998,7 @@ async fn issue_session_for_email(
         ],
     )
     .await?;
-    let refresh_token = opaque_refresh_token();
+    let refresh_token = opaque_refresh_token()?;
     let refresh_token_hash = refresh_token_hash(&refresh_token);
     let refresh_token_expires_at_ms = now.saturating_add(refresh_token_ttl_ms);
     execute_sql(
@@ -1056,7 +1090,7 @@ pub async fn refresh_session(
     let now = now_ms();
     let refresh_token_ttl_ms = refresh_token_ttl_ms().await;
     let access_token_ttl_seconds = access_token_ttl_seconds().await;
-    let next_refresh_token = opaque_refresh_token();
+    let next_refresh_token = opaque_refresh_token()?;
     let next_refresh_token_hash = refresh_token_hash(&next_refresh_token);
     let next_refresh_token_expires_at_ms = now.saturating_add(refresh_token_ttl_ms);
     execute_sql(
@@ -1292,6 +1326,19 @@ pub async fn validate_admin_token(admin_token: Option<&str>) -> AuthStackResult<
         return Err(AuthStackError::Forbidden);
     }
     Ok(())
+}
+
+pub async fn csrf_token_for_session(session_id: &str) -> AuthStackResult<String> {
+    let secret = if let Some(value) = store_config_value("AUTH_CSRF_SECRET")
+        .await
+        .filter(|value| !value.trim().is_empty())
+    {
+        value
+    } else {
+        jwt_secret().await
+    };
+    let digest = Sha256::digest(format!("csrf:{secret}:{session_id}").as_bytes());
+    Ok(URL_SAFE_NO_PAD.encode(digest))
 }
 
 pub async fn write_authorization_model(
@@ -1698,6 +1745,7 @@ async fn insert_auth_provider_config_if_missing_unchecked(
 
 async fn seed_bootstrap_authorization_model() -> AuthStackResult<()> {
     let request = AuthzModelWriteRequest {
+        tenant: None,
         model_id: BOOTSTRAP_MODEL_ID.to_string(),
         schema_json: json!({
             "schema_version": "1.0",
@@ -1705,6 +1753,7 @@ async fn seed_bootstrap_authorization_model() -> AuthStackResult<()> {
             "types": {}
         })
         .to_string(),
+        idempotency_key: None,
     };
     write_authorization_model_unchecked(&request, request.schema_json.clone()).await?;
     let active_rows = execute_sql(
@@ -1779,7 +1828,7 @@ fn env_non_empty(name: &str) -> Option<String> {
 }
 
 async fn runtime_config_value(name: &str) -> Option<String> {
-    #[cfg(runtime_spin)]
+    #[cfg(all(runtime_spin, not(test)))]
     {
         let variable_name = name.to_ascii_lowercase();
         if let Ok(value) = spin_sdk::variables::get(&variable_name).await
@@ -2067,7 +2116,7 @@ async fn append_storage_event(
         "tenant_id": DEFAULT_TENANT_ID,
         "source": "auth-stack",
     });
-    let event_id = storage_event_id();
+    let event_id = storage_event_id()?;
     let payload_json = serde_json::to_string(&payload)
         .map_err(|error| AuthStackError::serialization(error.to_string()))?;
     let metadata_json = serde_json::to_string(&metadata)
@@ -2656,8 +2705,10 @@ async fn apply_authz_storage_event(event: &StoredStorageEvent) -> AuthStackResul
             let schema_json = payload_json_string(payload, "schema_json")?;
             write_authorization_model_unchecked(
                 &AuthzModelWriteRequest {
+                    tenant: None,
                     model_id,
                     schema_json: schema_json.clone(),
+                    idempotency_key: None,
                 },
                 schema_json,
             )
@@ -3061,25 +3112,78 @@ fn password_credential_from_row(row: Value) -> AuthStackResult<PasswordCredentia
     })
 }
 
-fn hash_password(password: &str) -> AuthStackResult<String> {
-    let salt = random_bytes(PASSWORD_SALT_BYTES);
-    let mut output = [0_u8; PASSWORD_HASH_BYTES];
-    pbkdf2::<Hmac<Sha256>>(
-        password.as_bytes(),
-        &salt,
-        PASSWORD_HASH_ITERATIONS,
-        &mut output,
-    )
-    .map_err(|error| AuthStackError::store(format!("failed to hash password: {error}")))?;
+async fn hash_password(password: &str) -> AuthStackResult<String> {
+    match password_kdf_algorithm().await?.as_str() {
+        "argon2id" => hash_password_argon2id(password).await,
+        PASSWORD_HASH_ALGORITHM => hash_password_pbkdf2(password, password_pbkdf2_iterations().await?),
+        algorithm => Err(AuthStackError::configuration(format!(
+            "unsupported AUTH_PASSWORD_KDF '{algorithm}'"
+        ))),
+    }
+}
 
+async fn hash_password_argon2id(password: &str) -> AuthStackResult<String> {
+    let salt = random_bytes(PASSWORD_SALT_BYTES)?;
+    let params = password_argon2_params().await?;
+    let mut output = [0_u8; PASSWORD_HASH_BYTES];
+    let argon2 = Argon2::new(Argon2Algorithm::Argon2id, Argon2Version::V0x13, params);
+    argon2
+        .hash_password_into(password.as_bytes(), &salt, &mut output)
+        .map_err(|error| AuthStackError::store(format!("failed to hash password: {error}")))?;
+
+    let params = password_argon2_params().await?;
     Ok(format!(
-        "{PASSWORD_HASH_ALGORITHM}${PASSWORD_HASH_ITERATIONS}${}${}",
+        "argon2id$m={},t={},p={}${}${}",
+        params.m_cost(),
+        params.t_cost(),
+        params.p_cost(),
         URL_SAFE_NO_PAD.encode(salt),
         URL_SAFE_NO_PAD.encode(output)
     ))
 }
 
-fn verify_password(password: &str, stored_hash: &str) -> AuthStackResult<bool> {
+fn hash_password_pbkdf2(password: &str, iterations: u32) -> AuthStackResult<String> {
+    let salt = random_bytes(PASSWORD_SALT_BYTES)?;
+    let mut output = [0_u8; PASSWORD_HASH_BYTES];
+    pbkdf2::<Hmac<Sha256>>(
+        password.as_bytes(),
+        &salt,
+        iterations,
+        &mut output,
+    )
+    .map_err(|error| AuthStackError::store(format!("failed to hash password: {error}")))?;
+
+    Ok(format!(
+        "{PASSWORD_HASH_ALGORITHM}${iterations}${}${}",
+        URL_SAFE_NO_PAD.encode(salt),
+        URL_SAFE_NO_PAD.encode(output)
+    ))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PasswordVerification {
+    Invalid,
+    ValidCurrent,
+    ValidNeedsRehash,
+}
+
+impl PasswordVerification {
+    fn from_match(matches: bool, needs_rehash: bool) -> Self {
+        if !matches {
+            Self::Invalid
+        } else if needs_rehash {
+            Self::ValidNeedsRehash
+        } else {
+            Self::ValidCurrent
+        }
+    }
+}
+
+async fn verify_password(password: &str, stored_hash: &str) -> AuthStackResult<PasswordVerification> {
+    if stored_hash.starts_with("argon2id$") {
+        return verify_password_argon2id(password, stored_hash).await;
+    }
+
     let parts = stored_hash.split('$').collect::<Vec<_>>();
     if parts.len() != 4 || parts[0] != PASSWORD_HASH_ALGORITHM {
         return Err(AuthStackError::store(
@@ -3099,7 +3203,138 @@ fn verify_password(password: &str, stored_hash: &str) -> AuthStackResult<bool> {
     pbkdf2::<Hmac<Sha256>>(password.as_bytes(), &salt, iterations, &mut candidate)
         .map_err(|error| AuthStackError::store(format!("failed to verify password: {error}")))?;
 
-    Ok(constant_time_eq(&candidate, &expected))
+    let current_algorithm = password_kdf_algorithm().await?;
+    let current_iterations = password_pbkdf2_iterations().await?;
+    Ok(PasswordVerification::from_match(
+        constant_time_eq(&candidate, &expected),
+        current_algorithm != PASSWORD_HASH_ALGORITHM || iterations < current_iterations,
+    ))
+}
+
+async fn verify_password_argon2id(
+    password: &str,
+    stored_hash: &str,
+) -> AuthStackResult<PasswordVerification> {
+    let parts = stored_hash.split('$').collect::<Vec<_>>();
+    if parts.len() != 4 || parts[0] != "argon2id" {
+        return Err(AuthStackError::store(
+            "stored password hash format is invalid",
+        ));
+    }
+    let (memory_kib, iterations, parallelism) = parse_argon2_param_part(parts[1])?;
+    let salt = URL_SAFE_NO_PAD.decode(parts[2]).map_err(|error| {
+        AuthStackError::store(format!("stored password salt is invalid: {error}"))
+    })?;
+    let expected = URL_SAFE_NO_PAD.decode(parts[3]).map_err(|error| {
+        AuthStackError::store(format!("stored password hash is invalid: {error}"))
+    })?;
+    let params = Argon2Params::new(memory_kib, iterations, parallelism, Some(expected.len()))
+        .map_err(|error| AuthStackError::store(format!("stored Argon2 parameters are invalid: {error}")))?;
+    let argon2 = Argon2::new(Argon2Algorithm::Argon2id, Argon2Version::V0x13, params);
+    let mut candidate = vec![0_u8; expected.len()];
+    argon2
+        .hash_password_into(password.as_bytes(), &salt, &mut candidate)
+        .map_err(|error| AuthStackError::store(format!("failed to verify password: {error}")))?;
+
+    let current_algorithm = password_kdf_algorithm().await?;
+    let current_params = password_argon2_params().await?;
+    let needs_rehash = current_algorithm != "argon2id"
+        || memory_kib < current_params.m_cost()
+        || iterations < current_params.t_cost()
+        || parallelism != current_params.p_cost();
+    Ok(PasswordVerification::from_match(
+        constant_time_eq(&candidate, &expected),
+        needs_rehash,
+    ))
+}
+
+fn parse_argon2_param_part(value: &str) -> AuthStackResult<(u32, u32, u32)> {
+    let mut memory_kib = None;
+    let mut iterations = None;
+    let mut parallelism = None;
+    for part in value.split(',') {
+        let (key, raw_value) = part
+            .split_once('=')
+            .ok_or_else(|| AuthStackError::store("stored Argon2 parameters are invalid"))?;
+        let parsed = raw_value.parse::<u32>().map_err(|error| {
+            AuthStackError::store(format!("stored Argon2 parameter is invalid: {error}"))
+        })?;
+        match key {
+            "m" => memory_kib = Some(parsed),
+            "t" => iterations = Some(parsed),
+            "p" => parallelism = Some(parsed),
+            _ => {}
+        }
+    }
+
+    Ok((
+        memory_kib.ok_or_else(|| AuthStackError::store("stored Argon2 memory cost is missing"))?,
+        iterations.ok_or_else(|| AuthStackError::store("stored Argon2 iterations are missing"))?,
+        parallelism.ok_or_else(|| AuthStackError::store("stored Argon2 parallelism is missing"))?,
+    ))
+}
+
+async fn password_kdf_algorithm() -> AuthStackResult<String> {
+    let algorithm = store_config_value("AUTH_PASSWORD_KDF")
+        .await
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_PASSWORD_KDF.to_string())
+        .trim()
+        .to_ascii_lowercase();
+    match algorithm.as_str() {
+        "argon2id" | PASSWORD_HASH_ALGORITHM => Ok(algorithm),
+        _ => Err(AuthStackError::configuration(format!(
+            "AUTH_PASSWORD_KDF must be 'argon2id' or '{PASSWORD_HASH_ALGORITHM}'"
+        ))),
+    }
+}
+
+async fn password_argon2_params() -> AuthStackResult<Argon2Params> {
+    let memory_kib = config_u32(
+        "AUTH_PASSWORD_ARGON2_MEMORY_KIB",
+        DEFAULT_PASSWORD_ARGON2_MEMORY_KIB,
+    )
+    .await?;
+    let iterations = config_u32(
+        "AUTH_PASSWORD_ARGON2_ITERATIONS",
+        DEFAULT_PASSWORD_ARGON2_ITERATIONS,
+    )
+    .await?;
+    let parallelism = config_u32(
+        "AUTH_PASSWORD_ARGON2_PARALLELISM",
+        DEFAULT_PASSWORD_ARGON2_PARALLELISM,
+    )
+    .await?;
+    Argon2Params::new(memory_kib, iterations, parallelism, Some(PASSWORD_HASH_BYTES))
+        .map_err(|error| AuthStackError::configuration(format!("Argon2 password KDF policy is invalid: {error}")))
+}
+
+async fn password_pbkdf2_iterations() -> AuthStackResult<u32> {
+    let iterations = config_u32(
+        "AUTH_PASSWORD_PBKDF2_ITERATIONS",
+        DEFAULT_PASSWORD_PBKDF2_ITERATIONS,
+    )
+    .await?;
+    if config_bool(AUTH_PRODUCTION_MODE, false).await
+        && password_kdf_algorithm().await? == PASSWORD_HASH_ALGORITHM
+        && iterations < MIN_PRODUCTION_PASSWORD_PBKDF2_ITERATIONS
+    {
+        return Err(AuthStackError::configuration(format!(
+            "{AUTH_PRODUCTION_MODE}=true requires AUTH_PASSWORD_PBKDF2_ITERATIONS >= {MIN_PRODUCTION_PASSWORD_PBKDF2_ITERATIONS}"
+        )));
+    }
+    Ok(iterations)
+}
+
+async fn config_u32(name: &str, default: u32) -> AuthStackResult<u32> {
+    let Some(value) = store_config_value(name).await.filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(default);
+    };
+    value
+        .trim()
+        .parse::<u32>()
+        .map_err(|error| AuthStackError::configuration(format!("{name} must be a positive integer: {error}")))
 }
 
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
@@ -3112,26 +3347,18 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
         == 0
 }
 
-fn random_bytes(len: usize) -> Vec<u8> {
+fn random_bytes(len: usize) -> AuthStackResult<Vec<u8>> {
     #[cfg(all(target_arch = "wasm32", feature = "ssr"))]
     {
-        wasip3::random::random::get_random_bytes(len as u64)
+        Ok(wasip3::random::random::get_random_bytes(len as u64))
     }
 
     #[cfg(not(all(target_arch = "wasm32", feature = "ssr")))]
     {
-        use sha2::Digest;
-
-        let mut bytes = Vec::with_capacity(len);
-        let mut counter = 0_u64;
-        while bytes.len() < len {
-            let seed = format!("{}:{counter}", now_ms());
-            let digest = Sha256::digest(seed.as_bytes());
-            bytes.extend_from_slice(&digest);
-            counter = counter.saturating_add(1);
-        }
-        bytes.truncate(len);
-        bytes
+        let mut bytes = vec![0_u8; len];
+        getrandom::getrandom(&mut bytes)
+            .map_err(|error| AuthStackError::store(format!("secure randomness unavailable: {error}")))?;
+        Ok(bytes)
     }
 }
 
@@ -3204,7 +3431,7 @@ async fn issue_access_token_for_session(
         vec![jwt_audience().await],
         token_expires_at,
         issued_at,
-        storage_id("jwt", session_id),
+        secure_storage_id("jwt")?,
     );
     claims.tenant_id = Some(TenantId::from(DEFAULT_TENANT_ID.to_string()));
     claims.session_id = Some(SessionId::from(session_id.to_string()));
@@ -3219,8 +3446,8 @@ async fn issue_access_token_for_session(
     .map_err(map_auth_error)
 }
 
-fn opaque_refresh_token() -> String {
-    format!("refresh_{}", URL_SAFE_NO_PAD.encode(random_bytes(32)))
+fn opaque_refresh_token() -> AuthStackResult<String> {
+    Ok(format!("refresh_{}", URL_SAFE_NO_PAD.encode(random_bytes(32)?)))
 }
 
 fn refresh_token_hash(refresh_token: &str) -> String {
@@ -3862,7 +4089,7 @@ fn seconds_to_ms(value: u64) -> u64 {
 }
 
 async fn store_config_value(name: &str) -> Option<String> {
-    #[cfg(runtime_spin)]
+    #[cfg(all(runtime_spin, not(test)))]
     {
         let variable_name = name.to_ascii_lowercase();
         if let Ok(value) = spin_sdk::variables::get(&variable_name).await {
@@ -3946,18 +4173,57 @@ fn normalized_session_id(session_id: Option<&str>) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+async fn session_permissions_for_email(email: &str) -> Vec<String> {
+    let mut permissions = default_session_permissions();
+    if bootstrap_admin_email(email).await {
+        permissions.extend(
+            [
+                "auth:provider:write",
+                "auth:redirect:write",
+                "auth:signing-key:admin",
+                "auth:storage:admin",
+                "authz:model:write",
+                "authz:tuple:write",
+            ]
+            .into_iter()
+            .map(ToOwned::to_owned),
+        );
+        permissions.sort();
+        permissions.dedup();
+    }
+    permissions
+}
+
 fn default_session_permissions() -> Vec<String> {
     [
         "auth:session:read",
         "auth:token:refresh",
         "auth:logout",
         "authz:check",
-        "authz:model:write",
-        "authz:tuple:write",
     ]
     .into_iter()
     .map(ToOwned::to_owned)
     .collect()
+}
+
+async fn bootstrap_admin_email(email: &str) -> bool {
+    let email = normalize_email(email);
+    store_config_value("AUTH_BOOTSTRAP_ADMIN_EMAILS")
+        .await
+        .unwrap_or_default()
+        .split(',')
+        .map(normalize_email)
+        .any(|candidate| !candidate.is_empty() && candidate == email)
+}
+
+async fn dev_password_reset_url(grant_id: &str) -> Option<String> {
+    if config_bool(AUTH_PRODUCTION_MODE, false).await {
+        return None;
+    }
+    if !config_bool("AUTH_DEV_TOOLS", false).await {
+        return None;
+    }
+    Some(format!("/reset-password?token={grant_id}"))
 }
 
 fn normalize_email(email: &str) -> String {
@@ -3998,13 +4264,16 @@ fn capitalize_ascii(value: &str) -> String {
     first.to_ascii_uppercase().to_string() + chars.as_str()
 }
 
-fn storage_id(kind: &str, seed: &str) -> String {
-    let sanitized_seed = sanitize_identifier(seed);
-    format!("{kind}_{}_{}", now_ms(), sanitized_seed)
+fn secure_storage_id(kind: &str) -> AuthStackResult<String> {
+    Ok(format!("{kind}_{}", URL_SAFE_NO_PAD.encode(random_bytes(32)?)))
 }
 
-fn storage_event_id() -> String {
-    format!("event_{}_{}", now_ms(), URL_SAFE_NO_PAD.encode(random_bytes(8)))
+fn storage_event_id() -> AuthStackResult<String> {
+    Ok(format!(
+        "event_{}_{}",
+        now_ms(),
+        URL_SAFE_NO_PAD.encode(random_bytes(16)?)
+    ))
 }
 
 fn sanitize_identifier(value: &str) -> String {
@@ -4661,10 +4930,20 @@ mod tests {
 
     #[test]
     fn password_hash_verifies_and_rejects_wrong_password() {
-        let stored_hash = hash_password("correct horse battery staple").unwrap();
+        futures::executor::block_on(async {
+            let stored_hash = hash_password("correct horse battery staple").await.unwrap();
 
-        assert!(verify_password("correct horse battery staple", &stored_hash).unwrap());
-        assert!(!verify_password("wrong password", &stored_hash).unwrap());
+            assert_eq!(
+                verify_password("correct horse battery staple", &stored_hash)
+                    .await
+                    .unwrap(),
+                PasswordVerification::ValidCurrent
+            );
+            assert_eq!(
+                verify_password("wrong password", &stored_hash).await.unwrap(),
+                PasswordVerification::Invalid
+            );
+        });
     }
 
     #[test]

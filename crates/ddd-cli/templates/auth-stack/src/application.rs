@@ -8,9 +8,9 @@ use crate::contracts::{
     AuthCapabilities, AuthProviderSummary, AuthzBatchCheckRequest, AuthzBatchCheckResponse,
     AuthzCheckRequest, AuthzCheckResponse, AuthzExpandRequest, AuthzExpandResponse,
     AuthzListObjectsRequest, AuthzListObjectsResponse, AuthzModelReadResponse,
-    AuthzModelWriteRequest, AuthzModelWriteResponse, EmailPasswordLoginRequest,
-    EmailPasswordRegisterRequest, LoginCompletionResponse, LogoutResponse, OAuthCallbackRequest,
-    OAuthStartResponse, PasskeyStartRequest, PasskeyStartResponse, PasskeyVerifyRequest,
+    AuthzModelRef, AuthzModelWriteRequest, AuthzModelWriteResponse, EmailPasswordLoginRequest,
+    EmailPasswordRegisterRequest, CsrfTokenResponse, LoginCompletionResponse, LogoutResponse,
+    OAuthCallbackRequest, OAuthStartResponse, PasskeyStartRequest, PasskeyStartResponse, PasskeyVerifyRequest,
     PasswordResetCompleteRequest, PasswordResetStartRequest, PasswordResetStartResponse,
     RelationshipTupleWriteRequest, RelationshipTupleWriteResponse, SessionView,
     SigningKeyListResponse, SigningKeyRotateRequest, SigningKeyRotateResponse,
@@ -20,6 +20,27 @@ use crate::contracts::{
 use crate::error::{AuthStackError, AuthStackResult};
 
 const DEFAULT_PASSWORD_MIN_LENGTH: usize = 8;
+
+#[derive(Clone, Debug, Default)]
+pub struct RequestAuth {
+    pub session_id: Option<String>,
+    pub access_token: Option<String>,
+    pub admin_token: Option<String>,
+}
+
+impl RequestAuth {
+    pub fn from_parts(
+        session_id: Option<String>,
+        access_token: Option<String>,
+        admin_token: Option<String>,
+    ) -> Self {
+        Self {
+            session_id,
+            access_token,
+            admin_token,
+        }
+    }
+}
 
 pub async fn auth_capabilities() -> AuthStackResult<AuthCapabilities> {
     let password_enabled = feature_enabled("AUTH_ENABLE_PASSWORD_LOGIN", true).await;
@@ -110,6 +131,41 @@ pub async fn get_current_session_for(session_id: Option<String>) -> AuthStackRes
     crate::store::get_session(session_id.as_deref()).await
 }
 
+pub async fn csrf_token_for_session(session_id: Option<String>) -> AuthStackResult<CsrfTokenResponse> {
+    require_authenticated_route_for(session_id.clone()).await?;
+    let session_id = session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or(AuthStackError::AuthRequired)?;
+    Ok(CsrfTokenResponse {
+        token: crate::store::csrf_token_for_session(session_id).await?,
+    })
+}
+
+pub async fn validate_csrf_token_for_session(
+    session_id: Option<String>,
+    csrf_token: Option<String>,
+) -> AuthStackResult<()> {
+    let Some(session_id) = session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Err(AuthStackError::AuthRequired);
+    };
+    require_authenticated_route_for(Some(session_id.to_string())).await?;
+    let expected = crate::store::csrf_token_for_session(session_id).await?;
+    let Some(candidate) = csrf_token.as_deref().map(str::trim).filter(|value| !value.is_empty())
+    else {
+        return Err(AuthStackError::validation("x-csrf-token is required"));
+    };
+    if expected != candidate {
+        return Err(AuthStackError::Forbidden);
+    }
+    Ok(())
+}
+
 pub async fn session_cookie_secure_enabled() -> bool {
     if let Some(value) = config_value("AUTH_COOKIE_SECURE")
         .await
@@ -159,6 +215,49 @@ pub async fn require_authorized_route_for(
         Ok(session)
     } else {
         Err(AuthStackError::Forbidden)
+    }
+}
+
+pub async fn require_permission_for(
+    permission: &str,
+    auth: RequestAuth,
+) -> AuthStackResult<SessionView> {
+    if let Some(admin_token) = auth.admin_token.as_deref().filter(|value| !value.trim().is_empty())
+    {
+        crate::store::validate_admin_token(Some(admin_token)).await?;
+        return Ok(admin_session_view(permission));
+    }
+
+    if let Some(access_token) = auth.access_token.as_deref().filter(|value| !value.trim().is_empty())
+    {
+        let verified = verify_access_token(TokenVerifyRequest {
+            access_token: access_token.to_string(),
+        })
+        .await?;
+        if verified.scopes.iter().any(|scope| scope == permission) {
+            return Ok(SessionView {
+                authenticated: true,
+                tenant_id: verified.tenant_id,
+                user_id: Some(verified.subject),
+                primary_email: None,
+                expires_at: None,
+                permissions: verified.scopes,
+            });
+        }
+        return Err(AuthStackError::Forbidden);
+    }
+
+    require_authorized_route_for(permission, auth.session_id).await
+}
+
+fn admin_session_view(permission: &str) -> SessionView {
+    SessionView {
+        authenticated: true,
+        tenant_id: Some("tenant:default".to_string()),
+        user_id: Some("operator:admin-token".to_string()),
+        primary_email: None,
+        expires_at: None,
+        permissions: vec![permission.to_string()],
     }
 }
 
@@ -390,7 +489,8 @@ pub async fn check_authorization(
     let subject = SubjectRef::new(request.subject.as_str()).map_err(authz_validation_error)?;
     let object = ObjectRef::new(request.object.as_str()).map_err(authz_validation_error)?;
     let relation = Relation::new(request.relation.as_str()).map_err(authz_validation_error)?;
-    let model = load_active_authorization_model(&request.tenant, object.type_name(), &relation).await?;
+    let model =
+        load_authorization_model(&request.tenant, request.model_ref.as_ref(), object.type_name(), &relation).await?;
     let stored_tuples = crate::store::relationship_tuples_for_tenant(&request.tenant).await?;
     let context = AuthzContext {
         tenant_id: Some(tenant),
@@ -419,8 +519,13 @@ pub async fn list_authorized_objects(
     if request.object_type.trim().is_empty() {
         return Err(AuthStackError::validation("object_type is required"));
     }
-    let model =
-        load_active_authorization_model(&request.tenant, &request.object_type, &relation).await?;
+    let model = load_authorization_model(
+        &request.tenant,
+        request.model_ref.as_ref(),
+        &request.object_type,
+        &relation,
+    )
+    .await?;
     let stored_tuples = crate::store::relationship_tuples_for_tenant(&request.tenant).await?;
     let context = AuthzContext {
         tenant_id: Some(tenant),
@@ -443,7 +548,8 @@ pub async fn expand_authorization(
     let tenant = TenantRef::new(request.tenant.as_str()).map_err(authz_validation_error)?;
     let object = ObjectRef::new(request.object.as_str()).map_err(authz_validation_error)?;
     let relation = Relation::new(request.relation.as_str()).map_err(authz_validation_error)?;
-    let model = load_active_authorization_model(&request.tenant, object.type_name(), &relation).await?;
+    let model =
+        load_authorization_model(&request.tenant, request.model_ref.as_ref(), object.type_name(), &relation).await?;
     let stored_tuples = crate::store::relationship_tuples_for_tenant(&request.tenant).await?;
     let context = AuthzContext {
         tenant_id: Some(tenant),
@@ -478,6 +584,7 @@ pub async fn write_authorization_model(
     if request.schema_json.trim().is_empty() {
         return Err(AuthStackError::validation("schema_json is required"));
     }
+    validate_idempotency_key(request.idempotency_key.as_deref())?;
     let response = crate::store::write_authorization_model(&request).await?;
     catch_up_storage_after_write("write_authorization_model").await;
     Ok(response)
@@ -485,10 +592,12 @@ pub async fn write_authorization_model(
 
 pub async fn activate_authorization_model(
     model_id: String,
+    idempotency_key: Option<String>,
 ) -> AuthStackResult<AuthzModelWriteResponse> {
     if model_id.trim().is_empty() {
         return Err(AuthStackError::validation("model_id is required"));
     }
+    validate_idempotency_key(idempotency_key.as_deref())?;
     let response = crate::store::activate_authorization_model(&model_id).await?;
     catch_up_storage_after_write("activate_authorization_model").await;
     Ok(response)
@@ -510,6 +619,7 @@ pub async fn write_relationship_tuples(
     if request.tuples_json.trim().is_empty() {
         return Err(AuthStackError::validation("tuples_json is required"));
     }
+    validate_idempotency_key(request.idempotency_key.as_deref())?;
     let response = crate::store::write_relationship_tuples(&request).await?;
     catch_up_storage_after_write("write_relationship_tuples").await;
     Ok(response)
@@ -521,6 +631,7 @@ pub async fn delete_relationship_tuples(
     if request.tuples_json.trim().is_empty() {
         return Err(AuthStackError::validation("tuples_json is required"));
     }
+    validate_idempotency_key(request.idempotency_key.as_deref())?;
     let response = crate::store::delete_relationship_tuples(&request).await?;
     catch_up_storage_after_write("delete_relationship_tuples").await;
     Ok(response)
@@ -817,7 +928,7 @@ async fn all_config_values_present(names: &[&str]) -> bool {
 }
 
 async fn config_value(name: &str) -> Option<String> {
-    #[cfg(all(feature = "sqlite", runtime_spin))]
+    #[cfg(all(feature = "sqlite", runtime_spin, not(test)))]
     {
         let variable_name = name.to_ascii_lowercase();
         if let Ok(value) = spin_sdk::variables::get(&variable_name).await {
@@ -855,12 +966,30 @@ fn url_query_component(value: &str) -> String {
         .collect()
 }
 
-async fn load_active_authorization_model(
+async fn load_authorization_model(
     tenant: &str,
+    model_ref: Option<&AuthzModelRef>,
     object_type: &str,
     relation: &Relation,
 ) -> AuthStackResult<AuthorizationModel> {
-    let model_id = crate::store::active_authorization_model_id(tenant).await?;
+    let model_ref = model_ref.ok_or_else(|| {
+        AuthStackError::validation("model_ref is required; use {\"kind\":\"active\"} or {\"kind\":\"id\",\"model_id\":\"...\"}")
+    })?;
+    let model_id = match model_ref.kind.trim() {
+        "active" => crate::store::active_authorization_model_id(tenant).await?,
+        "id" => model_ref
+            .model_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| AuthStackError::validation("model_ref.model_id is required when kind is 'id'"))?,
+        _ => {
+            return Err(AuthStackError::validation(
+                "model_ref.kind must be 'active' or 'id'",
+            ));
+        }
+    };
     if model_id == "bootstrap-deny-by-default" {
         return Ok(AuthorizationModel::new(model_id).with_type(
             ObjectType::new(object_type)
@@ -869,6 +998,18 @@ async fn load_active_authorization_model(
     }
     let schema_json = crate::store::authorization_model_schema(tenant, &model_id).await?;
     AuthorizationModel::from_json(&schema_json).map_err(authz_validation_error)
+}
+
+fn validate_idempotency_key(value: Option<&str>) -> AuthStackResult<()> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Err(AuthStackError::validation("idempotency_key is required"));
+    };
+    if value.len() > 128 {
+        return Err(AuthStackError::validation(
+            "idempotency_key must be 128 characters or fewer",
+        ));
+    }
+    Ok(())
 }
 
 fn authz_validation_error(error: ddd_authz::AuthzError) -> AuthStackError {

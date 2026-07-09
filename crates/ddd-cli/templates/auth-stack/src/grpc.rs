@@ -323,6 +323,10 @@ impl AuthzService for AuthzGrpcService {
         &self,
         request: Request<authz_proto::CheckRequest>,
     ) -> Result<Response<authz_proto::CheckResponse>, Status> {
+        let auth = request_auth_from_metadata(request.metadata());
+        crate::application::require_permission_for("authz:check", auth)
+            .await
+            .map_err(|error| status_from_app_error("Check", error))?;
         let response = crate::application::check_authorization(request.into_inner().into())
             .await
             .map_err(|error| status_from_app_error("Check", error))?;
@@ -333,6 +337,10 @@ impl AuthzService for AuthzGrpcService {
         &self,
         request: Request<authz_proto::BatchCheckRequest>,
     ) -> Result<Response<authz_proto::BatchCheckResponse>, Status> {
+        let auth = request_auth_from_metadata(request.metadata());
+        crate::application::require_permission_for("authz:check", auth)
+            .await
+            .map_err(|error| status_from_app_error("BatchCheck", error))?;
         let response = crate::application::batch_check_authorization(
             crate::contracts::AuthzBatchCheckRequest {
                 checks: request
@@ -352,6 +360,10 @@ impl AuthzService for AuthzGrpcService {
         &self,
         request: Request<authz_proto::ListObjectsRequest>,
     ) -> Result<Response<authz_proto::ListObjectsResponse>, Status> {
+        let auth = request_auth_from_metadata(request.metadata());
+        crate::application::require_permission_for("authz:check", auth)
+            .await
+            .map_err(|error| status_from_app_error("ListObjects", error))?;
         let response = crate::application::list_authorized_objects(request.into_inner().into())
             .await
             .map_err(|error| status_from_app_error("ListObjects", error))?;
@@ -362,6 +374,10 @@ impl AuthzService for AuthzGrpcService {
         &self,
         request: Request<authz_proto::ExpandRequest>,
     ) -> Result<Response<authz_proto::ExpandResponse>, Status> {
+        let auth = request_auth_from_metadata(request.metadata());
+        crate::application::require_permission_for("authz:check", auth)
+            .await
+            .map_err(|error| status_from_app_error("Expand", error))?;
         let response = crate::application::expand_authorization(request.into_inner().into())
             .await
             .map_err(|error| status_from_app_error("Expand", error))?;
@@ -372,11 +388,18 @@ impl AuthzService for AuthzGrpcService {
         &self,
         request: Request<authz_proto::WriteAuthorizationModelRequest>,
     ) -> Result<Response<authz_proto::WriteAuthorizationModelResponse>, Status> {
+        let auth = request_auth_from_metadata(request.metadata());
+        let idempotency_key = metadata_text(request.metadata(), "idempotency-key");
+        crate::application::require_permission_for("authz:model:write", auth)
+            .await
+            .map_err(|error| status_from_app_error("WriteAuthorizationModel", error))?;
         let request = request.into_inner();
         let response = crate::application::write_authorization_model(
             crate::contracts::AuthzModelWriteRequest {
+                tenant: empty_to_option(request.tenant),
                 model_id: request.model_id,
                 schema_json: request.schema_json,
+                idempotency_key: empty_to_option(request.idempotency_key).or(idempotency_key),
             },
         )
         .await
@@ -388,10 +411,18 @@ impl AuthzService for AuthzGrpcService {
         &self,
         request: Request<authz_proto::ActivateAuthorizationModelRequest>,
     ) -> Result<Response<authz_proto::WriteAuthorizationModelResponse>, Status> {
-        let response =
-            crate::application::activate_authorization_model(request.into_inner().model_id)
-                .await
-                .map_err(|error| status_from_app_error("ActivateAuthorizationModel", error))?;
+        let auth = request_auth_from_metadata(request.metadata());
+        let idempotency_key = metadata_text(request.metadata(), "idempotency-key");
+        crate::application::require_permission_for("authz:model:write", auth)
+            .await
+            .map_err(|error| status_from_app_error("ActivateAuthorizationModel", error))?;
+        let request = request.into_inner();
+        let response = crate::application::activate_authorization_model(
+            request.model_id,
+            empty_to_option(request.idempotency_key).or(idempotency_key),
+        )
+        .await
+        .map_err(|error| status_from_app_error("ActivateAuthorizationModel", error))?;
         Ok(Response::new(response.into()))
     }
 
@@ -410,9 +441,16 @@ impl AuthzService for AuthzGrpcService {
         &self,
         request: Request<authz_proto::RelationshipTupleWriteRequest>,
     ) -> Result<Response<authz_proto::RelationshipTupleWriteResponse>, Status> {
+        let auth = request_auth_from_metadata(request.metadata());
+        let idempotency_key = metadata_text(request.metadata(), "idempotency-key");
+        crate::application::require_permission_for("authz:tuple:write", auth)
+            .await
+            .map_err(|error| status_from_app_error("WriteRelationshipTuples", error))?;
+        let request = request.into_inner();
         let response = crate::application::write_relationship_tuples(
             crate::contracts::RelationshipTupleWriteRequest {
-                tuples_json: request.into_inner().tuples_json,
+                tuples_json: request.tuples_json,
+                idempotency_key: empty_to_option(request.idempotency_key).or(idempotency_key),
             },
         )
         .await
@@ -424,9 +462,16 @@ impl AuthzService for AuthzGrpcService {
         &self,
         request: Request<authz_proto::RelationshipTupleWriteRequest>,
     ) -> Result<Response<authz_proto::RelationshipTupleWriteResponse>, Status> {
+        let auth = request_auth_from_metadata(request.metadata());
+        let idempotency_key = metadata_text(request.metadata(), "idempotency-key");
+        crate::application::require_permission_for("authz:tuple:write", auth)
+            .await
+            .map_err(|error| status_from_app_error("DeleteRelationshipTuples", error))?;
+        let request = request.into_inner();
         let response = crate::application::delete_relationship_tuples(
             crate::contracts::RelationshipTupleWriteRequest {
-                tuples_json: request.into_inner().tuples_json,
+                tuples_json: request.tuples_json,
+                idempotency_key: empty_to_option(request.idempotency_key).or(idempotency_key),
             },
         )
         .await
@@ -476,6 +521,43 @@ fn status_from_app_error(operation: &'static str, error: crate::error::AuthStack
 fn empty_to_option(value: String) -> Option<String> {
     let value = value.trim().to_string();
     if value.is_empty() { None } else { Some(value) }
+}
+
+fn request_auth_from_metadata(metadata: &tonic::metadata::MetadataMap) -> crate::application::RequestAuth {
+    crate::application::RequestAuth::from_parts(
+        metadata_text(metadata, "x-auth-session"),
+        metadata_text(metadata, "authorization").and_then(|value| bearer_token(&value)),
+        metadata_text(metadata, "x-auth-admin-token"),
+    )
+}
+
+fn metadata_text(metadata: &tonic::metadata::MetadataMap, name: &str) -> Option<String> {
+    metadata
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn bearer_token(value: &str) -> Option<String> {
+    value
+        .trim()
+        .strip_prefix("Bearer ")
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn model_ref(kind: String, model_id: String) -> Option<crate::contracts::AuthzModelRef> {
+    let kind = kind.trim().to_string();
+    if kind.is_empty() {
+        return None;
+    }
+    Some(crate::contracts::AuthzModelRef {
+        kind,
+        model_id: empty_to_option(model_id),
+    })
 }
 
 impl From<crate::contracts::AuthProviderSummary> for auth_proto::AuthProvider {
@@ -649,6 +731,7 @@ impl From<authz_proto::CheckRequest> for crate::contracts::AuthzCheckRequest {
             subject: value.subject,
             object: value.object,
             relation: value.relation,
+            model_ref: model_ref(value.model_ref_kind, value.model_ref_model_id),
             context: value.context.into_iter().collect(),
         }
     }
@@ -679,6 +762,7 @@ impl From<authz_proto::ListObjectsRequest> for crate::contracts::AuthzListObject
             subject: value.subject,
             relation: value.relation,
             object_type: value.object_type,
+            model_ref: model_ref(value.model_ref_kind, value.model_ref_model_id),
             context: BTreeMap::new(),
         }
     }
@@ -698,6 +782,7 @@ impl From<authz_proto::ExpandRequest> for crate::contracts::AuthzExpandRequest {
             tenant: value.tenant,
             object: value.object,
             relation: value.relation,
+            model_ref: model_ref(value.model_ref_kind, value.model_ref_model_id),
             context: BTreeMap::new(),
         }
     }

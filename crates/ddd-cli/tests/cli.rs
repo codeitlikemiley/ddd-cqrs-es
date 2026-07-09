@@ -226,6 +226,8 @@ fn auth_stack_writes_manifest_defaults_and_passes_check() {
     assert!(cargo_toml.contains("crates/ddd-authz"));
     assert!(cargo_toml.contains("spin-postgres"));
     assert!(cargo_toml.contains("spin-mysql"));
+    assert!(cargo_toml.contains("argon2"));
+    assert!(cargo_toml.contains("getrandom"));
 
     let makefile = std::fs::read_to_string(project.join("Makefile")).unwrap();
     assert!(makefile.contains("db ?= $(if $(DATABASE_BACKEND),$(DATABASE_BACKEND),sqlite)"));
@@ -262,7 +264,17 @@ fn auth_stack_writes_manifest_defaults_and_passes_check() {
     let spin_toml = std::fs::read_to_string(project.join("spin.toml")).unwrap();
     assert!(spin_toml.contains("database_backend = { default = \"sqlite\" }"));
     assert!(spin_toml.contains("auth_cookie_secure = { default = \"false\" }"));
+    assert!(spin_toml.contains("auth_password_kdf = { default = \"argon2id\" }"));
+    assert!(spin_toml.contains("auth_bootstrap_admin_emails = { default = \"\" }"));
+    assert!(spin_toml.contains("auth_csrf_secret = { default = \"\" }"));
+    assert!(spin_toml.contains("auth_dev_tools = { default = \"false\" }"));
     assert!(spin_toml.contains("auth_cookie_secure = \"{{ auth_cookie_secure }}\""));
+    assert!(spin_toml.contains("auth_password_kdf = \"{{ auth_password_kdf }}\""));
+    assert!(
+        spin_toml.contains("auth_bootstrap_admin_emails = \"{{ auth_bootstrap_admin_emails }}\"")
+    );
+    assert!(spin_toml.contains("auth_csrf_secret = \"{{ auth_csrf_secret }}\""));
+    assert!(spin_toml.contains("auth_dev_tools = \"{{ auth_dev_tools }}\""));
     assert!(spin_toml.contains("auth_jwt_key_ring_json = \"{{ auth_jwt_key_ring_json }}\""));
     assert!(spin_toml.contains("auth_public_base_url = \"{{ auth_public_base_url }}\""));
     assert!(spin_toml.contains("auth_google_client_secret = \"{{ auth_google_client_secret }}\""));
@@ -277,7 +289,12 @@ fn auth_stack_writes_manifest_defaults_and_passes_check() {
         std::fs::read_to_string(project.join("spin.production.toml.example")).unwrap();
     assert!(production_spin_toml.contains("auth_production_mode = { default = \"true\" }"));
     assert!(production_spin_toml.contains("auth_cookie_secure = { default = \"true\" }"));
+    assert!(production_spin_toml.contains("auth_password_kdf = { default = \"argon2id\" }"));
+    assert!(production_spin_toml.contains("auth_bootstrap_admin_emails = { default = \"\" }"));
     assert!(production_spin_toml.contains("auth_cookie_secure = \"{{ auth_cookie_secure }}\""));
+    assert!(production_spin_toml.contains("auth_password_kdf = \"{{ auth_password_kdf }}\""));
+    assert!(production_spin_toml
+        .contains("auth_bootstrap_admin_emails = \"{{ auth_bootstrap_admin_emails }}\""));
     assert!(
         production_spin_toml.contains("auth_jwt_key_ring_json = \"{{ auth_jwt_key_ring_json }}\"")
     );
@@ -299,6 +316,10 @@ fn auth_stack_writes_manifest_defaults_and_passes_check() {
     let env_example = std::fs::read_to_string(project.join(".env.example")).unwrap();
     assert!(env_example.contains("AUTH_STORAGE_AUTO_CATCH_UP=true"));
     assert!(env_example.contains("AUTH_COOKIE_SECURE=false"));
+    assert!(env_example.contains("AUTH_PASSWORD_KDF=argon2id"));
+    assert!(env_example.contains("AUTH_BOOTSTRAP_ADMIN_EMAILS="));
+    assert!(env_example.contains("AUTH_CSRF_SECRET="));
+    assert!(env_example.contains("AUTH_DEV_TOOLS=false"));
     assert!(env_example.contains("DATABASE_BACKEND=sqlite"));
     assert!(env_example.contains("POSTGRES_URL="));
     assert!(env_example.contains("MYSQL_URL="));
