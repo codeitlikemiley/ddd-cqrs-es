@@ -27,6 +27,8 @@ flowchart LR
 
 Because upcasters operate during the loading loop, the database remains completely untouched, preserving our historical audit guarantees, while your application code only ever has to reason about the latest, current event structure.
 
+Upcasting is related to Event Sourcing because it keeps old event streams replayable after payload schemas change, but it is not the Decider/Evolver pattern. `EventUpcaster` transforms stored payload bytes before deserialization. Command decisions still belong in `Aggregate::handle`, and aggregate state evolution still belongs in `Aggregate::apply`.
+
 ---
 
 ## Implementing the `EventUpcaster` Trait

@@ -135,3 +135,10 @@ When implementing your own aggregates, always follow these rules:
 
 1. **Deterministic `apply`:** The `apply` method is run every time your aggregate state is reconstituted from history. It must be completely deterministic, have no side effects, and only mutate fields. Never perform validations or log actions inside `apply`.
 2. **Stateless `handle`:** The `handle` method only reads from the reconstituted state to validate business rules and emit events. It must never mutate any fields of the aggregate directly. State mutation is deferred entirely to `apply`.
+
+If you are familiar with the Decider/Evolver pattern, this crate maps that vocabulary directly onto the `Aggregate` trait:
+
+1. **Decider:** `Aggregate::handle` is the decision function. It receives the current aggregate state plus a command, validates invariants, and returns the new events to persist or a domain error.
+2. **Evolver:** `Aggregate::apply` is the evolve function. It receives an event fact and mutates only in-memory aggregate state so replay can deterministically rebuild the current state.
+
+The public API keeps the established `handle` and `apply` names for compatibility with existing users and generated code.

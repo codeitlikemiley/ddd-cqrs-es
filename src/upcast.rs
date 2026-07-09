@@ -5,6 +5,9 @@ use std::sync::{Arc, RwLock};
 ///
 /// Upcasters operate on raw bytes so storage adapters can use JSON, MessagePack,
 /// protobuf, or another encoding without coupling the core crate to that format.
+/// They are load-time schema migration hooks, not Decider/Evolver logic:
+/// command decisions remain in `Aggregate::handle`, and state evolution remains
+/// in `Aggregate::apply`.
 ///
 /// # Example
 ///

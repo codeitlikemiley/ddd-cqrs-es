@@ -7,6 +7,11 @@ use std::hash::Hash;
 /// themselves, publish messages, call infrastructure, or mutate themselves
 /// during command handling.
 ///
+/// In Decider/Evolver terminology, `handle` is the Decider: it reads current
+/// state and decides which new events should be persisted. `apply` is the
+/// Evolver: it folds a decided event into aggregate state during replay or
+/// after commit.
+///
 /// # Example
 ///
 /// ```rust
@@ -71,10 +76,10 @@ pub trait Aggregate: Sized {
     /// Returns the aggregate's own revision if it tracks one.
     fn revision(&self) -> Revision;
 
-    /// Mutates aggregate state from a previously decided domain event.
+    /// Evolves aggregate state from a previously decided domain event.
     fn apply(&mut self, event: &Self::Event);
 
-    /// Validates a command against current state and returns events to persist.
+    /// Decides new events by validating a command against current state.
     fn handle(&self, command: Self::Command) -> Result<Vec<Self::Event>, Self::Error>;
 
     /// Creates a new empty aggregate state.
