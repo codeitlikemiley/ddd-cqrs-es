@@ -28,7 +28,8 @@ Because the low-level Fermyon Spin PostgreSQL WASI driver doesn't have native, h
 If this unsupported byte payload is unmatched or printed raw via its debug representation, it generates a non-JSON debug string like `"DbValue::Unsupported([91, 123, ...])"`. Feeding this raw string into `serde_json::from_str` throws the `expected value at line 1 column 1` error (because the string begins with `"D"` instead of valid JSON brackets/braces `[` or `{`).
 
 #### Solution
-Our database adapter ([adapters.rs](file:///Users/uriah/Code/ddd/src/adapters.rs)) has been updated to explicitly pattern-match `SpinPgDbVal::Unsupported(b)` and `SpinPgDbVal::Jsonb(j)` variants.
+Our database adapter handles the unsupported and JSONB value variants
+explicitly instead of assuming every runtime value is scalar.
 
 Instead of falling back to debug string formatting, the adapter attempts to parse the raw byte slices directly using `serde_json::from_slice`:
 

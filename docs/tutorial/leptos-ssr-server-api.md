@@ -15,7 +15,9 @@ and Redis realtime publishing stay consistent.
 
 ### 5.1 Server Function Definitions (`src/app.rs`)
 
-Here is how our server functions are constructed inside `/Users/uriah/Code/ddd/examples/counter-app/src/app.rs`. Notice how they isolate SSR execution from client-side WASM hydration compilation:
+Here is how the server functions are constructed in
+`examples/counter-app/src/app.rs`. Notice how they isolate SSR execution from
+client-side WASM hydration compilation:
 
 ```rust
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -251,4 +253,3 @@ impl wasip3::exports::http::handler::Guest for LeptosServer {
 ```
 
 ---
-

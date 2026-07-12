@@ -6,10 +6,18 @@ under both raw Wasmtime and Fermyon Spin.
 
 ## Prerequisites
 
-- **Rust Toolchain:** Version 1.93.0 or later (required by `spin-sdk` v6.0.0).
-- **Rust target:** `rustup target add wasm32-wasip2`
-- **Cargo Leptos:** `cargo install --locked cargo-leptos`
-- **Spin CLI:** Version 4.0.0 or later.
+- **Rust Toolchain:** Version 1.93.0 or later, as required by the pinned
+  pre-release `spin-sdk` graph.
+- **WASI codegen target:** `rustup target add wasm32-wasip2`. This distributed
+  Rust target supplies `std`; the resulting component is inspected to prove it
+  exports the final `wasi:http/handler@0.3.0` world and has no Preview 1 imports.
+  The unstable `wasm32-wasip3` Rust target remains a canary until Rust ships its
+  self-contained target libraries.
+- **Cargo Leptos:** 0.3.7 or newer:
+  `cargo install --locked cargo-leptos --version '^0.3.7'`.
+- **wasm-tools:** Required for component-world inspection.
+- **Spin CLI:** the pinned `4.1.0-pre0` canary lane; no tagged release is yet
+  claimed as production-compatible with this final-WASI graph.
 - **Wasmtime CLI:** Version 45.0.0 or later.
 - **Redis CLI/server:** Optional, only needed for `db=redis` or `realtime=redis`.
 - **MySQL server/client:** Optional, only needed for `db=mysql`.

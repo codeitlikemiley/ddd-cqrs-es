@@ -8,12 +8,22 @@ service CounterService {
   rpc Decrement(ChangeCounterRequest) returns (CounterView);
   rpc Reset(ResetCounterRequest) returns (CounterView);
   rpc WatchCounter(WatchCounterRequest) returns (stream CounterRealtimeMessage);
+  rpc ApplyChanges(stream ChangeCounterRequest) returns (CounterView);
+  rpc Interact(stream CounterClientMessage) returns (stream CounterRealtimeMessage);
 }
 
 message GetCounterViewRequest {}
 
 message ChangeCounterRequest {
   int32 amount = 1;
+  ChangeOperation operation = 2;
+}
+
+enum ChangeOperation {
+  CHANGE_OPERATION_UNSPECIFIED = 0;
+  CHANGE_OPERATION_INCREMENT = 1;
+  CHANGE_OPERATION_DECREMENT = 2;
+  CHANGE_OPERATION_RESET = 3;
 }
 
 message ResetCounterRequest {}
@@ -40,4 +50,11 @@ message EventLog {
 message CounterRealtimeMessage {
   CounterView view = 1;
   uint64 last_sequence = 2;
+}
+
+message CounterClientMessage {
+  oneof message {
+    WatchCounterRequest watch = 1;
+    ChangeCounterRequest change = 2;
+  }
 }

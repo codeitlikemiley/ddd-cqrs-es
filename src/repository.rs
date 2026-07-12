@@ -478,6 +478,27 @@ where
         )
         .entered();
 
+        let started = std::time::Instant::now();
+        loop {
+            match self
+                .store
+                .load_idempotent(&idempotency_key)
+                .map_err(IdempotentRepositoryError::from_store_error)?
+            {
+                Some(crate::IdempotencyState::Complete(committed)) => return Ok(committed),
+                Some(crate::IdempotencyState::Pending) => {
+                    let Some(delay) = wait_config.next_delay(started.elapsed()) else {
+                        return Err(IdempotentRepositoryError::IdempotencyPendingTimeout {
+                            key: idempotency_key,
+                            waited: started.elapsed(),
+                        });
+                    };
+                    std::thread::sleep(delay);
+                }
+                None => break,
+            }
+        }
+
         let loaded = self.load(aggregate_id).map_err(|error| match error {
             RepositoryError::Domain(error) => IdempotentRepositoryError::Domain(error),
             RepositoryError::Concurrency(error) => IdempotentRepositoryError::Concurrency(error),
@@ -486,8 +507,6 @@ where
         let events = handle_command_as_new_events::<A>(&loaded.state, command, &metadata)
             .map_err(IdempotentRepositoryError::Domain)?;
         let expected_revision = ExpectedRevision::Exact(loaded.revision);
-        let started = std::time::Instant::now();
-
         loop {
             match self.store.append_idempotent(
                 idempotency_key.clone(),

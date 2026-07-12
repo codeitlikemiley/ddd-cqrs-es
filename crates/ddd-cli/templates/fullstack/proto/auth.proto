@@ -1,0 +1,239 @@
+syntax = "proto3";
+
+package auth.v1;
+
+service AuthService {
+  rpc GetCapabilities(GetCapabilitiesRequest) returns (AuthCapabilitiesResponse);
+  rpc ListProviders(ListProvidersRequest) returns (ListProvidersResponse);
+  rpc RegisterPassword(EmailPasswordRegisterRequest) returns (LoginCompletionResponse);
+  rpc LoginPassword(EmailPasswordLoginRequest) returns (LoginCompletionResponse);
+  rpc CompleteEmailVerification(EmailVerificationCompleteRequest) returns (LoginCompletionResponse);
+  rpc ResendEmailVerification(EmailVerificationResendRequest) returns (AcceptedResponse);
+  rpc StartPasswordReset(PasswordResetStartRequest) returns (PasswordResetStartResponse);
+  rpc CompletePasswordReset(PasswordResetCompleteRequest) returns (LoginCompletionResponse);
+  rpc StartOAuthLogin(StartOAuthLoginRequest) returns (OAuthStartResponse);
+  rpc CompleteOAuthCallback(CompleteOAuthCallbackRequest) returns (LoginCompletionResponse);
+  rpc StartPasskeyRegistration(PasskeyStartRequest) returns (PasskeyStartResponse);
+  rpc VerifyPasskeyRegistration(PasskeyVerifyRequest) returns (LoginCompletionResponse);
+  rpc StartPasskeyLogin(PasskeyStartRequest) returns (PasskeyStartResponse);
+  rpc VerifyPasskeyLogin(PasskeyVerifyRequest) returns (LoginCompletionResponse);
+  rpc GetSession(GetSessionRequest) returns (SessionView);
+  rpc RefreshToken(RefreshTokenRequest) returns (TokenRefreshResponse);
+  rpc VerifyToken(TokenVerifyRequest) returns (TokenVerifyResponse);
+  rpc ChangePassword(ChangePasswordRequest) returns (AcceptedResponse);
+  rpc ListSessions(ListSessionsRequest) returns (SessionListResponse);
+  rpc RevokeSession(RevokeSessionRequest) returns (AcceptedResponse);
+  rpc GetMfaStatus(GetMfaStatusRequest) returns (MfaStatusResponse);
+  rpc StartTotpEnrollment(StartTotpEnrollmentRequest) returns (MfaEnrollStartResponse);
+  rpc ConfirmTotpEnrollment(MfaCodeRequest) returns (MfaEnrollConfirmResponse);
+  rpc VerifyTotpStepUp(MfaCodeRequest) returns (SessionView);
+  rpc VerifyRecoveryCode(MfaCodeRequest) returns (SessionView);
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+  rpc GetJwks(GetJwksRequest) returns (JwksDocument);
+}
+
+message GetCapabilitiesRequest {}
+
+message AuthCapabilitiesResponse {
+  bool password_enabled = 1;
+  bool oauth_enabled = 2;
+  bool passkeys_enabled = 3;
+  repeated AuthProvider providers = 4;
+}
+
+message ListProvidersRequest {}
+
+message ListProvidersResponse {
+  repeated AuthProvider providers = 1;
+}
+
+message AuthProvider {
+  string provider_id = 1;
+  string display_name = 2;
+  string login_url = 3;
+  bool enabled = 4;
+}
+
+message StartOAuthLoginRequest {
+  string provider_id = 1;
+  string redirect_url = 2;
+}
+
+message OAuthStartResponse {
+  string provider_id = 1;
+  string authorization_url = 2;
+  string state = 3;
+}
+
+message CompleteOAuthCallbackRequest {
+  string provider_id = 1;
+  string code = 2;
+  string state = 3;
+  string redirect_url = 4;
+}
+
+message LoginCompletionResponse {
+  bool authenticated = 1;
+  string redirect_url = 2;
+  string session_id = 3;
+  string access_token = 4;
+  string refresh_token = 5;
+  uint64 expires_in_seconds = 6;
+}
+
+message EmailVerificationCompleteRequest {
+  string token = 1;
+  string redirect_url = 2;
+}
+
+message EmailVerificationResendRequest {
+  string email = 1;
+  string redirect_url = 2;
+}
+
+message AcceptedResponse {
+  bool accepted = 1;
+}
+
+message EmailPasswordRegisterRequest {
+  string email = 1;
+  string password = 2;
+  string redirect_url = 3;
+}
+
+message EmailPasswordLoginRequest {
+  string email = 1;
+  string password = 2;
+  string redirect_url = 3;
+}
+
+message PasswordResetStartRequest {
+  string email = 1;
+  string redirect_url = 2;
+}
+
+message PasswordResetStartResponse {
+  bool accepted = 1;
+  uint64 expires_in_seconds = 2;
+}
+
+message PasswordResetCompleteRequest {
+  string token = 1;
+  string password = 2;
+  string redirect_url = 3;
+}
+
+message PasskeyStartRequest {
+  string email = 1;
+  string redirect_url = 2;
+}
+
+message PasskeyStartResponse {
+  string challenge_id = 1;
+  string public_key_options_json = 2;
+  string redirect_url = 3;
+}
+
+message PasskeyVerifyRequest {
+  string challenge_id = 1;
+  string credential_json = 2;
+  string redirect_url = 3;
+}
+
+message GetSessionRequest {
+  string session_id = 1;
+}
+
+message SessionView {
+  bool authenticated = 1;
+  string tenant_id = 2;
+  string user_id = 3;
+  string primary_email = 4;
+  string expires_at = 5;
+  repeated string permissions = 6;
+  string assurance = 7;
+  bool system_administrator = 8;
+  uint64 issued_at_unix_seconds = 9;
+  uint64 expires_at_unix_seconds = 10;
+  string session_id = 11;
+}
+
+message RefreshTokenRequest {
+  string session_id = 1;
+  string refresh_token = 2;
+}
+
+message TokenRefreshResponse {
+  string access_token = 1;
+  string refresh_token = 2;
+  uint64 expires_in_seconds = 3;
+}
+
+message TokenVerifyRequest {
+  string access_token = 1;
+}
+
+message TokenVerifyResponse {
+  bool active = 1;
+  string subject = 2;
+  string tenant_id = 3;
+  string session_id = 4;
+  uint64 expires_at = 5;
+  repeated string scopes = 6;
+  string assurance = 7;
+  bool system_administrator = 8;
+  uint64 issued_at_unix_seconds = 9;
+}
+
+message ChangePasswordRequest { string current_password = 1; string new_password = 2; }
+message ListSessionsRequest {}
+message RevokeSessionRequest { string session_id = 1; }
+message AccountSession {
+  string session_id = 1;
+  string organization_id = 2;
+  string assurance = 3;
+  uint64 issued_at_ms = 4;
+  uint64 expires_at_ms = 5;
+  bool current = 6;
+}
+message SessionListResponse { repeated AccountSession sessions = 1; }
+
+message GetMfaStatusRequest {}
+message StartTotpEnrollmentRequest {}
+message MfaStatusResponse {
+  bool totp_enrolled = 1;
+  uint32 recovery_codes_remaining = 2;
+  string assurance = 3;
+}
+message MfaEnrollStartResponse {
+  string credential_id = 1;
+  string secret_base32 = 2;
+  string provisioning_uri = 3;
+}
+message MfaCodeRequest { string code = 1; }
+message MfaEnrollConfirmResponse {
+  repeated string recovery_codes = 1;
+  string assurance = 2;
+}
+
+message LogoutRequest {
+  string session_id = 1;
+}
+
+message LogoutResponse {
+  string redirect_url = 1;
+}
+
+message GetJwksRequest {}
+
+message JwksDocument {
+  repeated JwksKey keys = 1;
+}
+
+message JwksKey {
+  string kid = 1;
+  string kty = 2;
+  string alg = 3;
+  string use = 4;
+  map<string, string> public_parameters = 5;
+}

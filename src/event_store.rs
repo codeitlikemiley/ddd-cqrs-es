@@ -1,7 +1,7 @@
 use crate::aggregate::Aggregate;
 use crate::error::EventStoreError;
 use crate::event::{EventEnvelope, ExpectedRevision, NewEvent};
-use crate::idempotency::IdempotencyKey;
+use crate::idempotency::{IdempotencyKey, IdempotencyState};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::num::NonZeroUsize;
@@ -146,6 +146,15 @@ pub trait AtomicIdempotentEventStore<A>: EventStore<A>
 where
     A: Aggregate,
 {
+    /// Loads an existing atomic idempotency record before command evaluation.
+    ///
+    /// Repositories use this to replay a completed command even when evaluating
+    /// that command against the now-current aggregate state would fail.
+    fn load_idempotent(
+        &self,
+        idempotency_key: &IdempotencyKey,
+    ) -> Result<Option<IdempotencyState<EventStream<A>>>, Self::Error>;
+
     /// Appends events once for the idempotency key, atomically with the
     /// idempotency completion record.
     fn append_idempotent(

@@ -27,6 +27,7 @@ pub fn is_rest_request(req: &RestRequest) -> bool {
 pub async fn serve(req: RestRequest) -> CounterAppResult<RestResponse> {
     let method = req.method().clone();
     let uri = req.uri().clone();
+    let auth = crate::auth::CounterAuthContext::from_http_headers(req.headers());
     tracing::debug!(
         method = %method,
         path = uri.path(),
@@ -34,27 +35,27 @@ pub async fn serve(req: RestRequest) -> CounterAppResult<RestResponse> {
     );
 
     match (method, uri.path()) {
-        (Method::GET, "/api/counter/view") => {
-            match crate::application::get_counter_view().await {
-                Ok(view) => json_response(StatusCode::OK, &view),
-                Err(error) => counter_error_response(&error),
-            }
-        }
+        (Method::GET, "/api/counter/view") => match crate::application::get_counter_view().await {
+            Ok(view) => json_response(StatusCode::OK, &view),
+            Err(error) => counter_error_response(&error),
+        },
         (Method::POST, "/api/counter/increment") => {
             let amount = match amount_from_request(req, 1).await {
                 Ok(amount) => amount,
                 Err(error) => return counter_error_response(&error),
             };
-            execute(crate::domain::CounterCommand::Increment { amount }).await
+            execute(crate::domain::CounterCommand::Increment { amount }, &auth).await
         }
         (Method::POST, "/api/counter/decrement") => {
             let amount = match amount_from_request(req, 1).await {
                 Ok(amount) => amount,
                 Err(error) => return counter_error_response(&error),
             };
-            execute(crate::domain::CounterCommand::Decrement { amount }).await
+            execute(crate::domain::CounterCommand::Decrement { amount }, &auth).await
         }
-        (Method::POST, "/api/counter/reset") => execute(crate::domain::CounterCommand::Reset).await,
+        (Method::POST, "/api/counter/reset") => {
+            execute(crate::domain::CounterCommand::Reset, &auth).await
+        }
         (_, "/api/counter/view") => validation_error_response(
             StatusCode::METHOD_NOT_ALLOWED,
             "GET is required for /api/counter/view",
@@ -69,8 +70,11 @@ pub async fn serve(req: RestRequest) -> CounterAppResult<RestResponse> {
     }
 }
 
-async fn execute(command: crate::domain::CounterCommand) -> CounterAppResult<RestResponse> {
-    match crate::application::execute_counter_command(command).await {
+async fn execute(
+    command: crate::domain::CounterCommand,
+    auth: &crate::auth::CounterAuthContext,
+) -> CounterAppResult<RestResponse> {
+    match crate::application::execute_counter_command_authorized(command, auth).await {
         Ok(view) => json_response(StatusCode::OK, &view),
         Err(error) => counter_error_response(&error),
     }
@@ -85,16 +89,17 @@ async fn amount_from_request(req: RestRequest, default: i32) -> CounterAppResult
         .into_body()
         .collect()
         .await
-        .map_err(|error| CounterAppError::transport(format!("failed to read request body: {error:?}")))?
+        .map_err(|error| {
+            CounterAppError::transport(format!("failed to read request body: {error:?}"))
+        })?
         .to_bytes();
 
     if body.is_empty() {
         return validate_amount(default);
     }
 
-    let payload: ChangeCounterRequest =
-        serde_json::from_slice(&body)
-            .map_err(|error| CounterAppError::validation(format!("invalid JSON body: {error}")))?;
+    let payload: ChangeCounterRequest = serde_json::from_slice(&body)
+        .map_err(|error| CounterAppError::validation(format!("invalid JSON body: {error}")))?;
     validate_amount(payload.amount.unwrap_or(default))
 }
 
@@ -108,12 +113,9 @@ fn amount_from_query(uri: &http::Uri) -> CounterAppResult<Option<i32>> {
             continue;
         };
         if key == "amount" {
-            return value
-                .parse::<i32>()
-                .map(Some)
-                .map_err(|_| {
-                    CounterAppError::validation("amount query parameter must be a valid integer")
-                });
+            return value.parse::<i32>().map(Some).map_err(|_| {
+                CounterAppError::validation("amount query parameter must be a valid integer")
+            });
         }
     }
 
@@ -129,8 +131,8 @@ fn validate_amount(amount: i32) -> CounterAppResult<i32> {
 }
 
 fn json_response<T: Serialize>(status: StatusCode, value: &T) -> CounterAppResult<RestResponse> {
-    let bytes =
-        serde_json::to_vec(value).map_err(|error| CounterAppError::serialization(error.to_string()))?;
+    let bytes = serde_json::to_vec(value)
+        .map_err(|error| CounterAppError::serialization(error.to_string()))?;
     response_with_bytes(status, "application/json", Bytes::from(bytes))
 }
 

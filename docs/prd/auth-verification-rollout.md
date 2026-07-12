@@ -67,28 +67,28 @@ rtk cargo check -p ddd-authz --target wasm32-wasip2 --no-default-features --feat
 Spin smoke checks after implementation:
 
 ```bash
-rtk make -C examples/auth-stack check db=sqlite
-rtk make -C examples/auth-stack check db=postgres
-rtk make -C examples/auth-stack check db=mysql
-rtk make -C examples/auth-stack grpc-check db=sqlite
-rtk make -C examples/auth-stack grpc-check db=postgres
-rtk make -C examples/auth-stack grpc-check db=mysql
-rtk make -C examples/auth-stack spin db=sqlite transport=both listen=127.0.0.1:3008
-rtk env BASE_URL=http://127.0.0.1:3008 make -C examples/auth-stack smoke
+rtk make -C examples/fullstack-app check db=sqlite
+rtk make -C examples/fullstack-app check db=postgres
+rtk make -C examples/fullstack-app check db=mysql
+rtk make -C examples/fullstack-app grpc-check db=sqlite
+rtk make -C examples/fullstack-app grpc-check db=postgres
+rtk make -C examples/fullstack-app grpc-check db=mysql
+rtk make -C examples/fullstack-app spin db=sqlite transport=both listen=127.0.0.1:3008
+rtk env BASE_URL=http://127.0.0.1:3008 make -C examples/fullstack-app smoke
 rtk env CHECK_STORAGE_EVENTS=1 AUTH_ADMIN_TOKEN=dev-admin-token \
-  BASE_URL=http://127.0.0.1:3008 bash examples/auth-stack/scripts/verify_auth_stack.sh
+  BASE_URL=http://127.0.0.1:3008 bash examples/fullstack-app/scripts/verify_fullstack.sh
 rtk env BASE_URL=http://127.0.0.1:3008 AUTH_ADMIN_TOKEN=dev-admin-token \
-  make -C examples/auth-stack oauth-dev-browser-smoke
+  make -C examples/fullstack-app oauth-dev-browser-smoke
 rtk env OAUTH_PROVIDERS=google OAUTH_EVIDENCE_MODE=preflight \
   BASE_URL=https://<host> AUTH_ADMIN_TOKEN=<token> \
-  make -C examples/auth-stack oauth-evidence
+  make -C examples/fullstack-app oauth-evidence
 rtk env OAUTH_PROVIDERS=google BASE_URL=https://<host> \
   AUTH_ADMIN_TOKEN=<token> EXPECTED_EMAIL=user@example.com \
-  make -C examples/auth-stack oauth-browser-smoke
+  make -C examples/fullstack-app oauth-browser-smoke
 rtk env OAUTH_PROVIDERS=google BASE_URL=https://<host> \
-  AUTH_ADMIN_TOKEN=<token> SESSION_COOKIE='ddd_auth_session=<id>' \
-  make -C examples/auth-stack oauth-callback
-rtk env BASE_URL=http://127.0.0.1:3008 make -C examples/auth-stack browser-smoke
+  AUTH_ADMIN_TOKEN=<token> SESSION_COOKIE='wasi_auth_dev_session=<id>' \
+  make -C examples/fullstack-app oauth-callback
+rtk env BASE_URL=http://127.0.0.1:3008 make -C examples/fullstack-app browser-smoke
 rtk curl -sS -I http://127.0.0.1:3008/login
 rtk curl -sS -I http://127.0.0.1:3008/register
 rtk curl -sS -I http://127.0.0.1:3008/forgot-password
@@ -102,9 +102,9 @@ rtk curl -sS -X POST -H 'content-type: application/json' \
   -H 'authorization: Bearer <access_jwt>' \
   -d '{"tenant":"tenant:default","subject":"user:alice","relation":"viewer","object":"project:demo","model_ref":{"kind":"active"}}' \
   http://127.0.0.1:3008/api/authz/check
-rtk grpcurl -plaintext -import-path examples/auth-stack/proto -proto auth.proto \
+rtk grpcurl -plaintext -import-path examples/fullstack-app/proto -proto auth.proto \
   localhost:3008 auth.v1.AuthService/GetJwks
-rtk grpcurl -plaintext -import-path examples/auth-stack/proto -proto authz.proto \
+rtk grpcurl -plaintext -import-path examples/fullstack-app/proto -proto authz.proto \
   -H 'authorization: Bearer <access_jwt>' \
   -d '{"tenant":"tenant:default","subject":"user:alice","relation":"viewer","object":"project:demo","model_ref_kind":"active"}' \
   localhost:3008 authz.v1.AuthzService/Check
@@ -140,7 +140,7 @@ rtk grpcurl -plaintext -import-path examples/auth-stack/proto -proto authz.proto
 2. Add core crate unit and contract tests.
 3. Add Spin web page, REST, and gRPC smoke scripts.
    - Status: done for local deterministic checks.
-     `examples/auth-stack/scripts/verify_auth_stack.sh`
+     `examples/fullstack-app/scripts/verify_fullstack.sh`
      covers current REST and web-route middleware smoke checks, password reset
      unknown-user safety, invalid reset token rejection, reset token replay
      rejection, old-password rejection after reset, disabled OAuth/passkey
@@ -167,13 +167,13 @@ rtk grpcurl -plaintext -import-path examples/auth-stack/proto -proto authz.proto
 4. Add Playwright checks for login, callback, logout, auth-required, forbidden,
    session-expired, passkey fallback, and admin guard behavior.
    - Status: done for local deterministic checks.
-     `examples/auth-stack/scripts/verify_auth_pages.mjs`
+     `examples/fullstack-app/scripts/verify_auth_pages.mjs`
      covers direct-load auth pages, desktop/mobile overflow checks,
      unauthenticated protected-route redirects, stale-cookie rejection,
      authenticated guest-route redirects, safe `next` handling, forbidden
      auth-admin redirects, logout cookie clearing, OAuth callback/error pages,
      and account/authz protected pages against a live Spin server.
-     `examples/auth-stack/scripts/verify_auth_oauth_dev_browser.mjs` covers
+     `examples/fullstack-app/scripts/verify_auth_oauth_dev_browser.mjs` covers
      the actual OAuth provider button redirect, development callback redirect,
      httpOnly session-cookie issuance, dashboard landing, authenticated
      session lookup, callback replay rejection, and OAuth storage event deltas

@@ -20,7 +20,7 @@ pub struct ProjectManifest {
     pub ui: Ui,
     pub capabilities: Vec<String>,
     pub auth: Option<AuthConfig>,
-    pub authz: Option<AuthzConfig>,
+    pub authorization: Option<AuthorizationConfig>,
     pub domains: Vec<DomainRecord>,
 }
 
@@ -45,8 +45,9 @@ pub struct AuthProviderRecord {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct AuthzConfig {
-    pub active_model: String,
+pub struct AuthorizationConfig {
+    pub provider: String,
+    pub policy_revision: String,
     pub default_decision: String,
 }
 
@@ -76,18 +77,23 @@ impl ProjectManifest {
         if selection.db == DbBackend::Redis {
             capabilities.push("redis-store".to_string());
         }
-        let (auth, authz) = if selection.preset == Preset::AuthStack {
+        let (auth, authorization) = if selection.preset == Preset::Fullstack {
             capabilities.push("auth".to_string());
-            capabilities.push("authz".to_string());
+            capabilities.push("authorization".to_string());
             (
                 Some(AuthConfig::default_for_project(&name)),
-                Some(AuthzConfig::deny_by_default()),
+                Some(AuthorizationConfig::embedded_cedar()),
             )
         } else {
             (None, None)
         };
         capabilities.sort();
         capabilities.dedup();
+        let domains = if selection.preset == Preset::Fullstack {
+            Vec::new()
+        } else {
+            vec![domain]
+        };
 
         Self {
             name,
@@ -99,8 +105,8 @@ impl ProjectManifest {
             ui: selection.ui,
             capabilities,
             auth,
-            authz,
-            domains: vec![domain],
+            authorization,
+            domains,
         }
     }
 
@@ -171,10 +177,12 @@ impl ProjectManifest {
             }
         }
 
-        if let Some(authz) = &self.authz {
-            doc["authz"] = Item::Table(Table::new());
-            doc["authz"]["active_model"] = value(authz.active_model.as_str());
-            doc["authz"]["default_decision"] = value(authz.default_decision.as_str());
+        if let Some(authorization) = &self.authorization {
+            doc["authorization"] = Item::Table(Table::new());
+            doc["authorization"]["provider"] = value(authorization.provider.as_str());
+            doc["authorization"]["policy_revision"] = value(authorization.policy_revision.as_str());
+            doc["authorization"]["default_decision"] =
+                value(authorization.default_decision.as_str());
         }
 
         doc["domains"] = Item::Table(Table::new());
@@ -223,10 +231,15 @@ impl ProjectManifest {
             .get("auth")
             .and_then(Item::as_table)
             .map(AuthConfig::from_table);
-        let authz = doc
-            .get("authz")
+        let authorization = doc
+            .get("authorization")
             .and_then(Item::as_table)
-            .map(AuthzConfig::from_table);
+            .map(AuthorizationConfig::from_table)
+            .or_else(|| {
+                doc.get("authz")
+                    .and_then(Item::as_table)
+                    .map(AuthorizationConfig::from_legacy_table)
+            });
 
         let mut domains = Vec::new();
         if let Some(domain_table) = doc["domains"].as_table() {
@@ -253,7 +266,7 @@ impl ProjectManifest {
             ui,
             capabilities,
             auth,
-            authz,
+            authorization,
             domains,
         })
     }
@@ -265,10 +278,11 @@ impl ProjectManifest {
         }
     }
 
-    pub fn enable_authz(&mut self) {
-        self.add_capability("authz");
-        if self.authz.is_none() {
-            self.authz = Some(AuthzConfig::deny_by_default());
+    pub fn enable_authorization(&mut self) {
+        self.add_capability("authorization");
+        self.capabilities.retain(|capability| capability != "authz");
+        if self.authorization.is_none() {
+            self.authorization = Some(AuthorizationConfig::embedded_cedar());
         }
     }
 
@@ -369,7 +383,7 @@ impl AuthConfig {
             audience: table
                 .get("audience")
                 .and_then(Item::as_str)
-                .unwrap_or("ddd-auth")
+                .unwrap_or("fullstack-app")
                 .to_string(),
             access_token_ttl_seconds: table
                 .get("access_token_ttl_seconds")
@@ -460,20 +474,26 @@ impl AuthProviderRecord {
     }
 }
 
-impl AuthzConfig {
-    fn deny_by_default() -> Self {
+impl AuthorizationConfig {
+    fn embedded_cedar() -> Self {
         Self {
-            active_model: "default".to_string(),
+            provider: "embedded-cedar".to_string(),
+            policy_revision: "embedded-v1".to_string(),
             default_decision: "deny".to_string(),
         }
     }
 
     fn from_table(table: &Table) -> Self {
         Self {
-            active_model: table
-                .get("active_model")
+            provider: table
+                .get("provider")
                 .and_then(Item::as_str)
-                .unwrap_or("default")
+                .unwrap_or("embedded-cedar")
+                .to_string(),
+            policy_revision: table
+                .get("policy_revision")
+                .and_then(Item::as_str)
+                .unwrap_or("embedded-v1")
                 .to_string(),
             default_decision: table
                 .get("default_decision")
@@ -481,6 +501,16 @@ impl AuthzConfig {
                 .unwrap_or("deny")
                 .to_string(),
         }
+    }
+
+    fn from_legacy_table(table: &Table) -> Self {
+        let mut config = Self::embedded_cedar();
+        config.default_decision = table
+            .get("default_decision")
+            .and_then(Item::as_str)
+            .unwrap_or("deny")
+            .to_string();
+        config
     }
 }
 

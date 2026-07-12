@@ -75,6 +75,12 @@ pub trait AsyncAtomicIdempotentEventStore<A>: AsyncEventStore<A>
 where
     A: Aggregate + Send + Sync,
 {
+    /// Loads an existing atomic idempotency record before command evaluation.
+    async fn load_idempotent(
+        &self,
+        idempotency_key: &IdempotencyKey,
+    ) -> Result<Option<IdempotencyState<EventStream<A>>>, Self::Error>;
+
     /// Appends events once for the idempotency key, atomically with the
     /// idempotency completion record.
     async fn append_idempotent(
@@ -521,6 +527,28 @@ where
             "executing atomic idempotent command"
         );
 
+        let started = std::time::Instant::now();
+        loop {
+            match self
+                .store
+                .load_idempotent(&idempotency_key)
+                .await
+                .map_err(IdempotentRepositoryError::from_store_error)?
+            {
+                Some(IdempotencyState::Complete(committed)) => return Ok(committed),
+                Some(IdempotencyState::Pending) => {
+                    let Some(delay) = wait_config.next_delay(started.elapsed()) else {
+                        return Err(IdempotentRepositoryError::IdempotencyPendingTimeout {
+                            key: idempotency_key,
+                            waited: started.elapsed(),
+                        });
+                    };
+                    tokio::time::sleep(delay).await;
+                }
+                None => break,
+            }
+        }
+
         let loaded = self.load(aggregate_id).await.map_err(|error| match error {
             RepositoryError::Domain(error) => IdempotentRepositoryError::Domain(error),
             RepositoryError::Concurrency(error) => IdempotentRepositoryError::Concurrency(error),
@@ -529,8 +557,6 @@ where
         let events = handle_command_as_new_events::<A>(&loaded.state, command, &metadata)
             .map_err(IdempotentRepositoryError::Domain)?;
         let expected_revision = ExpectedRevision::Exact(loaded.revision);
-        let started = std::time::Instant::now();
-
         loop {
             match self
                 .store

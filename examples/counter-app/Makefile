@@ -1,5 +1,5 @@
 # Makefile for building app for different WASI runtimes
-.PHONY: help help-db help-realtime help-transport help-matrix help-env db realtime transport matrix env spin wasmtime clean run fresh db-reset validate-params validate-env
+.PHONY: help help-db help-realtime help-transport help-matrix help-env db realtime transport matrix env spin wasmtime clean run fresh db-reset validate-params validate-env validate-toolchain verify-grpc-streaming verify-browser
 
 DB_BACKENDS := sqlite postgres neon supabase turso mysql redis
 REALTIME_BACKENDS := off polling redis
@@ -217,6 +217,8 @@ help:
 		echo ""; \
 		echo "Available targets:"; \
 		echo "  make help                    - Show this help"; \
+		echo "  make verify-grpc-streaming   - Verify all four gRPC interaction modes against a running Spin app"; \
+		echo "  make verify-browser          - Verify lazy-island hydration and an interactive mutation"; \
 		echo "  make wasmtime                - Build and run with Wasmtime (default db=sqlite JSON files under ./data)"; \
 		echo "  make spin                    - Build and run with Spin (default db=sqlite Spin SQLite)"; \
 		echo "  make run                     - Alias for make wasmtime"; \
@@ -257,6 +259,14 @@ help:
 		echo ""; \
 		echo "Use make help-matrix to see the supported runtime/db/realtime combinations."; \
 	fi
+
+verify-grpc-streaming:
+	./scripts/verify_grpc_streaming.sh
+
+verify-browser:
+	npm install
+	npm exec -- playwright install chromium
+	npm run browser-smoke
 
 help-db:
 	@echo "Supported db=<backend> values:"
@@ -381,6 +391,9 @@ validate-params:
 validate-env: validate-params
 	@$(RESOLVE_RUNTIME_ENV); :
 
+validate-toolchain:
+	bash scripts/verify_toolchain.sh
+
 # Run target alias
 run: wasmtime
 
@@ -394,15 +407,16 @@ db-reset: validate-env
 fresh: db-reset
 
 # Build and run with Spin
-spin: validate-env
+spin: validate-env validate-toolchain
 	@echo "Building for Spin runtime with DB: $(DATABASE_BACKEND), realtime: $(REALTIME_BACKEND), transport: $(transport)..."
 	@mkdir -p .spin
-	WASI_RUNTIME=spin DATABASE_BACKEND=$(DATABASE_BACKEND) REALTIME_BACKEND=$(REALTIME_BACKEND) TRANSPORT_MODE=$(transport) cargo leptos build --release --lib-features hydrate --bin-features $(SPIN_CARGO_FEATURES)
+	WASI_RUNTIME=spin DATABASE_BACKEND=$(DATABASE_BACKEND) REALTIME_BACKEND=$(REALTIME_BACKEND) TRANSPORT_MODE=$(transport) cargo leptos build --release --split --frontend-only --lib-features hydrate
 	WASI_RUNTIME=spin DATABASE_BACKEND=$(DATABASE_BACKEND) REALTIME_BACKEND=$(REALTIME_BACKEND) TRANSPORT_MODE=$(transport) LEPTOS_OUTPUT_NAME=counter_app cargo build --lib --target wasm32-wasip2 --release --no-default-features --features $(SPIN_CARGO_FEATURES)
+	bash scripts/verify_wasi_artifact.sh
 	@if [ "$(REALTIME_BACKEND)" = "redis" ]; then \
 		cargo build --manifest-path redis-trigger/Cargo.toml --target wasm32-wasip2 --release; \
 	fi
-	@echo "Built: target/wasm32-wasip2/release/counter_app.wasm (for Spin)"
+	@echo "Built: target/wasm32-wasip2/release/counter_app.wasm (final-WASI HTTP world for Spin)"
 	@echo "Starting Spin..."
 	@$(RESOLVE_RUNTIME_ENV); \
 		set -- --from $(SPIN_MANIFEST) --env DATABASE_BACKEND=$(DATABASE_BACKEND) --env REALTIME_BACKEND=$(REALTIME_BACKEND) --env TRANSPORT_MODE=$(transport); \
@@ -434,7 +448,7 @@ wasmtime: validate-env
 		exit 2; \
 	fi
 	@echo "Building for Wasmtime runtime with DB: $(DATABASE_BACKEND), realtime: $(REALTIME_BACKEND)..."
-	WASI_RUNTIME=wasmtime DATABASE_BACKEND=$(DATABASE_BACKEND) REALTIME_BACKEND=$(REALTIME_BACKEND) cargo leptos build --release --lib-features hydrate --bin-features $(WASMTIME_CARGO_FEATURES)
+	WASI_RUNTIME=wasmtime DATABASE_BACKEND=$(DATABASE_BACKEND) REALTIME_BACKEND=$(REALTIME_BACKEND) cargo leptos build --release --split --frontend-only --lib-features hydrate
 	WASI_RUNTIME=wasmtime DATABASE_BACKEND=$(DATABASE_BACKEND) REALTIME_BACKEND=$(REALTIME_BACKEND) LEPTOS_OUTPUT_NAME=counter_app cargo build --lib --target wasm32-wasip2 --release --no-default-features --features $(WASMTIME_CARGO_FEATURES) --target-dir target/wasmtime
 	@echo "Built: target/wasmtime/wasm32-wasip2/release/counter_app.wasm (for Wasmtime)"
 	@echo "Starting Wasmtime serve..."

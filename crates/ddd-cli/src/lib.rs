@@ -158,7 +158,8 @@ enum EnableCommand {
     Rest,
     Leptos,
     Auth,
-    Authz,
+    #[command(alias = "authz")]
+    Authorization,
     Passkeys,
     #[command(name = "oauth-provider")]
     OAuthProvider {
@@ -496,7 +497,7 @@ fn enable_capability(ctx: &ExecutionContext, command: EnableCommand) -> Result<C
             manifest.add_capability("leptos");
         }
         EnableCommand::Auth => manifest.enable_auth(),
-        EnableCommand::Authz => manifest.enable_authz(),
+        EnableCommand::Authorization => manifest.enable_authorization(),
         EnableCommand::Passkeys => manifest.enable_passkeys(),
         EnableCommand::OAuthProvider { provider } => manifest.enable_oauth_provider(provider),
         EnableCommand::Idempotency => manifest.add_capability("idempotency"),
@@ -627,7 +628,8 @@ fn check_project(ctx: &ExecutionContext) -> Result<CommandReport> {
     let manifest = ProjectManifest::read_from(&ctx.cwd)?;
     manifest.selection().validate()?;
     let base_files = [MANIFEST_FILE, "Cargo.toml", "src/domain/mod.rs"];
-    let auth_stack_files = [
+    let fullstack_files = [
+        ".cargo/config.toml",
         ".env.example",
         "build.rs",
         "input.css",
@@ -646,23 +648,27 @@ fn check_project(ctx: &ExecutionContext) -> Result<CommandReport> {
         "src/rest.rs",
         "src/server.rs",
         "src/store.rs",
+        "src/wasip3_random.rs",
+        "proto/admin.proto",
+        "proto/audit.proto",
         "proto/auth.proto",
-        "proto/authz.proto",
+        "proto/authorization.proto",
+        "proto/organization.proto",
         "scripts/report_oauth_evidence.sh",
         "scripts/reset_db.sh",
         "scripts/verify_auth_oauth_dev_browser.mjs",
         "scripts/verify_auth_pages.mjs",
         "scripts/verify_auth_passkeys.mjs",
-        "scripts/verify_auth_stack.sh",
+        "scripts/verify_fullstack.sh",
         "scripts/verify_live_oauth_browser.mjs",
         "scripts/verify_live_oauth_callback.sh",
         "scripts/verify_live_oauth_preflight.sh",
         "scripts/verify_oauth_credentials.sh",
     ];
-    let files = if manifest.preset == Preset::AuthStack {
+    let files = if manifest.preset == Preset::Fullstack {
         [MANIFEST_FILE, "Cargo.toml"]
             .into_iter()
-            .chain(auth_stack_files)
+            .chain(fullstack_files)
             .collect::<Vec<_>>()
     } else {
         base_files.into_iter().collect::<Vec<_>>()
@@ -712,14 +718,14 @@ fn capabilities() -> Result<CommandReport> {
         "auth": {
             "capabilities": [
                 "auth",
-                "authz",
+                "authorization",
                 "passkeys",
                 "oauth:google",
                 "oauth:apple",
                 "oauth:facebook"
             ],
             "oauth_providers": OAuthProviderKind::ALL.map(|value| value.as_str()),
-            "default_preset": "auth-stack",
+            "default_preset": "fullstack",
             "default_transport": "both",
             "default_ui": "leptos"
         },

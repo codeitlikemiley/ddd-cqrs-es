@@ -17,9 +17,14 @@ cleanup() {
 trap cleanup EXIT
 
 jq -r '.navigation.groups[].pages[]' "$DOCS_JSON" | sort | grep -v '^README$' > "$nav_pages"
-find docs -type f -name '*.md' \
-  | grep -v '/README\.md$' \
-  | sed 's#^docs/##' \
+{
+  # Individual authentication PRDs are archived evidence. Publish their index
+  # only, so obsolete multi-crate guidance cannot silently re-enter nav.
+  find docs -type f -name '*.md' \
+    | grep -v '^docs/README\.md$' \
+    | grep -v '^docs/prd/'
+  printf '%s\n' docs/prd/README.md
+} | sed 's#^docs/##' \
   | sed 's#\.md$##' \
   | sort > "$fs_pages"
 
@@ -44,11 +49,11 @@ fi
   printf '%s\n' README.md
   find docs -type f -name '*.md' | sort
 } | while IFS= read -r file; do
-  grep -nE 'ddd_cqrs_es = (\{ version = )?"[0-9]+\.[0-9]+\.[0-9]+"' "$file" \
+  grep -nE 'ddd_cqrs_es = (\{ version = )?"[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?"' "$file" \
     | sed "s#^#$file:#" || true
 done > "$version_refs"
 
-if mismatches=$(awk -v version="$crate_version" '$0 !~ "ddd_cqrs_es = .*\"" version "\"" { print; bad = 1 } END { exit bad ? 0 : 1 }' "$version_refs"); then
+if mismatches=$(awk -v version="$crate_version" 'index($0, "\"" version "\"") == 0 { print; bad = 1 } END { exit bad ? 0 : 1 }' "$version_refs"); then
   echo "Documentation crate version mismatch detected." >&2
   echo "Expected ddd_cqrs_es install snippets to use version $crate_version." >&2
   echo "$mismatches" >&2

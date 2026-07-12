@@ -9,7 +9,7 @@ const TRANSPORTS: &[&str] = &["http", "grpc", "both"];
 const PRESETS: &[&str] = &[
     "basic",
     "leptos-wasi",
-    "auth-stack",
+    "fullstack",
     "native-api",
     "worker",
     "custom",
@@ -111,12 +111,12 @@ fn capabilities_json_exposes_agent_contract() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\"agent_contract\""))
-        .stdout(predicate::str::contains("auth-stack"))
+        .stdout(predicate::str::contains("fullstack"))
         .stdout(predicate::str::contains("oauth:google"));
 }
 
 #[test]
-fn auth_stack_dry_run_json_lists_auth_template_operations() {
+fn fullstack_dry_run_json_lists_auth_template_operations() {
     let temp = tempfile::tempdir().unwrap();
 
     let mut command = Command::cargo_bin("ddd").unwrap();
@@ -127,9 +127,9 @@ fn auth_stack_dry_run_json_lists_auth_template_operations() {
         .arg("--format")
         .arg("json")
         .arg("init")
-        .arg("auth-stack")
+        .arg("fullstack")
         .arg("--preset")
-        .arg("auth-stack");
+        .arg("fullstack");
 
     command
         .assert()
@@ -143,26 +143,29 @@ fn auth_stack_dry_run_json_lists_auth_template_operations() {
         .stdout(predicate::str::contains("\"path\": \"src/rest.rs\""))
         .stdout(predicate::str::contains("\"path\": \"src/grpc.rs\""))
         .stdout(predicate::str::contains("\"path\": \"proto/auth.proto\""))
-        .stdout(predicate::str::contains("\"path\": \"proto/authz.proto\""))
+        .stdout(predicate::str::contains(
+            "\"path\": \"proto/authorization.proto\"",
+        ))
         .stdout(predicate::str::contains("\"path\": \".env.example\""));
 }
 
 #[test]
-fn auth_stack_writes_manifest_defaults_and_passes_check() {
+fn fullstack_writes_manifest_defaults_and_passes_check() {
     let temp = tempfile::tempdir().unwrap();
-    let project = temp.path().join("auth-stack");
+    let project = temp.path().join("fullstack");
 
     let mut init = Command::cargo_bin("ddd").unwrap();
     init.arg("--cwd")
         .arg(temp.path())
         .arg("init")
-        .arg("auth-stack")
+        .arg("fullstack")
         .arg("--preset")
-        .arg("auth-stack");
+        .arg("fullstack");
     init.assert().success();
 
     for file in [
         "ddd.toml",
+        ".cargo/config.toml",
         "Cargo.toml",
         "Makefile",
         "build.rs",
@@ -183,14 +186,18 @@ fn auth_stack_writes_manifest_defaults_and_passes_check() {
         "src/main.rs",
         "src/server.rs",
         "src/store.rs",
+        "src/wasip3_random.rs",
+        "proto/admin.proto",
+        "proto/audit.proto",
         "proto/auth.proto",
-        "proto/authz.proto",
+        "proto/authorization.proto",
+        "proto/organization.proto",
         "scripts/report_oauth_evidence.sh",
         "scripts/reset_db.sh",
         "scripts/verify_auth_oauth_dev_browser.mjs",
         "scripts/verify_auth_pages.mjs",
         "scripts/verify_auth_passkeys.mjs",
-        "scripts/verify_auth_stack.sh",
+        "scripts/verify_fullstack.sh",
         "scripts/verify_live_oauth_browser.mjs",
         "scripts/verify_live_oauth_callback.sh",
         "scripts/verify_live_oauth_preflight.sh",
@@ -200,34 +207,47 @@ fn auth_stack_writes_manifest_defaults_and_passes_check() {
     }
     assert!(
         !project.join("src/domain/mod.rs").exists(),
-        "auth-stack should not generate an unused aggregate domain scaffold"
+        "fullstack should not generate an unused aggregate domain scaffold"
     );
 
     let manifest = std::fs::read_to_string(project.join("ddd.toml")).unwrap();
-    assert!(manifest.contains(r#"preset = "auth-stack""#));
+    assert!(manifest.contains(r#"preset = "fullstack""#));
     assert!(manifest.contains(r#"transport = "both""#));
     assert!(manifest.contains(r#"ui = "leptos""#));
     assert!(manifest.contains(r#""auth""#));
-    assert!(manifest.contains(r#""authz""#));
+    assert!(manifest.contains(r#""authorization""#));
     assert!(manifest.contains("[auth]"));
-    assert!(manifest.contains("[authz]"));
+    assert!(manifest.contains("[authorization]"));
+    assert!(manifest.contains(r#"provider = "embedded-cedar""#));
+    assert!(manifest.contains(r#"policy_revision = "embedded-v1""#));
     assert!(manifest.contains(r#"default_decision = "deny""#));
 
     let cargo_toml = std::fs::read_to_string(project.join("Cargo.toml")).unwrap();
     assert!(cargo_toml.contains("leptos_wasi"));
     assert!(cargo_toml.contains("spin-sdk"));
-    assert!(cargo_toml.contains("ddd-auth"));
-    assert!(cargo_toml.contains("ddd-authz"));
+    assert!(cargo_toml.contains("wasi-auth"));
+    assert!(!cargo_toml.contains("ddd-auth ="));
+    assert!(!cargo_toml.contains("ddd-authz ="));
+    assert!(cargo_toml.contains("=0.4.2-alpha.3"));
+    assert!(cargo_toml.contains("=0.7.0"));
+    assert!(cargo_toml.contains("=0.59.0"));
+    assert!(cargo_toml.contains("f0c4aeb2c2c44804906a9bc818397050b45c622d"));
+    assert!(cargo_toml.contains(r#"rust-version = "1.93.0""#));
+    assert!(!cargo_toml.contains("path ="));
     assert!(cargo_toml.contains("[patch.crates-io]"));
-    assert!(cargo_toml.contains("ddd_cqrs_es = { path = "));
-    assert!(cargo_toml.contains("ddd-auth = { path = "));
-    assert!(cargo_toml.contains("crates/ddd-auth"));
-    assert!(cargo_toml.contains("ddd-authz = { path = "));
-    assert!(cargo_toml.contains("crates/ddd-authz"));
+    assert!(cargo_toml.contains(
+        r#"spin-sdk = { git = "https://github.com/spinframework/spin-rust-sdk", rev = "f0c4aeb2c2c44804906a9bc818397050b45c622d" }"#
+    ));
     assert!(cargo_toml.contains("spin-postgres"));
-    assert!(cargo_toml.contains("spin-mysql"));
+    assert!(!cargo_toml.contains("spin-mysql"));
     assert!(cargo_toml.contains("argon2"));
     assert!(cargo_toml.contains("getrandom"));
+    assert!(cargo_toml.contains(r#"bin-target-triple = "wasm32-wasip2""#));
+    assert!(cargo_toml.contains(r#"mail-capture = ["wasi-auth/mail-capture"]"#));
+    assert!(cargo_toml.contains(r#"mail-smtp = ["wasi-auth/mail-smtp"]"#));
+    assert!(cargo_toml.contains(r#"mail-http = ["wasi-auth/mail-http"]"#));
+    assert!(cargo_toml.contains(r#"spicedb = ["wasi-auth/spicedb"]"#));
+    assert!(!cargo_toml.contains(r#"features = ["fullstack-spin", "mail-capture"]"#));
 
     let makefile = std::fs::read_to_string(project.join("Makefile")).unwrap();
     assert!(makefile.contains("db ?= $(if $(DATABASE_BACKEND),$(DATABASE_BACKEND),sqlite)"));
@@ -239,12 +259,15 @@ fn auth_stack_writes_manifest_defaults_and_passes_check() {
     assert!(makefile.contains("--variable auth_google_client_secret=$(AUTH_GOOGLE_CLIENT_SECRET)"));
     assert!(makefile.contains("--variable auth_apple_private_key='$(AUTH_APPLE_PRIVATE_KEY)'"));
     assert!(makefile.contains("POSTGRES_URL ?="));
-    assert!(makefile.contains("MYSQL_URL ?="));
-    assert!(makefile.contains("AUTH_STACK_FEATURES=$(GRPC_FEATURES)"));
+    assert!(makefile.contains("FULLSTACK_FEATURES=$(GRPC_FEATURES)"));
+    assert!(makefile.contains("MAIL_FEATURE := mail-$(AUTH_MAIL_TRANSPORT)"));
+    assert!(makefile.contains("OPTIONAL_SPICEDB_FEATURE :="));
+    assert!(makefile.contains("--variable auth_spicedb_enabled=$(AUTH_SPICEDB_ENABLED)"));
+    assert!(makefile.contains("--target wasm32-wasip2"));
     assert!(makefile.contains("oauth-credentials:"));
-    assert!(makefile.contains("./scripts/verify_oauth_credentials.sh"));
-    assert!(makefile.contains("./scripts/verify_live_oauth_preflight.sh"));
-    assert!(makefile.contains("./scripts/report_oauth_evidence.sh"));
+    assert!(makefile.contains("bash scripts/verify_oauth_credentials.sh"));
+    assert!(makefile.contains("bash scripts/verify_live_oauth_preflight.sh"));
+    assert!(makefile.contains("bash scripts/report_oauth_evidence.sh"));
     assert!(makefile.contains("npm run browser-smoke"));
     assert!(makefile.contains("npm run passkey-smoke"));
     assert!(makefile.contains("make oauth-preflight"));
@@ -267,7 +290,8 @@ fn auth_stack_writes_manifest_defaults_and_passes_check() {
     assert!(spin_toml.contains("auth_password_kdf = { default = \"argon2id\" }"));
     assert!(spin_toml.contains("auth_bootstrap_admin_emails = { default = \"\" }"));
     assert!(spin_toml.contains("auth_csrf_secret = { default = \"\" }"));
-    assert!(spin_toml.contains("auth_dev_tools = { default = \"false\" }"));
+    assert!(spin_toml.contains("auth_dev_tools = { default = \"true\" }"));
+    assert!(spin_toml.contains("auth_spicedb_enabled = { default = \"false\" }"));
     assert!(spin_toml.contains("auth_cookie_secure = \"{{ auth_cookie_secure }}\""));
     assert!(spin_toml.contains("auth_password_kdf = \"{{ auth_password_kdf }}\""));
     assert!(
@@ -282,8 +306,9 @@ fn auth_stack_writes_manifest_defaults_and_passes_check() {
     assert!(spin_toml.contains("database_backend = \"{{ database_backend }}\""));
     assert!(!spin_toml.contains("DATABASE_BACKEND = \"{{ database_backend }}\""));
     assert!(spin_toml.contains("postgres://*:*"));
-    assert!(spin_toml.contains("mysql://*:*"));
-    assert!(spin_toml.contains("${AUTH_STACK_FEATURES:-ssr,sqlite,spin-grpc}"));
+    assert!(!spin_toml.contains("mysql://*:*"));
+    assert!(spin_toml.contains("${FULLSTACK_FEATURES:-ssr,sqlite,spin-grpc,mail-capture}"));
+    assert!(spin_toml.contains("target/wasm32-wasip2/release/fullstack.wasm"));
 
     let production_spin_toml =
         std::fs::read_to_string(project.join("spin.production.toml.example")).unwrap();
@@ -306,12 +331,15 @@ fn auth_stack_writes_manifest_defaults_and_passes_check() {
     );
     assert!(production_spin_toml.contains("https://auth.example.com"));
     assert!(production_spin_toml.contains("postgres://auth-db.internal.example.com:5432"));
-    assert!(production_spin_toml.contains("mysql://auth-db.internal.example.com:3306"));
     assert!(!production_spin_toml.contains("*://"));
     assert!(!production_spin_toml.contains("://*"));
     assert!(!production_spin_toml.contains("*:*"));
     assert!(!production_spin_toml.contains("localhost"));
     assert!(!production_spin_toml.contains("127.0.0.1"));
+    assert!(
+        production_spin_toml.contains("${FULLSTACK_FEATURES:-ssr,postgres,spin-grpc,mail-http}")
+    );
+    assert!(production_spin_toml.contains("auth_mail_transport = { default = \"http\" }"));
 
     let env_example = std::fs::read_to_string(project.join(".env.example")).unwrap();
     assert!(env_example.contains("AUTH_STORAGE_AUTO_CATCH_UP=true"));
@@ -319,10 +347,9 @@ fn auth_stack_writes_manifest_defaults_and_passes_check() {
     assert!(env_example.contains("AUTH_PASSWORD_KDF=argon2id"));
     assert!(env_example.contains("AUTH_BOOTSTRAP_ADMIN_EMAILS="));
     assert!(env_example.contains("AUTH_CSRF_SECRET="));
-    assert!(env_example.contains("AUTH_DEV_TOOLS=false"));
+    assert!(env_example.contains("AUTH_DEV_TOOLS=true"));
     assert!(env_example.contains("DATABASE_BACKEND=sqlite"));
     assert!(env_example.contains("POSTGRES_URL="));
-    assert!(env_example.contains("MYSQL_URL="));
 
     let mut check = Command::cargo_bin("ddd").unwrap();
     check.arg("--cwd").arg(&project).arg("check");
@@ -330,7 +357,7 @@ fn auth_stack_writes_manifest_defaults_and_passes_check() {
 }
 
 #[test]
-fn auth_stack_rejects_non_fullstack_shape() {
+fn fullstack_rejects_non_fullstack_shape() {
     let temp = tempfile::tempdir().unwrap();
 
     let mut command = Command::cargo_bin("ddd").unwrap();
@@ -341,7 +368,7 @@ fn auth_stack_rejects_non_fullstack_shape() {
         .arg("init")
         .arg("auth-api-only")
         .arg("--preset")
-        .arg("auth-stack")
+        .arg("fullstack")
         .arg("--transport")
         .arg("http");
 
@@ -597,7 +624,7 @@ fn auth_enable_commands_update_manifest_without_secrets() {
 
     for args in [
         &["enable", "auth"][..],
-        &["enable", "authz"][..],
+        &["enable", "authorization"][..],
         &["enable", "passkeys"][..],
         &["enable", "oauth-provider", "google"][..],
     ] {
@@ -608,7 +635,8 @@ fn auth_enable_commands_update_manifest_without_secrets() {
 
     let manifest = std::fs::read_to_string(project.join("ddd.toml")).unwrap();
     assert!(manifest.contains(r#""auth""#));
-    assert!(manifest.contains(r#""authz""#));
+    assert!(manifest.contains(r#""authorization""#));
+    assert!(manifest.contains("[authorization]"));
     assert!(manifest.contains(r#""passkeys""#));
     assert!(manifest.contains(r#""oauth:google""#));
     assert!(manifest.contains("[[auth.providers]]"));

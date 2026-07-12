@@ -26,7 +26,12 @@ jobs:
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
-          components: rustfmt
+          components: rustfmt, clippy
+
+      - name: Install release policy tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny,cargo-hack
 
       - name: Cache cargo artifacts
         uses: actions/cache@v4

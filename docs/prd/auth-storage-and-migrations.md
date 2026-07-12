@@ -92,10 +92,10 @@ Required read models:
 
 1. Define schema configs, event stream names, and read model tables.
    - Status: done for auth/authz contract constants and the
-     `examples/auth-stack` SQLite schema.
+     `examples/fullstack-app` SQLite schema.
 2. Add schema bootstrap and reset support for SQLite, PostgreSQL, and MySQL.
    - Status: done for Spin SQLite reset and host-side PostgreSQL/MySQL reset
-     DDL in `examples/auth-stack/scripts/reset_db.sh`. Live PostgreSQL and
+     DDL in `examples/fullstack-app/scripts/reset_db.sh`. Live PostgreSQL and
      MySQL reset plus storage smoke passed against local SQL services.
 3. Add projections for sessions, JWKS, provider configs, passkeys, active authz
    model, and tuple indexes.

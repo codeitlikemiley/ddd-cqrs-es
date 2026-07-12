@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package authorization.v1;
+
+service AuthorizationService {
+  rpc Check(CheckRequest) returns (CheckResponse);
+  rpc BatchCheck(BatchCheckRequest) returns (BatchCheckResponse);
+  rpc GetCapabilities(GetCapabilitiesRequest) returns (CapabilitiesResponse);
+}
+
+message CheckRequest {
+  string action = 1;
+  string resource_type = 2;
+  string resource_id = 3;
+  string organization_id = 4;
+  reserved 5;
+  reserved "attributes";
+}
+
+message CheckResponse {
+  bool allowed = 1;
+  string reason = 2;
+  string policy_revision = 3;
+  string consistency_token = 4;
+  optional uint64 resource_revision = 5;
+}
+
+message BatchCheckRequest {
+  repeated CheckRequest checks = 1;
+}
+
+message BatchCheckResponse {
+  repeated CheckResponse results = 1;
+}
+
+message GetCapabilitiesRequest {}
+
+message CapabilitiesResponse {
+  string provider = 1;
+  bool batch_check = 2;
+  bool list_resources = 3;
+  bool consistency_tokens = 4;
+  uint32 max_batch_checks = 5;
+}

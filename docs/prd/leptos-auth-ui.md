@@ -132,7 +132,7 @@ transport-native errors from the same application service decision:
 
 - Access tokens may be kept in memory or secure cookies depending on runtime
   configuration, but refresh tokens must remain httpOnly when cookie-based.
-- Browser session state is carried by the `ddd_auth_session` httpOnly cookie;
+- Browser session state is carried by the `wasi_auth_dev_session` httpOnly cookie;
   server functions read that cookie and pass the session id into the shared
   application service.
 - Session-issuing server functions must return browser-safe completion
@@ -237,18 +237,18 @@ transport-native errors from the same application service decision:
 - UI tests prove unsafe `next` values do not redirect outside the allowlist.
 - UI tests prove unauthenticated users are routed to `/auth/required` and
   authenticated users without permission are routed to `/auth/forbidden`.
-- `rtk bash examples/auth-stack/scripts/verify_auth_stack.sh` proves current
+- `rtk bash examples/fullstack-app/scripts/verify_fullstack.sh` proves current
   guest-only/protected route middleware, password reset, session, logout, JWKS,
   passkey challenge/replay/expiry, and authz deny-by-default behavior against a
   live Spin server.
-- `rtk env BASE_URL=http://127.0.0.1:3008 make -C examples/auth-stack browser-smoke`
+- `rtk env BASE_URL=http://127.0.0.1:3008 make -C examples/fullstack-app browser-smoke`
   proves direct-load auth pages render at desktop and mobile widths without
   horizontal overflow, protected routes redirect guests to `/auth/required`,
   stale cookies are rejected, guest-only routes redirect authenticated users to
   safe destinations, unsafe `next` values are ignored, ordinary authenticated
   users are redirected from auth-admin pages to `/auth/forbidden`, and logout
   clears the browser session cookie.
-- `rtk env BASE_URL=http://localhost:3008 make -C examples/auth-stack passkey-browser-smoke`
+- `rtk env BASE_URL=http://localhost:3008 make -C examples/fullstack-app passkey-browser-smoke`
   proves WebAuthn registration and login succeed in a browser through a
   Playwright virtual authenticator when `AUTH_ENABLE_PASSKEYS=true`,
   `AUTH_PASSKEY_RP_ID=localhost`, and

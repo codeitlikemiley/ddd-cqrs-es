@@ -26,8 +26,8 @@ than transport handlers.
 
 ## Success Criteria
 
-- `examples/auth-stack` can run as a Spin app with REST and gRPC enabled.
-- `examples/auth-stack` is a fullstack Leptos WASI project that owns the
+- `examples/fullstack-app` can run as a Spin app with REST and gRPC enabled.
+- `examples/fullstack-app` is a fullstack Leptos WASI project that owns the
   browser-facing authentication pages and auth error pages.
 - The default fullstack target serves web pages, REST APIs, and gRPC from the
   same Spin application with `transport=both`.
@@ -62,7 +62,7 @@ Internal service names:
 
 ### Fullstack Project Shape
 
-`examples/auth-stack` must be generated as a Leptos Spin project, not only an
+`examples/fullstack-app` must be generated as a Leptos Spin project, not only an
 API service. The project owns these browser and API boundaries:
 
 - `src/app.rs`: Leptos routes, pages, forms, and client-side browser flow state.
@@ -235,7 +235,7 @@ Authorization REST routes:
 - Token and session lifetimes are configurable through
   `AUTH_SESSION_TTL_SECONDS`, `AUTH_ACCESS_TOKEN_TTL_SECONDS`, and
   `AUTH_REFRESH_TOKEN_TTL_SECONDS`.
-- Browser session cookies use `ddd_auth_session` with `HttpOnly` and
+- Browser session cookies use `wasi_auth_dev_session` with `HttpOnly` and
   `SameSite=Lax`. `AUTH_COOKIE_SECURE=true` adds the `Secure` attribute for
   HTTPS deployments; the local development default is `false`, while the
   production manifest example defaults it to `true`.
@@ -251,7 +251,7 @@ Authorization REST routes:
 
 ## Implementation Milestones
 
-1. Add `examples/auth-stack` as a documentation-backed Spin app skeleton after
+1. Add `examples/fullstack-app` as a documentation-backed Spin app skeleton after
    the reusable crates compile, including the Leptos route tree and auth error
    pages.
 2. Add REST handlers that parse DTOs, call shared services, and map typed errors.
@@ -280,8 +280,8 @@ Authorization REST routes:
      services.
 6. Add manifest examples with least-privilege outbound hosts for local and
    production profiles.
-   - Status: done. `examples/auth-stack/spin.toml` remains the local
-     development manifest, and `examples/auth-stack/spin.production.toml.example`
+   - Status: done. `examples/fullstack-app/spin.toml` remains the local
+     development manifest, and `examples/fullstack-app/spin.production.toml.example`
      provides a production hardening starting point with exact OAuth and
      database outbound hosts. Generated `auth-stack` projects also include
      `spin.production.toml.example`, and CLI regression tests reject wildcard,
@@ -295,7 +295,7 @@ Authorization REST routes:
   session inspection, token refresh, logout, JWKS response, passkey
   challenge/replay/expiry checks, and authz deny-by-default checks. The
   current repeatable command is
-  `rtk bash examples/auth-stack/scripts/verify_auth_stack.sh` against a running
+  `rtk bash examples/fullstack-app/scripts/verify_fullstack.sh` against a running
   Spin server.
 - OAuth helper tests prove provider authorization URL generation, token
   exchange boundaries, JWKS parsing, and ID-token validation helpers. Live

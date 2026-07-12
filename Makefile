@@ -1,13 +1,14 @@
 .DEFAULT_GOAL := help
 SHELL := /usr/bin/env bash
 
-.PHONY: help version publish example example-check ci clean preflight check-tools check-example-runtime check-wasm-target
+.PHONY: help version publish example example-check fullstack-sync fullstack-check ci clean preflight check-tools check-example-runtime check-wasm-target
 
 # Convenience aliases used by examples/counter-app passthrough.
 EXAMPLE_RUNTIME := $(word 2,$(MAKECMDGOALS))
 VALID_RUNTIMES := spin wasmtime run
 EXAMPLE_TARGET := counter-app
 EXAMPLE_CHECK_FEATURES := ssr,sqlite
+CARGO_CONFIG_ARGS ?=
 
 # `make version` can take `make version X.Y.Z` or `VERSION=X.Y.Z make version`.
 VERSION_ARG := $(if $(VERSION),$(VERSION),$(word 2,$(MAKECMDGOALS)))
@@ -28,6 +29,8 @@ help:
 	@echo "  make version [<version>]            bump library and CLI versions (auto-increments patch if omitted)"
 	@echo "  make publish [dry-run]              publish library and CLI to crates.io (or: make publish -- --dry-run)"
 	@echo "  make example <spin|wasmtime|run>    run counter-app example with db/realtime args"
+	@echo "  make fullstack-sync                 regenerate examples/fullstack-app from the CLI template"
+	@echo "  make fullstack-check                fail when the generated fullstack example has drifted"
 	@echo "  make preflight                      check required local tools before running CI/release/example commands"
 	@echo ""
 	@echo "Examples:"
@@ -92,7 +95,13 @@ example:
 
 example-check:
 	@$(MAKE) check-tools check-wasm-target
-	@cargo check --manifest-path examples/$(EXAMPLE_TARGET)/Cargo.toml --target wasm32-wasip2 --no-default-features --features $(EXAMPLE_CHECK_FEATURES)
+	@cargo check $(CARGO_CONFIG_ARGS) --manifest-path examples/$(EXAMPLE_TARGET)/Cargo.toml --target wasm32-wasip2 --no-default-features --features $(EXAMPLE_CHECK_FEATURES)
+
+fullstack-sync:
+	@bash scripts/regenerate-fullstack-example.sh
+
+fullstack-check:
+	@bash scripts/regenerate-fullstack-example.sh --check
 
 ci:
 	@$(MAKE) preflight

@@ -144,6 +144,6 @@ a typed configuration error.
   team membership, tenant isolation, contextual tuples, condition pass/fail,
   cycles, max depth, unknown model, and unknown relation.
 - Golden JSON tests for model parsing and validation errors.
-- `rtk env BASE_URL=http://127.0.0.1:3008 bash examples/auth-stack/scripts/verify_auth_stack.sh`
+- `rtk env BASE_URL=http://127.0.0.1:3008 bash examples/fullstack-app/scripts/verify_fullstack.sh`
   against a live Spin server proves stored model activation, tuple write,
   check, list-objects, and expand behavior through REST.

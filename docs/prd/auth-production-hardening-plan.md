@@ -10,8 +10,8 @@ Tracker milestones A0–A36 remain `done`. This document defines A37–A48.
 Hand this document to an implementation agent (Codex or otherwise) as the sole
 execution contract for closing production-security gaps in:
 
-- `examples/auth-stack`
-- `crates/ddd-cli/templates/auth-stack`
+- `examples/fullstack-app`
+- `crates/ddd-cli/templates/fullstack`
 - related docs/PRD/smoke updates
 
 Library crates (`crates/ddd-auth`, `crates/ddd-authz`) are mostly transport
@@ -20,7 +20,7 @@ a change clearly belongs in a reusable crate.
 
 ## Goal
 
-Make `examples/auth-stack` a production-grade Spin auth/authz **reference
+Make `examples/fullstack-app` a production-grade Spin auth/authz **reference
 boundary**, not only a feature demo.
 
 Keep:
@@ -111,26 +111,26 @@ Introduce one request-auth path used by all transports:
 
 ```text
 RequestAuth {
-  session_id: Option<String>,      // cookie or x-auth-session only
+  session_id: Option<String>,      // verified secure cookie session only
   access_token: Option<String>,    // Authorization: Bearer
-  admin_token: Option<String>,     // x-auth-admin-token only
+  verified: Option<VerifiedRequestContext>,
 }
 ```
 
 Permission resolution order:
 
-1. Valid `x-auth-admin-token` → operator principal for operational endpoints only
-   (or explicit break-glass for configured admin routes).
-2. Valid access JWT with required scope/permission.
-3. Valid session cookie/header with required permission list.
+1. Trusted ingress validates a secure cookie or access JWT exactly once.
+2. Current user, session, membership, role, and policy facts are loaded from
+   authoritative storage.
+3. System administration requires the separate system role plus AAL2.
 4. Else `401 AuthRequired` or `403 Forbidden`.
 
 Transport mapping:
 
 | Transport | Credentials allowed | CSRF | Idempotency |
 | --- | --- | --- | --- |
-| REST | Bearer, `x-auth-session`, cookie, `x-auth-admin-token` | Required for cookie-auth unsafe methods | `Idempotency-Key` / `idempotency-key` header or body field on authz writes |
-| gRPC | metadata `authorization`, `x-auth-admin-token`, `idempotency-key` | Not required (no ambient cookie) | metadata `idempotency-key` required on writes |
+| REST | Bearer or secure cookie | Required for cookie-auth unsafe methods | `Idempotency-Key` / `idempotency-key` header or body field on authz writes |
+| gRPC | metadata `authorization`, `idempotency-key` | Not required (no ambient cookie) | metadata `idempotency-key` required on writes |
 | Leptos server fn | cookie session only | Required on unsafe actions | hidden `idempotency_key` field on authz admin forms |
 
 **Remove** `?admin_token=` and `?session_id=` completely. No compatibility shim.
@@ -308,10 +308,10 @@ Statuses start as `not_started` unless WIP already covers them.
 
 Tasks:
 
-1. Review dirty files under `examples/auth-stack/src/{application,rest,store,app,grpc,contracts}.rs`.
+1. Review dirty files under `examples/fullstack-app/src/{application,rest,store,app,grpc,contracts}.rs`.
 2. Compile matrix:
-   - `rtk env WASI_RUNTIME=spin cargo test --manifest-path examples/auth-stack/Cargo.toml --no-default-features --features ssr,sqlite`
-   - `rtk env WASI_RUNTIME=spin cargo check --manifest-path examples/auth-stack/Cargo.toml --target wasm32-wasip2 --no-default-features --features ssr,sqlite,spin-grpc`
+   - `rtk env WASI_RUNTIME=spin cargo test --manifest-path examples/fullstack-app/Cargo.toml --no-default-features --features ssr,sqlite`
+   - `rtk env WASI_RUNTIME=spin cargo check --manifest-path examples/fullstack-app/Cargo.toml --target wasm32-wasip2 --no-default-features --features ssr,sqlite,spin-grpc`
 3. Produce a short “done vs remaining” checklist against this plan’s tables.
 4. Do not commit secrets; keep working tree coherent before feature PRs.
 
@@ -502,10 +502,10 @@ Tasks:
    - `docs/prd/ddd-auth.md`, `ddd-authz.md`, `auth-surface-contracts.md`,
      `spin-auth-stack.md`, `leptos-auth-ui.md`, `auth-verification-rollout.md`
    - `docs/production/auth-oauth-rollout.md`, `auth-storage-rollout.md` as needed
-   - `examples/auth-stack/.env.example`, `spin.toml`, `spin.production.toml.example`,
+   - `examples/fullstack-app/.env.example`, `spin.toml`, `spin.production.toml.example`,
      `Makefile`
    - `crates/ddd-cli` auth-stack template render + tests
-2. Extend `examples/auth-stack/scripts/verify_auth_stack.sh` with
+2. Extend `examples/fullstack-app/scripts/verify_fullstack.sh` with
    `CHECK_AUTH_SECURITY=1` covering the smoke scenarios below.
 3. Keep A11 live OAuth operator-pending.
 
@@ -523,11 +523,11 @@ Required commands:
 rtk cargo test -p ddd-auth --all-features
 rtk cargo test -p ddd-authz --all-features
 rtk cargo test -p ddd-cqrs-es-cli --all-targets
-rtk env WASI_RUNTIME=spin cargo test --manifest-path examples/auth-stack/Cargo.toml --no-default-features --features ssr,sqlite
-rtk env WASI_RUNTIME=spin cargo check --manifest-path examples/auth-stack/Cargo.toml --target wasm32-wasip2 --no-default-features --features ssr,sqlite,spin-grpc
-rtk env CHECK_AUTH_SECURITY=1 BASE_URL=http://127.0.0.1:3008 bash examples/auth-stack/scripts/verify_auth_stack.sh
-rtk make -C examples/auth-stack smoke
-rtk make -C examples/auth-stack browser-smoke
+rtk env WASI_RUNTIME=spin cargo test --manifest-path examples/fullstack-app/Cargo.toml --no-default-features --features ssr,sqlite
+rtk env WASI_RUNTIME=spin cargo check --manifest-path examples/fullstack-app/Cargo.toml --target wasm32-wasip2 --no-default-features --features ssr,sqlite,spin-grpc
+rtk env CHECK_AUTH_SECURITY=1 BASE_URL=http://127.0.0.1:3008 bash examples/fullstack-app/scripts/verify_fullstack.sh
+rtk make -C examples/fullstack-app smoke
+rtk make -C examples/fullstack-app browser-smoke
 rtk cargo fmt --all -- --check
 rtk bash scripts/verify-docs.sh
 rtk git diff --check
@@ -536,7 +536,7 @@ rtk git diff --check
 Optional when available:
 
 ```bash
-RUN_GRPC=1 CHECK_AUTH_SECURITY=1 rtk bash examples/auth-stack/scripts/verify_auth_stack.sh
+RUN_GRPC=1 CHECK_AUTH_SECURITY=1 rtk bash examples/fullstack-app/scripts/verify_fullstack.sh
 ```
 
 **Exit:** All required commands pass; tracker A37–A48 marked done with evidence.
@@ -553,7 +553,8 @@ Implement as scripted checks against a live Spin server:
 4. Normal registered user session cannot access authz model/tuple admin writes → 403.
 5. Bootstrap admin email session can access admin UI and authz writes.
 6. `?admin_token=` and `?session_id=` rejected (ignored or 400/401; not accepted).
-7. Header `x-auth-admin-token` still works for operational endpoints.
+7. Header `x-auth-admin-token` is rejected; operational endpoints require a
+   verified system-administrator session with AAL2.
 8. Cookie-authenticated unsafe REST request fails without CSRF and passes with CSRF.
 9. Password reset start response is generic and does not expose reset URL in
    production mode / default mode without dev tools.
@@ -588,15 +589,15 @@ Each slice must include tests or smoke evidence in the commit message body.
 
 | Area | Primary files |
 | --- | --- |
-| Shared auth layer | `examples/auth-stack/src/application.rs`, `contracts.rs` |
-| REST | `examples/auth-stack/src/rest.rs` |
-| gRPC | `examples/auth-stack/src/grpc.rs`, `examples/auth-stack/proto/*.proto` |
-| Leptos | `examples/auth-stack/src/app.rs` |
-| Storage / tokens / KDF | `examples/auth-stack/src/store.rs`, reset scripts |
-| OAuth | `examples/auth-stack/src/oauth.rs`, `store.rs` |
+| Shared auth layer | `examples/fullstack-app/src/application.rs`, `contracts.rs` |
+| REST | `examples/fullstack-app/src/rest.rs` |
+| gRPC | `examples/fullstack-app/src/grpc.rs`, `examples/fullstack-app/proto/*.proto` |
+| Leptos | `examples/fullstack-app/src/app.rs` |
+| Storage / tokens / KDF | `examples/fullstack-app/src/store.rs`, reset scripts |
+| OAuth | `examples/fullstack-app/src/oauth.rs`, `store.rs` |
 | Authz evaluator | `crates/ddd-authz/src/evaluator.rs` (+ tests) |
-| CLI templates | `crates/ddd-cli/src/render.rs`, `templates/auth-stack/**`, `tests/cli.rs` |
-| Smoke | `examples/auth-stack/scripts/verify_auth_stack.sh`, Makefile |
+| CLI templates | `crates/ddd-cli/src/render.rs`, `templates/fullstack/**`, `tests/cli.rs` |
+| Smoke | `examples/fullstack-app/scripts/verify_fullstack.sh`, Makefile |
 | Docs | `docs/prd/*`, `docs/production/*`, `docs/docs.json`, `docs/prd/README.md` |
 
 ---
@@ -654,7 +655,7 @@ Implement docs/prd/auth-production-hardening-plan.md for the ddd auth stack.
 Context:
 - Branch: auth (may have uncommitted WIP partially implementing this plan)
 - Tracker A0–A36 are done; execute A37–A48 from the integrated plan
-- Primary app: examples/auth-stack; also keep CLI template parity
+- Primary app: examples/fullstack-app; also keep CLI template parity
 
 Rules:
 1. Read the plan fully, then git status/diff before coding

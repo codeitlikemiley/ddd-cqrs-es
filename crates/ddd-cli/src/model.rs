@@ -8,7 +8,7 @@ use std::fmt::{Display, Formatter};
 pub enum Preset {
     Basic,
     LeptosWasi,
-    AuthStack,
+    Fullstack,
     NativeApi,
     Worker,
     Custom,
@@ -18,7 +18,7 @@ impl Preset {
     pub const ALL: [Self; 6] = [
         Self::Basic,
         Self::LeptosWasi,
-        Self::AuthStack,
+        Self::Fullstack,
         Self::NativeApi,
         Self::Worker,
         Self::Custom,
@@ -28,7 +28,7 @@ impl Preset {
         match self {
             Self::Basic => "basic",
             Self::LeptosWasi => "leptos-wasi",
-            Self::AuthStack => "auth-stack",
+            Self::Fullstack => "fullstack",
             Self::NativeApi => "native-api",
             Self::Worker => "worker",
             Self::Custom => "custom",
@@ -288,14 +288,19 @@ impl AppSelection {
         if self.preset == Preset::Basic && self.ui == Ui::Leptos {
             anyhow::bail!("preset=basic is domain-only; use preset=leptos-wasi for ui=leptos");
         }
-        if self.preset == Preset::AuthStack {
+        if self.preset == Preset::Fullstack {
+            if !matches!(self.db, DbBackend::Sqlite | DbBackend::Postgres) {
+                anyhow::bail!(
+                    "preset=fullstack supports db=sqlite for development or db=postgres for production"
+                );
+            }
             if self.transport != Transport::Both {
                 anyhow::bail!(
-                    "preset=auth-stack requires transport=both for web, REST, and gRPC surfaces"
+                    "preset=fullstack requires transport=both for web, REST, and gRPC surfaces"
                 );
             }
             if self.ui != Ui::Leptos {
-                anyhow::bail!("preset=auth-stack requires ui=leptos for fullstack auth pages");
+                anyhow::bail!("preset=fullstack requires ui=leptos for fullstack auth pages");
             }
         }
 
@@ -319,7 +324,7 @@ pub fn defaults_for_preset(preset: Preset) -> (Runtime, DbBackend, Realtime, Tra
             Transport::Http,
             Ui::Leptos,
         ),
-        Preset::AuthStack => (
+        Preset::Fullstack => (
             Runtime::Spin,
             DbBackend::Sqlite,
             Realtime::Off,

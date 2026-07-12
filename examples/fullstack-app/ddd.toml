@@ -1,0 +1,16 @@
+project = { name = "fullstack-app", preset = "fullstack", runtime = "spin", db = "sqlite", realtime = "off", transport = "both", ui = "leptos" }
+capabilities = { enabled = ["auth", "authorization", "grpc", "leptos", "rest", "server-fn"] }
+
+[auth]
+issuer = "http://127.0.0.1:3008"
+audience = "fullstack-app"
+access_token_ttl_seconds = 900
+refresh_token_ttl_seconds = 2592000
+cookie_mode = "http-only"
+
+[authorization]
+provider = "embedded-cedar"
+policy_revision = "embedded-v1"
+default_decision = "deny"
+
+[domains]

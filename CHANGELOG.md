@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.0-alpha.1
+
+- Removed the duplicate `ddd-auth` and `ddd-authz` products in favor of the
+  single `wasi-auth` dependency while keeping the DDD core identity-agnostic.
+- Replaced the `auth-stack` CLI preset with the canonical `fullstack` preset and
+  byte-for-byte generated `examples/fullstack-app`.
+- Added final-WASI Leptos islands, REST, and Spin gRPC dispatch to the fullstack
+  example, including bounded audit streaming and production configuration
+  guards.
+- Added unary, server-streaming, client-streaming, and bidirectional-streaming
+  gRPC to the counter example, with an optional authorization feature.
+- Hardened atomic idempotent execution so completed retries return their
+  original result before an already-applied command is evaluated again.
+- Pinned final `wasip3` 0.7.0 and the Spin SDK canary required by the generated
+  final-WASI examples.
+- Replaced production RS256 access-token signing with ES256 and added a
+  public-only JWKS round-trip test; provider-issued RS256 ID tokens remain
+  verification-only behind `wasi-auth`'s private-RSA signing denial.
+
 ## 0.2.0
 
 - Removed the legacy `store` module shim; use top-level exports or the `event_store` and `memory` modules directly.

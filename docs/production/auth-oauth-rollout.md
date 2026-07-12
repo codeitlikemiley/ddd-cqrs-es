@@ -1,9 +1,9 @@
 ---
 title: 5.12. Auth OAuth Rollout
-description: Configure and verify Google, Facebook, and Apple OAuth providers for the Spin auth stack.
+description: Configure and verify Google, Facebook, and Apple OAuth providers for the wasi-auth fullstack app.
 ---
 
-The auth stack ships with OAuth disabled. Enable providers only after a provider
+The fullstack app ships with OAuth disabled. Enable providers only after a provider
 app exists, callback URLs are registered with that provider, and the matching
 environment variables are set.
 
@@ -30,14 +30,13 @@ smoke instead of `localhost` or an IP address.
 
 ## Environment
 
-Start from `examples/auth-stack/.env.example`, keep password login enabled, and
+Start from `examples/fullstack-app/.env.example`, keep password login enabled, and
 enable only the provider being tested.
 
 ```bash
 AUTH_ENABLE_OAUTH=true
 AUTH_PUBLIC_BASE_URL=https://auth.example.com
 AUTH_COOKIE_SECURE=true
-AUTH_ADMIN_TOKEN=change-me
 
 AUTH_GOOGLE_ENABLED=true
 AUTH_GOOGLE_CLIENT_ID=
@@ -67,7 +66,7 @@ password-login sessions are issued with `Secure`, `HttpOnly`, and
 
 ## Provider Setup
 
-| Provider | Required app settings | Auth-stack variables |
+| Provider | Required app settings | Fullstack variables |
 | --- | --- | --- |
 | Google | OAuth web client, authorized redirect URI, email/profile scopes. | `AUTH_GOOGLE_ENABLED`, `AUTH_GOOGLE_CLIENT_ID`, `AUTH_GOOGLE_CLIENT_SECRET`, `AUTH_GOOGLE_REDIRECT_URI` |
 | Facebook | Facebook Login product, valid OAuth redirect URI, app ID, app secret, email/public_profile scopes. | `AUTH_FACEBOOK_ENABLED`, `AUTH_FACEBOOK_CLIENT_ID`, `AUTH_FACEBOOK_CLIENT_SECRET`, `AUTH_FACEBOOK_REDIRECT_URI` |
@@ -91,7 +90,7 @@ For local development, put the Spin app behind a trusted HTTPS tunnel, or
 deploy the app to a disposable HTTPS test host.
 
 After the provider app is created, copy values into
-`examples/auth-stack/.env`. Keep `.env` local and uncommitted. The Makefile and
+`examples/fullstack-app/.env`. Keep `.env` local and uncommitted. The Makefile and
 the OAuth verification scripts load this file automatically.
 
 ### Google OAuth Setup
@@ -112,7 +111,7 @@ Use Google Cloud Console for the Google provider.
    ```
 
 6. Save the client and copy the client ID and client secret.
-7. Set these values in `examples/auth-stack/.env`:
+7. Set these values in `examples/fullstack-app/.env`:
 
    ```bash
    AUTH_ENABLE_OAUTH=true
@@ -151,7 +150,7 @@ Use Meta for Developers for the Facebook provider.
 
 5. Save changes.
 6. Open **Settings** > **Basic** and copy the App ID and App Secret.
-7. Set these values in `examples/auth-stack/.env`:
+7. Set these values in `examples/fullstack-app/.env`:
 
    ```bash
    AUTH_ENABLE_OAUTH=true
@@ -191,7 +190,7 @@ has Sign in with Apple enabled.
 
 6. Create a Sign in with Apple private key, or use an existing one. Record the
    Team ID, Key ID, and downloaded private key contents.
-7. Set these values in `examples/auth-stack/.env`:
+7. Set these values in `examples/fullstack-app/.env`:
 
    ```bash
    AUTH_ENABLE_OAUTH=true
@@ -213,7 +212,7 @@ when private keys are managed outside the Spin deployment system.
 
 ### Hook Credentials Into Spin
 
-For local operator smoke, put provider values in `examples/auth-stack/.env`.
+For local operator smoke, put provider values in `examples/fullstack-app/.env`.
 For deployed Spin environments, pass the same values as Spin variables or
 runtime secrets that map to the variables in `spin.production.toml.example`.
 
@@ -223,7 +222,6 @@ Minimum shared values:
 AUTH_ENABLE_OAUTH=true
 AUTH_PUBLIC_BASE_URL=https://<host>
 AUTH_COOKIE_SECURE=true
-AUTH_ADMIN_TOKEN=<strong-admin-token>
 ```
 
 Provider-specific values can be enabled one provider at a time. Start with
@@ -236,7 +234,7 @@ Run one provider at a time first. This keeps callback and credential failures
 easy to isolate.
 
 ```bash
-make -C examples/auth-stack spin db=sqlite transport=both listen=127.0.0.1:3008
+make -C examples/fullstack-app spin db=sqlite transport=both listen=127.0.0.1:3008
 ```
 
 Use the public URL that the provider can redirect to. For local development,
@@ -249,7 +247,7 @@ secret values.
 
 ```bash
 OAUTH_PROVIDERS=google \
-make -C examples/auth-stack oauth-credentials
+make -C examples/fullstack-app oauth-credentials
 ```
 
 Then run the live OAuth preflight against the running Spin app. The Make target
@@ -259,14 +257,14 @@ provider first, then expand `OAUTH_PROVIDERS` after the first provider passes.
 ```bash
 OAUTH_PROVIDERS=google \
 BASE_URL=https://auth.example.com \
-AUTH_ADMIN_TOKEN=change-me \
-make -C examples/auth-stack oauth-preflight
+AUTH_SYSTEM_ACCESS_TOKEN='<aal2-system-admin-bearer>' \
+make -C examples/fullstack-app oauth-preflight
 ```
 
 The preflight checks `/api/auth/capabilities`, rejects the development callback
 bypass URL, validates the external HTTPS authorization endpoint, verifies
 `response_type`, `client_id`, `redirect_uri`, `scope`, `state`, and `nonce`,
-and checks OAuth state storage evidence when `AUTH_ADMIN_TOKEN` is set. It does
+and checks OAuth state storage evidence when `AUTH_SYSTEM_ACCESS_TOKEN` is set. It does
 not replace the browser callback test because provider credentials and user
 login are still external dependencies.
 
@@ -277,8 +275,8 @@ print provider secrets, tokens, session IDs, or profile payloads.
 OAUTH_PROVIDERS=google \
 OAUTH_EVIDENCE_MODE=preflight \
 BASE_URL=https://auth.example.com \
-AUTH_ADMIN_TOKEN=change-me \
-make -C examples/auth-stack oauth-evidence
+AUTH_SYSTEM_ACCESS_TOKEN='<aal2-system-admin-bearer>' \
+make -C examples/fullstack-app oauth-evidence
 ```
 
 Then verify:
@@ -288,14 +286,14 @@ Then verify:
 3. Clicking the provider redirects to the provider authorization URL.
 4. Completing provider login returns to `/dashboard`.
 5. `/api/auth/session` reports an authenticated session.
-6. `GET /api/auth/storage/status` with `x-auth-admin-token` shows:
+6. `GET /api/auth/storage/status` with an AAL2 system-administrator bearer token shows:
    `auth_oauth_state_created`, `auth_oauth_state_consumed`,
    `auth_external_identity_linked`, and `auth_session_issued`.
 7. Reusing the same callback URL fails because OAuth state is single-use.
 
 The fastest way to run the browser portion is the interactive browser smoke.
 It opens Chromium, clicks the configured provider, waits for you to complete
-the provider login, captures the issued `ddd_auth_session` cookie, then checks
+the provider login, captures the issued `wasi_auth_dev_session` cookie, then checks
 the session and storage evidence automatically. It also replays the exact
 callback URL in JSON mode and expects a conflict response, proving OAuth state
 is single-use.
@@ -303,14 +301,14 @@ is single-use.
 ```bash
 OAUTH_PROVIDERS=google \
 BASE_URL=https://auth.example.com \
-AUTH_ADMIN_TOKEN=change-me \
+AUTH_SYSTEM_ACCESS_TOKEN='<aal2-system-admin-bearer>' \
 EXPECTED_EMAIL=user@example.com \
-make -C examples/auth-stack oauth-browser-smoke
+make -C examples/fullstack-app oauth-browser-smoke
 ```
 
-After completing provider login, capture the issued `ddd_auth_session` cookie
+After completing provider login, capture the issued `wasi_auth_dev_session` cookie
 from the browser and run the callback evidence check. `SESSION_COOKIE` may be a
-bare session ID, `ddd_auth_session=<id>`, or a full `Cookie:` header value.
+bare session ID, `wasi_auth_dev_session=<id>`, or a full `Cookie:` header value.
 `EXPECTED_EMAIL` is optional but should be set when the provider account is
 known. This manual path is useful when the interactive browser smoke cannot run
 on the operator machine.
@@ -318,10 +316,10 @@ on the operator machine.
 ```bash
 OAUTH_PROVIDERS=google \
 BASE_URL=https://auth.example.com \
-AUTH_ADMIN_TOKEN=change-me \
-SESSION_COOKIE='ddd_auth_session=<issued-session-id>' \
+AUTH_SYSTEM_ACCESS_TOKEN='<aal2-system-admin-bearer>' \
+SESSION_COOKIE='wasi_auth_dev_session=<issued-session-id>' \
 EXPECTED_EMAIL=user@example.com \
-make -C examples/auth-stack oauth-callback
+make -C examples/fullstack-app oauth-callback
 ```
 
 The callback evidence check verifies `/api/auth/session`, confirms `/dashboard`
@@ -336,8 +334,8 @@ the final event counts and projection checkpoint.
 OAUTH_PROVIDERS=google \
 OAUTH_EVIDENCE_MODE=callback \
 BASE_URL=https://auth.example.com \
-AUTH_ADMIN_TOKEN=change-me \
-make -C examples/auth-stack oauth-evidence
+AUTH_SYSTEM_ACCESS_TOKEN='<aal2-system-admin-bearer>' \
+make -C examples/fullstack-app oauth-evidence
 ```
 
 The implementation tracker marks A11 as `operator_pending` until this live

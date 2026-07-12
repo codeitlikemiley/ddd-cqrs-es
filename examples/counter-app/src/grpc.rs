@@ -1,8 +1,11 @@
 use std::pin::Pin;
 
 use futures::Stream;
-use spin_sdk::http::IntoResponse;
 use tonic::{Request, Response, Status};
+
+const MAX_GRPC_MESSAGE_BYTES: usize = 256 * 1024;
+const MAX_INBOUND_STREAM_MESSAGES: usize = 100;
+const MAX_INBOUND_STREAM_NANOS: u64 = 5 * 60 * 1_000_000_000;
 
 pub mod proto {
     tonic::include_proto!("counter.v1");
@@ -26,9 +29,20 @@ pub fn is_grpc_request(req: &spin_sdk::http::Request) -> bool {
 pub async fn serve(
     req: spin_sdk::http::Request,
 ) -> Result<wasip3::http::types::Response, wasip3::http::types::ErrorCode> {
-    let response =
-        spin_sdk::http::grpc::serve(CounterServiceServer::new(CounterGrpcService), req).await;
-    response.into_response()
+    let may_idle_before_first_frame = matches!(
+        req.uri().path(),
+        "/counter.v1.CounterService/WatchCounter" | "/counter.v1.CounterService/Interact"
+    );
+    let service = CounterServiceServer::new(CounterGrpcService)
+        .max_decoding_message_size(MAX_GRPC_MESSAGE_BYTES)
+        .max_encoding_message_size(MAX_GRPC_MESSAGE_BYTES);
+    let response = spin_sdk::http::grpc::serve(service, req).await;
+    let response = if may_idle_before_first_frame {
+        wasi_auth::spin_grpc::normalize_trailers_only_response(response)
+    } else {
+        wasi_auth::spin_grpc::normalize_trailers_only_response_awaiting_first_frame(response).await
+    };
+    wasi_auth::spin_grpc::into_final_wasi_response(response)
 }
 
 #[tonic::async_trait]
@@ -47,6 +61,11 @@ impl CounterService for CounterGrpcService {
         &self,
         request: Request<proto::ChangeCounterRequest>,
     ) -> Result<Response<proto::CounterView>, Status> {
+        authorize_counter_request(
+            &crate::auth::CounterAuthContext::from_grpc_metadata(request.metadata()),
+            "counter.change",
+        )
+        .await?;
         let amount = request.into_inner().amount;
         if amount <= 0 {
             return Err(status_from_app_error(
@@ -62,6 +81,11 @@ impl CounterService for CounterGrpcService {
         &self,
         request: Request<proto::ChangeCounterRequest>,
     ) -> Result<Response<proto::CounterView>, Status> {
+        authorize_counter_request(
+            &crate::auth::CounterAuthContext::from_grpc_metadata(request.metadata()),
+            "counter.change",
+        )
+        .await?;
         let amount = request.into_inner().amount;
         if amount <= 0 {
             return Err(status_from_app_error(
@@ -75,8 +99,13 @@ impl CounterService for CounterGrpcService {
 
     async fn reset(
         &self,
-        _request: Request<proto::ResetCounterRequest>,
+        request: Request<proto::ResetCounterRequest>,
     ) -> Result<Response<proto::CounterView>, Status> {
+        authorize_counter_request(
+            &crate::auth::CounterAuthContext::from_grpc_metadata(request.metadata()),
+            "counter.reset",
+        )
+        .await?;
         execute(crate::domain::CounterCommand::Reset).await
     }
 
@@ -135,11 +164,153 @@ impl CounterService for CounterGrpcService {
 
         Ok(Response::new(Box::pin(stream)))
     }
+
+    async fn apply_changes(
+        &self,
+        request: Request<tonic::Streaming<proto::ChangeCounterRequest>>,
+    ) -> Result<Response<proto::CounterView>, Status> {
+        let auth = crate::auth::CounterAuthContext::from_grpc_metadata(request.metadata());
+        let started_at = wasip3::clocks::monotonic_clock::now();
+        let mut inbound = request.into_inner();
+        let mut count = 0_usize;
+        let mut latest = None;
+
+        while let Some(change) = inbound.message().await? {
+            count += 1;
+            enforce_inbound_stream_bounds(count, started_at)?;
+            let command = command_from_change(change)?;
+            authorize_counter_request(&auth, permission_for_command(&command)).await?;
+            latest = Some(execute_view(command).await?);
+        }
+
+        let latest = latest.ok_or_else(|| Status::invalid_argument("change stream is empty"))?;
+        Ok(Response::new(latest.into()))
+    }
+
+    type InteractStream =
+        Pin<Box<dyn Stream<Item = Result<proto::CounterRealtimeMessage, Status>> + Send>>;
+
+    async fn interact(
+        &self,
+        request: Request<tonic::Streaming<proto::CounterClientMessage>>,
+    ) -> Result<Response<Self::InteractStream>, Status> {
+        let auth = crate::auth::CounterAuthContext::from_grpc_metadata(request.metadata());
+        let state = InteractState {
+            inbound: request.into_inner(),
+            auth,
+            started_at: wasip3::clocks::monotonic_clock::now(),
+            received: 0,
+            terminated: false,
+        };
+        let stream = futures::stream::unfold(state, |mut state| async move {
+            if state.terminated {
+                return None;
+            }
+
+            let result = interact_next(&mut state).await;
+            if result.is_err() {
+                state.terminated = true;
+            }
+            Some((result, state))
+        });
+        Ok(Response::new(Box::pin(stream)))
+    }
 }
 
 struct WatchState {
     last_sequence: u64,
     sent_initial: bool,
+}
+
+struct InteractState {
+    inbound: tonic::Streaming<proto::CounterClientMessage>,
+    auth: crate::auth::CounterAuthContext,
+    started_at: u64,
+    received: usize,
+    terminated: bool,
+}
+
+async fn interact_next(state: &mut InteractState) -> Result<proto::CounterRealtimeMessage, Status> {
+    let message = state
+        .inbound
+        .message()
+        .await?
+        .ok_or_else(|| Status::cancelled("client closed the interaction stream"))?;
+    state.received += 1;
+    enforce_inbound_stream_bounds(state.received, state.started_at)?;
+
+    let view = match message.message {
+        Some(proto::counter_client_message::Message::Watch(watch)) => {
+            match crate::store::counter_realtime_message_after(watch.last_sequence)
+                .await
+                .map_err(|error| status_from_app_error("interact.watch", error))?
+            {
+                Some(message) => message.view,
+                None => crate::application::get_counter_view()
+                    .await
+                    .map_err(|error| status_from_app_error("interact.watch.current", error))?,
+            }
+        }
+        Some(proto::counter_client_message::Message::Change(change)) => {
+            let command = command_from_change(change)?;
+            authorize_counter_request(&state.auth, permission_for_command(&command)).await?;
+            execute_view(command).await?
+        }
+        None => return Err(Status::invalid_argument("interaction message is empty")),
+    };
+    Ok(proto::CounterRealtimeMessage {
+        last_sequence: view.last_sequence,
+        view: Some(view.into()),
+    })
+}
+
+fn command_from_change(
+    change: proto::ChangeCounterRequest,
+) -> Result<crate::domain::CounterCommand, Status> {
+    match proto::ChangeOperation::try_from(change.operation)
+        .unwrap_or(proto::ChangeOperation::Unspecified)
+    {
+        proto::ChangeOperation::Increment if change.amount > 0 => {
+            Ok(crate::domain::CounterCommand::Increment {
+                amount: change.amount,
+            })
+        }
+        proto::ChangeOperation::Decrement if change.amount > 0 => {
+            Ok(crate::domain::CounterCommand::Decrement {
+                amount: change.amount,
+            })
+        }
+        proto::ChangeOperation::Reset => Ok(crate::domain::CounterCommand::Reset),
+        proto::ChangeOperation::Increment | proto::ChangeOperation::Decrement => {
+            Err(Status::invalid_argument("change amount must be positive"))
+        }
+        proto::ChangeOperation::Unspecified => {
+            Err(Status::invalid_argument("change operation is required"))
+        }
+    }
+}
+
+fn permission_for_command(command: &crate::domain::CounterCommand) -> &'static str {
+    match command {
+        crate::domain::CounterCommand::Reset => "counter.reset",
+        crate::domain::CounterCommand::Increment { .. }
+        | crate::domain::CounterCommand::Decrement { .. } => "counter.change",
+    }
+}
+
+fn enforce_inbound_stream_bounds(count: usize, started_at: u64) -> Result<(), Status> {
+    if count > MAX_INBOUND_STREAM_MESSAGES {
+        return Err(Status::resource_exhausted(
+            "stream exceeds the 100-message limit",
+        ));
+    }
+    if wasip3::clocks::monotonic_clock::now().saturating_sub(started_at) > MAX_INBOUND_STREAM_NANOS
+    {
+        return Err(Status::deadline_exceeded(
+            "stream exceeds the five-minute limit",
+        ));
+    }
+    Ok(())
 }
 
 async fn execute(
@@ -149,6 +320,23 @@ async fn execute(
         .await
         .map_err(|error| status_from_app_error("execute_counter_command", error))?;
     Ok(Response::new(view.into()))
+}
+
+async fn execute_view(
+    command: crate::domain::CounterCommand,
+) -> Result<crate::app::CounterViewDto, Status> {
+    crate::application::execute_counter_command(command)
+        .await
+        .map_err(|error| status_from_app_error("execute_counter_command", error))
+}
+
+async fn authorize_counter_request(
+    auth: &crate::auth::CounterAuthContext,
+    permission: &str,
+) -> Result<(), Status> {
+    auth.authorize(permission)
+        .await
+        .map_err(|error| status_from_app_error("authorize_counter_request", error))
 }
 
 fn status_from_app_error(operation: &'static str, error: crate::error::CounterAppError) -> Status {

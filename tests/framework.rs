@@ -429,7 +429,7 @@ fn sqlite_atomic_idempotent_retry_returns_original_committed_events() {
     let retry = repo
         .execute_idempotent_atomic(
             &counter_id,
-            CounterCommand::Increment { by: 9 },
+            CounterCommand::Create,
             Metadata::default(),
             key,
         )
@@ -1629,7 +1629,7 @@ mod async_tests {
         let retry = repo
             .execute_idempotent_atomic(
                 &counter_id,
-                CounterCommand::Increment { by: 9 },
+                CounterCommand::Create,
                 Metadata::default(),
                 key,
             )

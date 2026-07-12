@@ -106,7 +106,7 @@ Protected browser routes must redirect unauthenticated users to
 Forms must submit to server functions only. They must not call REST endpoints
 directly from hydrated client code in v1, because server functions are the web
 UI boundary where cookies, redirects, and page-level auth errors are handled.
-Session-issuing server functions must set the `ddd_auth_session` httpOnly cookie
+Session-issuing server functions must set the `wasi_auth_dev_session` httpOnly cookie
 and return browser-safe completion responses without `session_id`,
 `access_token`, or `refresh_token` fields. REST and gRPC retain token-bearing
 responses for non-browser clients.
@@ -149,13 +149,14 @@ handoffs, but all other REST failures return JSON.
 
 Session context:
 
-- Browser server functions use the `ddd_auth_session` httpOnly cookie.
+- Browser server functions use the `wasi_auth_dev_session` httpOnly cookie.
 - Browser server functions must not expose issued session ids, access tokens, or
   refresh tokens to hydrated browser code after issuing that cookie.
-- Browser page middleware reads the `ddd_auth_session` httpOnly cookie before
+- Browser page middleware reads the `wasi_auth_dev_session` httpOnly cookie before
   rendering guest-only or protected routes.
-- REST smoke and service-to-service callers may pass `x-auth-session`, the
-  `ddd_auth_session` cookie, or `Authorization: Bearer <access_jwt>`.
+- Browser callers use the secure session cookie. REST smoke and
+  service-to-service callers use `Authorization: Bearer <access_jwt>`; trusted
+  ingress rejects the former `x-auth-session` compatibility header.
   Query-string credentials such as `?session_id=...` and `?admin_token=...`
   are not supported.
 - Access-token callers use `POST /api/auth/token/verify` with a signed JWT
@@ -203,15 +204,10 @@ browser-only redirects, or HTML response concepts.
 - `ListSigningKeys`
 - `RotateSigningKey`
 
-Session-bearing request messages:
-
-- `GetSessionRequest`: `session_id = 1`
-- `RefreshTokenRequest`: `session_id = 1`, `refresh_token = 2`
-- `TokenVerifyRequest`: `access_token = 1`
-- `LogoutRequest`: `session_id = 1`
-- `ListSigningKeysRequest`: `admin_token = 1`
-- `SigningKeyRotateRequest`: `admin_token = 1`, `kid = 2`,
-  `retire_previous = 3`
+Authentication authority is carried only by the verified HTTP cookie or gRPC
+`authorization` metadata. Request messages do not contain session or
+administrator credentials; signing-key operations derive system-admin and
+AAL2 authority from `VerifiedRequestContext`.
 
 `authz.v1.AuthzService` methods:
 
@@ -255,7 +251,7 @@ gRPC status mapping:
 - Web route tests direct-load every route in the web route table.
 - Form tests prove every form submits to the listed server function.
 - REST smoke tests cover every REST endpoint and error class.
-- `rtk bash examples/auth-stack/scripts/verify_auth_stack.sh` covers
+- `rtk bash examples/fullstack-app/scripts/verify_fullstack.sh` covers
   guest-only route redirects, protected route redirects, register/login,
   session inspection, token refresh, logout, forgot/reset password, JWKS,
   stored authz model activation, tuple-backed check/list/expand, and authz

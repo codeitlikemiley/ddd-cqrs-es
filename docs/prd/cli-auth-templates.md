@@ -25,7 +25,7 @@ runtime/backend/transport vocabulary.
 ## Success Criteria
 
 - `ddd capabilities --json` advertises auth and authz capabilities.
-- `ddd init ... --preset auth-stack` plans and writes a Spin auth stack project.
+- `ddd init ... --preset fullstack` plans and writes a Spin auth stack project.
 - Generated `auth-stack` projects default to fullstack support:
   `--transport both --ui leptos`.
 - Dry-run JSON lists every file operation before writing.
@@ -40,10 +40,10 @@ runtime/backend/transport vocabulary.
 New preset:
 
 ```bash
-ddd init auth-stack --preset auth-stack --runtime spin --db sqlite --transport both --ui leptos
+ddd init fullstack --preset fullstack --runtime spin --db sqlite --transport both --ui leptos
 ```
 
-If the user omits `--transport` or `--ui` for `preset=auth-stack`, default to
+If the user omits `--transport` or `--ui` for `preset=fullstack`, default to
 `transport=both` and `ui=leptos` so the generated project includes web pages,
 REST, and gRPC by default.
 
@@ -122,7 +122,7 @@ The CLI template generates:
      `AUTH_GOOGLE_CLIENT_SECRET`, not credential values.
 4. Add generated project checks for REST, gRPC, Leptos, and storage features.
    - Status: done. `ddd check` now requires the auth-stack Leptos, REST, gRPC,
-     OAuth, storage, proto, package, and script files for `preset=auth-stack`
+     OAuth, storage, proto, package, and script files for `preset=fullstack`
      and no longer requires the unrelated aggregate-domain scaffold.
      Regression tests prove generated `Cargo.toml`, `Makefile`, `spin.toml`,
      `.env.example`, scripts, and package files carry Spin PostgreSQL/MySQL
@@ -133,14 +133,14 @@ The CLI template generates:
      published; published CLI builds omit those local patches and use the
      declared crates.io versions.
 5. Update CLI docs after generated output is stable.
-   - Status: done. `docs/cli.md` documents the `auth-stack` preset, manifest
+   - Status: done. `docs/cli.md` documents the `fullstack` preset, manifest
      auth/authz sections, and auth enable commands.
 
 ## Verification
 
 - `cargo test -p ddd-cqrs-es-cli --all-targets`.
 - `cargo run -p ddd-cqrs-es-cli -- capabilities --json`.
-- `cargo run -p ddd-cqrs-es-cli -- --dry-run --format json init /tmp/ddd-auth-stack-dry-run --preset auth-stack --runtime spin --db sqlite --transport both --ui leptos`.
+- `cargo run -p ddd-cqrs-es-cli -- --dry-run --format json init /tmp/ddd-auth-stack-dry-run --preset fullstack --runtime spin --db sqlite --transport both --ui leptos`.
 - Full write test proving generated files exist and `ddd check` passes.
 - Full write test proving generated auth-stack projects include real runtime
   files, scripts, package metadata, no unused aggregate scaffold, and pass
@@ -152,4 +152,4 @@ The CLI template generates:
   --target wasm32-wasip2 --no-default-features --features ssr,sqlite,spin-grpc`.
 - Capabilities JSON test proving auth capabilities and templates are listed.
 - Regression test proving unsupported runtime values are still rejected and
-  `preset=auth-stack` rejects non-fullstack transport/UI selections.
+  `preset=fullstack` rejects non-fullstack transport/UI selections.

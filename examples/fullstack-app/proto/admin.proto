@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package admin.v1;
+
+service AdminService {
+  rpc ListUsers(ListUsersRequest) returns (UserListResponse);
+  rpc SetUserDisabled(SetUserDisabledRequest) returns (User);
+  rpc ListProviders(ListProvidersRequest) returns (ProviderListResponse);
+  rpc SaveProvider(SaveProviderRequest) returns (Provider);
+  rpc ListSigningKeys(ListSigningKeysRequest) returns (SigningKeyListResponse);
+  rpc RotateSigningKey(RotateSigningKeyRequest) returns (SigningKeyRotateResponse);
+  rpc ListPolicyVersions(ListPolicyVersionsRequest) returns (PolicyVersionListResponse);
+  rpc PublishPolicy(PublishPolicyRequest) returns (PolicyVersion);
+  rpc GetHealth(GetHealthRequest) returns (HealthResponse);
+}
+
+message ListUsersRequest {}
+message SetUserDisabledRequest { string user_id = 1; bool disabled = 2; }
+message User { string user_id = 1; string primary_email = 2; bool disabled = 3; bool email_verified = 4; uint64 created_at_ms = 5; }
+message UserListResponse { repeated User users = 1; }
+message ListProvidersRequest {}
+message SaveProviderRequest { string provider_id = 1; bool enabled = 2; }
+message Provider { string provider_id = 1; string display_name = 2; string login_url = 3; bool enabled = 4; }
+message ProviderListResponse { repeated Provider providers = 1; }
+message ListSigningKeysRequest {}
+message RotateSigningKeyRequest { string kid = 1; bool retire_previous = 2; }
+message SigningKey { string kid = 1; string alg = 2; string status = 3; bool active = 4; string source = 5; uint64 created_at_ms = 6; uint64 activated_at_ms = 7; uint64 retired_at_ms = 8; uint64 revoked_at_ms = 9; }
+message SigningKeyListResponse { repeated SigningKey keys = 1; }
+message SigningKeyRotateResponse { string active_kid = 1; string previous_kid = 2; bool retired_previous = 3; repeated SigningKey keys = 4; }
+message ListPolicyVersionsRequest {}
+message PublishPolicyRequest { string policy_text = 1; string schema_text = 2; }
+message PolicyVersion { string version_id = 1; string status = 2; string policy_hash = 3; string published_by = 4; uint64 created_at_ms = 5; }
+message PolicyVersionListResponse { repeated PolicyVersion versions = 1; }
+message GetHealthRequest {}
+message HealthResponse { string status = 1; string storage_backend = 2; string mail_transport = 3; string authorization_provider = 4; bool production_mode = 5; }
