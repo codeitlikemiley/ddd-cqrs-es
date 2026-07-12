@@ -18,58 +18,40 @@ use wasi_auth::authorization::{
     Resource as SpiceDbResource, ResourceType as SpiceDbResourceType,
 };
 #[cfg(all(feature = "spicedb", runtime_spin))]
-use wasi_auth::context::{OrganizationId, PolicyRevision};
-#[cfg(all(feature = "mail-http", runtime_spin))]
-use wasi_auth::mail::HttpMailTransport;
+use wasi_auth::context::OrganizationId;
 #[cfg(all(feature = "spicedb", runtime_spin))]
-use wasi_auth::postgres::outbox::RelationshipOutboxWorker;
+use wasi_auth::postgres::outbox::load_relationship_consistency;
+use wasi_auth::schema::{AppliedSchemaMigration, plan_schema};
 #[cfg(all(feature = "spicedb", runtime_spin))]
 use wasi_auth::spicedb::{
-    PermissionMap, SpiceDbBearerToken, SpiceDbEndpoint, SpiceDbProvider, SpiceDbRelationshipWriter,
-    SpiceDbTransport, SpiceDbWriteEndpoint,
+    PermissionMap, SpiceDbBearerToken, SpiceDbEndpoint, SpiceDbProvider, SpiceDbTransport,
 };
-use wasi_auth::schema::{AppliedSchemaMigration, plan_schema};
 
 use crate::contracts::{
-    HealthStatusResponse, StorageEventTypeCount, StorageProjectionRunResponse, StorageStatusResponse,
+    HealthStatusResponse, StorageEventTypeCount, StorageProjectionRunResponse,
+    StorageStatusResponse,
 };
 use crate::error::{AuthStackError, AuthStackResult};
 
 const AUTH_PRODUCTION_MODE: &str = "AUTH_PRODUCTION_MODE";
 const MFA_VAULT_KEY: &str = "AUTH_VAULT_KEY_BASE64";
 const MFA_RECOVERY_PEPPER: &str = "AUTH_RECOVERY_CODE_PEPPER_BASE64";
-#[cfg(all(feature = "mail-http", runtime_spin))]
-const MAX_MAIL_WEBHOOK_RESPONSE_BYTES: usize = 16 * 1024;
 #[cfg(all(feature = "spicedb", runtime_spin))]
 const MAX_SPICEDB_RESPONSE_BYTES: usize = 256 * 1024;
-#[cfg(all(feature = "spicedb", runtime_spin))]
-const MAX_RELATIONSHIP_DISPATCH_BATCH: usize = 100;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StorageBackend {
     Postgres,
 }
 
-#[cfg(all(any(feature = "mail-http", feature = "spicedb"), runtime_spin))]
+#[cfg(all(feature = "spicedb", runtime_spin))]
 #[derive(Clone, Copy, Debug, thiserror::Error)]
 #[error("Spin outbound HTTP transport failed")]
 struct SpinOutboundHttpTransportError;
 
-#[cfg(all(any(feature = "mail-http", feature = "spicedb"), runtime_spin))]
+#[cfg(all(feature = "spicedb", runtime_spin))]
 #[derive(Clone, Copy, Debug)]
 struct SpinOutboundHttpTransport;
-
-#[cfg(all(feature = "mail-http", runtime_spin))]
-impl HttpMailTransport for SpinOutboundHttpTransport {
-    type Error = SpinOutboundHttpTransportError;
-
-    async fn send(
-        &self,
-        request: http::Request<Vec<u8>>,
-    ) -> Result<http::Response<Vec<u8>>, Self::Error> {
-        spin_outbound_http_send(request, MAX_MAIL_WEBHOOK_RESPONSE_BYTES).await
-    }
-}
 
 #[cfg(all(feature = "spicedb", runtime_spin))]
 impl SpiceDbTransport for SpinOutboundHttpTransport {
@@ -83,7 +65,7 @@ impl SpiceDbTransport for SpinOutboundHttpTransport {
     }
 }
 
-#[cfg(all(any(feature = "mail-http", feature = "spicedb"), runtime_spin))]
+#[cfg(all(feature = "spicedb", runtime_spin))]
 async fn spin_outbound_http_send(
     request: http::Request<Vec<u8>>,
     max_response_bytes: usize,
@@ -180,8 +162,8 @@ pub async fn initialize_schema_async() -> AuthStackResult<()> {
         })
     })
     .collect::<AuthStackResult<Vec<_>>>()?;
-    let pending = plan_schema(&applied)
-        .map_err(|error| AuthStackError::configuration(error.to_string()))?;
+    let pending =
+        plan_schema(&applied).map_err(|error| AuthStackError::configuration(error.to_string()))?;
     if !pending.is_empty() {
         return Err(AuthStackError::configuration(format!(
             "wasi-auth schema has pending migrations: {}",
@@ -209,7 +191,11 @@ pub async fn verify_atomic_rollback_probe() -> AuthStackResult<Value> {
             "INSERT INTO auth_rate_limit_buckets \
              (bucket_key, attempt_count, window_expires_at_ms, updated_at_ms) \
              VALUES (?1, 1, ?2, ?3)",
-            vec![json!(&probe_id), json!(now.saturating_add(60_000)), json!(now)],
+            vec![
+                json!(&probe_id),
+                json!(now.saturating_add(60_000)),
+                json!(now),
+            ],
         ),
         AtomicSqlStatement::guard(
             "SELECT bucket_key FROM auth_rate_limit_buckets WHERE bucket_key = ?1 AND FALSE",
@@ -250,55 +236,6 @@ pub async fn csrf_token_for_session(session_id: &str) -> AuthStackResult<String>
     Ok(URL_SAFE_NO_PAD.encode(digest))
 }
 
-pub async fn dispatch_pending_relationships() -> AuthStackResult<usize> {
-    if !config_bool("AUTH_SPICEDB_ENABLED", false).await {
-        return Ok(0);
-    }
-    #[cfg(all(feature = "spicedb", runtime_spin))]
-    {
-        dispatch_pending_spicedb_relationships().await
-    }
-    #[cfg(not(all(feature = "spicedb", runtime_spin)))]
-    {
-        Err(AuthStackError::configuration(
-            "AUTH_SPICEDB_ENABLED requires the spicedb feature on Spin",
-        ))
-    }
-}
-
-#[cfg(all(feature = "spicedb", runtime_spin))]
-async fn dispatch_pending_spicedb_relationships() -> AuthStackResult<usize> {
-    let endpoint = store_config_value("AUTH_SPICEDB_WRITE_URL")
-        .await
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| AuthStackError::configuration("AUTH_SPICEDB_WRITE_URL is required"))?;
-    let bearer_token = store_config_value("AUTH_SPICEDB_TOKEN")
-        .await
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| AuthStackError::configuration("AUTH_SPICEDB_TOKEN is required"))?;
-    let writer = SpiceDbRelationshipWriter::new(
-        SpiceDbWriteEndpoint::new(endpoint.trim())
-            .map_err(|_| AuthStackError::configuration("AUTH_SPICEDB_WRITE_URL is invalid"))?,
-        SpiceDbBearerToken::new(bearer_token)
-            .map_err(|_| AuthStackError::configuration("AUTH_SPICEDB_TOKEN is invalid"))?,
-        SpinOutboundHttpTransport,
-    );
-    let worker = RelationshipOutboxWorker::new(
-        crate::auth_product::store().await?,
-        crate::auth_product::RuntimeClock,
-        crate::auth_product::RuntimeRandom,
-        crate::auth_product::outbox_key().await?,
-    );
-    worker
-        .dispatch(&writer, MAX_RELATIONSHIP_DISPATCH_BATCH)
-        .await
-        .map(|report| report.delivered)
-        .map_err(|error| {
-            tracing::error!(error = %error, "canonical relationship outbox dispatch failed");
-            AuthStackError::store("relationship outbox dispatch failed")
-        })
-}
-
 pub async fn direct_spicedb_enabled() -> bool {
     config_bool("AUTH_SPICEDB_ENABLED", false).await
 }
@@ -311,23 +248,25 @@ pub async fn check_direct_spicedb_membership(
     {
         let organization = OrganizationId::new(organization_id.to_owned())
             .map_err(|_| AuthStackError::validation("organization_id is invalid"))?;
-        let rows = execute_sql(
-            "SELECT status, delivery_id \
-             FROM auth_outbox \
-             WHERE kind = 'relationship' \
-             ORDER BY CASE WHEN status = 'delivered' THEN 1 ELSE 0 END, \
-                      updated_at_ms DESC, outbox_id DESC \
-             LIMIT 1",
-            Vec::new(),
+        let synchronization = load_relationship_consistency(
+            &crate::auth_product::store().await?,
+            "organization",
+            organization_id,
         )
-        .await?;
-        let latest = rows.first();
-        if latest.is_some_and(|row| row_string(row, "status").as_deref() != Some("delivered")) {
-            let revision = PolicyRevision::new("spicedb-pending-v1")
-                .map_err(|_| AuthStackError::configuration("SpiceDB policy revision is invalid"))?;
+        .await
+        .map_err(|error| {
+            tracing::error!(error = %error, "resource relationship consistency lookup failed");
+            AuthStackError::store("relationship consistency lookup failed")
+        })?;
+        if synchronization.has_unsettled() {
             return Ok((
-                AuthorizationDecision::deny(revision, "spicedb.pending_relationship"),
-                None,
+                AuthorizationDecision::deny(
+                    wasi_auth::context::PolicyRevision::new("spicedb-pending-v1").map_err(
+                        |_| AuthStackError::configuration("SpiceDB policy revision is invalid"),
+                    )?,
+                    "spicedb.pending_relationship",
+                ),
+                synchronization.resource_revision(),
             ));
         }
 
@@ -339,12 +278,12 @@ pub async fn check_direct_spicedb_membership(
             Some(organization),
         )
         .map_err(|_| AuthStackError::validation("organization resource is invalid"))?;
-        let consistency = latest
-            .and_then(|row| row_string(row, "delivery_id"))
-            .filter(|value| !value.is_empty())
-            .map_or(ConsistencyRequirement::MinimizeLatency, |token| {
-                ConsistencyRequirement::AtLeastAsFresh { token }
-            });
+        let consistency = synchronization.consistency_token().map_or(
+            ConsistencyRequirement::MinimizeLatency,
+            |token| ConsistencyRequirement::AtLeastAsFresh {
+                token: token.to_owned(),
+            },
+        );
         let request = SpiceDbAccessRequest::new(
             context,
             SpiceDbActionName::new("authorization.check")
@@ -360,7 +299,7 @@ pub async fn check_direct_spicedb_membership(
                 tracing::error!(error = %error, "direct SpiceDB failed closed");
                 AuthStackError::Forbidden
             })?;
-        Ok((decision, None))
+        Ok((decision, synchronization.resource_revision()))
     }
     #[cfg(not(all(feature = "spicedb", runtime_spin)))]
     {
@@ -382,10 +321,10 @@ async fn direct_spicedb_provider()
         .await
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| AuthStackError::configuration("AUTH_SPICEDB_CHECK_URL is required"))?;
-    let token = store_config_value("AUTH_SPICEDB_TOKEN")
+    let token = store_config_value("AUTH_SPICEDB_CHECK_TOKEN")
         .await
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| AuthStackError::configuration("AUTH_SPICEDB_TOKEN is required"))?;
+        .ok_or_else(|| AuthStackError::configuration("AUTH_SPICEDB_CHECK_TOKEN is required"))?;
     let permission = store_config_value("AUTH_SPICEDB_MEMBERSHIP_PERMISSION")
         .await
         .filter(|value| !value.trim().is_empty())
@@ -394,7 +333,7 @@ async fn direct_spicedb_provider()
         SpiceDbEndpoint::new(check_url.trim())
             .map_err(|_| AuthStackError::configuration("AUTH_SPICEDB_CHECK_URL is invalid"))?,
         SpiceDbBearerToken::new(token)
-            .map_err(|_| AuthStackError::configuration("AUTH_SPICEDB_TOKEN is invalid"))?,
+            .map_err(|_| AuthStackError::configuration("AUTH_SPICEDB_CHECK_TOKEN is invalid"))?,
         SpinOutboundHttpTransport,
         PermissionMap::new([("authorization.check", permission)]).map_err(|_| {
             AuthStackError::configuration("AUTH_SPICEDB_MEMBERSHIP_PERMISSION is invalid")
@@ -610,7 +549,9 @@ pub async fn catch_up_storage_projections(
 ) -> AuthStackResult<Vec<StorageProjectionRunResponse>> {
     initialize_schema_async().await?;
     if batch_limit.is_some_and(|limit| limit == 0 || limit > 10_000) {
-        return Err(AuthStackError::validation("projection batch limit is invalid"));
+        return Err(AuthStackError::validation(
+            "projection batch limit is invalid",
+        ));
     }
     Ok(Vec::new())
 }
@@ -701,20 +642,15 @@ async fn validate_runtime_security_config_uncached() -> AuthStackResult<()> {
         .await
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| {
-            AuthStackError::configuration(
-                "production requires AUTH_TRUSTED_INGRESS_KEY_BASE64",
-            )
+            AuthStackError::configuration("production requires AUTH_TRUSTED_INGRESS_KEY_BASE64")
         })?;
-    if STANDARD
+    let ingress_key = STANDARD
         .decode(ingress_key.trim())
         .ok()
         .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
-        .is_none()
-    {
-        return Err(AuthStackError::configuration(
-            "AUTH_TRUSTED_INGRESS_KEY_BASE64 must decode to 32 bytes",
-        ));
-    }
+        .ok_or_else(|| {
+            AuthStackError::configuration("AUTH_TRUSTED_INGRESS_KEY_BASE64 must decode to 32 bytes")
+        })?;
     if store_config_value("AUTH_TRUSTED_INGRESS_AUDIENCE")
         .await
         .is_none_or(|value| value.trim().is_empty() || value.len() > 256)
@@ -748,28 +684,82 @@ async fn validate_runtime_security_config_uncached() -> AuthStackResult<()> {
             "production requires AUTH_CSRF_SECRET with at least 32 characters",
         ));
     }
-    require_production_secret(MFA_VAULT_KEY).await?;
-    require_production_secret(MFA_RECOVERY_PEPPER).await?;
+    let vault_key: [u8; 32] = store_config_value(MFA_VAULT_KEY)
+        .await
+        .and_then(|value| STANDARD.decode(value.trim()).ok())
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or_else(|| {
+            AuthStackError::configuration(
+                "production AUTH_VAULT_KEY_BASE64 must decode to 32 bytes",
+            )
+        })?;
+    if store_config_value("AUTH_VAULT_KEY_VERSION")
+        .await
+        .is_none_or(|value| {
+            value.trim().is_empty()
+                || value == "development-v1"
+                || value.len() > 128
+                || value.chars().any(char::is_control)
+        })
+    {
+        return Err(AuthStackError::configuration(
+            "production requires a bounded non-development AUTH_VAULT_KEY_VERSION",
+        ));
+    }
+    let recovery_pepper = store_config_value(MFA_RECOVERY_PEPPER)
+        .await
+        .and_then(|value| STANDARD.decode(value.trim()).ok())
+        .filter(|bytes| (16..=1_024).contains(&bytes.len()))
+        .ok_or_else(|| {
+            AuthStackError::configuration(
+                "production AUTH_RECOVERY_CODE_PEPPER_BASE64 must decode to 16-1024 bytes",
+            )
+        })?;
+    let outbox_key: [u8; 32] = store_config_value("AUTH_OUTBOX_KEY_BASE64")
+        .await
+        .and_then(|value| STANDARD.decode(value.trim()).ok())
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or_else(|| {
+            AuthStackError::configuration(
+                "production AUTH_OUTBOX_KEY_BASE64 must decode to 32 bytes",
+            )
+        })?;
+    let development_outbox_key: [u8; 32] =
+        Sha256::digest(b"fullstack-development-outbox-key").into();
+    if vault_key == development_outbox_key || outbox_key == development_outbox_key {
+        return Err(AuthStackError::configuration(
+            "production forbids development encryption keys",
+        ));
+    }
+    if store_config_value("AUTH_OUTBOX_KEY_VERSION")
+        .await
+        .is_none_or(|value| value.trim().is_empty() || value == "development-v1")
+    {
+        return Err(AuthStackError::configuration(
+            "production requires a non-development AUTH_OUTBOX_KEY_VERSION",
+        ));
+    }
+    if ingress_key == vault_key
+        || ingress_key == outbox_key
+        || vault_key == outbox_key
+        || recovery_pepper.as_slice() == ingress_key.as_slice()
+        || recovery_pepper.as_slice() == vault_key.as_slice()
+        || recovery_pepper.as_slice() == outbox_key.as_slice()
+    {
+        return Err(AuthStackError::configuration(
+            "production requires distinct ingress, vault, outbox, and recovery secrets",
+        ));
+    }
     match mail_transport().await.as_str() {
-        "smtp" => {
-            require_production_secret("AUTH_SMTP_URL").await?;
-            #[cfg(runtime_spin)]
-            return Err(AuthStackError::configuration(
-                "Spin production uses AUTH_MAIL_TRANSPORT=http; SMTP requires an external native SmtpMailer worker",
-            ));
-        }
-        "http" => {
-            require_production_secret("AUTH_MAIL_HTTP_URL").await?;
-            require_production_secret("AUTH_MAIL_HTTP_TOKEN").await?;
-        }
+        "http" => {}
         "capture" => {
             return Err(AuthStackError::configuration(
-                "production forbids capture mail; configure smtp or http",
+                "production forbids capture mail; run the native outbox worker with HTTP mail",
             ));
         }
         _ => {
             return Err(AuthStackError::configuration(
-                "AUTH_MAIL_TRANSPORT must be capture, smtp, or http",
+                "production AUTH_MAIL_TRANSPORT must be http",
             ));
         }
     }
@@ -788,13 +778,7 @@ async fn validate_spicedb_runtime_config() -> AuthStackResult<()> {
             .ok_or_else(|| AuthStackError::configuration("AUTH_SPICEDB_CHECK_URL is required"))?;
         SpiceDbEndpoint::new(check_endpoint.trim())
             .map_err(|_| AuthStackError::configuration("AUTH_SPICEDB_CHECK_URL is invalid"))?;
-        let endpoint = store_config_value("AUTH_SPICEDB_WRITE_URL")
-            .await
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| AuthStackError::configuration("AUTH_SPICEDB_WRITE_URL is required"))?;
-        SpiceDbWriteEndpoint::new(endpoint.trim())
-            .map_err(|_| AuthStackError::configuration("AUTH_SPICEDB_WRITE_URL is invalid"))?;
-        require_production_secret("AUTH_SPICEDB_TOKEN").await?;
+        require_production_secret("AUTH_SPICEDB_CHECK_TOKEN").await?;
         Ok(())
     }
     #[cfg(not(all(feature = "spicedb", runtime_spin)))]
@@ -805,6 +789,7 @@ async fn validate_spicedb_runtime_config() -> AuthStackResult<()> {
     }
 }
 
+#[cfg(all(feature = "spicedb", runtime_spin))]
 async fn require_production_secret(name: &str) -> AuthStackResult<()> {
     if store_config_value(name)
         .await

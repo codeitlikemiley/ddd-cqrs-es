@@ -239,7 +239,7 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
     assert!(cargo_toml.contains("=0.57.1"));
     assert!(!cargo_toml.contains("wit-bindgen-spin-compat"));
     assert!(cargo_toml.contains("a02d330fe9357be2d18e6deef400511195ce6f7f"));
-    assert!(cargo_toml.contains(r#"rust-version = "1.94.0""#));
+    assert!(cargo_toml.contains(r#"rust-version = "1.93.0""#));
     assert!(!cargo_toml.contains("path ="));
     assert!(cargo_toml.contains("[patch.crates-io]"));
     assert!(cargo_toml.contains(
@@ -252,14 +252,14 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
     assert!(cargo_toml.contains("getrandom"));
     assert!(cargo_toml.contains(r#"bin-target-triple = "wasm32-wasip2""#));
     assert!(cargo_toml.contains(r#"mail-capture = ["wasi-auth/mail-capture"]"#));
-    assert!(cargo_toml.contains(r#"mail-smtp = ["wasi-auth/mail-smtp"]"#));
+    assert!(!cargo_toml.contains("mail-smtp"));
     assert!(cargo_toml.contains(r#"mail-http = ["wasi-auth/mail-http"]"#));
     assert!(cargo_toml.contains(r#"spicedb = ["wasi-auth/spicedb"]"#));
     assert!(!cargo_toml.contains(r#"features = ["fullstack-spin", "mail-capture"]"#));
 
     let makefile = std::fs::read_to_string(project.join("Makefile")).unwrap();
     assert!(makefile.contains("db ?= $(if $(DATABASE_BACKEND),$(DATABASE_BACKEND),postgres)"));
-    assert!(makefile.contains("AUTH_STORAGE_AUTO_CATCH_UP ?= true"));
+    assert!(!makefile.contains("AUTH_STORAGE_AUTO_CATCH_UP"));
     assert!(makefile.contains("AUTH_COOKIE_SECURE ?= false"));
     assert!(makefile.contains("--variable auth_cookie_secure=$(AUTH_COOKIE_SECURE)"));
     assert!(makefile.contains("--variable auth_jwt_key_ring_json='$(AUTH_JWT_KEY_RING_JSON)'"));
@@ -271,6 +271,11 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
     assert!(makefile.contains("MAIL_FEATURE := mail-$(AUTH_MAIL_TRANSPORT)"));
     assert!(makefile.contains("OPTIONAL_SPICEDB_FEATURE :="));
     assert!(makefile.contains("--variable auth_spicedb_enabled=$(AUTH_SPICEDB_ENABLED)"));
+    assert!(makefile.contains("--variable auth_spicedb_check_token='$(AUTH_SPICEDB_CHECK_TOKEN)'"));
+    assert!(!makefile.contains("--variable auth_spicedb_write_url"));
+    assert!(!makefile.contains("--variable auth_mail_http_token"));
+    assert!(makefile.contains("outbox-worker: validate-mail db-migrate"));
+    assert!(makefile.contains("WASI_AUTH_OUTBOX_WORKER_BIN"));
     assert!(makefile.contains("--target wasm32-wasip2"));
     assert!(makefile.contains("oauth-credentials:"));
     assert!(makefile.contains("bash scripts/verify_oauth_credentials.sh"));
@@ -300,6 +305,10 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
     assert!(spin_toml.contains("auth_csrf_secret = { default = \"\" }"));
     assert!(spin_toml.contains("auth_dev_tools = { default = \"true\" }"));
     assert!(spin_toml.contains("auth_spicedb_enabled = { default = \"false\" }"));
+    assert!(spin_toml.contains("auth_spicedb_check_token = { default = \"\" }"));
+    assert!(!spin_toml.contains("auth_spicedb_write_url"));
+    assert!(!spin_toml.contains("auth_spicedb_token"));
+    assert!(!spin_toml.contains("auth_mail_http_token"));
     assert!(spin_toml.contains("auth_cookie_secure = \"{{ auth_cookie_secure }}\""));
     assert!(spin_toml.contains("auth_password_kdf = \"{{ auth_password_kdf }}\""));
     assert!(
@@ -350,12 +359,15 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
     assert!(production_spin_toml.contains("auth_mail_transport = { default = \"http\" }"));
 
     let env_example = std::fs::read_to_string(project.join(".env.example")).unwrap();
-    assert!(env_example.contains("AUTH_STORAGE_AUTO_CATCH_UP=true"));
+    assert!(!env_example.contains("AUTH_STORAGE_AUTO_CATCH_UP"));
     assert!(env_example.contains("AUTH_COOKIE_SECURE=false"));
     assert!(env_example.contains("AUTH_PASSWORD_KDF=argon2id"));
     assert!(env_example.contains("AUTH_BOOTSTRAP_ADMIN_EMAILS="));
     assert!(env_example.contains("AUTH_CSRF_SECRET="));
     assert!(env_example.contains("AUTH_DEV_TOOLS=true"));
+    assert!(env_example.contains("AUTH_OUTBOX_KEY_BASE64="));
+    assert!(env_example.contains("AUTH_OUTBOX_KEY_VERSION=development-v1"));
+    assert!(env_example.contains("AUTH_SPICEDB_CHECK_TOKEN="));
     assert!(env_example.contains("DATABASE_BACKEND=postgres"));
     assert!(env_example.contains("POSTGRES_URL="));
 

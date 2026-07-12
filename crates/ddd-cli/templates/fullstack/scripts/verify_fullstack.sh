@@ -107,6 +107,24 @@ json_post() {
     --data "$body"
 }
 
+captured_mail() {
+  local recipient="$1"
+  local kind="$2"
+  local response=""
+  for _ in $(seq 1 50); do
+    response="$(curl -sS -f -G "$BASE_URL/api/auth/dev/mail/latest" \
+      --data-urlencode "recipient=$recipient" \
+      --data-urlencode "kind=$kind" 2>/dev/null || true)"
+    if [[ -n "$response" ]]; then
+      printf '%s' "$response"
+      return 0
+    fi
+    sleep 0.1
+  done
+  echo "Mail worker did not deliver $kind for the requested recipient" >&2
+  return 1
+}
+
 json_post_bearer() {
   local path="$1"
   local body="$2"
@@ -349,9 +367,7 @@ run_passkey_check() {
   register_response="$(json_post /api/auth/password/register \
     "{\"email\":\"$passkey_email\",\"password\":\"passkey-correct-123\",\"redirect_url\":\"/dashboard\"}")"
   jq -e '.authenticated == false and .session_id == null' <<<"$register_response" >/dev/null
-  verification_mail="$(curl -sS -f -G "$BASE_URL/api/auth/dev/mail/latest" \
-    --data-urlencode "recipient=$passkey_email" \
-    --data-urlencode "kind=email-verification")"
+  verification_mail="$(captured_mail "$passkey_email" email-verification)"
   verification_path="$(jq -r '.body_text' <<<"$verification_mail")"
   verification_token="${verification_path##*token=}"
   local verification_response passkey_session passkey_cookie passkey_csrf
@@ -504,9 +520,7 @@ register_response="$(json_post /api/auth/password/register \
   "{\"email\":\"$email\",\"password\":\"$old_password\",\"redirect_url\":\"/dashboard\"}")"
 jq -e '.authenticated == false and .redirect_url == "/verify-email" and .session_id == null and .access_token == null and .refresh_token == null' \
   <<<"$register_response" >/dev/null
-verification_mail="$(curl -sS -f -G "$BASE_URL/api/auth/dev/mail/latest" \
-  --data-urlencode "recipient=$email" \
-  --data-urlencode "kind=email-verification")"
+verification_mail="$(captured_mail "$email" email-verification)"
 verification_path="$(jq -r '.body_text' <<<"$verification_mail")"
 verification_token="${verification_path##*token=}"
 if [[ -z "$verification_token" || "$verification_token" == "$verification_path" ]]; then
@@ -660,11 +674,9 @@ start_reset_response="$(json_post /api/auth/password/reset/start \
   "{\"email\":\"$email\",\"redirect_url\":\"/dashboard\"}")"
 jq -e '.accepted == true and (has("reset_url") | not) and .expires_in_seconds > 0' \
   <<<"$start_reset_response" >/dev/null
-captured_mail="$(curl -sS -f -G "$BASE_URL/api/auth/dev/mail/latest" \
-  --data-urlencode "recipient=$email" \
-  --data-urlencode "kind=password-reset" 2>/dev/null || true)"
-if [[ -n "$captured_mail" ]]; then
-  reset_path="$(jq -r '.body_text' <<<"$captured_mail")"
+captured_reset_mail="$(captured_mail "$email" password-reset)"
+if [[ -n "$captured_reset_mail" ]]; then
+  reset_path="$(jq -r '.body_text' <<<"$captured_reset_mail")"
   reset_token="${reset_path##*token=}"
   if [[ -z "$reset_token" || "$reset_token" == "$reset_path" ]]; then
     echo "Mail capture returned an invalid reset path" >&2

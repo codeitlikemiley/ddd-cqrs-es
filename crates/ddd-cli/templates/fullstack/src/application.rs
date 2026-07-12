@@ -362,7 +362,6 @@ pub async fn start_oauth_login(
     let redirect_url = safe_redirect_or_default(redirect_url);
     ensure_oauth_provider_ready(&provider_id).await?;
     let grant = crate::auth_product::start_oauth_flow(&provider_id, &redirect_url).await?;
-    catch_up_storage_after_write("start_oauth_login").await;
 
     if development_oauth_callback_bypass_enabled().await {
         return Ok(OAuthStartResponse {
@@ -443,7 +442,6 @@ pub async fn complete_oauth_callback(
         crate::oauth::complete_authorization_code(&request.provider_id, code, &grant).await?
     };
     let response = crate::auth_product::complete_oauth_identity(grant, identity).await?;
-    catch_up_storage_after_write("complete_oauth_callback").await;
     Ok(response)
 }
 
@@ -471,7 +469,6 @@ pub async fn start_passkey_login(
         .as_deref()
         .ok_or_else(|| AuthStackError::validation("email is required for passkey login"))?;
     let response = crate::auth_product::start_passkey_login(email, &redirect_url).await?;
-    catch_up_storage_after_write("start_passkey_login").await;
     Ok(response)
 }
 
@@ -502,7 +499,6 @@ pub async fn start_passkey_registration(
         &redirect_url,
     )
     .await?;
-    catch_up_storage_after_write("start_passkey_registration").await;
     Ok(response)
 }
 
@@ -520,7 +516,6 @@ pub async fn verify_passkey_login(
         &request.credential_json,
     )
     .await?;
-    catch_up_storage_after_write("verify_passkey_login").await;
     Ok(response)
 }
 
@@ -544,7 +539,6 @@ pub async fn verify_passkey_registration(
         &request.credential_json,
     )
     .await?;
-    catch_up_storage_after_write("verify_passkey_registration").await;
     Ok(response)
 }
 
@@ -1890,65 +1884,6 @@ fn provider_enabled_env_name(provider_id: &str) -> String {
 
 async fn development_oauth_callback_bypass_enabled() -> bool {
     feature_enabled("AUTH_OAUTH_DEVELOPMENT_CALLBACK_BYPASS", false).await
-}
-
-async fn storage_auto_catch_up_enabled() -> bool {
-    feature_enabled("AUTH_STORAGE_AUTO_CATCH_UP", true).await
-}
-
-async fn catch_up_storage_after_write(operation: &str) {
-    if !storage_auto_catch_up_enabled().await {
-        return;
-    }
-    match crate::store::catch_up_storage_projections(None).await {
-        Ok(outcomes) => {
-            tracing::debug!(
-                operation,
-                projection_count = outcomes.len(),
-                "auth storage projections caught up after write"
-            );
-        }
-        Err(error) => {
-            tracing::error!(
-                operation,
-                error = %error,
-                error_code = error.public_code(),
-                "auth storage projection catch-up failed after write"
-            );
-        }
-    }
-    match crate::auth_product::dispatch_pending_mail().await {
-        Ok(delivered) if delivered > 0 => {
-            tracing::debug!(operation, delivered, "mail outbox batch delivered");
-        }
-        Ok(_) => {}
-        Err(error) => {
-            tracing::error!(
-                operation,
-                error = %error,
-                error_code = error.public_code(),
-                "mail outbox dispatch failed; durable messages remain pending"
-            );
-        }
-    }
-    match crate::store::dispatch_pending_relationships().await {
-        Ok(completed) if completed > 0 => {
-            tracing::debug!(
-                operation,
-                completed,
-                "SpiceDB relationship outbox batch completed"
-            );
-        }
-        Ok(_) => {}
-        Err(error) => {
-            tracing::error!(
-                operation,
-                error = %error,
-                error_code = error.public_code(),
-                "relationship outbox dispatch failed; intents remain fail-closed"
-            );
-        }
-    }
 }
 
 async fn all_config_values_present(names: &[&str]) -> bool {

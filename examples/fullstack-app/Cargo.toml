@@ -2,7 +2,7 @@
 name = "fullstack-app"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.94.0"
+rust-version = "1.93.0"
 authors = ["codeitlikemiley <codeitlikemiley@gmail.com>"]
 description = "A Spin fullstack authentication and authorization service for ddd_cqrs_es"
 build = "build.rs"
@@ -63,7 +63,6 @@ spin-sdk = { git = "https://github.com/codeitlikemiley/spin-rust-sdk", rev = "a0
 [features]
 default = []
 mail-capture = ["wasi-auth/mail-capture"]
-mail-smtp = ["wasi-auth/mail-smtp"]
 mail-http = ["wasi-auth/mail-http"]
 spicedb = ["wasi-auth/spicedb"]
 migrate = ["dep:serde_json", "dep:tokio", "dep:wasi-auth", "wasi-auth/postgres-native"]

@@ -137,6 +137,26 @@ async function assertRedirect(page, path, expectedPathPrefix) {
   await waitForPageWasm(page);
 }
 
+async function capturedMail(email, kind) {
+  let lastStatus = 0;
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const response = await fetch(
+      url(
+        `/api/auth/dev/mail/latest?recipient=${encodeURIComponent(email)}&kind=${encodeURIComponent(kind)}`,
+      ),
+    );
+    lastStatus = response.status;
+    if (response.ok) return response.json();
+    if (response.status !== 404) {
+      throw new Error(
+        `Mail capture failed with ${response.status}: ${await response.text()}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Mail worker did not deliver ${kind}; last status ${lastStatus}`);
+}
+
 async function createSessionCookie() {
   const email = `browser-smoke-${Date.now()}@example.test`;
   const response = await fetch(url("/api/auth/password/register"), {
@@ -157,17 +177,7 @@ async function createSessionCookie() {
   if (body.authenticated !== false || body.session_id !== null) {
     throw new Error(`Register response did not create a pending account`);
   }
-  const mailResponse = await fetch(
-    url(
-      `/api/auth/dev/mail/latest?recipient=${encodeURIComponent(email)}&kind=email-verification`,
-    ),
-  );
-  if (!mailResponse.ok) {
-    throw new Error(
-      `Mail capture failed with ${mailResponse.status}: ${await mailResponse.text()}`,
-    );
-  }
-  const mail = await mailResponse.json();
+  const mail = await capturedMail(email, "email-verification");
   const verificationUrl = new URL(mail.body_text, baseUrl);
   const token = verificationUrl.searchParams.get("token");
   if (!token) {

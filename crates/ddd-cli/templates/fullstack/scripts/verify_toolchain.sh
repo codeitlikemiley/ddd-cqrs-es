@@ -5,7 +5,7 @@ required_leptos_major=0
 required_leptos_minor=3
 required_leptos_patch=7
 required_rust_major=1
-required_rust_minor=94
+required_rust_minor=93
 
 if ! command -v cargo >/dev/null 2>&1; then
   echo "Error: cargo is required." >&2
@@ -19,7 +19,7 @@ rust_major="${rust_major:-0}"
 rust_minor="${rust_minor:-0}"
 if (( rust_major < required_rust_major \
    || (rust_major == required_rust_major && rust_minor < required_rust_minor) )); then
-  echo "Error: rustc $rust_version is too old; >= 1.94.0 is required for final-WASI async component linking." >&2
+  echo "Error: rustc $rust_version is too old; >= 1.93.0 is required for final-WASI async component linking." >&2
   exit 1
 fi
 

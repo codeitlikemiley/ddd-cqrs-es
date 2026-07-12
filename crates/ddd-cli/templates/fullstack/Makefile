@@ -2,6 +2,7 @@ transport ?= both
 listen ?= 127.0.0.1:3008
 backend_listen ?= 127.0.0.1:3009
 WASI_AUTH_INGRESS_BIN ?= wasi-auth-ingress
+WASI_AUTH_OUTBOX_WORKER_BIN ?= wasi-auth-outbox-worker
 SPIN_BIN ?= spin
 SPIN_UP_BUILD_FLAG ?= --build
 CARGO_CONFIG_ARGS ?=
@@ -33,22 +34,27 @@ AUTH_BOOTSTRAP_ADMIN_EMAILS ?=
 AUTH_CSRF_SECRET ?=
 AUTH_VAULT_KEY_BASE64 ?=
 AUTH_VAULT_KEY_VERSION ?= development-v1
+AUTH_OUTBOX_KEY_BASE64 ?= 3FbbdAQKHq2YhqzKKU1GuAAdRq7nZmDU/iX3ZmGX02o=
+AUTH_OUTBOX_KEY_VERSION ?= development-v1
+AUTH_OUTBOX_POSTGRES_POOL_SIZE ?= 4
+AUTH_OUTBOX_MAIL_BATCH_SIZE ?= 25
+AUTH_OUTBOX_RELATIONSHIP_BATCH_SIZE ?= 100
+AUTH_OUTBOX_POLL_INTERVAL_MS ?= 500
 AUTH_RECOVERY_CODE_PEPPER_BASE64 ?=
 AUTH_MFA_ISSUER ?= wasi-auth
 AUTH_DEV_TOOLS ?= true
 AUTH_MAIL_TRANSPORT ?= capture
-AUTH_SMTP_URL ?=
 AUTH_MAIL_HTTP_URL ?=
 AUTH_MAIL_HTTP_TOKEN ?=
 AUTH_SPICEDB_ENABLED ?= false
 AUTH_SPICEDB_CHECK_URL ?=
 AUTH_SPICEDB_WRITE_URL ?=
 AUTH_SPICEDB_TOKEN ?=
+AUTH_SPICEDB_CHECK_TOKEN ?=
 AUTH_SPICEDB_MEMBERSHIP_PERMISSION ?= member
 AUTH_SESSION_TTL_SECONDS ?= 3600
 AUTH_ACCESS_TOKEN_TTL_SECONDS ?= 900
 AUTH_REFRESH_TOKEN_TTL_SECONDS ?= 2592000
-AUTH_STORAGE_AUTO_CATCH_UP ?= true
 AUTH_COOKIE_SECURE ?= false
 AUTH_PUBLIC_BASE_URL ?= http://127.0.0.1:3008
 AUTH_ENABLE_OAUTH ?= false
@@ -133,23 +139,20 @@ SPIN_VARIABLE_ARGS := \
 	--variable auth_csrf_secret='$(AUTH_CSRF_SECRET)' \
 	--variable auth_vault_key_base64='$(AUTH_VAULT_KEY_BASE64)' \
 	--variable auth_vault_key_version='$(AUTH_VAULT_KEY_VERSION)' \
+	--variable auth_outbox_key_base64='$(AUTH_OUTBOX_KEY_BASE64)' \
+	--variable auth_outbox_key_version='$(AUTH_OUTBOX_KEY_VERSION)' \
 	--variable auth_recovery_code_pepper_base64='$(AUTH_RECOVERY_CODE_PEPPER_BASE64)' \
 	--variable auth_mfa_issuer='$(AUTH_MFA_ISSUER)' \
 	--variable auth_session_ttl_seconds=$(AUTH_SESSION_TTL_SECONDS) \
 	--variable auth_access_token_ttl_seconds=$(AUTH_ACCESS_TOKEN_TTL_SECONDS) \
 	--variable auth_refresh_token_ttl_seconds=$(AUTH_REFRESH_TOKEN_TTL_SECONDS) \
-	--variable auth_storage_auto_catch_up=$(AUTH_STORAGE_AUTO_CATCH_UP) \
 	--variable auth_cookie_secure=$(AUTH_COOKIE_SECURE) \
 	--variable auth_public_base_url=$(AUTH_PUBLIC_BASE_URL) \
 	--variable auth_dev_tools=$(AUTH_DEV_TOOLS) \
 	--variable auth_mail_transport=$(AUTH_MAIL_TRANSPORT) \
-	--variable auth_smtp_url='$(AUTH_SMTP_URL)' \
-	--variable auth_mail_http_url='$(AUTH_MAIL_HTTP_URL)' \
-	--variable auth_mail_http_token='$(AUTH_MAIL_HTTP_TOKEN)' \
 	--variable auth_spicedb_enabled=$(AUTH_SPICEDB_ENABLED) \
 	--variable auth_spicedb_check_url='$(AUTH_SPICEDB_CHECK_URL)' \
-	--variable auth_spicedb_write_url='$(AUTH_SPICEDB_WRITE_URL)' \
-	--variable auth_spicedb_token='$(AUTH_SPICEDB_TOKEN)' \
+	--variable auth_spicedb_check_token='$(AUTH_SPICEDB_CHECK_TOKEN)' \
 	--variable auth_spicedb_membership_permission='$(AUTH_SPICEDB_MEMBERSHIP_PERMISSION)' \
 	--variable auth_enable_oauth=$(AUTH_ENABLE_OAUTH) \
 	--variable auth_oauth_development_callback_bypass=$(AUTH_OAUTH_DEVELOPMENT_CALLBACK_BYPASS) \
@@ -197,7 +200,7 @@ SPIN_VARIABLE_ARGS := \
 	--variable auth_apple_scopes='$(AUTH_APPLE_SCOPES)' \
 	--variable auth_apple_redirect_uri=$(AUTH_APPLE_REDIRECT_URI)
 
-.PHONY: help validate-toolchain validate-mail db-up db-down db-migrate db-verify check grpc-check spin spin-backend spin-backend-prebuilt trusted-ingress fresh smoke oauth-credentials oauth-preflight oauth-evidence oauth-callback oauth-browser-smoke oauth-dev-browser-smoke browser-smoke passkey-browser-smoke
+.PHONY: help validate-toolchain validate-mail db-up db-down db-migrate db-verify check grpc-check spin spin-backend spin-backend-prebuilt trusted-ingress outbox-worker fresh smoke oauth-credentials oauth-preflight oauth-evidence oauth-callback oauth-browser-smoke oauth-dev-browser-smoke browser-smoke passkey-browser-smoke
 
 help:
 	@echo "Fullstack targets:"
@@ -210,6 +213,7 @@ help:
 	@echo "  make spin-backend          Run loopback Spin backend on $(backend_listen)"
 	@echo "  make spin-backend-prebuilt Run the already verified component without rebuilding"
 	@echo "  make trusted-ingress       Run native ingress on $(listen) in a second terminal"
+	@echo "  make outbox-worker         Run native mail/SpiceDB delivery in a separate terminal"
 	@echo "  make fresh db=postgres     Erase PostgreSQL data using POSTGRES_URL"
 	@echo "  make smoke                 Run REST/web route smoke checks against BASE_URL"
 	@echo "  make oauth-credentials     Check required live OAuth credential variables"
@@ -238,8 +242,8 @@ db-verify:
 
 validate-mail:
 	@case "$(AUTH_MAIL_TRANSPORT)" in \
-		capture|smtp|http) ;; \
-		*) echo "Error: unsupported AUTH_MAIL_TRANSPORT=$(AUTH_MAIL_TRANSPORT). Use capture, smtp, or http."; exit 2 ;; \
+		capture|http) ;; \
+		*) echo "Error: unsupported AUTH_MAIL_TRANSPORT=$(AUTH_MAIL_TRANSPORT). Use capture or http."; exit 2 ;; \
 	esac
 
 check: validate-toolchain validate-mail
@@ -283,6 +287,28 @@ trusted-ingress: db-migrate
 	AUTH_INGRESS_CACHE_REVALIDATE_MS=$(AUTH_INGRESS_CACHE_REVALIDATE_MS) \
 	AUTH_PUBLIC_BASE_URL='$(AUTH_PUBLIC_BASE_URL)' \
 	"$(WASI_AUTH_INGRESS_BIN)"
+
+outbox-worker: validate-mail db-migrate
+	@test -n "$(AUTH_OUTBOX_KEY_BASE64)" || \
+		(echo "Error: AUTH_OUTBOX_KEY_BASE64 must be a base64-encoded 32-byte key."; exit 2)
+	@command -v "$(WASI_AUTH_OUTBOX_WORKER_BIN)" >/dev/null 2>&1 || \
+		(echo "Error: $(WASI_AUTH_OUTBOX_WORKER_BIN) is not installed or WASI_AUTH_OUTBOX_WORKER_BIN is incorrect."; exit 2)
+	DATABASE_URL='$(POSTGRES_URL)' \
+	AUTH_PRODUCTION_MODE=$(AUTH_PRODUCTION_MODE) \
+	AUTH_PUBLIC_BASE_URL='$(AUTH_PUBLIC_BASE_URL)' \
+	AUTH_OUTBOX_KEY_BASE64='$(AUTH_OUTBOX_KEY_BASE64)' \
+	AUTH_OUTBOX_KEY_VERSION='$(AUTH_OUTBOX_KEY_VERSION)' \
+	AUTH_OUTBOX_POSTGRES_POOL_SIZE=$(AUTH_OUTBOX_POSTGRES_POOL_SIZE) \
+	AUTH_OUTBOX_MAIL_BATCH_SIZE=$(AUTH_OUTBOX_MAIL_BATCH_SIZE) \
+	AUTH_OUTBOX_RELATIONSHIP_BATCH_SIZE=$(AUTH_OUTBOX_RELATIONSHIP_BATCH_SIZE) \
+	AUTH_OUTBOX_POLL_INTERVAL_MS=$(AUTH_OUTBOX_POLL_INTERVAL_MS) \
+	AUTH_MAIL_TRANSPORT=$(AUTH_MAIL_TRANSPORT) \
+	AUTH_MAIL_HTTP_URL='$(AUTH_MAIL_HTTP_URL)' \
+	AUTH_MAIL_HTTP_TOKEN='$(AUTH_MAIL_HTTP_TOKEN)' \
+	AUTH_SPICEDB_ENABLED=$(AUTH_SPICEDB_ENABLED) \
+	AUTH_SPICEDB_WRITE_URL='$(AUTH_SPICEDB_WRITE_URL)' \
+	AUTH_SPICEDB_TOKEN='$(AUTH_SPICEDB_TOKEN)' \
+	"$(WASI_AUTH_OUTBOX_WORKER_BIN)"
 
 fresh:
 	@case "$(db)" in \

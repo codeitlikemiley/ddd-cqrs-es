@@ -42,6 +42,26 @@ async function assertPasskeyCapability() {
   }
 }
 
+async function capturedMail(email, kind) {
+  let lastStatus = 0;
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const response = await fetch(
+      url(
+        `/api/auth/dev/mail/latest?recipient=${encodeURIComponent(email)}&kind=${encodeURIComponent(kind)}`,
+      ),
+    );
+    lastStatus = response.status;
+    if (response.ok) return response.json();
+    if (response.status !== 404) {
+      throw new Error(
+        `verification mail capture failed: ${response.status} ${await response.text()}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Mail worker did not deliver ${kind}; last status ${lastStatus}`);
+}
+
 async function createVerifiedSession(email) {
   const register = await fetch(url("/api/auth/password/register"), {
     method: "POST",
@@ -59,15 +79,7 @@ async function createVerifiedSession(email) {
   if (pending.authenticated !== false) {
     throw new Error("password registration did not create a pending account");
   }
-  const capture = await fetch(
-    url(
-      `/api/auth/dev/mail/latest?recipient=${encodeURIComponent(email)}&kind=email-verification`,
-    ),
-  );
-  if (!capture.ok) {
-    throw new Error(`verification mail capture failed: ${capture.status} ${await capture.text()}`);
-  }
-  const message = await capture.json();
+  const message = await capturedMail(email, "email-verification");
   const token = new URL(message.body_text, baseUrl).searchParams.get("token");
   if (!token) throw new Error("verification mail did not contain a token");
   const verify = await fetch(url("/api/auth/email/verify"), {

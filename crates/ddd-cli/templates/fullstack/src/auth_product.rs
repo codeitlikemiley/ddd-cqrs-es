@@ -59,13 +59,9 @@ use wasi_auth::{
     },
 };
 #[cfg(feature = "mail-capture")]
-use wasi_auth::mail::{CaptureMailer, EmailKind, Recipient};
-#[cfg(any(feature = "mail-capture", all(feature = "mail-http", runtime_spin)))]
+use wasi_auth::mail::{EmailKind, Recipient};
+#[cfg(feature = "mail-capture")]
 use wasi_auth::postgres::outbox::{MailOutboxWorker, PublicBaseUrl};
-#[cfg(all(feature = "mail-http", runtime_spin))]
-use wasi_auth::mail::{
-    HttpMailBearerToken, HttpMailEndpoint, HttpMailTransport, HttpMailer,
-};
 
 use crate::{
     contracts::{
@@ -88,8 +84,6 @@ use crate::{
 const DEVELOPMENT_OUTBOX_KEY: &[u8] = b"fullstack-development-outbox-key";
 const VERIFIED_TOKEN_CACHE_CAPACITY: usize = 256;
 
-#[cfg(feature = "mail-capture")]
-static CAPTURE_MAILER: OnceLock<CaptureMailer> = OnceLock::new();
 static TOKEN_VERIFIER: OnceLock<RuntimeTokenVerifier> = OnceLock::new();
 static TRUSTED_CONTEXT_CODEC: OnceLock<TrustedContextCodec> = OnceLock::new();
 type VerifiedTokenCache = Mutex<VecDeque<([u8; 32], VerifiedAccessToken)>>;
@@ -101,53 +95,6 @@ pub struct OAuthStartValues {
     pub state: String,
     pub nonce: String,
     pub pkce_challenge: String,
-}
-
-#[cfg(all(feature = "mail-http", runtime_spin))]
-#[derive(Clone, Copy, Debug, thiserror::Error)]
-#[error("Spin outbound HTTP transport failed")]
-struct SpinMailTransportError;
-
-#[cfg(all(feature = "mail-http", runtime_spin))]
-#[derive(Clone, Copy, Debug)]
-struct SpinMailTransport;
-
-#[cfg(all(feature = "mail-http", runtime_spin))]
-impl HttpMailTransport for SpinMailTransport {
-    type Error = SpinMailTransportError;
-
-    async fn send(
-        &self,
-        request: http::Request<Vec<u8>>,
-    ) -> Result<http::Response<Vec<u8>>, Self::Error> {
-        use bytes::Bytes;
-        use http_body_util::BodyExt as _;
-        use spin_sdk::http::{FullBody, send};
-
-        const MAX_RESPONSE_BYTES: usize = 16 * 1_024;
-        let (parts, body) = request.into_parts();
-        let request = http::Request::from_parts(parts, FullBody::new(Bytes::from(body)));
-        let response = send(request).await.map_err(|_| SpinMailTransportError)?;
-        if response
-            .headers()
-            .get(http::header::CONTENT_LENGTH)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.parse::<usize>().ok())
-            .is_some_and(|length| length > MAX_RESPONSE_BYTES)
-        {
-            return Err(SpinMailTransportError);
-        }
-        let (parts, body) = response.into_parts();
-        let body = body
-            .collect()
-            .await
-            .map_err(|_| SpinMailTransportError)?
-            .to_bytes();
-        if body.len() > MAX_RESPONSE_BYTES {
-            return Err(SpinMailTransportError);
-        }
-        Ok(http::Response::from_parts(parts, body.to_vec()))
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -553,7 +500,6 @@ pub async fn register_email_password(
         ))
         .await
         .map_err(map_registration_error)?;
-    dispatch_pending_mail().await?;
     Ok(LoginCompletionResponse {
         authenticated: false,
         redirect_url: "/verify-email".to_owned(),
@@ -583,101 +529,6 @@ pub async fn enforce_account_rate_limit(
     }
 }
 
-pub async fn dispatch_pending_mail() -> AuthStackResult<usize> {
-    let transport = runtime_config_value("AUTH_MAIL_TRANSPORT")
-        .await
-        .unwrap_or_else(|| "capture".to_owned())
-        .trim()
-        .to_ascii_lowercase();
-    match transport.as_str() {
-        "capture" => {
-            #[cfg(feature = "mail-capture")]
-            {
-                let public_base_url = runtime_config_value("AUTH_PUBLIC_BASE_URL")
-                    .await
-                    .unwrap_or_else(|| "http://127.0.0.1:3008".to_owned());
-                let worker = MailOutboxWorker::new(
-                    store().await?,
-                    RuntimeClock,
-                    RuntimeRandom,
-                    outbox_key().await?,
-                    PublicBaseUrl::new(&public_base_url).map_err(|_| {
-                        AuthStackError::configuration("AUTH_PUBLIC_BASE_URL is invalid")
-                    })?,
-                );
-                let report = worker
-                    .dispatch(CAPTURE_MAILER.get_or_init(CaptureMailer::default), 25)
-                    .await
-                    .map_err(|_| AuthStackError::store("mail outbox dispatch failed"))?;
-                Ok(report.delivered)
-            }
-            #[cfg(not(feature = "mail-capture"))]
-            {
-                Err(AuthStackError::configuration(
-                    "capture mail requires the mail-capture feature",
-                ))
-            }
-        }
-        "http" => {
-            #[cfg(all(feature = "mail-http", runtime_spin))]
-            {
-                let endpoint = runtime_config_value("AUTH_MAIL_HTTP_URL")
-                    .await
-                    .filter(|value| !value.trim().is_empty())
-                    .ok_or_else(|| {
-                        AuthStackError::configuration("AUTH_MAIL_HTTP_URL is required")
-                    })?;
-                let token = runtime_config_value("AUTH_MAIL_HTTP_TOKEN")
-                    .await
-                    .filter(|value| !value.trim().is_empty())
-                    .ok_or_else(|| {
-                        AuthStackError::configuration("AUTH_MAIL_HTTP_TOKEN is required")
-                    })?;
-                let public_base_url = runtime_config_value("AUTH_PUBLIC_BASE_URL")
-                    .await
-                    .ok_or_else(|| {
-                        AuthStackError::configuration("AUTH_PUBLIC_BASE_URL is required")
-                    })?;
-                let mailer = HttpMailer::new(
-                    HttpMailEndpoint::new(&endpoint).map_err(|_| {
-                        AuthStackError::configuration("AUTH_MAIL_HTTP_URL is invalid")
-                    })?,
-                    HttpMailBearerToken::new(token).map_err(|_| {
-                        AuthStackError::configuration("AUTH_MAIL_HTTP_TOKEN is invalid")
-                    })?,
-                    SpinMailTransport,
-                );
-                let worker = MailOutboxWorker::new(
-                    store().await?,
-                    RuntimeClock,
-                    RuntimeRandom,
-                    outbox_key().await?,
-                    PublicBaseUrl::new(&public_base_url).map_err(|_| {
-                        AuthStackError::configuration("AUTH_PUBLIC_BASE_URL is invalid")
-                    })?,
-                );
-                let report = worker
-                    .dispatch(&mailer, 25)
-                    .await
-                    .map_err(|_| AuthStackError::store("mail outbox dispatch failed"))?;
-                Ok(report.delivered)
-            }
-            #[cfg(not(all(feature = "mail-http", runtime_spin)))]
-            {
-                Err(AuthStackError::configuration(
-                    "HTTP mail requires the mail-http feature on Spin",
-                ))
-            }
-        }
-        "smtp" => Err(AuthStackError::configuration(
-            "SMTP delivery runs in the external native outbox worker",
-        )),
-        _ => Err(AuthStackError::configuration(
-            "AUTH_MAIL_TRANSPORT must be capture, http, or smtp",
-        )),
-    }
-}
-
 pub async fn latest_captured_mail(
     recipient: &str,
     message_kind: &str,
@@ -689,7 +540,6 @@ pub async fn latest_captured_mail(
     }
     #[cfg(feature = "mail-capture")]
     {
-        dispatch_pending_mail().await?;
         let expected_kind = match message_kind {
             "email-verification" => EmailKind::Verification,
             "password-reset" => EmailKind::PasswordReset,
@@ -808,7 +658,6 @@ pub async fn resend_email_verification(
     ))
     .await
     .map_err(map_registration_error)?;
-    dispatch_pending_mail().await?;
     Ok(())
 }
 
@@ -833,7 +682,6 @@ pub async fn start_password_reset(
         ))
         .await
         .map_err(map_password_reset_error)?;
-    dispatch_pending_mail().await?;
     Ok(PasswordResetStartResponse {
         accepted: receipt.accepted,
         expires_in_seconds: receipt.expires_in_seconds,
@@ -1202,7 +1050,6 @@ pub async fn create_invitation(
     )
     .await
     .map_err(map_management_error)?;
-    dispatch_pending_mail().await?;
     Ok(invitation_summary(invitation))
 }
 
@@ -1527,7 +1374,48 @@ pub(crate) async fn store() -> AuthStackResult<PostgresAuthStore<SpinPostgresTra
 }
 
 pub(crate) async fn outbox_key() -> AuthStackResult<OutboxSealingKey> {
-    let (key_version, key) = vault_key_material().await?;
+    let configured = runtime_config_value("AUTH_OUTBOX_KEY_BASE64")
+        .await
+        .filter(|value| !value.trim().is_empty());
+    let production = config_bool("AUTH_PRODUCTION_MODE", false).await;
+    let key: [u8; 32] = match configured {
+        Some(encoded) => STANDARD
+            .decode(encoded.trim())
+            .ok()
+            .and_then(|bytes| bytes.try_into().ok())
+            .ok_or_else(|| {
+                AuthStackError::configuration("AUTH_OUTBOX_KEY_BASE64 must decode to 32 bytes")
+            })?,
+        None if production => {
+            return Err(AuthStackError::configuration(
+                "AUTH_OUTBOX_KEY_BASE64 is required in production",
+            ));
+        }
+        None => Sha256::digest(DEVELOPMENT_OUTBOX_KEY).into(),
+    };
+    let development_key: [u8; 32] = Sha256::digest(DEVELOPMENT_OUTBOX_KEY).into();
+    if production && key == development_key {
+        return Err(AuthStackError::configuration(
+            "production forbids the development outbox key",
+        ));
+    }
+    let configured_version = runtime_config_value("AUTH_OUTBOX_KEY_VERSION")
+        .await
+        .filter(|value| !value.trim().is_empty());
+    let key_version = match configured_version {
+        Some(version) if !production || version != "development-v1" => version,
+        Some(_) => {
+            return Err(AuthStackError::configuration(
+                "production forbids the development outbox key version",
+            ));
+        }
+        None if production => {
+            return Err(AuthStackError::configuration(
+                "AUTH_OUTBOX_KEY_VERSION is required in production",
+            ));
+        }
+        None => "development-v1".to_owned(),
+    };
     OutboxSealingKey::new(key_version, key)
         .map_err(|_| AuthStackError::configuration("outbox key configuration is invalid"))
 }

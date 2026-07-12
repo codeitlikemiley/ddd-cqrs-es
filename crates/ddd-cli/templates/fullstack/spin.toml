@@ -34,22 +34,19 @@ auth_bootstrap_admin_emails = { default = "" }
 auth_csrf_secret = { default = "" }
 auth_vault_key_base64 = { default = "" }
 auth_vault_key_version = { default = "development-v1" }
+auth_outbox_key_base64 = { default = "" }
+auth_outbox_key_version = { default = "development-v1" }
 auth_recovery_code_pepper_base64 = { default = "" }
 auth_mfa_issuer = { default = "wasi-auth" }
 auth_dev_tools = { default = "true" }
 auth_mail_transport = { default = "capture" }
-auth_smtp_url = { default = "" }
-auth_mail_http_url = { default = "" }
-auth_mail_http_token = { default = "" }
 auth_spicedb_enabled = { default = "false" }
 auth_spicedb_check_url = { default = "" }
-auth_spicedb_write_url = { default = "" }
-auth_spicedb_token = { default = "" }
+auth_spicedb_check_token = { default = "" }
 auth_spicedb_membership_permission = { default = "member" }
 auth_session_ttl_seconds = { default = "3600" }
 auth_access_token_ttl_seconds = { default = "900" }
 auth_refresh_token_ttl_seconds = { default = "2592000" }
-auth_storage_auto_catch_up = { default = "true" }
 auth_cookie_secure = { default = "false" }
 auth_public_base_url = { default = "http://127.0.0.1:3008" }
 auth_enable_oauth = { default = "false" }
@@ -164,22 +161,19 @@ auth_bootstrap_admin_emails = "{{ auth_bootstrap_admin_emails }}"
 auth_csrf_secret = "{{ auth_csrf_secret }}"
 auth_vault_key_base64 = "{{ auth_vault_key_base64 }}"
 auth_vault_key_version = "{{ auth_vault_key_version }}"
+auth_outbox_key_base64 = "{{ auth_outbox_key_base64 }}"
+auth_outbox_key_version = "{{ auth_outbox_key_version }}"
 auth_recovery_code_pepper_base64 = "{{ auth_recovery_code_pepper_base64 }}"
 auth_mfa_issuer = "{{ auth_mfa_issuer }}"
 auth_dev_tools = "{{ auth_dev_tools }}"
 auth_mail_transport = "{{ auth_mail_transport }}"
-auth_smtp_url = "{{ auth_smtp_url }}"
-auth_mail_http_url = "{{ auth_mail_http_url }}"
-auth_mail_http_token = "{{ auth_mail_http_token }}"
 auth_spicedb_enabled = "{{ auth_spicedb_enabled }}"
 auth_spicedb_check_url = "{{ auth_spicedb_check_url }}"
-auth_spicedb_write_url = "{{ auth_spicedb_write_url }}"
-auth_spicedb_token = "{{ auth_spicedb_token }}"
+auth_spicedb_check_token = "{{ auth_spicedb_check_token }}"
 auth_spicedb_membership_permission = "{{ auth_spicedb_membership_permission }}"
 auth_session_ttl_seconds = "{{ auth_session_ttl_seconds }}"
 auth_access_token_ttl_seconds = "{{ auth_access_token_ttl_seconds }}"
 auth_refresh_token_ttl_seconds = "{{ auth_refresh_token_ttl_seconds }}"
-auth_storage_auto_catch_up = "{{ auth_storage_auto_catch_up }}"
 auth_cookie_secure = "{{ auth_cookie_secure }}"
 auth_public_base_url = "{{ auth_public_base_url }}"
 auth_enable_oauth = "{{ auth_enable_oauth }}"
@@ -279,22 +273,19 @@ auth_bootstrap_admin_emails = "{{ auth_bootstrap_admin_emails }}"
 auth_csrf_secret = "{{ auth_csrf_secret }}"
 auth_vault_key_base64 = "{{ auth_vault_key_base64 }}"
 auth_vault_key_version = "{{ auth_vault_key_version }}"
+auth_outbox_key_base64 = "{{ auth_outbox_key_base64 }}"
+auth_outbox_key_version = "{{ auth_outbox_key_version }}"
 auth_recovery_code_pepper_base64 = "{{ auth_recovery_code_pepper_base64 }}"
 auth_mfa_issuer = "{{ auth_mfa_issuer }}"
 auth_dev_tools = "{{ auth_dev_tools }}"
 auth_mail_transport = "{{ auth_mail_transport }}"
-auth_smtp_url = "{{ auth_smtp_url }}"
-auth_mail_http_url = "{{ auth_mail_http_url }}"
-auth_mail_http_token = "{{ auth_mail_http_token }}"
 auth_spicedb_enabled = "{{ auth_spicedb_enabled }}"
 auth_spicedb_check_url = "{{ auth_spicedb_check_url }}"
-auth_spicedb_write_url = "{{ auth_spicedb_write_url }}"
-auth_spicedb_token = "{{ auth_spicedb_token }}"
+auth_spicedb_check_token = "{{ auth_spicedb_check_token }}"
 auth_spicedb_membership_permission = "{{ auth_spicedb_membership_permission }}"
 auth_session_ttl_seconds = "{{ auth_session_ttl_seconds }}"
 auth_access_token_ttl_seconds = "{{ auth_access_token_ttl_seconds }}"
 auth_refresh_token_ttl_seconds = "{{ auth_refresh_token_ttl_seconds }}"
-auth_storage_auto_catch_up = "{{ auth_storage_auto_catch_up }}"
 auth_cookie_secure = "{{ auth_cookie_secure }}"
 auth_public_base_url = "{{ auth_public_base_url }}"
 auth_enable_oauth = "{{ auth_enable_oauth }}"
@@ -390,22 +381,19 @@ auth_bootstrap_admin_emails = "{{ auth_bootstrap_admin_emails }}"
 auth_csrf_secret = "{{ auth_csrf_secret }}"
 auth_vault_key_base64 = "{{ auth_vault_key_base64 }}"
 auth_vault_key_version = "{{ auth_vault_key_version }}"
+auth_outbox_key_base64 = "{{ auth_outbox_key_base64 }}"
+auth_outbox_key_version = "{{ auth_outbox_key_version }}"
 auth_recovery_code_pepper_base64 = "{{ auth_recovery_code_pepper_base64 }}"
 auth_mfa_issuer = "{{ auth_mfa_issuer }}"
 auth_dev_tools = "{{ auth_dev_tools }}"
 auth_mail_transport = "{{ auth_mail_transport }}"
-auth_smtp_url = "{{ auth_smtp_url }}"
-auth_mail_http_url = "{{ auth_mail_http_url }}"
-auth_mail_http_token = "{{ auth_mail_http_token }}"
 auth_spicedb_enabled = "{{ auth_spicedb_enabled }}"
 auth_spicedb_check_url = "{{ auth_spicedb_check_url }}"
-auth_spicedb_write_url = "{{ auth_spicedb_write_url }}"
-auth_spicedb_token = "{{ auth_spicedb_token }}"
+auth_spicedb_check_token = "{{ auth_spicedb_check_token }}"
 auth_spicedb_membership_permission = "{{ auth_spicedb_membership_permission }}"
 auth_session_ttl_seconds = "{{ auth_session_ttl_seconds }}"
 auth_access_token_ttl_seconds = "{{ auth_access_token_ttl_seconds }}"
 auth_refresh_token_ttl_seconds = "{{ auth_refresh_token_ttl_seconds }}"
-auth_storage_auto_catch_up = "{{ auth_storage_auto_catch_up }}"
 auth_cookie_secure = "{{ auth_cookie_secure }}"
 auth_public_base_url = "{{ auth_public_base_url }}"
 auth_enable_oauth = "{{ auth_enable_oauth }}"
