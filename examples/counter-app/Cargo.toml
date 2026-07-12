@@ -2,7 +2,7 @@
 name = "counter_app"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.94.0"
+rust-version = "1.93.0"
 authors = ["codeitlikemiley <codeitlikemiley@gmail.com>"]
 description = "A Leptos application exporting the final WASI HTTP component world"
 build = "build.rs"
@@ -124,9 +124,6 @@ spin-mysql = [
   "dep:spin-sdk",
   "spin-sdk/mysql",
   "ddd_cqrs_es/spin-mysql",
-]
-wasi-mysql = [
-  "mysql",
 ]
 spin-redis = [
   "redis",

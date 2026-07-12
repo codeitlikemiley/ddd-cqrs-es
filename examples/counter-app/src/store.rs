@@ -206,15 +206,8 @@ async fn execute_query_routed(
         }
         #[cfg(runtime_wasmtime)]
         {
-            #[cfg(feature = "wasi-mysql")]
-            {
-                let url = get_mysql_url();
-                ddd_cqrs_es::adapters::execute_raw_tcp_mysql(&url, sql_sqlite, params)
-            }
-            #[cfg(not(feature = "wasi-mysql"))]
-            {
-                Err("wasi-mysql feature is not enabled".to_string())
-            }
+            let _ = (sql_sqlite, params);
+            Err("MySQL is supported only through Spin host calls".to_string())
         }
     } else if backend == "libsql" || backend == "turso" {
         #[cfg(feature = "libsql")]
@@ -277,15 +270,8 @@ async fn execute_query_routed(
         }
         #[cfg(runtime_wasmtime)]
         {
-            #[cfg(feature = "postgres")]
-            {
-                let url = get_postgres_url();
-                ddd_cqrs_es::adapters::execute_raw_tcp_postgres(&url, sql_postgres, params)
-            }
-            #[cfg(not(feature = "postgres"))]
-            {
-                Err("postgres feature is not enabled".to_string())
-            }
+            let _ = (sql_postgres, params);
+            Err("PostgreSQL is supported only through Spin host calls".to_string())
         }
     }
 }
@@ -346,7 +332,7 @@ pub async fn initialize_schema_async() -> Result<(), String> {
             std::fs::create_dir_all("/data").map_err(|e| e.to_string())?;
         }
     } else if backend == "mysql" {
-        #[cfg(any(feature = "spin-mysql", feature = "wasi-mysql"))]
+        #[cfg(feature = "spin-mysql")]
         {
             let sql_events = r#"
                     CREATE TABLE IF NOT EXISTS events (
@@ -378,7 +364,7 @@ pub async fn initialize_schema_async() -> Result<(), String> {
             execute_query_routed(sql_checkpoints, sql_checkpoints, Vec::new()).await?;
             execute_query_routed(sql_read_model, sql_read_model, Vec::new()).await?;
         }
-        #[cfg(not(any(feature = "spin-mysql", feature = "wasi-mysql")))]
+        #[cfg(not(feature = "spin-mysql"))]
         {
             return Err("mysql runtime feature not enabled".to_string());
         }

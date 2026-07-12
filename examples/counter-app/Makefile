@@ -137,7 +137,6 @@ ifneq (,$(filter redis,$(DATABASE_BACKEND) $(REALTIME_BACKEND)))
 endif
 ifeq ($(DATABASE_BACKEND), mysql)
   SPIN_CARGO_FEATURES := $(SPIN_CARGO_FEATURES),spin-mysql
-  WASMTIME_CARGO_FEATURES := $(WASMTIME_CARGO_FEATURES),wasi-mysql
 endif
 ifneq (,$(filter grpc both,$(transport)))
   SPIN_CARGO_FEATURES := $(SPIN_CARGO_FEATURES),spin-grpc
@@ -231,8 +230,6 @@ help:
 		echo "  transport=$(TRANSPORTS)"; \
 		echo ""; \
 		echo "Common examples:"; \
-		echo "  make wasmtime db=postgres"; \
-		echo "  make wasmtime db=postgres realtime=redis"; \
 		echo "  make wasmtime db=neon"; \
 		echo "  make wasmtime db=neon realtime=polling"; \
 		echo "  make wasmtime db=neon realtime=redis"; \
@@ -247,7 +244,6 @@ help:
 		echo "  make spin db=supabase"; \
 		echo "  make spin db=supabase realtime=redis"; \
 		echo "  make spin db=turso realtime=redis"; \
-		echo "  make wasmtime db=mysql realtime=redis"; \
 		echo "  make spin db=mysql realtime=polling"; \
 		echo "  make spin db=mysql realtime=redis"; \
 		echo "  make spin db=sqlite transport=both"; \
@@ -291,7 +287,6 @@ help-realtime:
 	@echo "realtime=redis is supported with every supported db backend:"
 	@echo "  make wasmtime db=sqlite realtime=redis"
 	@echo "  make spin db=sqlite realtime=redis"
-	@echo "  make wasmtime db=postgres realtime=redis"
 	@echo "  make spin db=postgres realtime=redis"
 	@echo "  make wasmtime db=neon realtime=redis"
 	@echo "  make spin db=neon realtime=redis"
@@ -299,7 +294,6 @@ help-realtime:
 	@echo "  make spin db=supabase realtime=redis"
 	@echo "  make wasmtime db=turso realtime=redis"
 	@echo "  make spin db=turso realtime=redis"
-	@echo "  make wasmtime db=mysql realtime=redis"
 	@echo "  make spin db=mysql realtime=redis"
 	@echo "  make wasmtime db=redis realtime=redis"
 	@echo "  make spin db=redis realtime=redis"
@@ -319,7 +313,7 @@ help-transport:
 
 help-matrix:
 	@echo "Supported runtime/db/realtime matrix:"
-	@echo "  make wasmtime db=<$(DB_BACKENDS)> realtime=<$(REALTIME_BACKENDS)>"
+	@echo "  make wasmtime db=<sqlite|neon|supabase|turso|redis> realtime=<$(REALTIME_BACKENDS)>"
 	@echo "  make spin     db=<$(DB_BACKENDS)> realtime=<$(REALTIME_BACKENDS)>"
 	@echo "  make spin     db=<$(DB_BACKENDS)> realtime=<$(REALTIME_BACKENDS)> transport=<$(TRANSPORTS)>"
 	@echo ""
@@ -340,7 +334,6 @@ help-matrix:
 	@echo "  make wasmtime db=turso realtime=polling"
 	@echo "  make wasmtime db=turso realtime=redis"
 	@echo "  make spin db=turso realtime=redis"
-	@echo "  make wasmtime db=mysql realtime=redis"
 	@echo "  make spin db=mysql realtime=redis"
 	@echo "  make db=postgres fresh"
 	@echo "  make db=supabase fresh"
@@ -445,6 +438,11 @@ wasmtime: validate-env
 	@if [ "$(transport)" != "http" ]; then \
 		echo "Error: transport=$(transport) is currently supported only by the Spin target."; \
 		echo "Use 'make spin ... transport=$(transport)' or 'make wasmtime ... transport=http'."; \
+		exit 2; \
+	fi
+	@if [ "$(DATABASE_BACKEND)" = "postgres" ] || [ "$(DATABASE_BACKEND)" = "mysql" ]; then \
+		echo "Error: db=$(DATABASE_BACKEND) requires Spin host database calls."; \
+		echo "Use 'make spin db=$(DATABASE_BACKEND)' or choose a Wasmtime HTTP-backed database."; \
 		exit 2; \
 	fi
 	@echo "Building for Wasmtime runtime with DB: $(DATABASE_BACKEND), realtime: $(REALTIME_BACKEND)..."
