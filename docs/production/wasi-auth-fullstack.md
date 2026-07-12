@@ -51,24 +51,23 @@ for Spin SQLite or PostgreSQL. `make fresh` erases data and relies on startup to
 reapply that canonical schema; the generated app does not maintain a schema
 copy of its own.
 
-The pinned Spin SDK revision currently declares Rust 1.94 as its own MSRV.
-Although the DDD and `wasi-auth` libraries retain Rust 1.93 compatibility,
-generated Spin consumers must use Rust 1.94 or later until a tagged SDK proves
-a lower MSRV.
+The maintained Spin SDK revision declares Rust 1.93 as its MSRV, matching the
+DDD, `wasi-auth`, and `leptos-wasi-runtime` release-candidate graph.
 
 ## Release topology
 
-The dependency graph requires a staged alpha release: publish
-`leptos_wasi 0.4.2-alpha.3`, then the `ddd_cqrs_es 0.3.0-alpha.1` library,
-then `wasi-auth 0.1.0-alpha.4`, and finally the
-`ddd-cqrs-es-cli 0.3.0-alpha.1` generator and generated consumers. The library
+The dependency graph requires a staged RC release: publish
+`leptos-wasi-runtime 0.4.2-rc.1` (aliased as `leptos_wasi`), then the
+`ddd_cqrs_es 0.3.0-rc.1` library,
+then `wasi-auth 0.1.0-rc.1`, and finally the
+`ddd-cqrs-es-cli 0.3.0-rc.1` generator and generated consumers. The library
 must precede `wasi-auth` because `wasi-auth` optionally depends on DDD; the CLI
 must follow `wasi-auth` because its `fullstack` preset emits that exact public
 dependency. Stable releases repeat the same dependency order.
 
 The planned `leptos_wasi 0.4.0-alpha.3` identifier was superseded: this source
 history already contains the `0.4.0` and `0.4.1` releases. The final-WASI and
-islands work therefore continues as `0.4.2-alpha.3` instead of moving version
+islands work therefore continues as `0.4.2-rc.1` instead of moving version
 history backward.
 
 ## User journey

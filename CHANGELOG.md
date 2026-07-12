@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0-alpha.1
+## 0.3.0-rc.1
 
 - Removed the duplicate `ddd-auth` and `ddd-authz` products in favor of the
   single `wasi-auth` dependency while keeping the DDD core identity-agnostic.
@@ -13,8 +13,8 @@
   gRPC to the counter example, with an optional authorization feature.
 - Hardened atomic idempotent execution so completed retries return their
   original result before an already-applied command is evaluated again.
-- Pinned final `wasip3` 0.7.0 and the Spin SDK canary required by the generated
-  final-WASI examples.
+- Pinned final `wasip3` 0.7.0 and the maintained Spin SDK revision required by
+  the generated final-WASI examples.
 - Replaced production RS256 access-token signing with ES256 and added a
   public-only JWKS round-trip test; provider-issued RS256 ID tokens remain
   verification-only behind `wasi-auth`'s private-RSA signing denial.

@@ -224,11 +224,14 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
 
     let cargo_toml = std::fs::read_to_string(project.join("Cargo.toml")).unwrap();
     assert!(cargo_toml.contains("leptos_wasi"));
+    assert!(cargo_toml.contains(r#"package = "leptos-wasi-runtime""#));
     assert!(cargo_toml.contains("spin-sdk"));
     assert!(cargo_toml.contains("wasi-auth"));
     assert!(!cargo_toml.contains("ddd-auth ="));
     assert!(!cargo_toml.contains("ddd-authz ="));
-    assert!(cargo_toml.contains("=0.4.2-alpha.3"));
+    assert!(cargo_toml.contains("=0.4.2-rc.1"));
+    assert!(cargo_toml.contains("=0.1.0-rc.1"));
+    assert!(cargo_toml.contains("=0.3.0-rc.1"));
     assert!(cargo_toml.contains("=0.7.0"));
     assert!(cargo_toml.contains("=0.59.0"));
     assert!(cargo_toml.contains("a02d330fe9357be2d18e6deef400511195ce6f7f"));

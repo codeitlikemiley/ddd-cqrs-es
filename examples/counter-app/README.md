@@ -16,8 +16,8 @@ under both raw Wasmtime and Fermyon Spin.
 - **Cargo Leptos:** 0.3.7 or newer:
   `cargo install --locked cargo-leptos --version '^0.3.7'`.
 - **wasm-tools:** Required for component-world inspection.
-- **Spin CLI:** the pinned `4.1.0-pre0` canary lane; no tagged release is yet
-  claimed as production-compatible with this final-WASI graph.
+- **Spin CLI:** the maintained `4.1.0-pre0` fork pinned by revision; no upstream
+  tagged release is yet claimed as production-compatible with this graph.
 - **Wasmtime CLI:** Version 45.0.0 or later.
 - **Redis CLI/server:** Optional, only needed for `db=redis` or `realtime=redis`.
 - **MySQL server/client:** Optional, only needed for `db=mysql`.

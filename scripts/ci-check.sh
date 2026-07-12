@@ -34,12 +34,12 @@ cargo audit --deny warnings
 cargo deny check advisories bans licenses sources
 
 log "Inspecting publishable package"
-package_archive="$PWD/target/package/ddd_cqrs_es-0.3.0-alpha.1.crate"
+package_archive="$PWD/target/package/ddd_cqrs_es-0.3.0-rc.1.crate"
 rm -f "$package_archive"
 cargo package --locked -p ddd_cqrs_es --allow-dirty --no-verify
 test -f "$package_archive"
 tar -tf "$package_archive" | grep -q '/Cargo.toml$'
-if tar -xOf "$package_archive" 'ddd_cqrs_es-0.3.0-alpha.1/Cargo.toml' | grep -Eq 'rustls-rustcrypto|(^|[[:space:]])rsa[[:space:]]*='; then
+if tar -xOf "$package_archive" 'ddd_cqrs_es-0.3.0-rc.1/Cargo.toml' | grep -Eq 'rustls-rustcrypto|(^|[[:space:]])rsa[[:space:]]*='; then
   echo "Error: quarantined direct-TCP dependencies leaked into the package." >&2
   exit 1
 fi
@@ -61,7 +61,7 @@ mkdir -p "$(dirname "$patch_config")"
     printf 'wasi-auth = { path = "%s" }\n' "$PWD/../wasi-auth/crates/wasi-auth"
   fi
   if [[ -f ../leptos_wasi/Cargo.toml ]]; then
-    printf 'leptos_wasi = { path = "%s" }\n' "$PWD/../leptos_wasi"
+    printf '"leptos-wasi-runtime" = { path = "%s" }\n' "$PWD/../leptos_wasi"
   fi
 } >"$patch_config"
 local_patch_args="--config $patch_config"
