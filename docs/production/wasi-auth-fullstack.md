@@ -11,7 +11,7 @@ preset. The embedded CLI template is the only editable source; run
 
 The template depends on one auth product: `wasi-auth`. The former `ddd-auth`
 and `ddd-authz` crates are removed. `ddd_cqrs_es` remains independent, while
-the optional dependency points from `wasi-auth` to the DDD crate.
+the dependency points only from generated DDD consumers to `wasi-auth`.
 
 Requests follow this boundary:
 
@@ -22,15 +22,15 @@ Browser / REST / gRPC
         -> shared application services
         -> embedded Cedar
         -> PostgreSQL relational auth command kernel
-        -> encrypted mail / optional SpiceDB auth_outbox
+        -> native mail / optional SpiceDB outbox worker
         -> DDD only for application business aggregates
 ```
 
-The generated SpiceDB profile is preview: provider checks and the canonical
-encrypted outbox worker are implemented, but stable support still requires
-every membership mutation to enqueue its typed relationship intent in the same
-relational command plus the independent latency gate. Embedded Cedar remains
-the production authorization path.
+The membership trigger atomically increments the organization authorization
+revision and emits resource-scoped typed SpiceDB grants/revocations. The native
+worker preserves per-tuple ordering and carries delivered consistency tokens.
+SpiceDB remains preview only because its independent latency/soak gate is not
+yet complete. Embedded Cedar remains the production authorization path.
 
 Arbitrary headers cannot construct `VerifiedAuthContext`. Browser authority
 comes from a secure host-only HttpOnly cookie; explicit API clients may use
@@ -42,7 +42,9 @@ The generated application uses PostgreSQL with capture mail during local
 development:
 
 ```bash
-make -C examples/fullstack-app spin db=postgres transport=both
+make -C examples/fullstack-app db-up
+make -C examples/fullstack-app outbox-worker # separate terminal
+make -C examples/fullstack-app spin transport=both # separate terminal
 ```
 
 The stale Spin SQLite migration-only feature was removed before the first RC.
@@ -51,9 +53,13 @@ relational kernel. The generated identity product now has one authoritative
 PostgreSQL execution path; a future development adapter must prove complete
 schema, transaction, and workflow parity before it can re-enter the product.
 
-The production profile uses PostgreSQL and one production mail adapter. Startup
-rejects capture mail, development tools, insecure cookies, a non-HTTPS public
-base URL, missing CSRF material, and runtime-generated symmetric signing keys.
+The production profile uses PostgreSQL and the native HTTP-mail worker. The
+Spin guest never receives mail or SpiceDB write credentials; optional direct
+checks use a separate check-only token. Startup rejects capture mail,
+development tools, insecure cookies, a non-HTTPS public base URL, missing CSRF
+material, development outbox keys, and runtime-generated symmetric signing keys.
+Ingress signing, credential-vault encryption, outbox encryption, and
+recovery-code hashing must use distinct production secrets.
 Production key rings accept ES256 private signing keys and publish only their
 P-256 public coordinates. `wasi-auth` rejects RSA/PSS private signing because
 the transitive RustCrypto RSA implementation is covered by a timing advisory;
@@ -72,13 +78,11 @@ Spin host is built separately at its truthful Rust 1.94 floor because Wasmtime
 ## Release topology
 
 The dependency graph requires a staged RC release: publish
-`leptos-wasi-runtime 0.4.2-rc.1` (aliased as `leptos_wasi`), then the
-`ddd_cqrs_es 0.3.0-rc.1` library,
-then `wasi-auth 0.1.0-rc.1`, and finally the
+`leptos-wasi-runtime 0.4.2-rc.1` (aliased as `leptos_wasi`), then
+`wasi-auth 0.1.0-rc.1`, the `ddd_cqrs_es 0.3.0-rc.1` library, and finally the
 `ddd-cqrs-es-cli 0.3.0-rc.1` generator and generated consumers. The library
-must precede `wasi-auth` because `wasi-auth` optionally depends on DDD; the CLI
-must follow `wasi-auth` because its `fullstack` preset emits that exact public
-dependency. Stable releases repeat the same dependency order.
+and CLI follow `wasi-auth` because the `fullstack` preset emits that exact
+public dependency. Stable releases repeat the same dependency order.
 
 The planned `leptos_wasi 0.4.0-alpha.3` identifier was superseded: this source
 history already contains the `0.4.0` and `0.4.1` releases. The final-WASI and

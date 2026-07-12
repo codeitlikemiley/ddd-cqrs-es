@@ -5,9 +5,17 @@ description: Durable task tracker for building the ddd-auth, ddd-authz, and full
 
 # Auth Implementation Tracker
 
+> Historical pre-consolidation record. `ddd-auth`, `ddd-authz`, automatic event
+> projection catch-up, SQLite/MySQL auth storage, and request-driven delivery
+> are no longer the production architecture. The canonical implementation is
+> PostgreSQL-backed `wasi-auth`, native trusted ingress, and the separately
+> deployed `wasi-auth-outbox-worker`; see
+> [Production fullstack](../production/wasi-auth-fullstack.md) and the generated
+> [fullstack example](../../examples/fullstack-app/README.md).
+
 ## Status
 
-implemented
+superseded
 
 ## Goal
 
