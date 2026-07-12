@@ -2890,10 +2890,7 @@ pub async fn save_auth_provider(
 ) -> Result<AuthProviderSummary, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
-        crate::application::require_permission_for("auth:provider:write", server_fn_request_auth())
-            .await
-            .map_err(server_fn_error)?;
-        crate::application::save_auth_provider_config(provider_id, enabled)
+        crate::application::admin_save_provider(provider_id, enabled, server_fn_request_auth())
             .await
             .map_err(server_fn_error)
     }
@@ -2908,10 +2905,7 @@ pub async fn save_auth_provider(
 pub async fn save_redirect_allowlist(redirects_json: String) -> Result<bool, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
-        crate::application::require_permission_for("auth:redirect:write", server_fn_request_auth())
-            .await
-            .map_err(server_fn_error)?;
-        crate::application::save_redirect_allowlist(redirects_json)
+        crate::application::save_redirect_allowlist(redirects_json, server_fn_request_auth())
             .await
             .map_err(server_fn_error)
     }

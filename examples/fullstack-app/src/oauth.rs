@@ -6,18 +6,10 @@ use wasi_auth::authentication::jwt::{
     Algorithm, DecodingKey, EncodingKey, Header, IdTokenClaims, JwksDocument, JwksKey,
     decode_id_token, encode_jwt, jwks_key_by_id, jwt_key_id,
 };
+use wasi_auth::postgres::oauth::VerifiedOAuthIdentity;
 
+use crate::auth_product::ProductPendingOAuthFlow;
 use crate::error::{AuthStackError, AuthStackResult};
-use crate::store::ConsumedOauthGrant;
-
-#[derive(Clone, Debug)]
-pub struct VerifiedOAuthIdentity {
-    pub provider_id: String,
-    pub provider_subject: String,
-    pub email: Option<String>,
-    pub email_verified: Option<bool>,
-    pub name: Option<String>,
-}
 
 #[derive(Clone, Debug)]
 struct OAuthProviderRuntimeConfig {
@@ -92,24 +84,28 @@ pub async fn authorization_url(
 pub async fn complete_authorization_code(
     provider_id: &str,
     code: &str,
-    grant: &ConsumedOauthGrant,
+    grant: &ProductPendingOAuthFlow,
 ) -> AuthStackResult<VerifiedOAuthIdentity> {
     let config = oauth_provider_runtime_config(provider_id).await?;
-    let token_response = exchange_authorization_code(&config, code, &grant.pkce_verifier).await?;
+    let token_response = exchange_authorization_code(&config, code, grant.pkce_verifier()).await?;
     if let Some(id_token) = token_response
         .id_token
         .as_deref()
         .filter(|value| !value.trim().is_empty())
     {
         let jwks = provider_jwks(&config).await?;
-        let claims = validate_provider_id_token(&config, id_token, &jwks, &grant.nonce)?;
+        let claims = validate_provider_id_token(&config, id_token, &jwks, grant.nonce())?;
 
         return Ok(VerifiedOAuthIdentity {
             provider_id: provider_id.to_string(),
             provider_subject: claims.sub,
-            email: claims.email,
-            email_verified: claims.email_verified,
-            name: claims.name,
+            email: claims.email.clone(),
+            email_verified: claims.email_verified.unwrap_or(false),
+            profile: serde_json::json!({
+                "email": claims.email,
+                "email_verified": claims.email_verified,
+                "name": claims.name,
+            }),
         });
     }
 
@@ -118,9 +114,13 @@ pub async fn complete_authorization_code(
     Ok(VerifiedOAuthIdentity {
         provider_id: provider_id.to_string(),
         provider_subject: profile.subject,
-        email: profile.email,
-        email_verified: profile.email_verified,
-        name: profile.name,
+        email: profile.email.clone(),
+        email_verified: profile.email_verified.unwrap_or(false),
+        profile: serde_json::json!({
+            "email": profile.email,
+            "email_verified": profile.email_verified,
+            "name": profile.name,
+        }),
     })
 }
 
@@ -440,7 +440,7 @@ async fn required_config_value(name: &str) -> AuthStackResult<String> {
 }
 
 async fn config_value(name: &str) -> Option<String> {
-    #[cfg(all(any(feature = "sqlite", feature = "postgres"), runtime_spin))]
+    #[cfg(all(feature = "postgres", runtime_spin))]
     {
         let variable_name = name.to_ascii_lowercase();
         if let Ok(value) = spin_sdk::variables::get(&variable_name).await {
@@ -571,7 +571,7 @@ fn map_auth_error(error: WorkflowError) -> AuthStackError {
 }
 
 async fn outbound_get(url: &str) -> AuthStackResult<Vec<u8>> {
-    #[cfg(all(any(feature = "sqlite", feature = "postgres"), runtime_spin))]
+    #[cfg(all(feature = "postgres", runtime_spin))]
     {
         use http_body_util::BodyExt;
 
@@ -596,7 +596,7 @@ async fn outbound_get(url: &str) -> AuthStackResult<Vec<u8>> {
         Ok(bytes)
     }
 
-    #[cfg(not(all(any(feature = "sqlite", feature = "postgres"), runtime_spin)))]
+    #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
         let _ = url;
         Err(AuthStackError::configuration(
@@ -606,7 +606,7 @@ async fn outbound_get(url: &str) -> AuthStackResult<Vec<u8>> {
 }
 
 async fn outbound_get_bearer(url: &str, bearer_token: &str) -> AuthStackResult<Vec<u8>> {
-    #[cfg(all(any(feature = "sqlite", feature = "postgres"), runtime_spin))]
+    #[cfg(all(feature = "postgres", runtime_spin))]
     {
         use http_body_util::BodyExt;
         use spin_sdk::http::{FullBody, send};
@@ -642,7 +642,7 @@ async fn outbound_get_bearer(url: &str, bearer_token: &str) -> AuthStackResult<V
         Ok(bytes)
     }
 
-    #[cfg(not(all(any(feature = "sqlite", feature = "postgres"), runtime_spin)))]
+    #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
         let _ = (url, bearer_token);
         Err(AuthStackError::configuration(
@@ -652,7 +652,7 @@ async fn outbound_get_bearer(url: &str, bearer_token: &str) -> AuthStackResult<V
 }
 
 async fn outbound_post_form(url: &str, body: String) -> AuthStackResult<Vec<u8>> {
-    #[cfg(all(any(feature = "sqlite", feature = "postgres"), runtime_spin))]
+    #[cfg(all(feature = "postgres", runtime_spin))]
     {
         use bytes::Bytes;
         use http_body_util::BodyExt;
@@ -689,7 +689,7 @@ async fn outbound_post_form(url: &str, body: String) -> AuthStackResult<Vec<u8>>
         Ok(bytes)
     }
 
-    #[cfg(not(all(any(feature = "sqlite", feature = "postgres"), runtime_spin)))]
+    #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
         let _ = (url, body);
         Err(AuthStackError::configuration(

@@ -407,7 +407,7 @@ fn render_worker(input: &InitRenderInput, names: &NameParts) -> Vec<FileOperatio
 fn render_readme(input: &InitRenderInput, names: &NameParts) -> String {
     if input.selection.preset == Preset::Fullstack {
         return format!(
-            "# {package}\n\nGenerated with `ddd init --preset fullstack`.\n\nThis project is a Spin fullstack authentication and authorization service with Leptos pages, REST endpoints, and gRPC service contracts.\n\n- Runtime: `spin`\n- DB: `{db}`\n- Transport: `both`\n- UI: `leptos`\n- Auth: email/password enabled by default\n- OAuth and passkeys: feature-flagged until credentials are configured\n\nStart with `.env.example`, then run:\n\n```bash\nmake spin\nmake smoke\nmake browser-smoke\n```\n\nThe toolchain gate requires `cargo-leptos >= 0.3.7`, `wasm32-wasip2`, and `wasm-tools`. The distributed P2 Rust target supplies `std`; the generated component is inspected to prove it exports `wasi:http/handler@0.3.0` and has no Preview 1 imports. The unstable `wasm32-wasip3` Rust target remains a canary.\n\n`wasi-auth` owns the only auth schema. Startup applies its embedded, checksum-verified migration for Spin SQLite or PostgreSQL. `make fresh` erases data and relies on the next startup to reinstall that canonical schema.\n\nFor production, start from `spin.production.toml.example` and replace the example auth domain and database hosts with exact deployment hosts.\n\nAfter OAuth provider credentials and callback URLs are configured, run `make oauth-preflight` before the browser callback smoke. Use `make oauth-browser-smoke` to complete the provider login in a browser, or `make oauth-callback` with an issued session cookie to capture final callback evidence manually.\n\nUse `ddd enable oauth-provider google`, `apple`, or `facebook` to record provider placeholders in `ddd.toml` without writing secrets.\n",
+            "# {package}\n\nGenerated with `ddd init --preset fullstack`.\n\nThis project is a Spin fullstack authentication and authorization service with Leptos pages, REST endpoints, and gRPC service contracts.\n\n- Runtime: `spin`\n- DB: `{db}`\n- Transport: `both`\n- UI: `leptos`\n- Auth: email/password enabled by default\n- OAuth and passkeys: feature-flagged until credentials are configured\n\nStart with `.env.example`, then run:\n\n```bash\nmake db-up\nmake spin\nmake smoke\nmake browser-smoke\n```\n\nThe toolchain gate requires `cargo-leptos >= 0.3.7`, `wasm32-wasip2`, and `wasm-tools`. The distributed P2 Rust target supplies `std`; the generated component is inspected to prove it exports `wasi:http/handler@0.3.0` and has no Preview 1 imports. The unstable `wasm32-wasip3` Rust target remains a canary.\n\n`wasi-auth` owns the only PostgreSQL auth schema. `make db-migrate` uses its native, advisory-lock-protected migration runner before Spin starts; the WASM request component never mutates schema. `make fresh` resets PostgreSQL and reapplies the immutable migration catalog.\n\nFor production, start from `spin.production.toml.example`, replace the example auth domain and database hosts with exact deployment hosts, and run the same migration binary as an explicit deployment step.\n\nAfter OAuth provider credentials and callback URLs are configured, run `make oauth-preflight` before the browser callback smoke. Use `make oauth-browser-smoke` to complete the provider login in a browser, or `make oauth-callback` with an issued session cookie to capture final callback evidence manually.\n\nUse `ddd enable oauth-provider google`, `apple`, or `facebook` to record provider placeholders in `ddd.toml` without writing secrets.\n",
             package = input.package_name,
             db = input.selection.db
         );
@@ -492,17 +492,14 @@ build = "build.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-aes-gcm = {{ version = "0.10.3", optional = true }}
 bytes = {{ version = "1.7.2", optional = true }}
 base64 = {{ version = "0.22", optional = true }}
 console_error_panic_hook = "0.1"
 futures = {{ version = "0.3.30", optional = true }}
 form_urlencoded = {{ version = "1.2", optional = true }}
-hmac = {{ version = "0.12", optional = true }}
 http = "1.1.0"
 http-body = {{ version = "1.0", optional = true }}
 http-body-util = {{ version = "0.1.2", optional = true }}
-argon2 = {{ version = "0.5", default-features = false, features = ["alloc"], optional = true }}
 getrandom = {{ version = "0.2", optional = true }}
 getrandom03 = {{ package = "getrandom", version = "0.3.4" }}
 leptos = {{ version = "0.8.20", default-features = false }}
@@ -510,7 +507,7 @@ leptos_meta = {{ version = "0.8.6", default-features = false }}
 leptos_router = {{ version = "0.8.14", default-features = false }}
 leptos_wasi = {{ version = "=0.4.2-alpha.3", default-features = false, features = ["wasip3", "islands-router", "tracing"], optional = true }}
 server_fn = {{ version = "0.8.13", default-features = false }}
-spin-sdk = {{ git = "https://github.com/spinframework/spin-rust-sdk", rev = "f0c4aeb2c2c44804906a9bc818397050b45c622d", version = "6.0.0", optional = true }}
+spin-sdk = {{ git = "https://github.com/codeitlikemiley/spin-rust-sdk", rev = "a02d330fe9357be2d18e6deef400511195ce6f7f", version = "6.0.0", optional = true }}
 wasip3 = {{ version = "=0.7.0", features = ["http-compat"], optional = true }}
 wit-bindgen = {{ version = "=0.59.0", features = ["async-spawn", "inter-task-wakeup"], optional = true }}
 wit-bindgen-spin-compat = {{ package = "wit-bindgen", version = "=0.57.1", features = ["inter-task-wakeup"], optional = true }}
@@ -523,9 +520,9 @@ thiserror = {{ version = "2", optional = true }}
 tracing = {{ version = "0.1", optional = true }}
 tracing-subscriber = {{ version = "0.3.18", features = ["fmt", "env-filter"], optional = true }}
 prost = {{ version = "0.13", optional = true }}
-pbkdf2 = {{ version = "0.12", optional = true }}
 sha2 = {{ version = "0.10", optional = true }}
 tonic = {{ version = "0.12", default-features = false, features = ["codegen", "prost"], optional = true }}
+tokio = {{ version = "1.52", features = ["macros", "rt"], optional = true }}
 wasi-auth = {{ version = "=0.1.0-alpha.4", default-features = false, optional = true }}
 ddd_cqrs_es = {{ version = "={framework_version}", default-features = false, features = ["json", "serde", "async", "tracing", "json-file"], optional = true }}
 
@@ -538,7 +535,7 @@ tonic-build = {{ version = "0.12", default-features = false, features = ["prost"
 # Keep every transitive SDK edge on the audited final-WASI revision until an
 # upstream release contains the same wasip3 graph.
 [patch.crates-io]
-spin-sdk = {{ git = "https://github.com/spinframework/spin-rust-sdk", rev = "f0c4aeb2c2c44804906a9bc818397050b45c622d" }}
+spin-sdk = {{ git = "https://github.com/codeitlikemiley/spin-rust-sdk", rev = "a02d330fe9357be2d18e6deef400511195ce6f7f" }}
 
 [features]
 default = []
@@ -546,6 +543,7 @@ mail-capture = ["wasi-auth/mail-capture"]
 mail-smtp = ["wasi-auth/mail-smtp"]
 mail-http = ["wasi-auth/mail-http"]
 spicedb = ["wasi-auth/spicedb"]
+migrate = ["dep:serde_json", "dep:tokio", "dep:wasi-auth", "wasi-auth/postgres-native"]
 hydrate = [
   "leptos/hydrate",
   "leptos/islands",
@@ -561,16 +559,12 @@ ssr = [
   "leptos_meta/ssr",
   "leptos_router/ssr",
   "server_fn/axum-no-default",
-  "dep:aes-gcm",
-  "dep:argon2",
   "dep:base64",
   "dep:bytes",
   "dep:ddd_cqrs_es",
   "dep:form_urlencoded",
   "dep:futures",
   "dep:getrandom",
-  "dep:hmac",
-  "dep:pbkdf2",
   "dep:serde_json",
   "dep:sha2",
   "dep:thiserror",
@@ -585,18 +579,12 @@ ssr = [
   "dep:http-body-util",
   "dep:tracing-subscriber",
 ]
-sqlite = [
-  "ssr",
-  "dep:spin-sdk",
-  "spin-sdk/variables",
-  "wasi-auth/storage-spin-sqlite",
-  "ddd_cqrs_es/spin-sqlite",
-]
 postgres = [
   "ssr",
   "dep:spin-sdk",
   "spin-sdk/variables",
   "wasi-auth/storage-postgres",
+  "wasi-auth/postgres-spin",
   "ddd_cqrs_es/spin-postgres",
 ]
 spin-grpc = [
@@ -627,6 +615,7 @@ strip = "symbols"
 
 [package.metadata.leptos]
 output-name = "{crate_name}"
+bin-target = "{package}"
 tailwind-input-file = "input.css"
 assets-dir = "public"
 disable-erase-components = true

@@ -72,7 +72,6 @@ impl RequestAuth {
         }
     }
 
-    #[cfg(target_arch = "wasm32")]
     pub fn for_revalidation(&self) -> Self {
         Self {
             session_id: self.session_id.clone(),
@@ -117,11 +116,15 @@ pub async fn register_email_password(
         ));
     }
     validate_email_password_register(&request, password_min_length().await)?;
-    crate::store::enforce_account_rate_limit("password-register", &request.email, 5, 3_600).await?;
+    crate::auth_product::enforce_account_rate_limit(
+        "password-register",
+        &request.email,
+        5,
+        3_600,
+    )
+    .await?;
     let redirect_url = safe_redirect_or_default(request.redirect_url.clone());
-    let response = crate::store::register_email_password(&request, &redirect_url).await?;
-    catch_up_storage_after_write("register_email_password").await;
-    Ok(response)
+    crate::auth_product::register_email_password(&request, &redirect_url).await
 }
 
 pub async fn login_email_password(
@@ -133,11 +136,15 @@ pub async fn login_email_password(
         ));
     }
     validate_email_password_login(&request)?;
-    crate::store::enforce_account_rate_limit("password-login", &request.email, 5, 15 * 60).await?;
+    crate::auth_product::enforce_account_rate_limit(
+        "password-login",
+        &request.email,
+        5,
+        15 * 60,
+    )
+    .await?;
     let redirect_url = safe_redirect_or_default(request.redirect_url.clone());
-    let response = crate::store::login_email_password(&request, &redirect_url).await?;
-    catch_up_storage_after_write("login_email_password").await;
-    Ok(response)
+    crate::auth_product::login_email_password(&request, &redirect_url).await
 }
 
 pub async fn complete_email_verification(
@@ -146,21 +153,16 @@ pub async fn complete_email_verification(
     if request.token.trim().is_empty() {
         return Err(AuthStackError::validation("verification token is required"));
     }
-    let redirect_url = safe_redirect_or_default(request.redirect_url);
-    let response = crate::store::complete_email_verification(&request.token, &redirect_url).await?;
-    catch_up_storage_after_write("complete_email_verification").await;
-    Ok(response)
+    let redirect_url = safe_redirect_or_default(request.redirect_url.clone());
+    crate::auth_product::complete_email_verification(&request, &redirect_url).await
 }
 
 pub async fn resend_email_verification(
     request: EmailVerificationResendRequest,
 ) -> AuthStackResult<AcceptedResponse> {
     validate_required_email(&request.email)?;
-    crate::store::enforce_account_rate_limit("verification-resend", &request.email, 5, 3_600)
-        .await?;
     let redirect_url = safe_redirect_or_default(request.redirect_url);
-    crate::store::resend_email_verification(&request.email, &redirect_url).await?;
-    catch_up_storage_after_write("resend_email_verification").await;
+    crate::auth_product::resend_email_verification(&request.email, &redirect_url).await?;
     Ok(AcceptedResponse { accepted: true })
 }
 
@@ -173,12 +175,15 @@ pub async fn start_password_reset(
         ));
     }
     validate_password_reset_start(&request)?;
-    crate::store::enforce_account_rate_limit("password-reset-start", &request.email, 5, 3_600)
-        .await?;
+    crate::auth_product::enforce_account_rate_limit(
+        "password-reset-start",
+        &request.email,
+        5,
+        3_600,
+    )
+    .await?;
     let redirect_url = safe_redirect_or_default(request.redirect_url.clone());
-    let response = crate::store::start_password_reset(&request, &redirect_url).await?;
-    catch_up_storage_after_write("start_password_reset").await;
-    Ok(response)
+    crate::auth_product::start_password_reset(&request, &redirect_url).await
 }
 
 pub async fn complete_password_reset(
@@ -191,13 +196,11 @@ pub async fn complete_password_reset(
     }
     validate_password_reset_complete(&request, password_min_length().await)?;
     let redirect_url = safe_redirect_or_default(request.redirect_url.clone());
-    let response = crate::store::complete_password_reset(&request, &redirect_url).await?;
-    catch_up_storage_after_write("complete_password_reset").await;
-    Ok(response)
+    crate::auth_product::complete_password_reset(&request, &redirect_url).await
 }
 
 pub async fn get_current_session_for(session_id: Option<String>) -> AuthStackResult<SessionView> {
-    crate::store::get_session(session_id.as_deref()).await
+    crate::auth_product::get_session(session_id.as_deref()).await
 }
 
 pub async fn csrf_token_for_session(
@@ -355,7 +358,7 @@ pub async fn start_oauth_login(
     validate_provider_id(&provider_id)?;
     let redirect_url = safe_redirect_or_default(redirect_url);
     ensure_oauth_provider_ready(&provider_id).await?;
-    let grant = crate::store::create_oauth_grant(&provider_id, &redirect_url).await?;
+    let grant = crate::auth_product::start_oauth_flow(&provider_id, &redirect_url).await?;
     catch_up_storage_after_write("start_oauth_login").await;
 
     if development_oauth_callback_bypass_enabled().await {
@@ -418,19 +421,25 @@ pub async fn complete_oauth_callback(
 
     let code = request.code.as_deref().unwrap_or_default().trim();
     let state = request.state.as_deref().unwrap_or_default().trim();
-    let grant = crate::store::consume_oauth_grant(&request.provider_id, state).await?;
-    let response = if development_oauth_callback_bypass_enabled().await {
+    let grant = crate::auth_product::load_oauth_callback(&request.provider_id, state).await?;
+    let identity = if development_oauth_callback_bypass_enabled().await {
         if code != "development-oauth-code" {
             return Err(AuthStackError::validation(
                 "OAuth development callback code is invalid",
             ));
         }
-        crate::store::issue_oauth_development_session(&grant).await?
+        let subject = grant.development_subject();
+        wasi_auth::postgres::oauth::VerifiedOAuthIdentity {
+            provider_id: request.provider_id.clone(),
+            provider_subject: subject.clone(),
+            email: Some(format!("{}-{subject}@oauth.local", request.provider_id)),
+            email_verified: true,
+            profile: serde_json::json!({"development_bypass": true}),
+        }
     } else {
-        let identity =
-            crate::oauth::complete_authorization_code(&request.provider_id, code, &grant).await?;
-        crate::store::issue_oauth_session(&identity, &grant.redirect_url).await?
+        crate::oauth::complete_authorization_code(&request.provider_id, code, &grant).await?
     };
+    let response = crate::auth_product::complete_oauth_identity(grant, identity).await?;
     catch_up_storage_after_write("complete_oauth_callback").await;
     Ok(response)
 }
@@ -445,11 +454,20 @@ pub async fn start_passkey_login(
     }
     if let Some(email) = request.email.as_deref() {
         validate_optional_email(email)?;
-        crate::store::enforce_account_rate_limit("passkey-login-start", email, 5, 3_600).await?;
+        crate::auth_product::enforce_account_rate_limit(
+            "passkey-login-start",
+            email,
+            5,
+            3_600,
+        )
+        .await?;
     }
     let redirect_url = safe_redirect_or_default(request.redirect_url);
-    let response =
-        crate::store::create_passkey_challenge("login", request.email, &redirect_url).await?;
+    let email = request
+        .email
+        .as_deref()
+        .ok_or_else(|| AuthStackError::validation("email is required for passkey login"))?;
+    let response = crate::auth_product::start_passkey_login(email, &redirect_url).await?;
     catch_up_storage_after_write("start_passkey_login").await;
     Ok(response)
 }
@@ -473,9 +491,14 @@ pub async fn start_passkey_registration(
         return Err(AuthStackError::Forbidden);
     }
     let redirect_url = safe_redirect_or_default(request.redirect_url);
-    let response =
-        crate::store::create_passkey_challenge("registration", Some(session_email), &redirect_url)
-            .await?;
+    let response = crate::auth_product::start_passkey_registration(
+        session
+            .session_id
+            .as_deref()
+            .ok_or(AuthStackError::AuthRequired)?,
+        &redirect_url,
+    )
+    .await?;
     catch_up_storage_after_write("start_passkey_registration").await;
     Ok(response)
 }
@@ -489,10 +512,9 @@ pub async fn verify_passkey_login(
         ));
     }
     validate_passkey_verify_request(&request)?;
-    let response = crate::store::verify_passkey_login(
+    let response = crate::auth_product::finish_passkey_login(
         &request.challenge_id,
         &request.credential_json,
-        request.redirect_url,
     )
     .await?;
     catch_up_storage_after_write("verify_passkey_login").await;
@@ -510,14 +532,13 @@ pub async fn verify_passkey_registration(
     }
     validate_passkey_verify_request(&request)?;
     let session = authenticated_session_view(auth).await?;
-    let response = crate::store::verify_passkey_registration(
-        &request.challenge_id,
-        &request.credential_json,
-        request.redirect_url,
+    let response = crate::auth_product::finish_passkey_registration(
         session
-            .user_id
+            .session_id
             .as_deref()
             .ok_or(AuthStackError::AuthRequired)?,
+        &request.challenge_id,
+        &request.credential_json,
     )
     .await?;
     catch_up_storage_after_write("verify_passkey_registration").await;
@@ -528,10 +549,12 @@ pub async fn refresh_token_for(
     session_id: Option<String>,
     refresh_token: Option<String>,
 ) -> AuthStackResult<TokenRefreshResponse> {
-    let response =
-        crate::store::refresh_session(session_id.as_deref(), refresh_token.as_deref()).await?;
-    catch_up_storage_after_write("refresh_token_for").await;
-    Ok(response)
+    let refresh_token = refresh_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or(AuthStackError::InvalidToken)?;
+    crate::auth_product::refresh_tokens(session_id.as_deref(), refresh_token).await
 }
 
 pub async fn verify_access_token(
@@ -540,13 +563,11 @@ pub async fn verify_access_token(
     if request.access_token.trim().is_empty() {
         return Err(AuthStackError::validation("access_token is required"));
     }
-    crate::store::verify_access_token(&request).await
+    crate::auth_product::verify_access_token(&request.access_token).await
 }
 
 pub async fn logout_session(session_id: Option<String>) -> AuthStackResult<LogoutResponse> {
-    let response = crate::store::revoke_session(session_id.as_deref()).await?;
-    catch_up_storage_after_write("logout_session").await;
-    Ok(response)
+    crate::auth_product::logout_session(session_id.as_deref()).await
 }
 
 pub async fn change_password(
@@ -563,20 +584,19 @@ pub async fn change_password(
         return Err(AuthStackError::validation("new password must be different"));
     }
     let (context, _) = verified_context_and_permissions(auth, true).await?;
-    crate::store::change_user_password(
+    crate::auth_product::change_password(
         context.principal().user_id().as_str(),
+        context.session_id().as_str(),
         &request.current_password,
         &request.new_password,
-        context.session_id().as_str(),
     )
     .await?;
-    catch_up_storage_after_write("change_password").await;
     Ok(AcceptedResponse { accepted: true })
 }
 
 pub async fn list_sessions(auth: RequestAuth) -> AuthStackResult<AccountSessionListResponse> {
     let (context, _) = verified_context_and_permissions(auth, false).await?;
-    crate::store::list_user_sessions(
+    crate::auth_product::list_user_sessions(
         context.principal().user_id().as_str(),
         context.session_id().as_str(),
     )
@@ -589,29 +609,25 @@ pub async fn revoke_account_session(
 ) -> AuthStackResult<AcceptedResponse> {
     validate_identifier("session_id", &request.session_id)?;
     let (context, _) = verified_context_and_permissions(auth, false).await?;
-    crate::store::revoke_user_session(
-        context.principal().user_id().as_str(),
-        &request.session_id,
-        context.session_id().as_str(),
-    )
-    .await?;
-    catch_up_storage_after_write("revoke_account_session").await;
+    crate::auth_product::revoke_user_session(&request.session_id, context.session_id().as_str())
+        .await?;
     Ok(AcceptedResponse { accepted: true })
 }
 
 pub async fn mfa_status(auth: RequestAuth) -> AuthStackResult<MfaStatusResponse> {
     let session = authenticated_session_view(auth).await?;
-    let user_id = session.user_id.ok_or(AuthStackError::AuthRequired)?;
-    crate::store::mfa_status(&user_id, &session.assurance).await
+    crate::auth_product::mfa_status(
+        session.session_id.as_deref().ok_or(AuthStackError::AuthRequired)?,
+    )
+    .await
 }
 
 pub async fn start_totp_enrollment(auth: RequestAuth) -> AuthStackResult<MfaEnrollStartResponse> {
     let session = authenticated_session_view(auth).await?;
-    let user_id = session.user_id.ok_or(AuthStackError::AuthRequired)?;
-    let primary_email = session.primary_email.ok_or(AuthStackError::AuthRequired)?;
-    let response = crate::store::start_totp_enrollment(&user_id, &primary_email).await?;
-    catch_up_storage_after_write("start_totp_enrollment").await;
-    Ok(response)
+    crate::auth_product::start_totp_enrollment(
+        session.session_id.as_deref().ok_or(AuthStackError::AuthRequired)?,
+    )
+    .await
 }
 
 pub async fn confirm_totp_enrollment(
@@ -620,20 +636,14 @@ pub async fn confirm_totp_enrollment(
 ) -> AuthStackResult<MfaEnrollConfirmResponse> {
     validate_mfa_code(&request.code)?;
     let session = authenticated_session_view(auth).await?;
-    let response = crate::store::confirm_totp_enrollment(
-        session
-            .user_id
-            .as_deref()
-            .ok_or(AuthStackError::AuthRequired)?,
+    crate::auth_product::confirm_totp_enrollment(
         session
             .session_id
             .as_deref()
             .ok_or(AuthStackError::AuthRequired)?,
         &request.code,
     )
-    .await?;
-    catch_up_storage_after_write("confirm_totp_enrollment").await;
-    Ok(response)
+    .await
 }
 
 pub async fn verify_totp_step_up(
@@ -642,20 +652,14 @@ pub async fn verify_totp_step_up(
 ) -> AuthStackResult<SessionView> {
     validate_mfa_code(&request.code)?;
     let session = authenticated_session_view(auth).await?;
-    let response = crate::store::verify_totp_step_up(
-        session
-            .user_id
-            .as_deref()
-            .ok_or(AuthStackError::AuthRequired)?,
+    crate::auth_product::verify_totp_step_up(
         session
             .session_id
             .as_deref()
             .ok_or(AuthStackError::AuthRequired)?,
         &request.code,
     )
-    .await?;
-    catch_up_storage_after_write("verify_totp_step_up").await;
-    Ok(response)
+    .await
 }
 
 pub async fn use_recovery_code_for_step_up(
@@ -666,24 +670,18 @@ pub async fn use_recovery_code_for_step_up(
         return Err(AuthStackError::validation("recovery code is invalid"));
     }
     let session = authenticated_session_view(auth).await?;
-    let response = crate::store::use_recovery_code_for_step_up(
-        session
-            .user_id
-            .as_deref()
-            .ok_or(AuthStackError::AuthRequired)?,
+    crate::auth_product::use_recovery_code(
         session
             .session_id
             .as_deref()
             .ok_or(AuthStackError::AuthRequired)?,
         &request.code,
     )
-    .await?;
-    catch_up_storage_after_write("use_recovery_code_for_step_up").await;
-    Ok(response)
+    .await
 }
 
 pub async fn get_jwks() -> AuthStackResult<JwksDocument> {
-    crate::store::get_jwks().await
+    crate::auth_product::get_jwks().await
 }
 
 pub async fn latest_captured_mail(
@@ -697,25 +695,29 @@ pub async fn latest_captured_mail(
     ) {
         return Err(AuthStackError::validation("message_kind is invalid"));
     }
-    crate::store::latest_captured_mail(&recipient, &message_kind).await
+    crate::auth_product::latest_captured_mail(&recipient, &message_kind).await
 }
 
 pub async fn list_signing_keys(auth: RequestAuth) -> AuthStackResult<SigningKeyListResponse> {
-    require_step_up_permission_for("auth:signing-key:admin", auth).await?;
-    crate::store::list_signing_keys().await
+    require_step_up_permission_for("system.signing-key.manage", auth).await?;
+    crate::auth_product::list_signing_keys().await
 }
 
 pub async fn rotate_signing_key(
     request: SigningKeyRotateRequest,
     auth: RequestAuth,
 ) -> AuthStackResult<SigningKeyRotateResponse> {
-    require_step_up_permission_for("auth:signing-key:admin", auth).await?;
+    let actor = require_step_up_permission_for("system.signing-key.manage", auth).await?;
     validate_signing_key_id(&request.kid)?;
-    let response =
-        crate::store::rotate_signing_key(&request.kid, request.retire_previous.unwrap_or(true))
-            .await?;
-    catch_up_storage_after_write("rotate_signing_key").await;
-    Ok(response)
+    crate::auth_product::rotate_signing_key(
+        actor
+            .session_id
+            .as_deref()
+            .ok_or(AuthStackError::AuthRequired)?,
+        &request.kid,
+        request.retire_previous.unwrap_or(true),
+    )
+    .await
 }
 
 pub async fn storage_status(auth: RequestAuth) -> AuthStackResult<StorageStatusResponse> {
@@ -833,7 +835,7 @@ pub async fn batch_check_authorization(
 
 pub async fn list_organizations(auth: RequestAuth) -> AuthStackResult<OrganizationListResponse> {
     let (context, _) = verified_context_and_permissions(auth, false).await?;
-    crate::store::list_organizations_for_user(context.principal().user_id().as_str()).await
+    crate::auth_product::list_organizations(context.principal().user_id().as_str()).await
 }
 
 pub async fn create_organization(
@@ -841,14 +843,8 @@ pub async fn create_organization(
     auth: RequestAuth,
 ) -> AuthStackResult<OrganizationSummary> {
     validate_display_name("organization name", &request.name, 120)?;
-    let (context, _) = verified_context_and_permissions(auth, true).await?;
-    let organization = crate::store::create_organization(
-        request.name.trim(),
-        context.principal().user_id().as_str(),
-    )
-    .await?;
-    catch_up_storage_after_write("create_organization").await;
-    Ok(organization)
+    let (context, _) = verified_context_and_permissions(auth, false).await?;
+    crate::auth_product::create_organization(request.name.trim(), context.session_id().as_str()).await
 }
 
 pub async fn update_organization(
@@ -859,13 +855,12 @@ pub async fn update_organization(
     validate_display_name("organization name", &request.name, 120)?;
     let (context, _) = verified_context_and_permissions(auth, true).await?;
     enforce_organization_scope(&context, &request.organization_id).await?;
-    let organization = crate::store::update_organization(
+    let organization = crate::auth_product::update_organization(
+        context.session_id().as_str(),
         &request.organization_id,
         request.name.trim(),
-        context.principal().user_id().as_str(),
     )
     .await?;
-    catch_up_storage_after_write("update_organization").await;
     Ok(organization)
 }
 
@@ -875,14 +870,11 @@ pub async fn select_organization(
 ) -> AuthStackResult<SessionView> {
     validate_identifier("organization_id", &request.organization_id)?;
     let (context, _) = verified_context_and_permissions(auth, false).await?;
-    let session = crate::store::select_organization_for_session(
+    crate::auth_product::select_organization(
         context.session_id().as_str(),
-        context.principal().user_id().as_str(),
         &request.organization_id,
     )
-    .await?;
-    catch_up_storage_after_write("select_organization").await;
-    Ok(session)
+    .await
 }
 
 pub async fn list_members(
@@ -892,7 +884,7 @@ pub async fn list_members(
     validate_identifier("organization_id", &organization_id)?;
     let (context, _) = verified_context_and_permissions(auth, false).await?;
     enforce_organization_scope(&context, &organization_id).await?;
-    crate::store::list_memberships(&organization_id, context.principal().user_id().as_str()).await
+    crate::auth_product::list_memberships(context.session_id().as_str(), &organization_id).await
 }
 
 pub async fn invite_member(
@@ -904,14 +896,13 @@ pub async fn invite_member(
     validate_identifier("role_id", &request.role_id)?;
     let (context, _) = verified_context_and_permissions(auth, true).await?;
     enforce_organization_scope(&context, &request.organization_id).await?;
-    let invitation = crate::store::create_invitation(
+    let invitation = crate::auth_product::create_invitation(
+        context.session_id().as_str(),
         &request.organization_id,
         &request.email,
         &request.role_id,
-        context.principal().user_id().as_str(),
     )
     .await?;
-    catch_up_storage_after_write("invite_member").await;
     Ok(invitation)
 }
 
@@ -922,7 +913,7 @@ pub async fn list_invitations(
     validate_identifier("organization_id", &organization_id)?;
     let (context, _) = verified_context_and_permissions(auth, false).await?;
     enforce_organization_scope(&context, &organization_id).await?;
-    crate::store::list_invitations(&organization_id, context.principal().user_id().as_str()).await
+    crate::auth_product::list_invitations(context.session_id().as_str(), &organization_id).await
 }
 
 pub async fn accept_invitation(
@@ -932,18 +923,8 @@ pub async fn accept_invitation(
     if request.token.trim().is_empty() {
         return Err(AuthStackError::validation("invitation token is required"));
     }
-    let session = authenticated_session_view(auth.clone()).await?;
-    let user_id = session.user_id.ok_or(AuthStackError::AuthRequired)?;
-    let primary_email = session.primary_email.ok_or(AuthStackError::AuthRequired)?;
-    let organization = crate::store::accept_invitation(
-        request.token.trim(),
-        &user_id,
-        &primary_email,
-        &session.assurance,
-    )
-    .await?;
-    catch_up_storage_after_write("accept_invitation").await;
-    Ok(organization)
+    let (context, _) = verified_context_and_permissions(auth, false).await?;
+    crate::auth_product::accept_invitation(context.session_id().as_str(), request.token.trim()).await
 }
 
 pub async fn assign_role(
@@ -955,14 +936,13 @@ pub async fn assign_role(
     validate_identifier("role_id", &request.role_id)?;
     let (context, _) = verified_context_and_permissions(auth, true).await?;
     enforce_organization_scope(&context, &request.organization_id).await?;
-    let membership = crate::store::assign_membership_role(
+    let membership = crate::auth_product::assign_role(
+        context.session_id().as_str(),
         &request.organization_id,
         &request.user_id,
         &request.role_id,
-        context.principal().user_id().as_str(),
     )
     .await?;
-    catch_up_storage_after_write("assign_role").await;
     Ok(membership)
 }
 
@@ -974,13 +954,12 @@ pub async fn remove_member(
     validate_identifier("user_id", &request.user_id)?;
     let (context, _) = verified_context_and_permissions(auth, true).await?;
     enforce_organization_scope(&context, &request.organization_id).await?;
-    crate::store::remove_membership(
+    crate::auth_product::remove_member(
+        context.session_id().as_str(),
         &request.organization_id,
         &request.user_id,
-        context.principal().user_id().as_str(),
     )
     .await?;
-    catch_up_storage_after_write("remove_member").await;
     Ok(AcceptedResponse { accepted: true })
 }
 
@@ -991,7 +970,7 @@ pub async fn list_roles(
     validate_identifier("organization_id", &organization_id)?;
     let (context, _) = verified_context_and_permissions(auth, false).await?;
     enforce_organization_scope(&context, &organization_id).await?;
-    crate::store::list_roles(&organization_id, context.principal().user_id().as_str()).await
+    crate::auth_product::list_roles(context.session_id().as_str(), &organization_id).await
 }
 
 pub async fn upsert_role(
@@ -1008,15 +987,14 @@ pub async fn upsert_role(
     }
     let (context, _) = verified_context_and_permissions(auth, true).await?;
     enforce_organization_scope(&context, &request.organization_id).await?;
-    let role = crate::store::upsert_custom_role(
+    let role = crate::auth_product::upsert_role(
+        context.session_id().as_str(),
         &request.organization_id,
         &request.role_id,
         request.name.trim(),
-        &request.permissions,
-        context.principal().user_id().as_str(),
+        request.permissions,
     )
     .await?;
-    catch_up_storage_after_write("upsert_role").await;
     Ok(role)
 }
 
@@ -1026,9 +1004,9 @@ pub async fn list_permissions(
 ) -> AuthStackResult<PermissionCatalogResponse> {
     validate_identifier("organization_id", &organization_id)?;
     let (context, _) = verified_context_and_permissions(auth, false).await?;
-    let organization = crate::store::organization_for_user(
+    let organization = crate::auth_product::organization_for_session(
+        context.session_id().as_str(),
         &organization_id,
-        context.principal().user_id().as_str(),
     )
     .await?;
     if !organization
@@ -1039,13 +1017,16 @@ pub async fn list_permissions(
         return Err(AuthStackError::Forbidden);
     }
     Ok(PermissionCatalogResponse {
-        permissions: crate::store::organization_permission_catalog(),
+        permissions: crate::auth_product::organization_permission_catalog(),
     })
 }
 
 pub async fn list_admin_users(auth: RequestAuth) -> AuthStackResult<AdminUserListResponse> {
-    require_step_up_permission_for("system.user.manage", auth).await?;
-    crate::store::list_admin_users().await
+    let session = require_step_up_permission_for("system.user.manage", auth).await?;
+    crate::auth_product::list_admin_users(
+        session.session_id.as_deref().ok_or(AuthStackError::AuthRequired)?,
+    )
+    .await
 }
 
 pub async fn set_admin_user_status(
@@ -1054,16 +1035,17 @@ pub async fn set_admin_user_status(
 ) -> AuthStackResult<AdminUserSummary> {
     validate_identifier("user_id", &request.user_id)?;
     let actor = require_step_up_permission_for("system.user.manage", auth).await?;
-    let actor_user_id = actor.user_id.ok_or(AuthStackError::AuthRequired)?;
-    let user =
-        crate::store::set_user_disabled(&request.user_id, request.disabled, &actor_user_id).await?;
-    catch_up_storage_after_write("set_admin_user_status").await;
-    Ok(user)
+    crate::auth_product::set_user_disabled(
+        actor.session_id.as_deref().ok_or(AuthStackError::AuthRequired)?,
+        &request.user_id,
+        request.disabled,
+    )
+    .await
 }
 
 pub async fn admin_list_providers(auth: RequestAuth) -> AuthStackResult<Vec<AuthProviderSummary>> {
     require_step_up_permission_for("system.provider.manage", auth).await?;
-    crate::store::list_auth_providers().await
+    crate::auth_product::list_oauth_providers().await
 }
 
 pub async fn admin_save_provider(
@@ -1071,13 +1053,22 @@ pub async fn admin_save_provider(
     enabled: bool,
     auth: RequestAuth,
 ) -> AuthStackResult<AuthProviderSummary> {
-    require_step_up_permission_for("system.provider.manage", auth).await?;
-    save_auth_provider_config(provider_id, enabled).await
+    validate_provider_id(&provider_id)?;
+    let actor = require_step_up_permission_for("system.provider.manage", auth).await?;
+    crate::auth_product::save_oauth_provider(
+        actor
+            .session_id
+            .as_deref()
+            .ok_or(AuthStackError::AuthRequired)?,
+        &provider_id,
+        enabled,
+    )
+    .await
 }
 
 pub async fn list_policy_versions(auth: RequestAuth) -> AuthStackResult<PolicyVersionListResponse> {
     require_step_up_permission_for("system.policy.manage", auth).await?;
-    crate::store::list_policy_versions().await
+    crate::auth_product::list_policy_versions().await
 }
 
 pub async fn publish_policy(
@@ -1095,14 +1086,15 @@ pub async fn publish_policy(
     )
     .map_err(map_cedar_error)?;
     let actor = require_step_up_permission_for("system.policy.manage", auth).await?;
-    let actor_user_id = actor.user_id.ok_or(AuthStackError::AuthRequired)?;
-    let version = crate::store::publish_policy_version(
+    let version = crate::auth_product::publish_policy_version(
+        actor
+            .session_id
+            .as_deref()
+            .ok_or(AuthStackError::AuthRequired)?,
         &request.policy_text,
         &request.schema_text,
-        &actor_user_id,
     )
     .await?;
-    catch_up_storage_after_write("publish_policy").await;
     Ok(version)
 }
 
@@ -1132,30 +1124,28 @@ pub async fn list_audit_events(
         let organization_id = organization_id
             .as_deref()
             .ok_or(AuthStackError::Forbidden)?;
-        let organization = crate::store::organization_for_user(
-            organization_id,
-            context.principal().user_id().as_str(),
-        )
-        .await?;
-        if !permissions
-            .iter()
-            .any(|permission| permission == "audit.view")
-            && !organization
-                .permissions
+        if context.organization_id().map(|value| value.as_str()) != Some(organization_id)
+            || !permissions
                 .iter()
                 .any(|permission| permission == "audit.view")
         {
             return Err(AuthStackError::Forbidden);
         }
     }
-    crate::store::list_audit_events(organization_id.as_deref(), after_cursor, limit).await
+    crate::auth_product::list_audit_events(
+        context.session_id().as_str(),
+        organization_id.as_deref(),
+        after_cursor,
+        limit.clamp(1, 100),
+    )
+    .await
 }
 
 async fn authenticated_session_view(auth: RequestAuth) -> AuthStackResult<SessionView> {
     if let Some(access_token) = auth.access_token {
         let verified = verify_access_token(TokenVerifyRequest { access_token }).await?;
         if let Some(session_id) = verified.session_id.as_deref() {
-            let session = crate::store::get_session(Some(session_id)).await?;
+            let session = crate::auth_product::get_session(Some(session_id)).await?;
             if session.authenticated {
                 return Ok(session);
             }
@@ -1186,7 +1176,7 @@ async fn enforce_organization_scope(
     {
         return Ok(());
     }
-    crate::store::organization_for_user(organization_id, context.principal().user_id().as_str())
+    crate::auth_product::organization_for_session(context.session_id().as_str(), organization_id)
         .await
         .map(|_| ())
 }
@@ -1478,8 +1468,7 @@ async fn verified_context_and_permissions(
 async fn authenticated_session_from_cookie(
     session_id: &str,
 ) -> AuthStackResult<AuthenticatedSession> {
-    let session = require_authenticated_route_for(Some(session_id.to_string())).await?;
-    authenticated_session_from_view(session).await
+    crate::auth_product::authenticated_session_from_cookie(session_id).await
 }
 
 async fn authenticated_session_from_token(token: &str) -> AuthStackResult<AuthenticatedSession> {
@@ -1500,27 +1489,6 @@ async fn authenticated_session_from_token(token: &str) -> AuthStackResult<Authen
     .await
 }
 
-async fn authenticated_session_from_view(
-    session: SessionView,
-) -> AuthStackResult<AuthenticatedSession> {
-    let permissions = session.permissions.clone();
-    authenticated_session(AuthenticatedSessionParts {
-        user_id: session.user_id.ok_or(AuthStackError::AuthRequired)?,
-        organization_id: session.tenant_id,
-        session_id: session.session_id,
-        assurance: session.assurance,
-        system_administrator: session.system_administrator,
-        issued_at_unix_seconds: session
-            .issued_at_unix_seconds
-            .ok_or(AuthStackError::AuthRequired)?,
-        expires_at_unix_seconds: session
-            .expires_at_unix_seconds
-            .ok_or(AuthStackError::AuthRequired)?,
-        permissions,
-    })
-    .await
-}
-
 struct AuthenticatedSessionParts {
     user_id: String,
     organization_id: Option<String>,
@@ -1535,11 +1503,12 @@ struct AuthenticatedSessionParts {
 async fn authenticated_session(
     parts: AuthenticatedSessionParts,
 ) -> AuthStackResult<AuthenticatedSession> {
-    let (role_ids, policy_revision) = crate::store::authorization_snapshot_metadata(
-        parts.organization_id.as_deref(),
-        &parts.user_id,
-    )
-    .await?;
+    let session_id_value = parts
+        .session_id
+        .as_deref()
+        .ok_or(AuthStackError::AuthRequired)?;
+    let (role_ids, policy_revision) =
+        crate::auth_product::authorization_metadata(session_id_value).await?;
     let user_id = UserId::new(parts.user_id)
         .map_err(|_| AuthStackError::configuration("authenticated user id is invalid"))?;
     let organization_id = parts
@@ -1547,11 +1516,7 @@ async fn authenticated_session(
         .map(OrganizationId::new)
         .transpose()
         .map_err(|_| AuthStackError::configuration("authenticated organization is invalid"))?;
-    let session_id = SessionId::new(
-        parts
-            .session_id
-            .unwrap_or_else(|| format!("session-{}", parts.issued_at_unix_seconds)),
-    )
+    let session_id = SessionId::new(session_id_value.to_owned())
     .map_err(|_| AuthStackError::configuration("authenticated session id is invalid"))?;
     let assurance = if parts.assurance == "aal2" {
         AuthenticationAssurance::Aal2
@@ -1638,33 +1603,33 @@ const EMBEDDED_CEDAR_SCHEMA: &str = r#"{
   }
 }"#;
 
-pub async fn save_auth_provider_config(
-    provider_id: String,
-    enabled: bool,
-) -> AuthStackResult<AuthProviderSummary> {
-    validate_provider_id(&provider_id)?;
-    let response = crate::store::save_auth_provider_config(&provider_id, enabled).await?;
-    catch_up_storage_after_write("save_auth_provider_config").await;
-    Ok(response)
-}
-
-pub async fn save_redirect_allowlist(redirects_json: String) -> AuthStackResult<bool> {
+pub async fn save_redirect_allowlist(
+    redirects_json: String,
+    auth: RequestAuth,
+) -> AuthStackResult<bool> {
     let redirects: Vec<String> = serde_json::from_str(&redirects_json)
         .map_err(|error| AuthStackError::validation(format!("invalid redirects_json: {error}")))?;
-    for redirect in redirects {
+    for redirect in &redirects {
         if !redirect.starts_with('/') || redirect.starts_with("//") {
             return Err(AuthStackError::validation(
                 "redirect allowlist entries must be local paths",
             ));
         }
     }
-    crate::store::save_redirect_allowlist(&redirects_json).await?;
-    catch_up_storage_after_write("save_redirect_allowlist").await;
+    let actor = require_step_up_permission_for("system.provider.manage", auth).await?;
+    crate::auth_product::replace_oauth_redirects(
+        actor
+            .session_id
+            .as_deref()
+            .ok_or(AuthStackError::AuthRequired)?,
+        &redirects,
+    )
+    .await?;
     Ok(true)
 }
 
 async fn list_credentialed_auth_providers() -> AuthStackResult<Vec<AuthProviderSummary>> {
-    let providers = crate::store::list_auth_providers().await?;
+    let providers = crate::auth_product::list_oauth_providers().await?;
     let mut credentialed = Vec::new();
     for mut provider in providers {
         if provider_enabled(&provider.provider_id, provider.enabled).await
@@ -1678,7 +1643,7 @@ async fn list_credentialed_auth_providers() -> AuthStackResult<Vec<AuthProviderS
 }
 
 async fn ensure_oauth_provider_ready(provider_id: &str) -> AuthStackResult<AuthProviderSummary> {
-    let Some(mut provider) = crate::store::find_auth_provider(provider_id).await? else {
+    let Some(mut provider) = crate::auth_product::find_oauth_provider(provider_id).await? else {
         return Err(AuthStackError::not_found(format!(
             "OAuth provider '{provider_id}' is not configured"
         )));
@@ -1924,7 +1889,7 @@ async fn catch_up_storage_after_write(operation: &str) {
             );
         }
     }
-    match crate::store::dispatch_pending_mail().await {
+    match crate::auth_product::dispatch_pending_mail().await {
         Ok(delivered) if delivered > 0 => {
             tracing::debug!(operation, delivered, "mail outbox batch delivered");
         }
@@ -1971,7 +1936,7 @@ async fn all_config_values_present(names: &[&str]) -> bool {
 }
 
 async fn config_value(name: &str) -> Option<String> {
-    #[cfg(all(feature = "sqlite", runtime_spin, not(test)))]
+    #[cfg(all(feature = "postgres", runtime_spin, not(test)))]
     {
         let variable_name = name.to_ascii_lowercase();
         if let Ok(value) = spin_sdk::variables::get(&variable_name).await {

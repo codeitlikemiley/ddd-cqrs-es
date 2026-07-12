@@ -289,10 +289,8 @@ impl AppSelection {
             anyhow::bail!("preset=basic is domain-only; use preset=leptos-wasi for ui=leptos");
         }
         if self.preset == Preset::Fullstack {
-            if !matches!(self.db, DbBackend::Sqlite | DbBackend::Postgres) {
-                anyhow::bail!(
-                    "preset=fullstack supports db=sqlite for development or db=postgres for production"
-                );
+            if self.db != DbBackend::Postgres {
+                anyhow::bail!("preset=fullstack requires db=postgres");
             }
             if self.transport != Transport::Both {
                 anyhow::bail!(
@@ -326,7 +324,7 @@ pub fn defaults_for_preset(preset: Preset) -> (Runtime, DbBackend, Realtime, Tra
         ),
         Preset::Fullstack => (
             Runtime::Spin,
-            DbBackend::Sqlite,
+            DbBackend::Postgres,
             Realtime::Off,
             Transport::Both,
             Ui::Leptos,

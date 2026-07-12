@@ -24,7 +24,7 @@ leptos_meta = { version = "0.8.6", default-features = false }
 leptos_router = { version = "0.8.14", default-features = false }
 leptos_wasi = { version = "=0.4.2-alpha.3", default-features = false, features = ["wasip3", "islands-router", "tracing"], optional = true }
 server_fn = { version = "0.8.13", default-features = false }
-spin-sdk = { git = "https://github.com/spinframework/spin-rust-sdk", rev = "f0c4aeb2c2c44804906a9bc818397050b45c622d", version = "6.0.0", optional = true }
+spin-sdk = { git = "https://github.com/codeitlikemiley/spin-rust-sdk", rev = "a02d330fe9357be2d18e6deef400511195ce6f7f", version = "6.0.0", optional = true }
 http = "1.1.0"
 http-body = { version = "1.0", optional = true }
 http-body-util = { version = "0.1.2", optional = true }

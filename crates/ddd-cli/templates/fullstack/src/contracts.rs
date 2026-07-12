@@ -2,6 +2,19 @@
 
 use serde::{Deserialize, Serialize};
 
+macro_rules! redacted_debug {
+    ($type:ident, visible [$($visible:ident),* $(,)?], secret [$($secret:ident),* $(,)?]) => {
+        impl std::fmt::Debug for $type {
+            fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                let mut debug = formatter.debug_struct(stringify!($type));
+                $(debug.field(stringify!($visible), &self.$visible);)*
+                $(debug.field(stringify!($secret), &"[REDACTED]");)*
+                debug.finish()
+            }
+        }
+    };
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AuthProviderSummary {
     pub provider_id: String,
@@ -38,14 +51,14 @@ pub struct CsrfTokenResponse {
     pub token: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OAuthStartResponse {
     pub provider_id: String,
     pub authorization_url: String,
     pub state: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OAuthCallbackRequest {
     pub provider_id: String,
     pub code: Option<String>,
@@ -53,7 +66,7 @@ pub struct OAuthCallbackRequest {
     pub redirect_url: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LoginCompletionResponse {
     pub authenticated: bool,
     pub redirect_url: String,
@@ -63,7 +76,7 @@ pub struct LoginCompletionResponse {
     pub expires_in_seconds: u64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PasswordResetStartRequest {
     pub email: String,
     pub redirect_url: Option<String>,
@@ -75,7 +88,7 @@ pub struct PasswordResetStartResponse {
     pub expires_in_seconds: u64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CapturedMailResponse {
     pub message_kind: String,
     pub recipient: String,
@@ -83,13 +96,13 @@ pub struct CapturedMailResponse {
     pub body_text: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EmailVerificationCompleteRequest {
     pub token: String,
     pub redirect_url: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EmailVerificationResendRequest {
     pub email: String,
     pub redirect_url: Option<String>,
@@ -100,21 +113,21 @@ pub struct AcceptedResponse {
     pub accepted: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PasswordResetCompleteRequest {
     pub token: String,
     pub password: String,
     pub redirect_url: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EmailPasswordLoginRequest {
     pub email: String,
     pub password: String,
     pub redirect_url: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EmailPasswordRegisterRequest {
     pub email: String,
     pub password: String,
@@ -127,14 +140,14 @@ pub struct PasskeyStartRequest {
     pub redirect_url: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PasskeyStartResponse {
     pub challenge_id: String,
     pub public_key_options_json: String,
     pub redirect_url: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PasskeyVerifyRequest {
     pub challenge_id: String,
     pub credential_json: String,
@@ -146,19 +159,19 @@ pub struct LogoutResponse {
     pub redirect_url: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TokenRefreshResponse {
     pub access_token: Option<String>,
     pub refresh_token: Option<String>,
     pub expires_in_seconds: u64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TokenRefreshRequest {
     pub refresh_token: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TokenVerifyRequest {
     pub access_token: String,
 }
@@ -176,7 +189,7 @@ pub struct TokenVerifyResponse {
     pub issued_at_unix_seconds: u64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PasswordChangeRequest {
     pub current_password: String,
     pub new_password: String,
@@ -543,6 +556,23 @@ pub struct StorageProjectionRunResponse {
     pub events_skipped: u64,
 }
 
+redacted_debug!(OAuthStartResponse, visible [provider_id], secret [authorization_url, state]);
+redacted_debug!(OAuthCallbackRequest, visible [provider_id, redirect_url], secret [code, state]);
+redacted_debug!(LoginCompletionResponse, visible [authenticated, redirect_url, expires_in_seconds], secret [session_id, access_token, refresh_token]);
+redacted_debug!(PasswordResetStartRequest, visible [redirect_url], secret [email]);
+redacted_debug!(CapturedMailResponse, visible [message_kind, subject], secret [recipient, body_text]);
+redacted_debug!(EmailVerificationCompleteRequest, visible [redirect_url], secret [token]);
+redacted_debug!(EmailVerificationResendRequest, visible [redirect_url], secret [email]);
+redacted_debug!(PasswordResetCompleteRequest, visible [redirect_url], secret [token, password]);
+redacted_debug!(EmailPasswordLoginRequest, visible [redirect_url], secret [email, password]);
+redacted_debug!(EmailPasswordRegisterRequest, visible [redirect_url], secret [email, password]);
+redacted_debug!(PasskeyStartResponse, visible [redirect_url], secret [challenge_id, public_key_options_json]);
+redacted_debug!(PasskeyVerifyRequest, visible [redirect_url], secret [challenge_id, credential_json]);
+redacted_debug!(TokenRefreshResponse, visible [expires_in_seconds], secret [access_token, refresh_token]);
+redacted_debug!(TokenRefreshRequest, visible [], secret [refresh_token]);
+redacted_debug!(TokenVerifyRequest, visible [], secret [access_token]);
+redacted_debug!(PasswordChangeRequest, visible [], secret [current_password, new_password]);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -567,6 +597,27 @@ mod tests {
         assert!(!debug.contains("otpauth://secret"));
         assert!(!debug.contains("AAAA-BBBB"));
         assert!(!debug.contains("123456"));
+        assert!(debug.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn password_and_token_contract_debug_output_is_redacted() {
+        let login = EmailPasswordLoginRequest {
+            email: "person@example.com".to_owned(),
+            password: "correct horse battery staple".to_owned(),
+            redirect_url: Some("/organizations".to_owned()),
+        };
+        let reset = PasswordResetCompleteRequest {
+            token: "one-time-reset-token".to_owned(),
+            password: "another correct password".to_owned(),
+            redirect_url: None,
+        };
+
+        let debug = format!("{login:?} {reset:?}");
+
+        assert!(!debug.contains("person@example.com"));
+        assert!(!debug.contains("correct horse"));
+        assert!(!debug.contains("one-time-reset-token"));
         assert!(debug.contains("[REDACTED]"));
     }
 }

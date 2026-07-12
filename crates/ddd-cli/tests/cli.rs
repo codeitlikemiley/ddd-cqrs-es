@@ -231,16 +231,17 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
     assert!(cargo_toml.contains("=0.4.2-alpha.3"));
     assert!(cargo_toml.contains("=0.7.0"));
     assert!(cargo_toml.contains("=0.59.0"));
-    assert!(cargo_toml.contains("f0c4aeb2c2c44804906a9bc818397050b45c622d"));
+    assert!(cargo_toml.contains("a02d330fe9357be2d18e6deef400511195ce6f7f"));
     assert!(cargo_toml.contains(r#"rust-version = "1.93.0""#));
     assert!(!cargo_toml.contains("path ="));
     assert!(cargo_toml.contains("[patch.crates-io]"));
     assert!(cargo_toml.contains(
-        r#"spin-sdk = { git = "https://github.com/spinframework/spin-rust-sdk", rev = "f0c4aeb2c2c44804906a9bc818397050b45c622d" }"#
+        r#"spin-sdk = { git = "https://github.com/codeitlikemiley/spin-rust-sdk", rev = "a02d330fe9357be2d18e6deef400511195ce6f7f" }"#
     ));
     assert!(cargo_toml.contains("spin-postgres"));
     assert!(!cargo_toml.contains("spin-mysql"));
-    assert!(cargo_toml.contains("argon2"));
+    assert!(!cargo_toml.contains("argon2 ="));
+    assert!(!cargo_toml.contains("pbkdf2 ="));
     assert!(cargo_toml.contains("getrandom"));
     assert!(cargo_toml.contains(r#"bin-target-triple = "wasm32-wasip2""#));
     assert!(cargo_toml.contains(r#"mail-capture = ["wasi-auth/mail-capture"]"#));
@@ -250,7 +251,7 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
     assert!(!cargo_toml.contains(r#"features = ["fullstack-spin", "mail-capture"]"#));
 
     let makefile = std::fs::read_to_string(project.join("Makefile")).unwrap();
-    assert!(makefile.contains("db ?= $(if $(DATABASE_BACKEND),$(DATABASE_BACKEND),sqlite)"));
+    assert!(makefile.contains("db ?= $(if $(DATABASE_BACKEND),$(DATABASE_BACKEND),postgres)"));
     assert!(makefile.contains("AUTH_STORAGE_AUTO_CATCH_UP ?= true"));
     assert!(makefile.contains("AUTH_COOKIE_SECURE ?= false"));
     assert!(makefile.contains("--variable auth_cookie_secure=$(AUTH_COOKIE_SECURE)"));
@@ -285,7 +286,7 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
     assert!(credential_script.contains("AUTH_${prefix}_REDIRECT_URI"));
 
     let spin_toml = std::fs::read_to_string(project.join("spin.toml")).unwrap();
-    assert!(spin_toml.contains("database_backend = { default = \"sqlite\" }"));
+    assert!(spin_toml.contains("database_backend = { default = \"postgres\" }"));
     assert!(spin_toml.contains("auth_cookie_secure = { default = \"false\" }"));
     assert!(spin_toml.contains("auth_password_kdf = { default = \"argon2id\" }"));
     assert!(spin_toml.contains("auth_bootstrap_admin_emails = { default = \"\" }"));
@@ -307,7 +308,7 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
     assert!(!spin_toml.contains("DATABASE_BACKEND = \"{{ database_backend }}\""));
     assert!(spin_toml.contains("postgres://*:*"));
     assert!(!spin_toml.contains("mysql://*:*"));
-    assert!(spin_toml.contains("${FULLSTACK_FEATURES:-ssr,sqlite,spin-grpc,mail-capture}"));
+    assert!(spin_toml.contains("${FULLSTACK_FEATURES:-ssr,postgres,spin-grpc,mail-capture}"));
     assert!(spin_toml.contains("target/wasm32-wasip2/release/fullstack.wasm"));
 
     let production_spin_toml =
@@ -348,8 +349,12 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
     assert!(env_example.contains("AUTH_BOOTSTRAP_ADMIN_EMAILS="));
     assert!(env_example.contains("AUTH_CSRF_SECRET="));
     assert!(env_example.contains("AUTH_DEV_TOOLS=true"));
-    assert!(env_example.contains("DATABASE_BACKEND=sqlite"));
+    assert!(env_example.contains("DATABASE_BACKEND=postgres"));
     assert!(env_example.contains("POSTGRES_URL="));
+
+    let compose = std::fs::read_to_string(project.join("compose.yaml")).unwrap();
+    assert!(compose.contains("postgres:17-alpine"));
+    assert!(compose.contains("54329:5432"));
 
     let mut check = Command::cargo_bin("ddd").unwrap();
     check.arg("--cwd").arg(&project).arg("check");

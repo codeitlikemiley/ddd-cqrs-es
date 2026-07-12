@@ -4,7 +4,7 @@ listen ?= 127.0.0.1:3008
 -include .env
 export
 
-db ?= $(if $(DATABASE_BACKEND),$(DATABASE_BACKEND),sqlite)
+db ?= $(if $(DATABASE_BACKEND),$(DATABASE_BACKEND),postgres)
 
 AUTH_PRODUCTION_MODE ?= false
 AUTH_ENABLE_PASSWORD_LOGIN ?= true
@@ -20,6 +20,7 @@ AUTH_JWT_KEY_RING_JSON ?=
 AUTH_BOOTSTRAP_ADMIN_EMAILS ?=
 AUTH_CSRF_SECRET ?=
 AUTH_VAULT_KEY_BASE64 ?=
+AUTH_VAULT_KEY_VERSION ?= development-v1
 AUTH_RECOVERY_CODE_PEPPER_BASE64 ?=
 AUTH_MFA_ISSUER ?= wasi-auth
 AUTH_DEV_TOOLS ?= true
@@ -83,7 +84,7 @@ AUTH_APPLE_JWKS_URL ?= https://appleid.apple.com/auth/keys
 AUTH_APPLE_JWKS_JSON ?=
 AUTH_APPLE_SCOPES ?= openid email name
 AUTH_APPLE_REDIRECT_URI ?= http://127.0.0.1:3008/api/auth/oauth/apple/callback
-POSTGRES_URL ?=
+POSTGRES_URL ?= postgres://wasi_auth:wasi_auth_dev@127.0.0.1:54329/wasi_auth
 
 AUTH_DATABASE_URL :=
 ifeq ($(db),postgres)
@@ -115,6 +116,7 @@ SPIN_VARIABLE_ARGS := \
 	--variable auth_bootstrap_admin_emails='$(AUTH_BOOTSTRAP_ADMIN_EMAILS)' \
 	--variable auth_csrf_secret='$(AUTH_CSRF_SECRET)' \
 	--variable auth_vault_key_base64='$(AUTH_VAULT_KEY_BASE64)' \
+	--variable auth_vault_key_version='$(AUTH_VAULT_KEY_VERSION)' \
 	--variable auth_recovery_code_pepper_base64='$(AUTH_RECOVERY_CODE_PEPPER_BASE64)' \
 	--variable auth_mfa_issuer='$(AUTH_MFA_ISSUER)' \
 	--variable auth_session_ttl_seconds=$(AUTH_SESSION_TTL_SECONDS) \
@@ -179,14 +181,16 @@ SPIN_VARIABLE_ARGS := \
 	--variable auth_apple_scopes='$(AUTH_APPLE_SCOPES)' \
 	--variable auth_apple_redirect_uri=$(AUTH_APPLE_REDIRECT_URI)
 
-.PHONY: help validate-toolchain validate-mail check grpc-check spin fresh smoke oauth-credentials oauth-preflight oauth-evidence oauth-callback oauth-browser-smoke oauth-dev-browser-smoke browser-smoke passkey-browser-smoke
+.PHONY: help validate-toolchain validate-mail db-up db-down db-migrate db-verify check grpc-check spin fresh smoke oauth-credentials oauth-preflight oauth-evidence oauth-callback oauth-browser-smoke oauth-dev-browser-smoke browser-smoke passkey-browser-smoke
 
 help:
 	@echo "Fullstack targets:"
 	@echo "  make check                 Compile Spin HTTP/Leptos shell with db=$(db)"
 	@echo "  make grpc-check            Compile Spin gRPC services with db=$(db)"
+	@echo "  make db-up                Start the local PostgreSQL development container"
+	@echo "  make db-migrate           Apply lock-protected wasi-auth migrations"
+	@echo "  make db-verify            Verify migration history and required tables"
 	@echo "  make spin transport=both   Build and run the Spin fullstack app on $(listen)"
-	@echo "  make fresh db=sqlite       Erase local data; migrate from wasi-auth on next startup"
 	@echo "  make fresh db=postgres     Erase PostgreSQL data using POSTGRES_URL"
 	@echo "  make smoke                 Run REST/web route smoke checks against BASE_URL"
 	@echo "  make oauth-credentials     Check required live OAuth credential variables"
@@ -201,6 +205,18 @@ help:
 validate-toolchain:
 	bash scripts/verify_toolchain.sh
 
+db-up:
+	docker compose up -d --wait postgres
+
+db-down:
+	docker compose down
+
+db-migrate:
+	DATABASE_URL='$(POSTGRES_URL)' cargo run --quiet --no-default-features --features migrate --bin wasi-auth-migrate -- apply
+
+db-verify:
+	DATABASE_URL='$(POSTGRES_URL)' cargo run --quiet --no-default-features --features migrate --bin wasi-auth-migrate -- verify-database
+
 validate-mail:
 	@case "$(AUTH_MAIL_TRANSPORT)" in \
 		capture|smtp|http) ;; \
@@ -213,29 +229,28 @@ check: validate-toolchain validate-mail
 grpc-check: validate-toolchain validate-mail
 	WASI_RUNTIME=spin AUTH_TRANSPORT=grpc cargo check --target wasm32-wasip2 --no-default-features --features $(GRPC_FEATURES)
 
-spin: validate-toolchain validate-mail
+spin: validate-toolchain validate-mail db-migrate
 	@case "$(db)" in \
-		sqlite) ;; \
 		postgres) \
 			if [ -z "$$POSTGRES_URL" ]; then \
 				echo "Error: POSTGRES_URL is required for make spin db=postgres."; \
 				exit 1; \
 			fi ;; \
-		*) echo "Error: unsupported db=$(db). Use sqlite or postgres."; exit 2 ;; \
+		*) echo "Error: unsupported db=$(db). Fullstack authentication requires postgres."; exit 2 ;; \
 	esac
 	FULLSTACK_FEATURES=$(GRPC_FEATURES) AUTH_TRANSPORT=$(transport) spin up --build --listen $(listen) $(SPIN_VARIABLE_ARGS)
 
 fresh:
 	@case "$(db)" in \
-		sqlite) AUTH_DB=sqlite bash scripts/reset_db.sh ;; \
 		postgres) \
 			if [ -z "$$POSTGRES_URL" ]; then \
 				echo "Error: POSTGRES_URL is required for db=postgres."; \
 				exit 1; \
 			fi; \
 			AUTH_DB=postgres DATABASE_URL="$$POSTGRES_URL" bash scripts/reset_db.sh ;; \
-		*) echo "Error: unsupported db=$(db). Use sqlite or postgres."; exit 2 ;; \
+		*) echo "Error: unsupported db=$(db). Fullstack authentication requires postgres."; exit 2 ;; \
 	esac
+	$(MAKE) db-migrate
 
 smoke:
 	bash scripts/verify_fullstack.sh

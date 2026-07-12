@@ -7,7 +7,7 @@ authors = ["codeitlikemiley <codeitlikemiley@gmail.com>"]
 description = "Fullstack authentication and authorization services for ddd_cqrs_es on Spin"
 
 [variables]
-database_backend = { default = "sqlite" }
+database_backend = { default = "postgres" }
 database_url = { default = "" }
 auth_transport = { default = "both" }
 auth_production_mode = { default = "false" }
@@ -29,6 +29,7 @@ auth_jwt_key_ring_json = { default = "" }
 auth_bootstrap_admin_emails = { default = "" }
 auth_csrf_secret = { default = "" }
 auth_vault_key_base64 = { default = "" }
+auth_vault_key_version = { default = "development-v1" }
 auth_recovery_code_pepper_base64 = { default = "" }
 auth_mfa_issuer = { default = "wasi-auth" }
 auth_dev_tools = { default = "true" }
@@ -127,7 +128,6 @@ allowed_outbound_hosts = [
   "*://127.0.0.1:*"
 ]
 key_value_stores = ["default"]
-sqlite_databases = ["default"]
 files = [
   { source = "Cargo.toml", destination = "/Cargo.toml" }
 ]
@@ -155,6 +155,7 @@ auth_jwt_key_ring_json = "{{ auth_jwt_key_ring_json }}"
 auth_bootstrap_admin_emails = "{{ auth_bootstrap_admin_emails }}"
 auth_csrf_secret = "{{ auth_csrf_secret }}"
 auth_vault_key_base64 = "{{ auth_vault_key_base64 }}"
+auth_vault_key_version = "{{ auth_vault_key_version }}"
 auth_recovery_code_pepper_base64 = "{{ auth_recovery_code_pepper_base64 }}"
 auth_mfa_issuer = "{{ auth_mfa_issuer }}"
 auth_dev_tools = "{{ auth_dev_tools }}"
@@ -220,7 +221,7 @@ auth_apple_scopes = "{{ auth_apple_scopes }}"
 auth_apple_redirect_uri = "{{ auth_apple_redirect_uri }}"
 
 [component.auth-api.build]
-command = "bash scripts/verify_toolchain.sh && WASI_RUNTIME=spin AUTH_TRANSPORT=both cargo leptos build --release --split --frontend-only && WASI_RUNTIME=spin AUTH_TRANSPORT=both LEPTOS_OUTPUT_NAME=fullstack_app cargo build --lib --target wasm32-wasip2 --release --no-default-features --features ${FULLSTACK_FEATURES:-ssr,sqlite,spin-grpc,mail-capture} && bash scripts/verify_wasi_artifact.sh"
+command = "bash scripts/verify_toolchain.sh && WASI_RUNTIME=spin AUTH_TRANSPORT=both cargo leptos build --release --split --frontend-only && WASI_RUNTIME=spin AUTH_TRANSPORT=both LEPTOS_OUTPUT_NAME=fullstack_app cargo build --lib --target wasm32-wasip2 --release --no-default-features --features ${FULLSTACK_FEATURES:-ssr,postgres,spin-grpc,mail-capture} && bash scripts/verify_wasi_artifact.sh"
 watch = ["src/**/*.rs", "Cargo.toml", "proto/**/*.proto"]
 
 [component.authorization-api]
@@ -238,7 +239,6 @@ allowed_outbound_hosts = [
   "*://127.0.0.1:*"
 ]
 key_value_stores = ["default"]
-sqlite_databases = ["default"]
 files = [
   { source = "Cargo.toml", destination = "/Cargo.toml" }
 ]
@@ -266,6 +266,7 @@ auth_jwt_key_ring_json = "{{ auth_jwt_key_ring_json }}"
 auth_bootstrap_admin_emails = "{{ auth_bootstrap_admin_emails }}"
 auth_csrf_secret = "{{ auth_csrf_secret }}"
 auth_vault_key_base64 = "{{ auth_vault_key_base64 }}"
+auth_vault_key_version = "{{ auth_vault_key_version }}"
 auth_recovery_code_pepper_base64 = "{{ auth_recovery_code_pepper_base64 }}"
 auth_mfa_issuer = "{{ auth_mfa_issuer }}"
 auth_dev_tools = "{{ auth_dev_tools }}"
@@ -345,7 +346,6 @@ allowed_outbound_hosts = [
   "*://127.0.0.1:*"
 ]
 key_value_stores = ["default"]
-sqlite_databases = ["default"]
 files = [
   { source = "Cargo.toml", destination = "/Cargo.toml" }
 ]
@@ -373,6 +373,7 @@ auth_jwt_key_ring_json = "{{ auth_jwt_key_ring_json }}"
 auth_bootstrap_admin_emails = "{{ auth_bootstrap_admin_emails }}"
 auth_csrf_secret = "{{ auth_csrf_secret }}"
 auth_vault_key_base64 = "{{ auth_vault_key_base64 }}"
+auth_vault_key_version = "{{ auth_vault_key_version }}"
 auth_recovery_code_pepper_base64 = "{{ auth_recovery_code_pepper_base64 }}"
 auth_mfa_issuer = "{{ auth_mfa_issuer }}"
 auth_dev_tools = "{{ auth_dev_tools }}"

@@ -31,6 +31,7 @@ auth_jwt_key_ring_json = { default = "" }
 auth_bootstrap_admin_emails = { default = "" }
 auth_csrf_secret = { default = "" }
 auth_vault_key_base64 = { default = "" }
+auth_vault_key_version = { default = "production-v1" }
 auth_recovery_code_pepper_base64 = { default = "" }
 auth_mfa_issuer = { default = "wasi-auth" }
 auth_dev_tools = { default = "false" }
@@ -144,6 +145,7 @@ auth_jwt_key_ring_json = "{{ auth_jwt_key_ring_json }}"
 auth_bootstrap_admin_emails = "{{ auth_bootstrap_admin_emails }}"
 auth_csrf_secret = "{{ auth_csrf_secret }}"
 auth_vault_key_base64 = "{{ auth_vault_key_base64 }}"
+auth_vault_key_version = "{{ auth_vault_key_version }}"
 auth_recovery_code_pepper_base64 = "{{ auth_recovery_code_pepper_base64 }}"
 auth_mfa_issuer = "{{ auth_mfa_issuer }}"
 auth_dev_tools = "{{ auth_dev_tools }}"
@@ -239,6 +241,7 @@ auth_jwt_key_ring_json = "{{ auth_jwt_key_ring_json }}"
 auth_bootstrap_admin_emails = "{{ auth_bootstrap_admin_emails }}"
 auth_csrf_secret = "{{ auth_csrf_secret }}"
 auth_vault_key_base64 = "{{ auth_vault_key_base64 }}"
+auth_vault_key_version = "{{ auth_vault_key_version }}"
 auth_recovery_code_pepper_base64 = "{{ auth_recovery_code_pepper_base64 }}"
 auth_mfa_issuer = "{{ auth_mfa_issuer }}"
 auth_dev_tools = "{{ auth_dev_tools }}"
@@ -340,6 +343,7 @@ auth_jwt_key_ring_json = "{{ auth_jwt_key_ring_json }}"
 auth_bootstrap_admin_emails = "{{ auth_bootstrap_admin_emails }}"
 auth_csrf_secret = "{{ auth_csrf_secret }}"
 auth_vault_key_base64 = "{{ auth_vault_key_base64 }}"
+auth_vault_key_version = "{{ auth_vault_key_version }}"
 auth_recovery_code_pepper_base64 = "{{ auth_recovery_code_pepper_base64 }}"
 auth_mfa_issuer = "{{ auth_mfa_issuer }}"
 auth_dev_tools = "{{ auth_dev_tools }}"

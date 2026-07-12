@@ -1,4 +1,4 @@
-project = { name = "fullstack-app", preset = "fullstack", runtime = "spin", db = "sqlite", realtime = "off", transport = "both", ui = "leptos" }
+project = { name = "fullstack-app", preset = "fullstack", runtime = "spin", db = "postgres", realtime = "off", transport = "both", ui = "leptos" }
 capabilities = { enabled = ["auth", "authorization", "grpc", "leptos", "rest", "server-fn"] }
 
 [auth]
