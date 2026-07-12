@@ -2,7 +2,7 @@
 name = "fullstack-app"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.93.0"
+rust-version = "1.94.0"
 authors = ["codeitlikemiley <codeitlikemiley@gmail.com>"]
 description = "A Spin fullstack authentication and authorization service for ddd_cqrs_es"
 build = "build.rs"
@@ -30,8 +30,9 @@ leptos_wasi = { package = "leptos-wasi-runtime", version = "=0.4.2-rc.1", defaul
 server_fn = { version = "0.8.13", default-features = false }
 spin-sdk = { git = "https://github.com/codeitlikemiley/spin-rust-sdk", rev = "a02d330fe9357be2d18e6deef400511195ce6f7f", version = "6.0.0", optional = true }
 wasip3 = { version = "=0.7.0", features = ["http-compat"], optional = true }
-wit-bindgen = { version = "=0.59.0", features = ["async-spawn", "inter-task-wakeup"], optional = true }
-wit-bindgen-spin-compat = { package = "wit-bindgen", version = "=0.57.1", features = ["inter-task-wakeup"], optional = true }
+# `wasip3 0.7.0` is generated against wit-bindgen 0.57.1. A second runtime
+# version duplicates unit-stream intrinsics and cannot be component-linked.
+wit-bindgen = { version = "=0.57.1", features = ["async-spawn", "inter-task-wakeup"], optional = true }
 wasm-bindgen = { version = "=0.2.126", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 web-sys = { version = "0.3", features = ["Location", "Storage", "Window"], optional = true }
@@ -52,6 +53,7 @@ getrandom03 = { package = "getrandom", version = "0.3.4", features = ["wasm_js"]
 
 [build-dependencies]
 tonic-build = { version = "0.12", default-features = false, features = ["prost"] }
+wasi-auth = { version = "=0.1.0-rc.1", default-features = false, features = ["cedar"] }
 
 # Keep every transitive SDK edge on the audited final-WASI revision until an
 # upstream release contains the same wasip3 graph.
@@ -95,7 +97,6 @@ ssr = [
   "dep:leptos_wasi",
   "dep:wasip3",
   "dep:wit-bindgen",
-  "dep:wit-bindgen-spin-compat",
   "dep:http-body",
   "dep:http-body-util",
   "dep:tracing-subscriber",
@@ -104,7 +105,6 @@ postgres = [
   "ssr",
   "dep:spin-sdk",
   "spin-sdk/variables",
-  "wasi-auth/storage-postgres",
   "wasi-auth/postgres-spin",
   "ddd_cqrs_es/spin-postgres",
 ]

@@ -1,8 +1,10 @@
 //! Thin Spin runtime adapter for product workflows owned by `wasi-auth`.
 
-use std::time::{SystemTime, UNIX_EPOCH};
-#[cfg(feature = "mail-capture")]
-use std::sync::OnceLock;
+use std::{
+    collections::VecDeque,
+    sync::{Mutex, OnceLock},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use base64::{Engine as _, engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD}};
 use sha2::{Digest, Sha256};
@@ -12,7 +14,7 @@ use wasi_auth::{
     authentication::passkeys::Attachment as PasskeyAttachment,
     authentication::{Clock, RandomSource},
     context::{AuthenticationAssurance, RequestId, SessionId, UserId},
-    http::AuthenticatedSession,
+    http::{AuthenticatedSession, TrustedContextCodec},
     postgres::{
         flows::FlowSealingKey,
         management::{
@@ -28,7 +30,10 @@ use wasi_auth::{
         passkeys::{
             PasskeyConfigurationError, PasskeyService, PasskeyServiceConfig, PasskeyServiceError,
         },
-        policy::{PolicyBundleRecord, PolicyBundleService, PolicyBundleServiceError},
+        policy::{
+            ActivePolicyBundle, PolicyBundleLoadError, PolicyBundleRecord, PolicyBundleService,
+            PolicyBundleServiceError,
+        },
         PostgresAuthStore, PostgresStoreError,
         organizations::{
             CreateOrganizationRequest, OrganizationError, OrganizationRecord, OrganizationService,
@@ -38,7 +43,8 @@ use wasi_auth::{
         signing::{SigningKeyRecord, SigningKeyService, SigningKeyServiceError},
         spin::{SpinPostgresError, SpinPostgresTransport},
         tokens::{
-            JwtKeyRing, RefreshSealingKey, TokenService, TokenServiceConfig, TokenServiceError,
+            AccessTokenVerifier, JwtKeyRing, RefreshSealingKey, TokenService, TokenServiceConfig,
+            TokenServiceError, VerifiedAccessToken,
         },
     },
     postgres::workflows::{
@@ -53,7 +59,7 @@ use wasi_auth::{
     },
 };
 #[cfg(feature = "mail-capture")]
-use wasi_auth::mail::{CaptureMailer, EmailKind};
+use wasi_auth::mail::{CaptureMailer, EmailKind, Recipient};
 #[cfg(any(feature = "mail-capture", all(feature = "mail-http", runtime_spin)))]
 use wasi_auth::postgres::outbox::{MailOutboxWorker, PublicBaseUrl};
 #[cfg(all(feature = "mail-http", runtime_spin))]
@@ -80,9 +86,14 @@ use crate::{
 };
 
 const DEVELOPMENT_OUTBOX_KEY: &[u8] = b"fullstack-development-outbox-key";
+const VERIFIED_TOKEN_CACHE_CAPACITY: usize = 256;
 
 #[cfg(feature = "mail-capture")]
 static CAPTURE_MAILER: OnceLock<CaptureMailer> = OnceLock::new();
+static TOKEN_VERIFIER: OnceLock<RuntimeTokenVerifier> = OnceLock::new();
+static TRUSTED_CONTEXT_CODEC: OnceLock<TrustedContextCodec> = OnceLock::new();
+type VerifiedTokenCache = Mutex<VecDeque<([u8; 32], VerifiedAccessToken)>>;
+static VERIFIED_TOKEN_CACHE: OnceLock<VerifiedTokenCache> = OnceLock::new();
 
 pub use wasi_auth::postgres::oauth::PendingOAuthFlow as ProductPendingOAuthFlow;
 
@@ -140,7 +151,7 @@ impl HttpMailTransport for SpinMailTransport {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct RuntimeClock;
+pub(crate) struct RuntimeClock;
 
 impl Clock for RuntimeClock {
     fn now_unix_seconds(&self) -> u64 {
@@ -153,10 +164,10 @@ impl Clock for RuntimeClock {
 
 #[derive(Clone, Copy, Debug, thiserror::Error)]
 #[error("host cryptographic randomness is unavailable")]
-struct RuntimeRandomError;
+pub(crate) struct RuntimeRandomError;
 
 #[derive(Clone, Copy, Debug)]
-struct RuntimeRandom;
+pub(crate) struct RuntimeRandom;
 
 impl RandomSource for RuntimeRandom {
     type Error = RuntimeRandomError;
@@ -360,6 +371,14 @@ pub async fn publish_policy_version(
         .await
         .map(policy_version_summary)
         .map_err(map_policy_error)
+}
+
+pub async fn active_policy_bundle() -> AuthStackResult<Option<ActivePolicyBundle>> {
+    store()
+        .await?
+        .load_active_policy_bundle()
+        .await
+        .map_err(map_policy_load_error)
 }
 
 fn policy_version_summary(record: PolicyBundleRecord) -> PolicyVersionSummary {
@@ -677,23 +696,29 @@ pub async fn latest_captured_mail(
             "invitation" => EmailKind::Invitation,
             _ => return Err(AuthStackError::validation("message_kind is invalid")),
         };
-        let messages = CAPTURE_MAILER
-            .get_or_init(CaptureMailer::default)
-            .messages()
-            .map_err(|_| AuthStackError::store("captured mail is unavailable"))?;
-        let captured = messages
-            .into_iter()
-            .rev()
-            .find(|captured| {
-                captured.message().recipient().as_str() == recipient
-                    && captured.message().kind() == expected_kind
-            })
+        let recipient = Recipient::new(recipient.to_owned())
+            .map_err(|_| AuthStackError::validation("recipient is invalid"))?;
+        let public_base_url = runtime_config_value("AUTH_PUBLIC_BASE_URL")
+            .await
+            .unwrap_or_else(|| "http://127.0.0.1:3008".to_owned());
+        let worker = MailOutboxWorker::new(
+            store().await?,
+            RuntimeClock,
+            RuntimeRandom,
+            outbox_key().await?,
+            PublicBaseUrl::new(&public_base_url)
+                .map_err(|_| AuthStackError::configuration("AUTH_PUBLIC_BASE_URL is invalid"))?,
+        );
+        let captured = worker
+            .latest_delivered_for_development(&recipient, expected_kind)
+            .await
+            .map_err(|_| AuthStackError::store("captured mail is unavailable"))?
             .ok_or_else(|| AuthStackError::not_found("captured mail was not found"))?;
         Ok(CapturedMailResponse {
             message_kind: message_kind.to_owned(),
-            recipient: captured.message().recipient().as_str().to_owned(),
-            subject: captured.message().subject().to_owned(),
-            body_text: captured.message().text_body().to_owned(),
+            recipient: captured.recipient().as_str().to_owned(),
+            subject: captured.subject().to_owned(),
+            body_text: captured.text_body().to_owned(),
         })
     }
     #[cfg(not(feature = "mail-capture"))]
@@ -871,10 +896,23 @@ pub async fn refresh_tokens(
 }
 
 pub async fn verify_access_token(token: &str) -> AuthStackResult<TokenVerifyResponse> {
-    let verified = token_service().await?
-        .verify(token, &request_id("verify-access-token")?)
+    let cached = cached_verified_token(token);
+    let verified = match token_verification_service()
+        .await?
+        .verify_cached(
+            token,
+            &request_id("verify-access-token")?,
+            cached.as_ref(),
+        )
         .await
-        .map_err(map_token_error)?;
+    {
+        Ok(verified) => verified,
+        Err(error) => {
+            remove_cached_verified_token(token);
+            return Err(map_token_error(error));
+        }
+    };
+    cache_verified_token(token, verified.clone());
     Ok(TokenVerifyResponse {
         active: true,
         subject: verified.user_id,
@@ -882,6 +920,8 @@ pub async fn verify_access_token(token: &str) -> AuthStackResult<TokenVerifyResp
         session_id: Some(verified.session_id),
         expires_at: verified.expires_at_seconds,
         scopes: verified.permissions,
+        role_ids: verified.role_ids,
+        policy_revision: verified.policy_revision,
         assurance: verified.assurance,
         system_administrator: verified.system_administrator,
         issued_at_unix_seconds: verified.issued_at_seconds,
@@ -1004,25 +1044,6 @@ pub async fn authenticated_session_from_cookie(
         policy_revision: context.auth().policy_revision().cloned(),
         authorization: context.authorization().clone(),
     })
-}
-
-pub async fn authorization_metadata(
-    session_id: &str,
-) -> AuthStackResult<(Vec<String>, String)> {
-    let session = load_session(session_id).await?;
-    let context = session.context();
-    Ok((
-        context
-            .authorization()
-            .role_ids()
-            .map(ToString::to_string)
-            .collect(),
-        context
-            .authorization()
-            .policy_revision()
-            .map(ToString::to_string)
-            .unwrap_or_else(|| "embedded-cedar-bootstrap".to_owned()),
-    ))
 }
 
 pub async fn get_session(session_id: Option<&str>) -> AuthStackResult<SessionView> {
@@ -1495,7 +1516,7 @@ fn unauthenticated_session() -> SessionView {
     }
 }
 
-async fn store() -> AuthStackResult<PostgresAuthStore<SpinPostgresTransport>> {
+pub(crate) async fn store() -> AuthStackResult<PostgresAuthStore<SpinPostgresTransport>> {
     let database_url = runtime_config_value("DATABASE_URL")
         .await
         .filter(|value| !value.trim().is_empty())
@@ -1505,7 +1526,7 @@ async fn store() -> AuthStackResult<PostgresAuthStore<SpinPostgresTransport>> {
     Ok(PostgresAuthStore::new(transport))
 }
 
-async fn outbox_key() -> AuthStackResult<OutboxSealingKey> {
+pub(crate) async fn outbox_key() -> AuthStackResult<OutboxSealingKey> {
     let (key_version, key) = vault_key_material().await?;
     OutboxSealingKey::new(key_version, key)
         .map_err(|_| AuthStackError::configuration("outbox key configuration is invalid"))
@@ -1637,10 +1658,121 @@ async fn vault_key_material() -> AuthStackResult<(String, [u8; 32])> {
     Ok((key_version, key))
 }
 
-async fn token_service(
-) -> AuthStackResult<TokenService<SpinPostgresTransport, RuntimeClock, RuntimeRandom>> {
+type RuntimeTokenService = TokenService<SpinPostgresTransport, RuntimeClock, RuntimeRandom>;
+type RuntimeTokenVerifier = AccessTokenVerifier<SpinPostgresTransport, RuntimeClock>;
+
+async fn token_service() -> AuthStackResult<RuntimeTokenService> {
     let mut key_ring = configured_jwt_key_ring().await?;
     synchronize_signing_keys(&mut key_ring).await?;
+    configured_token_service(key_ring).await
+}
+
+async fn token_verification_service() -> AuthStackResult<&'static RuntimeTokenVerifier> {
+    if let Some(verifier) = TOKEN_VERIFIER.get() {
+        return Ok(verifier);
+    }
+    let issuer = runtime_config_value("AUTH_JWT_ISSUER")
+        .await
+        .unwrap_or_else(|| "http://127.0.0.1:3008".to_owned());
+    let audience = runtime_config_value("AUTH_JWT_AUDIENCE")
+        .await
+        .unwrap_or_else(|| "fullstack-app".to_owned());
+    let verifier = AccessTokenVerifier::new(
+        store().await?,
+        RuntimeClock,
+        configured_jwt_key_ring().await?,
+        issuer,
+        audience,
+    )
+    .map_err(|_| AuthStackError::configuration("token verification configuration is invalid"))?;
+    let _ = TOKEN_VERIFIER.set(verifier);
+    TOKEN_VERIFIER.get().ok_or_else(|| {
+        AuthStackError::configuration("token verification service could not be initialized")
+    })
+}
+
+pub async fn trusted_context_codec() -> AuthStackResult<Option<&'static TrustedContextCodec>> {
+    if let Some(codec) = TRUSTED_CONTEXT_CODEC.get() {
+        return Ok(Some(codec));
+    }
+    let Some(encoded_key) = runtime_config_value("AUTH_TRUSTED_INGRESS_KEY_BASE64")
+        .await
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(None);
+    };
+    let key: [u8; 32] = STANDARD
+        .decode(encoded_key.trim())
+        .ok()
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or_else(|| {
+            AuthStackError::configuration(
+                "AUTH_TRUSTED_INGRESS_KEY_BASE64 must decode to 32 bytes",
+            )
+        })?;
+    let audience = runtime_config_value("AUTH_TRUSTED_INGRESS_AUDIENCE")
+        .await
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "fullstack-app".to_owned());
+    let max_age = config_u64("AUTH_TRUSTED_INGRESS_MAX_AGE_SECONDS", 5).await?;
+    let codec = TrustedContextCodec::new(audience, key)
+        .and_then(|codec| codec.with_max_age_seconds(max_age))
+        .map_err(|_| AuthStackError::configuration("trusted ingress configuration is invalid"))?;
+    let _ = TRUSTED_CONTEXT_CODEC.set(codec);
+    Ok(TRUSTED_CONTEXT_CODEC.get())
+}
+
+pub async fn trusted_ingress_required() -> bool {
+    config_bool("AUTH_PRODUCTION_MODE", false).await
+        || config_bool("AUTH_REQUIRE_TRUSTED_INGRESS", false).await
+}
+
+fn verified_token_cache() -> &'static VerifiedTokenCache {
+    VERIFIED_TOKEN_CACHE.get_or_init(|| Mutex::new(VecDeque::new()))
+}
+
+fn token_cache_key(token: &str) -> [u8; 32] {
+    Sha256::digest(token.as_bytes()).into()
+}
+
+fn cached_verified_token(token: &str) -> Option<VerifiedAccessToken> {
+    let key = token_cache_key(token);
+    let mut cache = verified_token_cache().lock().ok()?;
+    let index = cache.iter().position(|(candidate, _)| candidate == &key)?;
+    let entry = cache.remove(index)?;
+    if entry.1.expires_at_seconds <= RuntimeClock.now_unix_seconds() {
+        return None;
+    }
+    let verified = entry.1.clone();
+    cache.push_back(entry);
+    Some(verified)
+}
+
+fn cache_verified_token(token: &str, verified: VerifiedAccessToken) {
+    let key = token_cache_key(token);
+    let Ok(mut cache) = verified_token_cache().lock() else {
+        return;
+    };
+    if let Some(index) = cache.iter().position(|(candidate, _)| candidate == &key) {
+        cache.remove(index);
+    }
+    cache.push_back((key, verified));
+    while cache.len() > VERIFIED_TOKEN_CACHE_CAPACITY {
+        cache.pop_front();
+    }
+}
+
+fn remove_cached_verified_token(token: &str) {
+    let key = token_cache_key(token);
+    let Ok(mut cache) = verified_token_cache().lock() else {
+        return;
+    };
+    if let Some(index) = cache.iter().position(|(candidate, _)| candidate == &key) {
+        cache.remove(index);
+    }
+}
+
+async fn configured_token_service(key_ring: JwtKeyRing) -> AuthStackResult<RuntimeTokenService> {
     let (version, key) = vault_key_material().await?;
     let sealing_key = RefreshSealingKey::new(format!("refresh:{version}"), key)
         .map_err(|_| AuthStackError::configuration("refresh sealing key is invalid"))?;
@@ -2074,6 +2206,11 @@ fn map_policy_error(error: PolicyBundleServiceError<SpinPostgresError>) -> AuthS
         }
         _ => AuthStackError::store("policy publication failed"),
     }
+}
+
+fn map_policy_load_error(error: PolicyBundleLoadError<SpinPostgresError>) -> AuthStackError {
+    tracing::error!(error = %error, "active Cedar policy load failed closed");
+    AuthStackError::store("active policy load failed")
 }
 
 fn map_signing_key_error(error: SigningKeyServiceError<SpinPostgresError>) -> AuthStackError {

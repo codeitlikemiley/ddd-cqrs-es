@@ -28,8 +28,15 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
             .try_init();
 
         let mut req = wasip3::http_compat::http_from_wasi_request(request)?;
-        wasi_auth::http::strip_untrusted_auth_metadata(req.headers_mut());
         ensure_request_id(&mut req)?;
+        let trusted_context = match crate::application::trusted_context_from_request(&req).await {
+            Ok(context) => context,
+            Err(error) => {
+                tracing::warn!(error = %error, "trusted ingress envelope was rejected");
+                return plain_text_response(error.http_status(), "Request rejected.");
+            }
+        };
+        wasi_auth::http::strip_untrusted_auth_metadata(req.headers_mut());
         let request_path = req.uri().path().to_string();
         let request_query = req.uri().query().map(ToOwned::to_owned);
         let transport_mode = transport_mode().await;
@@ -40,13 +47,17 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
             "handling fullstack request"
         );
 
+        // Schema installation and checksum verification are deployment gates
+        // (`wasi-auth-migrate apply`/`verify-database`), not request work. Spin
+        // may create a fresh component instance for a request, so an in-guest
+        // once flag cannot make a database preflight process-global.
         if !request_path.starts_with("/pkg/")
-            && let Err(error) = crate::store::initialize_schema_async().await
+            && let Err(error) = crate::store::validate_runtime_security_config().await
         {
             tracing::error!(
                 error = %error,
                 error_code = error.public_code(),
-                "failed to initialize auth storage contract"
+                "invalid auth runtime security configuration"
             );
             return Err(ErrorCode::InternalError(None));
         }
@@ -71,7 +82,15 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
             return plain_text_response(error.http_status(), "Request origin rejected.");
         }
 
-        let request_context = match crate::application::authenticate_ingress(&req).await {
+        let request_context = if trusted_context.is_some() {
+            trusted_context
+        } else if crate::auth_product::trusted_ingress_required().await
+            && has_authentication_credential(req.headers())
+        {
+            tracing::warn!("credential-bearing request bypassed required native ingress");
+            return plain_text_response(http::StatusCode::UNAUTHORIZED, "Request rejected.");
+        } else {
+            match crate::application::authenticate_ingress(&req).await {
             Ok(context) => context,
             Err(
                 crate::error::AuthStackError::AuthRequired
@@ -90,6 +109,7 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
                     "trusted ingress rejected request"
                 );
                 return plain_text_response(error.http_status(), "Request rejected.");
+            }
             }
         };
         let session_id = request_context
@@ -318,6 +338,19 @@ fn session_id_from_headers(headers: &http::HeaderMap) -> Option<String> {
         .get(COOKIE)
         .and_then(|value| value.to_str().ok())
         .and_then(session_id_from_cookie_header)
+}
+
+fn has_authentication_credential(headers: &http::HeaderMap) -> bool {
+    headers.contains_key(http::header::AUTHORIZATION)
+        || headers
+            .get_all(http::header::COOKIE)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .flat_map(|value| value.split(';'))
+            .filter_map(|cookie| cookie.trim().split_once('='))
+            .any(|(name, value)| {
+                !value.is_empty() && matches!(name, "__Host-session" | "wasi_auth_dev_session")
+            })
 }
 
 fn ensure_request_id<B>(request: &mut http::Request<B>) -> Result<(), ErrorCode> {

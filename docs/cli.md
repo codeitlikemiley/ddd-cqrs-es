@@ -118,7 +118,7 @@ Examples:
 ddd init billing --preset basic --domain Invoice
 ddd init counter-app --preset leptos-wasi --domain Counter --db sqlite --runtime spin --transport http --ui leptos
 ddd init counter-grpc --preset leptos-wasi --domain Counter --db postgres --runtime spin --transport both --ui leptos
-ddd init fullstack --preset fullstack --runtime spin --db sqlite --transport both --ui leptos
+ddd init fullstack --preset fullstack --runtime spin --db postgres --transport both --ui leptos
 ddd init projector --preset worker --domain Invoice --db mysql --realtime polling
 ```
 

@@ -192,6 +192,9 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
         "proto/auth.proto",
         "proto/authorization.proto",
         "proto/organization.proto",
+        "scripts/benchmark_fullstack.sh",
+        "scripts/benchmark_ingress_overhead.sh",
+        "scripts/soak_fullstack.sh",
         "scripts/report_oauth_evidence.sh",
         "scripts/reset_db.sh",
         "scripts/verify_auth_oauth_dev_browser.mjs",
@@ -233,9 +236,10 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
     assert!(cargo_toml.contains("=0.1.0-rc.1"));
     assert!(cargo_toml.contains("=0.3.0-rc.1"));
     assert!(cargo_toml.contains("=0.7.0"));
-    assert!(cargo_toml.contains("=0.59.0"));
+    assert!(cargo_toml.contains("=0.57.1"));
+    assert!(!cargo_toml.contains("wit-bindgen-spin-compat"));
     assert!(cargo_toml.contains("a02d330fe9357be2d18e6deef400511195ce6f7f"));
-    assert!(cargo_toml.contains(r#"rust-version = "1.93.0""#));
+    assert!(cargo_toml.contains(r#"rust-version = "1.94.0""#));
     assert!(!cargo_toml.contains("path ="));
     assert!(cargo_toml.contains("[patch.crates-io]"));
     assert!(cargo_toml.contains(

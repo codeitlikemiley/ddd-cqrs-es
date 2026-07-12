@@ -11,6 +11,14 @@ fn main() {
     println!("cargo::rerun-if-changed=proto/admin.proto");
     println!("cargo::rerun-if-changed=proto/audit.proto");
 
+    wasi_auth::cedar::CedarProvider::new_validated(
+        wasi_auth::cedar::DEFAULT_APPLICATION_POLICY,
+        wasi_auth::cedar::DEFAULT_APPLICATION_SCHEMA,
+        "[]",
+        "embedded-v1",
+    )
+    .expect("the embedded Cedar bundle must pass strict build-time validation");
+
     if env::var_os("CARGO_FEATURE_SPIN_GRPC").is_some() {
         tonic_build::configure()
             .build_transport(false)

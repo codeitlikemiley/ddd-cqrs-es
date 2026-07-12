@@ -2,7 +2,7 @@
 name = "counter_app"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.93.0"
+rust-version = "1.94.0"
 authors = ["codeitlikemiley <codeitlikemiley@gmail.com>"]
 description = "A Leptos application exporting the final WASI HTTP component world"
 build = "build.rs"
@@ -29,8 +29,9 @@ http = "1.1.0"
 http-body = { version = "1.0", optional = true }
 http-body-util = { version = "0.1.2", optional = true }
 wasip3 = { version = "=0.7.0", features = ["http-compat"], optional = true }
-wit-bindgen = { version = "=0.59.0", features = ["async-spawn", "inter-task-wakeup"], optional = true }
-wit-bindgen-spin-compat = { package = "wit-bindgen", version = "=0.57.1", features = ["inter-task-wakeup"], optional = true }
+# `wasip3 0.7.0` is generated against wit-bindgen 0.57.1. Keep one runtime
+# version so async unit-stream intrinsics have one canonical implementation.
+wit-bindgen = { version = "=0.57.1", features = ["async-spawn", "inter-task-wakeup"], optional = true }
 wasm-bindgen = { version = "=0.2.126", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 web-sys = { version = "0.3", features = ["Document", "Element", "EventSource", "EventTarget", "MessageEvent", "Storage", "Window"], optional = true }
@@ -78,7 +79,6 @@ ssr = [
   "dep:leptos_wasi",
   "dep:wasip3",
   "dep:wit-bindgen",
-  "dep:wit-bindgen-spin-compat",
   "dep:http-body",
   "dep:http-body-util",
   "dep:tracing-subscriber",
@@ -98,7 +98,6 @@ postgres = [
   "dep:pbkdf2",
   "dep:base64",
   "dep:spin-sdk",
-  "ddd_cqrs_es/wasi-postgres-tcp",
   "ddd_cqrs_es/spin-postgres",
 ]
 neon = [
@@ -128,7 +127,6 @@ spin-mysql = [
 ]
 wasi-mysql = [
   "mysql",
-  "ddd_cqrs_es/wasi-mysql",
 ]
 spin-redis = [
   "redis",

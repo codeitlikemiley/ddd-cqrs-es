@@ -21,8 +21,9 @@ Browser / REST / gRPC
         -> VerifiedAuthContext
         -> shared application services
         -> embedded Cedar
-        -> DDD unit of work and PostgreSQL
-        -> optional SpiceDB relationship outbox
+        -> PostgreSQL relational auth command kernel
+        -> encrypted mail / optional SpiceDB auth_outbox
+        -> DDD only for application business aggregates
 ```
 
 Arbitrary headers cannot construct `VerifiedAuthContext`. Browser authority
@@ -31,11 +32,18 @@ bearer tokens. No request accepts `admin_token` or raw authorization tuples.
 
 ## Development and production profiles
 
-The development profile uses `fullstack-spin`, Spin SQLite, and capture mail:
+The generated application uses PostgreSQL with capture mail during local
+development:
 
 ```bash
-make -C examples/fullstack-app spin db=sqlite transport=both
+make -C examples/fullstack-app spin db=postgres transport=both
 ```
+
+The stale Spin SQLite migration-only feature was removed before the first RC.
+It did not implement the product workflows and had already diverged from the
+relational kernel. The generated identity product now has one authoritative
+PostgreSQL execution path; a future development adapter must prove complete
+schema, transaction, and workflow parity before it can re-enter the product.
 
 The production profile uses PostgreSQL and one production mail adapter. Startup
 rejects capture mail, development tools, insecure cookies, a non-HTTPS public
@@ -45,14 +53,15 @@ P-256 public coordinates. `wasi-auth` rejects RSA/PSS private signing because
 the transitive RustCrypto RSA implementation is covered by a timing advisory;
 RS256 is retained only for public-key verification of provider ID tokens.
 
-`wasi-auth` owns the only auth migration source. Both development and
-production startup execute the same versioned migration contract, translated
-for Spin SQLite or PostgreSQL. `make fresh` erases data and relies on startup to
-reapply that canonical schema; the generated app does not maintain a schema
-copy of its own.
+`wasi-auth` owns the only auth migration source. Development and production
+execute the same PostgreSQL migration contract. `make fresh` erases data and
+the explicit migration step reapplies that canonical schema; the generated app
+does not maintain a schema copy of its own.
 
 The maintained Spin SDK revision declares Rust 1.93 as its MSRV, matching the
-DDD, `wasi-auth`, and `leptos-wasi-runtime` release-candidate graph.
+DDD, `wasi-auth`, and `leptos-wasi-runtime` release-candidate graph. The native
+Spin host is built separately at its truthful Rust 1.94 floor because Wasmtime
+46 and Cranelift 0.133 require it.
 
 ## Release topology
 
@@ -109,8 +118,8 @@ and bidirectional-streaming gRPC. Its optional `auth` feature delegates
 ## Required verification
 
 Before release, run formatting, warnings-denied Clippy, unit/doc tests, CLI
-generation and drift checks, SQLite and PostgreSQL profile builds, hydrate and
-split-WASM builds, package dry-runs, and WASM artifact inspection. Live Spin
+generation and drift checks, the PostgreSQL profile build and live relational
+contracts, hydrate and split-WASM builds, package dry-runs, and WASM artifact inspection. Live Spin
 promotion additionally requires browser flows, all four gRPC modes, five
 paired performance samples, and a ten-minute concurrency-100 soak.
 
@@ -118,3 +127,10 @@ Native trusted ingress and embedded Cedar must stay within 10% paired overhead
 and 25 ms p99 at concurrency 100 respectively. SpiceDB and portable component
 middleware remain opt-in/experimental until they independently pass those
 unchanged gates. A compile-only canary is not production support.
+
+The 2026-07-12 exact-candidate run passed all five protected-path pairs: native
+ingress was about 4.83 times faster in the paired median and reduced median p99
+by 76.98%. Five 60-second samples reached 24,501.972 median requests/s with
+10.847 ms worst p99. The final ten-minute sample reached 24,838.391 requests/s
+at 10.278 ms p99 with zero status or transport failures, bounded HTTP 401
+revocation, no sensitive-log findings, and no second-half RSS growth.

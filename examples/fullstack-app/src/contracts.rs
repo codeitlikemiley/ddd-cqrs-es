@@ -184,6 +184,10 @@ pub struct TokenVerifyResponse {
     pub session_id: Option<String>,
     pub expires_at: u64,
     pub scopes: Vec<String>,
+    #[serde(skip)]
+    pub role_ids: Vec<String>,
+    #[serde(skip)]
+    pub policy_revision: Option<String>,
     pub assurance: String,
     pub system_administrator: bool,
     pub issued_at_unix_seconds: u64,

@@ -11,6 +11,10 @@ database_backend = { default = "postgres" }
 database_url = { default = "" }
 auth_transport = { default = "both" }
 auth_production_mode = { default = "false" }
+auth_require_trusted_ingress = { default = "false" }
+auth_trusted_ingress_key_base64 = { default = "" }
+auth_trusted_ingress_audience = { default = "fullstack-app" }
+auth_trusted_ingress_max_age_seconds = { default = "5" }
 auth_enable_password_login = { default = "true" }
 auth_password_min_length = { default = "8" }
 auth_password_kdf = { default = "argon2id" }
@@ -137,6 +141,10 @@ database_backend = "{{ database_backend }}"
 database_url = "{{ database_url }}"
 auth_transport = "{{ auth_transport }}"
 auth_production_mode = "{{ auth_production_mode }}"
+auth_require_trusted_ingress = "{{ auth_require_trusted_ingress }}"
+auth_trusted_ingress_key_base64 = "{{ auth_trusted_ingress_key_base64 }}"
+auth_trusted_ingress_audience = "{{ auth_trusted_ingress_audience }}"
+auth_trusted_ingress_max_age_seconds = "{{ auth_trusted_ingress_max_age_seconds }}"
 auth_enable_password_login = "{{ auth_enable_password_login }}"
 auth_password_min_length = "{{ auth_password_min_length }}"
 auth_password_kdf = "{{ auth_password_kdf }}"
@@ -248,6 +256,10 @@ database_backend = "{{ database_backend }}"
 database_url = "{{ database_url }}"
 auth_transport = "{{ auth_transport }}"
 auth_production_mode = "{{ auth_production_mode }}"
+auth_require_trusted_ingress = "{{ auth_require_trusted_ingress }}"
+auth_trusted_ingress_key_base64 = "{{ auth_trusted_ingress_key_base64 }}"
+auth_trusted_ingress_audience = "{{ auth_trusted_ingress_audience }}"
+auth_trusted_ingress_max_age_seconds = "{{ auth_trusted_ingress_max_age_seconds }}"
 auth_enable_password_login = "{{ auth_enable_password_login }}"
 auth_password_min_length = "{{ auth_password_min_length }}"
 auth_password_kdf = "{{ auth_password_kdf }}"
@@ -355,6 +367,10 @@ database_backend = "{{ database_backend }}"
 database_url = "{{ database_url }}"
 auth_transport = "{{ auth_transport }}"
 auth_production_mode = "{{ auth_production_mode }}"
+auth_require_trusted_ingress = "{{ auth_require_trusted_ingress }}"
+auth_trusted_ingress_key_base64 = "{{ auth_trusted_ingress_key_base64 }}"
+auth_trusted_ingress_audience = "{{ auth_trusted_ingress_audience }}"
+auth_trusted_ingress_max_age_seconds = "{{ auth_trusted_ingress_max_age_seconds }}"
 auth_enable_password_login = "{{ auth_enable_password_login }}"
 auth_password_min_length = "{{ auth_password_min_length }}"
 auth_password_kdf = "{{ auth_password_kdf }}"

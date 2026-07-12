@@ -1,15 +1,16 @@
 use std::borrow::Cow;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(feature = "mail-capture")]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use futures::lock::Mutex;
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(feature = "mail-capture")]
+use serde_json::json;
 use sha2::{Digest, Sha256};
-#[cfg(all(feature = "spicedb", runtime_spin))]
-use wasi_auth::authentication::{RelationshipOperation, RelationshipOutboxIntent};
 #[cfg(all(feature = "spicedb", runtime_spin))]
 use wasi_auth::authorization::{
     AccessRequest as SpiceDbAccessRequest, ActionName as SpiceDbActionName,
@@ -19,10 +20,9 @@ use wasi_auth::authorization::{
 #[cfg(all(feature = "spicedb", runtime_spin))]
 use wasi_auth::context::{OrganizationId, PolicyRevision};
 #[cfg(all(feature = "mail-http", runtime_spin))]
-use wasi_auth::mail::{
-    EmailKind, EmailMessage, HttpMailBearerToken, HttpMailEndpoint, HttpMailTransport, HttpMailer,
-    Mailer, Recipient,
-};
+use wasi_auth::mail::HttpMailTransport;
+#[cfg(all(feature = "spicedb", runtime_spin))]
+use wasi_auth::postgres::outbox::RelationshipOutboxWorker;
 #[cfg(all(feature = "spicedb", runtime_spin))]
 use wasi_auth::spicedb::{
     PermissionMap, SpiceDbBearerToken, SpiceDbEndpoint, SpiceDbProvider, SpiceDbRelationshipWriter,
@@ -39,17 +39,11 @@ const AUTH_PRODUCTION_MODE: &str = "AUTH_PRODUCTION_MODE";
 const MFA_VAULT_KEY: &str = "AUTH_VAULT_KEY_BASE64";
 const MFA_RECOVERY_PEPPER: &str = "AUTH_RECOVERY_CODE_PEPPER_BASE64";
 #[cfg(all(feature = "mail-http", runtime_spin))]
-const MAX_MAIL_DISPATCH_BATCH: usize = 25;
-#[cfg(all(feature = "mail-http", runtime_spin))]
-const MAIL_LEASE_MS: u64 = 30_000;
-#[cfg(all(feature = "mail-http", runtime_spin))]
 const MAX_MAIL_WEBHOOK_RESPONSE_BYTES: usize = 16 * 1024;
 #[cfg(all(feature = "spicedb", runtime_spin))]
 const MAX_SPICEDB_RESPONSE_BYTES: usize = 256 * 1024;
 #[cfg(all(feature = "spicedb", runtime_spin))]
 const MAX_RELATIONSHIP_DISPATCH_BATCH: usize = 100;
-#[cfg(all(feature = "spicedb", runtime_spin))]
-const RELATIONSHIP_LEASE_MS: u64 = 30_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StorageBackend {
@@ -125,6 +119,7 @@ async fn spin_outbound_http_send(
 }
 
 #[derive(Clone, Debug)]
+#[cfg(feature = "mail-capture")]
 #[cfg_attr(not(runtime_spin), allow(dead_code))]
 struct AtomicSqlStatement {
     sql: String,
@@ -133,22 +128,13 @@ struct AtomicSqlStatement {
     minimum_rows: usize,
 }
 
+#[cfg(feature = "mail-capture")]
 impl AtomicSqlStatement {
     fn execute(sql: impl Into<String>, params: Vec<Value>) -> Self {
         Self {
             sql: sql.into(),
             params,
             returns_rows: false,
-            minimum_rows: 0,
-        }
-    }
-
-    #[allow(dead_code)]
-    fn query(sql: impl Into<String>, params: Vec<Value>) -> Self {
-        Self {
-            sql: sql.into(),
-            params,
-            returns_rows: true,
             minimum_rows: 0,
         }
     }
@@ -165,6 +151,8 @@ impl AtomicSqlStatement {
 
 static SCHEMA_INITIALIZED: AtomicBool = AtomicBool::new(false);
 static SCHEMA_INIT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static RUNTIME_SECURITY_VALIDATED: AtomicBool = AtomicBool::new(false);
+static RUNTIME_SECURITY_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 pub async fn initialize_schema_async() -> AuthStackResult<()> {
     if SCHEMA_INITIALIZED.load(Ordering::Acquire) {
@@ -295,144 +283,20 @@ async fn dispatch_pending_spicedb_relationships() -> AuthStackResult<usize> {
             .map_err(|_| AuthStackError::configuration("AUTH_SPICEDB_TOKEN is invalid"))?,
         SpinOutboundHttpTransport,
     );
-    let now = now_ms();
-    let rows = execute_sql(
-        "SELECT intent_id, operation, resource, relation_name, subject, resource_revision, \
-                consistency_token, attempt_count \
-         FROM auth_relationship_outbox \
-         WHERE status = 'pending' AND available_at_ms <= ?1 \
-           AND (lease_id IS NULL OR leased_until_ms < ?1) \
-         ORDER BY available_at_ms ASC, created_at_ms ASC LIMIT ?2",
-        vec![json!(now), json!(MAX_RELATIONSHIP_DISPATCH_BATCH)],
-    )
-    .await?;
-
-    let mut claimed = Vec::with_capacity(rows.len());
-    for row in rows {
-        let intent_id = required_string(&row, "intent_id")?;
-        let lease_id = secure_storage_id("relationship_lease")?;
-        if execute_sql_atomic(vec![AtomicSqlStatement::guard(
-            "UPDATE auth_relationship_outbox SET lease_id = ?1, leased_until_ms = ?2 \
-             WHERE intent_id = ?3 AND status = 'pending' AND available_at_ms <= ?4 \
-               AND (lease_id IS NULL OR leased_until_ms < ?4) RETURNING intent_id",
-            vec![
-                json!(&lease_id),
-                json!(now.saturating_add(RELATIONSHIP_LEASE_MS)),
-                json!(&intent_id),
-                json!(now),
-            ],
-        )])
+    let worker = RelationshipOutboxWorker::new(
+        crate::auth_product::store().await?,
+        crate::auth_product::RuntimeClock,
+        crate::auth_product::RuntimeRandom,
+        crate::auth_product::outbox_key().await?,
+    );
+    worker
+        .dispatch(&writer, MAX_RELATIONSHIP_DISPATCH_BATCH)
         .await
-        .is_err()
-        {
-            continue;
-        }
-        let operation = match required_string(&row, "operation")?.as_str() {
-            "grant" => RelationshipOperation::Grant,
-            "revoke" => RelationshipOperation::Revoke,
-            _ => {
-                release_invalid_relationship_intent(&intent_id, &lease_id).await?;
-                continue;
-            }
-        };
-        let resource_revision = row_i64(&row, "resource_revision")
-            .filter(|value| *value >= 0)
-            .ok_or_else(|| AuthStackError::store("relationship revision is invalid"))?
-            as u64;
-        claimed.push((
-            intent_id,
-            lease_id,
-            row_i64(&row, "attempt_count").unwrap_or_default().max(0) as u32,
-            RelationshipOutboxIntent {
-                operation,
-                resource: required_string(&row, "resource")?,
-                relation: required_string(&row, "relation_name")?,
-                subject: required_string(&row, "subject")?,
-                resource_revision,
-                consistency_token: row_string(&row, "consistency_token"),
-            },
-        ));
-    }
-    if claimed.is_empty() {
-        return Ok(0);
-    }
-
-    let intents = claimed
-        .iter()
-        .map(|(_, _, _, intent)| intent.clone())
-        .collect::<Vec<_>>();
-    match writer.write(&intents).await {
-        Ok(receipt) => {
-            let completed_at = now_ms();
-            let statements = claimed
-                .iter()
-                .map(|(intent_id, lease_id, _, _)| {
-                    AtomicSqlStatement::guard(
-                        "UPDATE auth_relationship_outbox \
-                         SET status = 'completed', consistency_token = ?1, updated_at_ms = ?2, \
-                             lease_id = NULL, leased_until_ms = NULL, last_error = NULL \
-                         WHERE intent_id = ?3 AND lease_id = ?4 AND status = 'pending' \
-                         RETURNING intent_id",
-                        vec![
-                            json!(receipt.consistency_token()),
-                            json!(completed_at),
-                            json!(intent_id),
-                            json!(lease_id),
-                        ],
-                    )
-                })
-                .collect();
-            execute_sql_atomic(statements).await?;
-            Ok(claimed.len())
-        }
-        Err(error) => {
-            let failed_at = now_ms();
-            let statements = claimed
-                .iter()
-                .map(|(intent_id, lease_id, attempts, _)| {
-                    AtomicSqlStatement::guard(
-                        "UPDATE auth_relationship_outbox \
-                         SET attempt_count = attempt_count + 1, last_error = 'provider_failure', \
-                             available_at_ms = ?1, updated_at_ms = ?2, lease_id = NULL, \
-                             leased_until_ms = NULL \
-                         WHERE intent_id = ?3 AND lease_id = ?4 AND status = 'pending' \
-                         RETURNING intent_id",
-                        vec![
-                            json!(failed_at.saturating_add(relationship_retry_delay_ms(*attempts))),
-                            json!(failed_at),
-                            json!(intent_id),
-                            json!(lease_id),
-                        ],
-                    )
-                })
-                .collect();
-            execute_sql_atomic(statements).await?;
-            tracing::warn!(error = %error, intent_count = claimed.len(), "SpiceDB outbox batch deferred");
-            Ok(0)
-        }
-    }
-}
-
-#[cfg(all(feature = "spicedb", runtime_spin))]
-async fn release_invalid_relationship_intent(
-    intent_id: &str,
-    lease_id: &str,
-) -> AuthStackResult<()> {
-    execute_sql_atomic(vec![AtomicSqlStatement::guard(
-        "UPDATE auth_relationship_outbox \
-         SET status = 'failed', last_error = 'invalid_intent', updated_at_ms = ?1, \
-             lease_id = NULL, leased_until_ms = NULL \
-         WHERE intent_id = ?2 AND lease_id = ?3 RETURNING intent_id",
-        vec![json!(now_ms()), json!(intent_id), json!(lease_id)],
-    )])
-    .await?;
-    Ok(())
-}
-
-#[cfg(all(feature = "spicedb", runtime_spin))]
-fn relationship_retry_delay_ms(attempts: u32) -> u64 {
-    let exponent = attempts.min(6);
-    100_u64.saturating_mul(1_u64 << exponent).min(10_000)
+        .map(|report| report.delivered)
+        .map_err(|error| {
+            tracing::error!(error = %error, "canonical relationship outbox dispatch failed");
+            AuthStackError::store("relationship outbox dispatch failed")
+        })
 }
 
 pub async fn direct_spicedb_enabled() -> bool {
@@ -447,32 +311,23 @@ pub async fn check_direct_spicedb_membership(
     {
         let organization = OrganizationId::new(organization_id.to_owned())
             .map_err(|_| AuthStackError::validation("organization_id is invalid"))?;
-        let issuer = context.principal().issuer();
-        let user_id = context.principal().user_id().as_str();
-        let mut identity = Vec::with_capacity(issuer.len() + user_id.len() + 1);
-        identity.extend_from_slice(issuer.as_bytes());
-        identity.push(0);
-        identity.extend_from_slice(user_id.as_bytes());
-        let subject = format!("user:v1_{}", URL_SAFE_NO_PAD.encode(identity));
-        let resource = format!("organization:{organization_id}");
         let rows = execute_sql(
-            "SELECT status, operation, consistency_token, resource_revision \
-             FROM auth_relationship_outbox WHERE resource = ?1 AND subject = ?2 \
-             ORDER BY resource_revision DESC, created_at_ms DESC LIMIT 1",
-            vec![json!(&resource), json!(&subject)],
+            "SELECT status, delivery_id \
+             FROM auth_outbox \
+             WHERE kind = 'relationship' \
+             ORDER BY CASE WHEN status = 'delivered' THEN 1 ELSE 0 END, \
+                      updated_at_ms DESC, outbox_id DESC \
+             LIMIT 1",
+            Vec::new(),
         )
         .await?;
         let latest = rows.first();
-        let resource_revision = latest
-            .and_then(|row| row_i64(row, "resource_revision"))
-            .filter(|revision| *revision >= 0)
-            .map(|revision| revision as u64);
-        if latest.is_some_and(|row| row_string(row, "status").as_deref() != Some("completed")) {
+        if latest.is_some_and(|row| row_string(row, "status").as_deref() != Some("delivered")) {
             let revision = PolicyRevision::new("spicedb-pending-v1")
                 .map_err(|_| AuthStackError::configuration("SpiceDB policy revision is invalid"))?;
             return Ok((
                 AuthorizationDecision::deny(revision, "spicedb.pending_relationship"),
-                resource_revision,
+                None,
             ));
         }
 
@@ -485,7 +340,7 @@ pub async fn check_direct_spicedb_membership(
         )
         .map_err(|_| AuthStackError::validation("organization resource is invalid"))?;
         let consistency = latest
-            .and_then(|row| row_string(row, "consistency_token"))
+            .and_then(|row| row_string(row, "delivery_id"))
             .filter(|value| !value.is_empty())
             .map_or(ConsistencyRequirement::MinimizeLatency, |token| {
                 ConsistencyRequirement::AtLeastAsFresh { token }
@@ -505,7 +360,7 @@ pub async fn check_direct_spicedb_membership(
                 tracing::error!(error = %error, "direct SpiceDB failed closed");
                 AuthStackError::Forbidden
             })?;
-        Ok((decision, resource_revision))
+        Ok((decision, None))
     }
     #[cfg(not(all(feature = "spicedb", runtime_spin)))]
     {
@@ -601,6 +456,7 @@ async fn execute_sql(sql: &str, params: Vec<Value>) -> AuthStackResult<Vec<Value
     execute_postgres(sql, params).await
 }
 
+#[cfg(feature = "mail-capture")]
 async fn execute_sql_atomic(
     statements: Vec<AtomicSqlStatement>,
 ) -> AuthStackResult<Vec<Vec<Value>>> {
@@ -777,6 +633,7 @@ fn row_i64(row: &Value, key: &str) -> Option<i64> {
     row.get(key).and_then(Value::as_i64)
 }
 
+#[cfg(feature = "mail-capture")]
 fn random_bytes(len: usize) -> AuthStackResult<Vec<u8>> {
     #[cfg(all(target_arch = "wasm32", feature = "ssr"))]
     {
@@ -802,7 +659,25 @@ async fn mail_transport() -> String {
         .to_ascii_lowercase()
 }
 
-async fn validate_runtime_security_config() -> AuthStackResult<()> {
+/// Validates security-sensitive runtime variables without touching storage.
+///
+/// Schema installation and checksum verification are separate deployment and
+/// health gates so the trusted-ingress hot path never performs migration I/O.
+pub async fn validate_runtime_security_config() -> AuthStackResult<()> {
+    if RUNTIME_SECURITY_VALIDATED.load(Ordering::Acquire) {
+        return Ok(());
+    }
+    let lock = RUNTIME_SECURITY_LOCK.get_or_init(|| Mutex::new(()));
+    let _guard = lock.lock().await;
+    if RUNTIME_SECURITY_VALIDATED.load(Ordering::Acquire) {
+        return Ok(());
+    }
+    validate_runtime_security_config_uncached().await?;
+    RUNTIME_SECURITY_VALIDATED.store(true, Ordering::Release);
+    Ok(())
+}
+
+async fn validate_runtime_security_config_uncached() -> AuthStackResult<()> {
     validate_spicedb_runtime_config().await?;
     if !config_bool(AUTH_PRODUCTION_MODE, false).await {
         return Ok(());
@@ -815,6 +690,46 @@ async fn validate_runtime_security_config() -> AuthStackResult<()> {
     if config_bool("AUTH_DEV_TOOLS", false).await {
         return Err(AuthStackError::configuration(
             "production forbids AUTH_DEV_TOOLS",
+        ));
+    }
+    if !config_bool("AUTH_REQUIRE_TRUSTED_INGRESS", false).await {
+        return Err(AuthStackError::configuration(
+            "production requires AUTH_REQUIRE_TRUSTED_INGRESS=true",
+        ));
+    }
+    let ingress_key = store_config_value("AUTH_TRUSTED_INGRESS_KEY_BASE64")
+        .await
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            AuthStackError::configuration(
+                "production requires AUTH_TRUSTED_INGRESS_KEY_BASE64",
+            )
+        })?;
+    if STANDARD
+        .decode(ingress_key.trim())
+        .ok()
+        .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+        .is_none()
+    {
+        return Err(AuthStackError::configuration(
+            "AUTH_TRUSTED_INGRESS_KEY_BASE64 must decode to 32 bytes",
+        ));
+    }
+    if store_config_value("AUTH_TRUSTED_INGRESS_AUDIENCE")
+        .await
+        .is_none_or(|value| value.trim().is_empty() || value.len() > 256)
+    {
+        return Err(AuthStackError::configuration(
+            "production requires a bounded AUTH_TRUSTED_INGRESS_AUDIENCE",
+        ));
+    }
+    let ingress_max_age = store_config_value("AUTH_TRUSTED_INGRESS_MAX_AGE_SECONDS")
+        .await
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(5);
+    if !(1..=30).contains(&ingress_max_age) {
+        return Err(AuthStackError::configuration(
+            "AUTH_TRUSTED_INGRESS_MAX_AGE_SECONDS must be between 1 and 30",
         ));
     }
     let public_base_url = store_config_value("AUTH_PUBLIC_BASE_URL")
@@ -929,6 +844,7 @@ fn truthy(value: &str) -> bool {
     )
 }
 
+#[cfg(feature = "mail-capture")]
 fn secure_storage_id(kind: &str) -> AuthStackResult<String> {
     Ok(format!(
         "{kind}_{}",
@@ -936,6 +852,7 @@ fn secure_storage_id(kind: &str) -> AuthStackResult<String> {
     ))
 }
 
+#[cfg(feature = "mail-capture")]
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

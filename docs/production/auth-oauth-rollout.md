@@ -234,7 +234,7 @@ Run one provider at a time first. This keeps callback and credential failures
 easy to isolate.
 
 ```bash
-make -C examples/fullstack-app spin db=sqlite transport=both listen=127.0.0.1:3008
+make -C examples/fullstack-app spin db=postgres transport=both listen=127.0.0.1:3008
 ```
 
 Use the public URL that the provider can redirect to. For local development,

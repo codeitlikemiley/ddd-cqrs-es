@@ -1,5 +1,10 @@
 transport ?= both
 listen ?= 127.0.0.1:3008
+backend_listen ?= 127.0.0.1:3009
+WASI_AUTH_INGRESS_BIN ?= wasi-auth-ingress
+SPIN_BIN ?= spin
+SPIN_UP_BUILD_FLAG ?= --build
+CARGO_CONFIG_ARGS ?=
 
 -include .env
 export
@@ -7,6 +12,13 @@ export
 db ?= $(if $(DATABASE_BACKEND),$(DATABASE_BACKEND),postgres)
 
 AUTH_PRODUCTION_MODE ?= false
+AUTH_REQUIRE_TRUSTED_INGRESS ?= false
+AUTH_TRUSTED_INGRESS_KEY_BASE64 ?=
+AUTH_TRUSTED_INGRESS_AUDIENCE ?= fullstack-app
+AUTH_TRUSTED_INGRESS_MAX_AGE_SECONDS ?= 5
+AUTH_INGRESS_POSTGRES_POOL_SIZE ?= 16
+AUTH_INGRESS_TOKEN_CACHE_CAPACITY ?= 4096
+AUTH_INGRESS_CACHE_REVALIDATE_MS ?= 1000
 AUTH_ENABLE_PASSWORD_LOGIN ?= true
 AUTH_PASSWORD_MIN_LENGTH ?= 15
 AUTH_JWT_ISSUER ?= http://127.0.0.1:3008
@@ -103,6 +115,10 @@ SPIN_VARIABLE_ARGS := \
 	--variable database_url='$(AUTH_DATABASE_URL)' \
 	--variable auth_transport=$(transport) \
 	--variable auth_production_mode=$(AUTH_PRODUCTION_MODE) \
+	--variable auth_require_trusted_ingress=$(AUTH_REQUIRE_TRUSTED_INGRESS) \
+	--variable auth_trusted_ingress_key_base64='$(AUTH_TRUSTED_INGRESS_KEY_BASE64)' \
+	--variable auth_trusted_ingress_audience='$(AUTH_TRUSTED_INGRESS_AUDIENCE)' \
+	--variable auth_trusted_ingress_max_age_seconds=$(AUTH_TRUSTED_INGRESS_MAX_AGE_SECONDS) \
 	--variable auth_enable_password_login=$(AUTH_ENABLE_PASSWORD_LOGIN) \
 	--variable auth_password_min_length=$(AUTH_PASSWORD_MIN_LENGTH) \
 	--variable auth_jwt_issuer=$(AUTH_JWT_ISSUER) \
@@ -181,7 +197,7 @@ SPIN_VARIABLE_ARGS := \
 	--variable auth_apple_scopes='$(AUTH_APPLE_SCOPES)' \
 	--variable auth_apple_redirect_uri=$(AUTH_APPLE_REDIRECT_URI)
 
-.PHONY: help validate-toolchain validate-mail db-up db-down db-migrate db-verify check grpc-check spin fresh smoke oauth-credentials oauth-preflight oauth-evidence oauth-callback oauth-browser-smoke oauth-dev-browser-smoke browser-smoke passkey-browser-smoke
+.PHONY: help validate-toolchain validate-mail db-up db-down db-migrate db-verify check grpc-check spin spin-backend spin-backend-prebuilt trusted-ingress fresh smoke oauth-credentials oauth-preflight oauth-evidence oauth-callback oauth-browser-smoke oauth-dev-browser-smoke browser-smoke passkey-browser-smoke
 
 help:
 	@echo "Fullstack targets:"
@@ -191,6 +207,9 @@ help:
 	@echo "  make db-migrate           Apply lock-protected wasi-auth migrations"
 	@echo "  make db-verify            Verify migration history and required tables"
 	@echo "  make spin transport=both   Build and run the Spin fullstack app on $(listen)"
+	@echo "  make spin-backend          Run loopback Spin backend on $(backend_listen)"
+	@echo "  make spin-backend-prebuilt Run the already verified component without rebuilding"
+	@echo "  make trusted-ingress       Run native ingress on $(listen) in a second terminal"
 	@echo "  make fresh db=postgres     Erase PostgreSQL data using POSTGRES_URL"
 	@echo "  make smoke                 Run REST/web route smoke checks against BASE_URL"
 	@echo "  make oauth-credentials     Check required live OAuth credential variables"
@@ -212,10 +231,10 @@ db-down:
 	docker compose down
 
 db-migrate:
-	DATABASE_URL='$(POSTGRES_URL)' cargo run --quiet --no-default-features --features migrate --bin wasi-auth-migrate -- apply
+	DATABASE_URL='$(POSTGRES_URL)' cargo $(CARGO_CONFIG_ARGS) run --quiet --no-default-features --features migrate --bin wasi-auth-migrate -- apply
 
 db-verify:
-	DATABASE_URL='$(POSTGRES_URL)' cargo run --quiet --no-default-features --features migrate --bin wasi-auth-migrate -- verify-database
+	DATABASE_URL='$(POSTGRES_URL)' cargo $(CARGO_CONFIG_ARGS) run --quiet --no-default-features --features migrate --bin wasi-auth-migrate -- verify-database
 
 validate-mail:
 	@case "$(AUTH_MAIL_TRANSPORT)" in \
@@ -238,7 +257,32 @@ spin: validate-toolchain validate-mail db-migrate
 			fi ;; \
 		*) echo "Error: unsupported db=$(db). Fullstack authentication requires postgres."; exit 2 ;; \
 	esac
-	FULLSTACK_FEATURES=$(GRPC_FEATURES) AUTH_TRANSPORT=$(transport) spin up --build --listen $(listen) $(SPIN_VARIABLE_ARGS)
+	FULLSTACK_FEATURES=$(GRPC_FEATURES) AUTH_TRANSPORT=$(transport) "$(SPIN_BIN)" up $(SPIN_UP_BUILD_FLAG) --listen $(listen) $(SPIN_VARIABLE_ARGS)
+
+spin-backend: AUTH_REQUIRE_TRUSTED_INGRESS=true
+spin-backend: listen=$(backend_listen)
+spin-backend: spin
+
+spin-backend-prebuilt: SPIN_UP_BUILD_FLAG=
+spin-backend-prebuilt: spin-backend
+
+trusted-ingress: db-migrate
+	@test -n "$(AUTH_TRUSTED_INGRESS_KEY_BASE64)" || \
+		(echo "Error: AUTH_TRUSTED_INGRESS_KEY_BASE64 must be a base64-encoded 32-byte key."; exit 2)
+	@command -v "$(WASI_AUTH_INGRESS_BIN)" >/dev/null 2>&1 || \
+		(echo "Error: $(WASI_AUTH_INGRESS_BIN) is not installed or WASI_AUTH_INGRESS_BIN is incorrect."; exit 2)
+	DATABASE_URL='$(POSTGRES_URL)' \
+	AUTH_PRODUCTION_MODE=$(AUTH_PRODUCTION_MODE) \
+	AUTH_TRUSTED_INGRESS_KEY_BASE64='$(AUTH_TRUSTED_INGRESS_KEY_BASE64)' \
+	AUTH_TRUSTED_INGRESS_AUDIENCE='$(AUTH_TRUSTED_INGRESS_AUDIENCE)' \
+	AUTH_TRUSTED_INGRESS_MAX_AGE_SECONDS=$(AUTH_TRUSTED_INGRESS_MAX_AGE_SECONDS) \
+	AUTH_INGRESS_LISTEN='$(listen)' \
+	AUTH_INGRESS_BACKEND_ORIGIN='http://$(backend_listen)' \
+	AUTH_INGRESS_POSTGRES_POOL_SIZE=$(AUTH_INGRESS_POSTGRES_POOL_SIZE) \
+	AUTH_INGRESS_TOKEN_CACHE_CAPACITY=$(AUTH_INGRESS_TOKEN_CACHE_CAPACITY) \
+	AUTH_INGRESS_CACHE_REVALIDATE_MS=$(AUTH_INGRESS_CACHE_REVALIDATE_MS) \
+	AUTH_PUBLIC_BASE_URL='$(AUTH_PUBLIC_BASE_URL)' \
+	"$(WASI_AUTH_INGRESS_BIN)"
 
 fresh:
 	@case "$(db)" in \

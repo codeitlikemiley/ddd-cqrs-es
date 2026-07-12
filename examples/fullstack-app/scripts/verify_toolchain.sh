@@ -4,9 +4,22 @@ set -euo pipefail
 required_leptos_major=0
 required_leptos_minor=3
 required_leptos_patch=7
+required_rust_major=1
+required_rust_minor=94
 
 if ! command -v cargo >/dev/null 2>&1; then
   echo "Error: cargo is required." >&2
+  exit 1
+fi
+
+rust_version="$(rustc --version | awk '{print $2}')"
+rust_numeric="${rust_version%%-*}"
+IFS=. read -r rust_major rust_minor _ <<<"$rust_numeric"
+rust_major="${rust_major:-0}"
+rust_minor="${rust_minor:-0}"
+if (( rust_major < required_rust_major \
+   || (rust_major == required_rust_major && rust_minor < required_rust_minor) )); then
+  echo "Error: rustc $rust_version is too old; >= 1.94.0 is required for final-WASI async component linking." >&2
   exit 1
 fi
 
@@ -40,4 +53,4 @@ if ! command -v wasm-tools >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Verified cargo-leptos $version, wasm32-wasip2, and wasm-tools."
+echo "Verified rustc $rust_version, cargo-leptos $version, wasm32-wasip2, and wasm-tools."

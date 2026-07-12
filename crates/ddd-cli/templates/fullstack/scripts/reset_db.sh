@@ -4,7 +4,7 @@ set -euo pipefail
 # Erase local fullstack data. The application reapplies the canonical,
 # checksum-verified migration embedded by wasi-auth on its next startup.
 
-BACKEND="${AUTH_DB:-${db:-sqlite}}"
+BACKEND="${AUTH_DB:-${db:-postgres}}"
 
 reset_postgres() {
   if [[ -z "${DATABASE_URL:-}" ]]; then
@@ -17,8 +17,7 @@ reset_postgres() {
 BEGIN;
 DROP TABLE IF EXISTS
     auth_audit_log,
-    auth_relationship_outbox,
-    auth_mail_outbox,
+    auth_outbox,
     auth_idempotency,
     auth_policy_bundles,
     auth_jwks,
@@ -63,16 +62,11 @@ SQL
 }
 
 case "$BACKEND" in
-  sqlite)
-    echo "Erasing fullstack-app local SQLite data..."
-    rm -f .spin/sqlite_db.db .spin/sqlite_key_value.db
-    echo "SQLite data erased; wasi-auth will install its canonical schema on next startup."
-    ;;
   postgres)
     reset_postgres
     ;;
   *)
-    echo "Error: unsupported AUTH_DB=$BACKEND. Use sqlite or postgres." >&2
+    echo "Error: unsupported AUTH_DB=$BACKEND. The fullstack template requires postgres." >&2
     exit 2
     ;;
 esac

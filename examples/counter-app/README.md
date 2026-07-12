@@ -6,8 +6,8 @@ under both raw Wasmtime and Fermyon Spin.
 
 ## Prerequisites
 
-- **Rust Toolchain:** Version 1.93.0 or later, as required by the pinned
-  pre-release `spin-sdk` graph.
+- **Rust Toolchain:** Version 1.94.0 or later. The libraries retain a Rust 1.93
+  MSRV, but async final-WASI components require the Rust 1.94 component linker.
 - **WASI codegen target:** `rustup target add wasm32-wasip2`. This distributed
   Rust target supplies `std`; the resulting component is inspected to prove it
   exports the final `wasi:http/handler@0.3.0` world and has no Preview 1 imports.

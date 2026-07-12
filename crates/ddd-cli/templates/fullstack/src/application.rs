@@ -5,7 +5,9 @@ use wasi_auth::authentication::Clock;
 use wasi_auth::authorization::{
     AccessRequest, ActionName, Authorizer, MAX_BATCH_CHECKS, Resource, ResourceType,
 };
-use wasi_auth::cedar::{CedarError, CedarProvider};
+use wasi_auth::cedar::{
+    CedarError, CedarProvider, DEFAULT_APPLICATION_POLICY, DEFAULT_APPLICATION_POLICY_REVISION,
+};
 use wasi_auth::context::{
     AuthenticationAssurance, AuthorizationSnapshot, OrganizationId, PolicyRevision, Principal,
     RoleId, SessionId, UserId, VerifiedAuthContext, VerifiedRequestContext,
@@ -72,6 +74,7 @@ impl RequestAuth {
         }
     }
 
+    #[cfg_attr(not(all(feature = "spin-grpc", runtime_spin)), allow(dead_code))]
     pub fn for_revalidation(&self) -> Self {
         Self {
             session_id: self.session_id.clone(),
@@ -739,7 +742,8 @@ pub async fn verify_storage_atomic_rollback() -> AuthStackResult<serde_json::Val
 }
 
 pub async fn authorization_capabilities() -> AuthStackResult<AuthorizationCapabilitiesResponse> {
-    let capabilities = Authorizer::new(cedar_provider()?).capabilities();
+    let cedar = cedar_provider().await?;
+    let capabilities = Authorizer::new(&cedar).capabilities();
     let spicedb = crate::store::direct_spicedb_enabled().await;
     Ok(AuthorizationCapabilitiesResponse {
         provider: if spicedb {
@@ -761,7 +765,8 @@ pub async fn check_authorization(
 ) -> AuthStackResult<AuthorizationCheckResponse> {
     let (context, permissions) = verified_context_and_permissions(auth, false).await?;
     let access_request = authorization_access_request(request, context, &permissions)?;
-    let cedar_decision = Authorizer::new(cedar_provider()?)
+    let cedar = cedar_provider().await?;
+    let cedar_decision = Authorizer::new(&cedar)
         .check(&access_request)
         .await
         .map_err(map_cedar_error)?;
@@ -801,7 +806,8 @@ pub async fn batch_check_authorization(
         .into_iter()
         .map(|request| authorization_access_request(request, context.clone(), &permissions))
         .collect::<AuthStackResult<Vec<_>>>()?;
-    let decisions = Authorizer::new(cedar_provider()?)
+    let cedar = cedar_provider().await?;
+    let decisions = Authorizer::new(&cedar)
         .batch_check(&requests)
         .await
         .map_err(|error| {
@@ -1278,14 +1284,28 @@ fn authorization_response(
     }
 }
 
-fn cedar_provider() -> AuthStackResult<&'static CedarProvider> {
+async fn cedar_provider() -> AuthStackResult<CedarProvider> {
+    if let Some(bundle) = crate::auth_product::active_policy_bundle().await? {
+        let entities = serde_json::to_string(&bundle.entities)
+            .map_err(|_| AuthStackError::configuration("active Cedar entities are invalid"))?;
+        return CedarProvider::new_validated(
+            &bundle.cedar_policy,
+            &bundle.cedar_schema,
+            &entities,
+            bundle.policy_revision,
+        )
+        .map_err(map_cedar_error);
+    }
+    embedded_cedar_provider().cloned()
+}
+
+fn embedded_cedar_provider() -> AuthStackResult<&'static CedarProvider> {
     static PROVIDER: OnceLock<Result<CedarProvider, CedarError>> = OnceLock::new();
     match PROVIDER.get_or_init(|| {
-        CedarProvider::new_validated(
-            EMBEDDED_CEDAR_POLICY,
-            EMBEDDED_CEDAR_SCHEMA,
+        CedarProvider::new_prevalidated(
+            DEFAULT_APPLICATION_POLICY,
             "[]",
-            "embedded-v1",
+            DEFAULT_APPLICATION_POLICY_REVISION,
         )
     }) {
         Ok(provider) => Ok(provider),
@@ -1361,6 +1381,56 @@ pub async fn authenticate_ingress<B>(
             _ => AuthStackError::AuthRequired,
         }
     })
+}
+
+pub async fn trusted_context_from_request<B>(
+    request: &http::Request<B>,
+) -> AuthStackResult<Option<VerifiedRequestContext>> {
+    let mut envelopes = request
+        .headers()
+        .get_all(&wasi_auth::http::AUTH_CONTEXT_HEADER)
+        .iter();
+    let Some(envelope) = envelopes.next() else {
+        return Ok(None);
+    };
+    if envelopes.next().is_some() {
+        return Err(AuthStackError::InvalidCredentials);
+    }
+    let envelope = envelope
+        .to_str()
+        .map_err(|_| AuthStackError::InvalidCredentials)?;
+    let mut request_ids = request
+        .headers()
+        .get_all(&wasi_auth::http::REQUEST_ID_HEADER)
+        .iter();
+    let request_id = request_ids
+        .next()
+        .ok_or(AuthStackError::InvalidCredentials)?
+        .to_str()
+        .map_err(|_| AuthStackError::InvalidCredentials)?;
+    if request_ids.next().is_some() {
+        return Err(AuthStackError::InvalidCredentials);
+    }
+    let codec = crate::auth_product::trusted_context_codec()
+        .await?
+        .ok_or_else(|| {
+            AuthStackError::configuration(
+                "trusted context was supplied without AUTH_TRUSTED_INGRESS_KEY_BASE64",
+            )
+        })?;
+    codec
+        .open(
+            envelope,
+            request.method(),
+            request.uri().path(),
+            request_id,
+            ApplicationClock.now_unix_seconds(),
+        )
+        .map(Some)
+        .map_err(|error| {
+            tracing::warn!(error = %error, "signed trusted context was rejected");
+            AuthStackError::InvalidCredentials
+        })
 }
 
 pub async fn validate_browser_origin(headers: &http::HeaderMap) -> AuthStackResult<()> {
@@ -1485,6 +1555,8 @@ async fn authenticated_session_from_token(token: &str) -> AuthStackResult<Authen
         issued_at_unix_seconds: verified.issued_at_unix_seconds,
         expires_at_unix_seconds: verified.expires_at,
         permissions: verified.scopes,
+        role_ids: verified.role_ids,
+        policy_revision: verified.policy_revision,
     })
     .await
 }
@@ -1498,6 +1570,8 @@ struct AuthenticatedSessionParts {
     issued_at_unix_seconds: u64,
     expires_at_unix_seconds: u64,
     permissions: Vec<String>,
+    role_ids: Vec<String>,
+    policy_revision: Option<String>,
 }
 
 async fn authenticated_session(
@@ -1507,8 +1581,6 @@ async fn authenticated_session(
         .session_id
         .as_deref()
         .ok_or(AuthStackError::AuthRequired)?;
-    let (role_ids, policy_revision) =
-        crate::auth_product::authorization_metadata(session_id_value).await?;
     let user_id = UserId::new(parts.user_id)
         .map_err(|_| AuthStackError::configuration("authenticated user id is invalid"))?;
     let organization_id = parts
@@ -1527,12 +1599,17 @@ async fn authenticated_session(
         std::env::var("AUTH_JWT_ISSUER").unwrap_or_else(|_| "http://localhost:3008".to_string());
     let principal = Principal::new(user_id, issuer, parts.system_administrator)
         .map_err(|_| AuthStackError::configuration("authenticated issuer is invalid"))?;
-    let role_ids = role_ids
+    let role_ids = parts
+        .role_ids
         .into_iter()
         .map(RoleId::new)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| AuthStackError::configuration("authorization role is invalid"))?;
-    let policy_revision = PolicyRevision::new(policy_revision)
+    let policy_revision = PolicyRevision::new(
+        parts
+            .policy_revision
+            .unwrap_or_else(|| DEFAULT_APPLICATION_POLICY_REVISION.to_owned()),
+    )
         .map_err(|_| AuthStackError::configuration("policy revision is invalid"))?;
     let authorization = AuthorizationSnapshot::new(
         parts.permissions,
@@ -1553,55 +1630,6 @@ async fn authenticated_session(
         authorization,
     })
 }
-
-const EMBEDDED_CEDAR_POLICY: &str = r#"
-permit (
-    principal is User,
-    action == Action::"authorization.check",
-    resource is ApplicationResource
-) when {
-    principal.wasi_permissions.contains(context.requested_action) &&
-    (
-        (principal.wasi_system_administrator && principal.wasi_assurance == "aal2") ||
-        (
-            !principal.wasi_system_administrator &&
-            principal has wasi_organization_id &&
-            resource has wasi_organization_id &&
-            principal.wasi_organization_id == resource.wasi_organization_id
-        )
-    )
-};
-"#;
-
-const EMBEDDED_CEDAR_SCHEMA: &str = r#"{
-  "": {
-    "entityTypes": {
-      "User": {"shape": {"type": "Record", "attributes": {
-        "wasi_issuer": {"type": "String", "required": true},
-        "wasi_assurance": {"type": "String", "required": true},
-        "wasi_system_administrator": {"type": "Boolean", "required": true},
-        "wasi_permissions": {"type": "Set", "element": {"type": "String"}, "required": true},
-        "wasi_organization_id": {"type": "String", "required": false}
-      }}},
-      "ApplicationResource": {"shape": {"type": "Record", "attributes": {
-        "wasi_organization_id": {"type": "String", "required": false}
-      }}}
-    },
-    "actions": {
-      "authorization.check": {"appliesTo": {
-        "principalTypes": ["User"],
-        "resourceTypes": ["ApplicationResource"],
-        "context": {"type": "Record", "attributes": {
-          "requested_action": {"type": "String", "required": true},
-          "requested_resource_type": {"type": "String", "required": true},
-          "resource_owner_id": {"type": "String", "required": false},
-          "resource_state": {"type": "String", "required": false},
-          "wasi_organization_id": {"type": "String", "required": false}
-        }}
-      }}
-    }
-  }
-}"#;
 
 pub async fn save_redirect_allowlist(
     redirects_json: String,
@@ -2021,6 +2049,15 @@ mod tests {
 
     #[test]
     fn embedded_cedar_policy_passes_strict_validation() {
-        assert!(cedar_provider().is_ok());
+        assert!(
+            CedarProvider::new_validated(
+                DEFAULT_APPLICATION_POLICY,
+                wasi_auth::cedar::DEFAULT_APPLICATION_SCHEMA,
+                "[]",
+                DEFAULT_APPLICATION_POLICY_REVISION,
+            )
+            .is_ok()
+        );
+        assert!(embedded_cedar_provider().is_ok());
     }
 }
