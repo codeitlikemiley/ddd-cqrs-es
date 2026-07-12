@@ -26,6 +26,12 @@ Browser / REST / gRPC
         -> DDD only for application business aggregates
 ```
 
+The generated SpiceDB profile is preview: provider checks and the canonical
+encrypted outbox worker are implemented, but stable support still requires
+every membership mutation to enqueue its typed relationship intent in the same
+relational command plus the independent latency gate. Embedded Cedar remains
+the production authorization path.
+
 Arbitrary headers cannot construct `VerifiedAuthContext`. Browser authority
 comes from a secure host-only HttpOnly cookie; explicit API clients may use
 bearer tokens. No request accepts `admin_token` or raw authorization tuples.
