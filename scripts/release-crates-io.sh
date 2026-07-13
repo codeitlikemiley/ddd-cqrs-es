@@ -22,6 +22,19 @@ if ! command -v cargo >/dev/null 2>&1; then
   exit 1
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REGISTRY_WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$REGISTRY_WORK_DIR"' EXIT
+
+cd "$REPO_ROOT"
+
+if [[ -n "$(git status --porcelain)" ]]; then
+  echo "Error: release requires a clean Git tree." >&2
+  git status --short >&2
+  exit 1
+fi
+
 PACKAGES=("ddd_cqrs_es" "ddd-cqrs-es-cli")
 
 read_manifest_version() {
@@ -63,19 +76,51 @@ crate_version_published() {
   local package="$1"
   local version="$2"
 
-  command -v curl >/dev/null 2>&1 || return 1
-  curl -fsS -A "ddd-cqrs-es-release-script" \
-    "https://crates.io/api/v1/crates/${package}/${version}" \
-    -o /dev/null
+  (
+    cd "$REGISTRY_WORK_DIR"
+    CARGO_TERM_COLOR=never cargo info --registry crates-io "${package}@${version}" >/dev/null 2>&1
+  )
 }
 
-if [[ "$MODE" == "dry-run" ]]; then
-  echo "Running crates.io dry-run publish checks..."
-  for package in "${PACKAGES[@]}"; do
-    echo "Dry-run publishing $package..."
-    cargo publish -p "$package" --dry-run --allow-dirty
+wait_for_registry_package() {
+  local package="$1"
+  local version="$2"
+  local attempt
+
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if crate_version_published "$package" "$version"; then
+      echo "Verified crates.io package $package@$version"
+      return 0
+    fi
+    sleep 3
   done
-else
+
+  echo "Error: crates.io did not expose $package@$version after publication." >&2
+  exit 1
+}
+
+require_registry_package() {
+  local package="$1"
+  local version="$2"
+  if ! crate_version_published "$package" "$version"; then
+    echo "Error: required crates.io dependency $package@$version is not published." >&2
+    exit 1
+  fi
+  echo "Verified prerequisite $package@$version"
+}
+
+echo "Running crates.io dry-run publish checks..."
+for package in "${PACKAGES[@]}"; do
+  echo "Dry-run publishing $package..."
+  cargo publish -p "$package" --locked --dry-run
+done
+
+if [[ "$MODE" == "publish" ]]; then
+  WASI_AUTH_VERSION="${WASI_AUTH_VERSION:-0.1.0-rc.2}"
+  LEPTOS_WASI_VERSION="${LEPTOS_WASI_VERSION:-0.4.2-rc.1}"
+  require_registry_package wasi-auth "$WASI_AUTH_VERSION"
+  require_registry_package leptos-wasi-runtime "$LEPTOS_WASI_VERSION"
+
   echo "Publishing packages to crates.io..."
   for package in "${PACKAGES[@]}"; do
     if crate_version_published "$package" "$LIB_VERSION"; then
@@ -83,8 +128,11 @@ else
       continue
     fi
     echo "Publishing $package..."
-    cargo publish -p "$package" --allow-dirty
+    cargo publish -p "$package" --locked
+    wait_for_registry_package "$package" "$LIB_VERSION"
   done
+
+  "$SCRIPT_DIR/verify-registry-consumer.sh"
 fi
 
 echo "Release mode '$MODE' completed successfully."

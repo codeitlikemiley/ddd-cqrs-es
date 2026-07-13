@@ -411,10 +411,15 @@ fn render_readme(input: &InitRenderInput, names: &NameParts) -> String {
             package = input.package_name,
             db = input.selection.db
         );
-        return readme.replace(
+        return readme
+            .replace(
             "The toolchain gate requires",
             "## What the outbox worker does\n\n`wasi-auth-outbox-worker` is not an email server and it does not replace Resend. It is a native background process that leases encrypted mail and optional SpiceDB jobs from PostgreSQL, calls the selected provider, and records delivery or retry status. The application commits the user change and mail intent together, then returns without waiting for the provider.\n\nIf the worker is stopped, requests can still commit but mail remains `pending` until a worker starts again. `make dev` starts Spin and the worker together. Use `make spin` and `make outbox-worker` separately only when you need independent logs. Production runs the worker beside Spin, sharing PostgreSQL and the outbox key; provider credentials stay only in the worker environment.\n\nThe toolchain gate requires",
-        );
+            )
+            .replace(
+                "make fresh resets PostgreSQL and reapplies the immutable migration catalog.",
+                "make migration-preflight verifies the migration binary resolves and compiles before `make fresh` performs its destructive reset. `make fresh` then resets PostgreSQL and reapplies the immutable migration catalog.",
+            );
     }
     format!(
         "# {}\n\nGenerated with `ddd init --preset {}`.\n\n- Aggregate: `{}`\n- Runtime: `{}`\n- DB: `{}`\n- Realtime: `{}`\n- Transport: `{}`\n\nUse `ddd add ...` to extend this generated project.\n",

@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 SHELL := /usr/bin/env bash
 
-.PHONY: help version publish example example-check fullstack-sync fullstack-check ci clean preflight check-tools check-example-runtime check-wasm-target
+.PHONY: help version publish publish-fullstack registry-check example example-check fullstack-sync fullstack-check ci clean preflight check-tools check-example-runtime check-wasm-target
 
 # Convenience aliases used by examples/counter-app passthrough.
 EXAMPLE_RUNTIME := $(word 2,$(MAKECMDGOALS))
@@ -28,6 +28,8 @@ help:
 	@echo "Usage:"
 	@echo "  make version [<version>]            bump library and CLI versions (auto-increments patch if omitted)"
 	@echo "  make publish [dry-run]              publish library and CLI to crates.io (or: make publish -- --dry-run)"
+	@echo "  make publish-fullstack [dry-run]    gate and publish Leptos, wasi-auth, DDD, and CLI in order"
+	@echo "  make registry-check                 verify the published RC chain with a clean generated consumer"
 	@echo "  make example <spin|wasmtime|run>    run counter-app example with db/realtime args"
 	@echo "  make fullstack-sync                 regenerate examples/fullstack-app from the CLI template"
 	@echo "  make fullstack-check                fail when the generated fullstack example has drifted"
@@ -80,12 +82,22 @@ version:
 
 publish:
 	@$(MAKE) preflight
-	@if [ "$(PUBLISH_MODE)" = "publish" ] && [ -z "$${CARGO_REGISTRY_TOKEN:-}" ]; then \
-		echo "Error: publish mode requires CARGO_REGISTRY_TOKEN environment variable." >&2; \
+	@if [ "$(PUBLISH_MODE)" = "publish" ] && \
+		[ -z "$${CARGO_REGISTRY_TOKEN:-}" ] && \
+		[ -z "$${CARGO_REGISTRIES_CRATES_IO_TOKEN:-}" ] && \
+		[ ! -f "$${CARGO_HOME:-$$HOME/.cargo}/credentials.toml" ] && \
+		[ ! -f "$${CARGO_HOME:-$$HOME/.cargo}/credentials" ]; then \
+		echo "Error: publish mode requires Cargo registry credentials." >&2; \
 		exit 1; \
 	fi; \
 	echo "Starting release flow in '$(PUBLISH_MODE)' mode..."; \
 	bash scripts/release-crates-io.sh "$(PUBLISH_MODE)"
+
+publish-fullstack:
+	@bash scripts/release-fullstack-crates-io.sh "$(PUBLISH_MODE)"
+
+registry-check:
+	@bash scripts/verify-registry-consumer.sh
 
 example:
 	@$(MAKE) preflight

@@ -211,13 +211,14 @@ SPIN_VARIABLE_ARGS = \
 	--variable auth_apple_scopes='$(AUTH_APPLE_SCOPES)' \
 	--variable auth_apple_redirect_uri=$(AUTH_APPLE_REDIRECT_URI)
 
-.PHONY: help validate-toolchain validate-mail db-up db-down db-migrate db-verify check grpc-check dev spin spin-backend spin-backend-prebuilt trusted-ingress install-outbox-worker outbox-worker fresh smoke oauth-credentials oauth-preflight oauth-evidence oauth-callback oauth-browser-smoke oauth-dev-browser-smoke browser-smoke passkey-browser-smoke
+.PHONY: help validate-toolchain validate-mail db-up db-down migration-preflight db-migrate db-verify check grpc-check dev spin spin-backend spin-backend-prebuilt trusted-ingress install-outbox-worker outbox-worker fresh smoke oauth-credentials oauth-preflight oauth-evidence oauth-callback oauth-browser-smoke oauth-dev-browser-smoke browser-smoke passkey-browser-smoke
 
 help:
 	@echo "Fullstack targets:"
 	@echo "  make check                 Compile Spin HTTP/Leptos shell with db=$(db)"
 	@echo "  make grpc-check            Compile Spin gRPC services with db=$(db)"
 	@echo "  make db-up                Start the local PostgreSQL development container"
+	@echo "  make migration-preflight Verify the migration binary before destructive resets"
 	@echo "  make db-migrate           Apply lock-protected wasi-auth migrations"
 	@echo "  make db-verify            Verify migration history and required tables"
 	@echo "  make dev                   Run Spin and the development mail worker together"
@@ -245,6 +246,9 @@ db-up:
 
 db-down:
 	docker compose down
+
+migration-preflight:
+	cargo $(CARGO_CONFIG_ARGS) check --locked --no-default-features --features migrate --bin wasi-auth-migrate
 
 db-migrate:
 	DATABASE_URL='$(POSTGRES_URL)' cargo $(CARGO_CONFIG_ARGS) run --quiet --no-default-features --features migrate --bin wasi-auth-migrate -- apply
@@ -348,7 +352,7 @@ outbox-worker: validate-mail db-migrate install-outbox-worker
 	AUTH_SPICEDB_TOKEN='$(AUTH_SPICEDB_TOKEN)' \
 	"$(WASI_AUTH_OUTBOX_WORKER_BIN)"
 
-fresh:
+fresh: migration-preflight
 	@case "$(db)" in \
 		postgres) \
 			if [ -z "$$POSTGRES_URL" ]; then \

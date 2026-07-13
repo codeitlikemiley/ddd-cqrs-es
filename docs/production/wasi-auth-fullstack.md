@@ -133,7 +133,21 @@ Spin host is built separately at its truthful Rust 1.94 floor because Wasmtime
 
 ## Release topology
 
-The dependency graph requires a staged RC release: publish
+The dependency graph requires a staged RC release. Run the cross-repository
+gate from the DDD checkout:
+
+```bash
+make publish-fullstack dry-run
+make publish-fullstack
+```
+
+The dry run performs all checks without uploading. Publish mode uploads only
+after every repository is clean and its package dry-run, tests, formatting,
+and generated-consumer checks pass; it then waits for each version to appear in
+the crates.io index and verifies a registry-only generated consumer.
+
+The package order is:
+
 `leptos-wasi-runtime 0.4.2-rc.1` (aliased as `leptos_wasi`), then
 `wasi-auth 0.1.0-rc.2`, the `ddd_cqrs_es 0.3.0-rc.2` library, and finally the
 `ddd-cqrs-es-cli 0.3.0-rc.2` generator and generated consumers. The library
