@@ -1,0 +1,10 @@
+# Experimental Rust-target canary only. Production final-WASI components use
+# the distributed wasm32-wasip2 Rust target while exporting the P3 HTTP world.
+# getrandom 0.3 does not yet select WASI Preview 3 automatically.
+[target.wasm32-wasip3]
+rustflags = ['--cfg', 'getrandom_backend="custom"']
+
+# Split hydration chunks run in the browser and use Web Crypto through
+# getrandom's wasm_js backend.
+[target.wasm32-unknown-unknown]
+rustflags = ['--cfg', 'getrandom_backend="wasm_js"']

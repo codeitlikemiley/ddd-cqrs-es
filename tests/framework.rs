@@ -1,10 +1,13 @@
+#[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
+use ddd_cqrs_es::{
+    assert_checkpoint_store_contract, assert_idempotency_store_contract, IdempotencyState,
+};
 use ddd_cqrs_es::{
     assert_event_store_contract, Aggregate, AggregateFixture, ConcurrencyError, DomainEvent,
     EventStore, EventStoreContractOptions, EventStoreError, EventStream, EventType,
-    ExpectedRevision, IdempotencyKey, IdempotencyState, IdempotencyStore, IdempotencyWaitConfig,
-    InMemoryEventStore, InMemoryIdempotencyStore, InMemoryProjectionRunner, InMemorySnapshotStore,
-    Metadata, NewEvent, Projection, ProjectionBatchConfig, Repository, RepositoryError, Snapshot,
-    SnapshotStore,
+    ExpectedRevision, IdempotencyKey, IdempotencyStore, IdempotencyWaitConfig, InMemoryEventStore,
+    InMemoryIdempotencyStore, InMemoryProjectionRunner, InMemorySnapshotStore, Metadata, NewEvent,
+    Projection, ProjectionBatchConfig, Repository, RepositoryError, Snapshot, SnapshotStore,
 };
 use std::collections::HashMap;
 use std::error::Error;
@@ -12,7 +15,12 @@ use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
+#[cfg(any(feature = "postgres", feature = "mysql", feature = "json-file"))]
+use std::time::{SystemTime, UNIX_EPOCH};
+
+#[path = "framework/contract_tests.rs"]
+mod contract_tests;
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,24 +60,12 @@ where
         + Sync
         + 'static,
 {
-    let missing_key = IdempotencyKey::new("sql-idempotency-missing");
-    assert_eq!(store.load(&missing_key).unwrap(), None);
-
     let key = IdempotencyKey::new("sql-idempotency-complete");
-    assert!(store.reserve(key.clone()).unwrap());
-    assert_eq!(store.load(&key).unwrap(), Some(IdempotencyState::Pending));
-    assert!(!store.reserve(key.clone()).unwrap());
-
     let value = StoredIdempotencyResult {
         value: 42,
         label: "json-round-trip".to_owned(),
     };
-    store.save(key.clone(), value.clone()).unwrap();
-    assert_eq!(
-        store.load(&key).unwrap(),
-        Some(IdempotencyState::Complete(value.clone()))
-    );
-    assert!(!store.reserve(key.clone()).unwrap());
+    assert_idempotency_store_contract(store.clone(), key, value);
 
     let failed_key = IdempotencyKey::new("sql-idempotency-failed");
     assert!(store.reserve(failed_key.clone()).unwrap());
@@ -396,28 +392,6 @@ fn event_store_rejects_wrong_expected_revision() {
 }
 
 #[test]
-fn in_memory_store_passes_reusable_contract() {
-    assert_event_store_contract::<Counter, _>(
-        InMemoryEventStore::<Counter>::new(),
-        "contract-counter".to_owned(),
-        CounterEvent::Created,
-        CounterEvent::Incremented { by: 1 },
-        EventStoreContractOptions::default(),
-    );
-}
-
-#[test]
-fn event_store_contract_accepts_custom_first_sequence() {
-    assert_event_store_contract::<Counter, _>(
-        OffsetSequenceStore::new(100),
-        "offset-contract-counter".to_owned(),
-        CounterEvent::Created,
-        CounterEvent::Incremented { by: 1 },
-        EventStoreContractOptions::with_expected_first_global_sequence(101),
-    );
-}
-
-#[test]
 fn event_type_is_a_string_newtype() {
     let event_type = EventType::from("counter_created");
 
@@ -434,26 +408,6 @@ fn event_type_round_trips_through_serde() {
     let restored: EventType = serde_json::from_str(&json).unwrap();
 
     assert_eq!(restored, event_type);
-}
-
-#[cfg(feature = "sqlite")]
-#[test]
-fn sqlite_store_passes_reusable_contract() {
-    assert_event_store_contract::<Counter, _>(
-        ddd_cqrs_es::SqliteEventStore::<Counter>::in_memory().unwrap(),
-        "sqlite-contract-counter".to_owned(),
-        CounterEvent::Created,
-        CounterEvent::Incremented { by: 1 },
-        EventStoreContractOptions::default(),
-    );
-}
-
-#[cfg(feature = "sqlite")]
-#[test]
-fn sqlite_idempotency_store_passes_contract() {
-    let connection = rusqlite::Connection::open_in_memory().unwrap();
-    let store = ddd_cqrs_es::SqliteIdempotencyStore::new(connection).unwrap();
-    assert_sql_idempotency_store_contract(store);
 }
 
 #[cfg(feature = "sqlite")]
@@ -475,7 +429,7 @@ fn sqlite_atomic_idempotent_retry_returns_original_committed_events() {
     let retry = repo
         .execute_idempotent_atomic(
             &counter_id,
-            CounterCommand::Increment { by: 9 },
+            CounterCommand::Create,
             Metadata::default(),
             key,
         )
@@ -525,104 +479,6 @@ fn sqlite_atomic_idempotent_pending_key_times_out() {
             ..
         } if timeout_key == key
     ));
-}
-
-#[cfg(feature = "sqlite")]
-#[test]
-fn sqlite_snapshot_store_persists_latest_snapshot() {
-    let connection = rusqlite::Connection::open_in_memory().unwrap();
-    let store = ddd_cqrs_es::SqliteSnapshotStore::<Counter>::new(connection).unwrap();
-    let counter_id = "sqlite-snapshot-counter".to_owned();
-    let older = Counter {
-        id: Some(counter_id.clone()),
-        value: 1,
-        revision: 1,
-    };
-    let newer = Counter {
-        id: Some(counter_id.clone()),
-        value: 7,
-        revision: 2,
-    };
-
-    ddd_cqrs_es::assert_snapshot_store_contract::<Counter, _>(
-        store.clone(),
-        counter_id.clone(),
-        older.clone(),
-        newer.clone(),
-    );
-    store
-        .save_snapshot(Snapshot::new(
-            counter_id.clone(),
-            1,
-            older,
-            Metadata::default(),
-        ))
-        .unwrap();
-
-    let loaded = store.load_snapshot(&counter_id).unwrap().unwrap();
-    assert_eq!(loaded.revision, 2);
-    assert_eq!(loaded.state, newer);
-}
-
-#[cfg(feature = "postgres")]
-#[test]
-fn postgres_store_passes_reusable_contract_when_url_is_provided() {
-    let Ok(database_url) = std::env::var("DDD_CQRS_ES_POSTGRES_URL") else {
-        eprintln!("skipping live Postgres contract test: DDD_CQRS_ES_POSTGRES_URL is not set");
-        return;
-    };
-    let table_name = format!(
-        "events_live_contract_{}_{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    );
-
-    let store = ddd_cqrs_es::PostgresEventStore::<Counter>::connect_with_table_name(
-        &database_url,
-        table_name,
-    )
-    .unwrap();
-    store.initialize_schema().unwrap();
-
-    assert_event_store_contract::<Counter, _>(
-        store,
-        "postgres-contract-counter".to_owned(),
-        CounterEvent::Created,
-        CounterEvent::Incremented { by: 1 },
-        EventStoreContractOptions::default(),
-    );
-}
-
-#[cfg(feature = "postgres")]
-#[test]
-fn postgres_idempotency_store_passes_contract_when_url_is_provided() {
-    let Ok(database_url) = std::env::var("DDD_CQRS_ES_POSTGRES_URL") else {
-        eprintln!("skipping live Postgres idempotency test: DDD_CQRS_ES_POSTGRES_URL is not set");
-        return;
-    };
-    let table_name = format!(
-        "idempotency_live_contract_{}_{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    );
-
-    let client = postgres::Client::connect(&database_url, postgres::NoTls).unwrap();
-    let store =
-        ddd_cqrs_es::PostgresIdempotencyStore::with_table_name(client, table_name.clone()).unwrap();
-
-    assert_sql_idempotency_store_contract(store.clone());
-    drop(store);
-
-    let mut cleanup = postgres::Client::connect(&database_url, postgres::NoTls).unwrap();
-    cleanup
-        .batch_execute(&format!("DROP TABLE IF EXISTS {table_name};"))
-        .unwrap();
 }
 
 #[cfg(feature = "postgres")]
@@ -1743,6 +1599,16 @@ mod async_tests {
         assert_eq!(events.len(), 1);
     }
 
+    #[tokio::test]
+    async fn async_idempotency_store_passes_reusable_contract() {
+        ddd_cqrs_es::assert_async_idempotency_store_contract(
+            InMemoryIdempotencyStore::<String>::new(),
+            IdempotencyKey::new("async-contract-key"),
+            "completed".to_owned(),
+        )
+        .await;
+    }
+
     #[cfg(feature = "sqlite")]
     #[tokio::test]
     async fn sqlite_async_atomic_idempotent_retry_returns_original_committed_events() {
@@ -1763,7 +1629,7 @@ mod async_tests {
         let retry = repo
             .execute_idempotent_atomic(
                 &counter_id,
-                CounterCommand::Increment { by: 9 },
+                CounterCommand::Create,
                 Metadata::default(),
                 key,
             )
@@ -1931,7 +1797,7 @@ mod async_tests {
 
 #[cfg(feature = "sqlite")]
 #[test]
-fn test_sqlite_chained_upcaster() {
+fn sqlite_store_upcasts_chained_event_versions_on_load() {
     use ddd_cqrs_es::EventUpcaster;
 
     struct Upcaster1To2;
@@ -2015,18 +1881,11 @@ fn test_sqlite_chained_upcaster() {
 #[cfg(feature = "sqlite")]
 #[test]
 fn test_sqlite_checkpoint_store() {
-    use ddd_cqrs_es::projection::CheckpointStore;
     use ddd_cqrs_es::SqliteCheckpointStore;
     let conn = rusqlite::Connection::open_in_memory().unwrap();
     let store = SqliteCheckpointStore::new(conn).unwrap();
 
-    assert_eq!(store.load_checkpoint("proj1").unwrap(), None);
-    store.save_checkpoint("proj1", 42).unwrap();
-    assert_eq!(store.load_checkpoint("proj1").unwrap(), Some(42));
-    store.save_checkpoint("proj1", 100).unwrap();
-    assert_eq!(store.load_checkpoint("proj1").unwrap(), Some(100));
-    store.save_checkpoint("proj1", 90).unwrap();
-    assert_eq!(store.load_checkpoint("proj1").unwrap(), Some(100));
+    assert_checkpoint_store_contract(store, "proj1");
 }
 
 #[cfg(feature = "sqlite")]
@@ -2060,7 +1919,7 @@ fn test_sync_persisted_projection_runner() {
 
 #[cfg(feature = "postgres")]
 #[test]
-fn test_postgres_chained_upcaster() {
+fn postgres_store_upcasts_chained_event_versions_on_load() {
     let Ok(database_url) = std::env::var("DDD_CQRS_ES_POSTGRES_URL") else {
         eprintln!("skipping live Postgres upcaster test: DDD_CQRS_ES_POSTGRES_URL is not set");
         return;
@@ -2147,7 +2006,6 @@ fn test_postgres_checkpoint_store() {
         eprintln!("skipping live Postgres checkpoint test: DDD_CQRS_ES_POSTGRES_URL is not set");
         return;
     };
-    use ddd_cqrs_es::projection::CheckpointStore;
     use ddd_cqrs_es::PostgresCheckpointStore;
 
     let mut client = postgres::Client::connect(&database_url, postgres::NoTls).unwrap();
@@ -2156,13 +2014,7 @@ fn test_postgres_checkpoint_store() {
 
     let store = PostgresCheckpointStore::with_table_name(client, table_name.clone()).unwrap();
 
-    assert_eq!(store.load_checkpoint("proj1").unwrap(), None);
-    store.save_checkpoint("proj1", 42).unwrap();
-    assert_eq!(store.load_checkpoint("proj1").unwrap(), Some(42));
-    store.save_checkpoint("proj1", 100).unwrap();
-    assert_eq!(store.load_checkpoint("proj1").unwrap(), Some(100));
-    store.save_checkpoint("proj1", 90).unwrap();
-    assert_eq!(store.load_checkpoint("proj1").unwrap(), Some(100));
+    assert_checkpoint_store_contract(store, "proj1");
 
     let mut client = postgres::Client::connect(&database_url, postgres::NoTls).unwrap();
     let _ = client.execute(&format!("DROP TABLE IF EXISTS {};", table_name), &[]);
@@ -2371,35 +2223,6 @@ fn mysql_test_db_or_skip(test_name: &str) -> Option<MySqlTestDb> {
 
 #[cfg(feature = "mysql")]
 #[test]
-fn test_mysql_store_passes_reusable_contract_when_url_is_provided() {
-    let _guard = MYSQL_TEST_MUTEX
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some(db) = mysql_test_db_or_skip("contract test") else {
-        return;
-    };
-
-    let table_name = unique_mysql_table("events_live_contract");
-    let _cleanup = MySqlTableCleanup::new(&db.test_url, vec![table_name.clone()]);
-
-    let store = ddd_cqrs_es::MySqlEventStore::<Counter>::connect_with_table_name(
-        &db.test_url,
-        table_name.clone(),
-    )
-    .unwrap();
-    store.initialize_schema().unwrap();
-
-    assert_event_store_contract::<Counter, _>(
-        store,
-        "mysql-contract-counter".to_owned(),
-        CounterEvent::Created,
-        CounterEvent::Incremented { by: 1 },
-        EventStoreContractOptions::default(),
-    );
-}
-
-#[cfg(feature = "mysql")]
-#[test]
 fn test_mysql_query_plans_and_v6_duplicate_index_cleanup() {
     let _guard = MYSQL_TEST_MUTEX
         .lock()
@@ -2527,7 +2350,6 @@ fn test_mysql_checkpoint_store() {
     let Some(db) = mysql_test_db_or_skip("checkpoint test") else {
         return;
     };
-    use ddd_cqrs_es::projection::CheckpointStore;
     use ddd_cqrs_es::MySqlCheckpointStore;
 
     let conn = mysql::Conn::new(db.test_url.as_str()).unwrap();
@@ -2536,31 +2358,5 @@ fn test_mysql_checkpoint_store() {
 
     let store = MySqlCheckpointStore::with_table_name(conn, table_name.clone()).unwrap();
 
-    assert_eq!(store.load_checkpoint("proj1").unwrap(), None);
-    store.save_checkpoint("proj1", 42).unwrap();
-    assert_eq!(store.load_checkpoint("proj1").unwrap(), Some(42));
-    store.save_checkpoint("proj1", 100).unwrap();
-    assert_eq!(store.load_checkpoint("proj1").unwrap(), Some(100));
-    store.save_checkpoint("proj1", 90).unwrap();
-    assert_eq!(store.load_checkpoint("proj1").unwrap(), Some(100));
-}
-
-#[cfg(feature = "mysql")]
-#[test]
-fn test_mysql_idempotency_store() {
-    let _guard = MYSQL_TEST_MUTEX
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some(db) = mysql_test_db_or_skip("idempotency test") else {
-        return;
-    };
-    use ddd_cqrs_es::MySqlIdempotencyStore;
-
-    let conn = mysql::Conn::new(db.test_url.as_str()).unwrap();
-    let table_name = unique_mysql_table("idempotency");
-    let _cleanup = MySqlTableCleanup::new(&db.test_url, vec![table_name.clone()]);
-
-    let store = MySqlIdempotencyStore::with_table_name(conn, table_name.clone()).unwrap();
-
-    assert_sql_idempotency_store_contract(store);
+    assert_checkpoint_store_contract(store, "proj1");
 }

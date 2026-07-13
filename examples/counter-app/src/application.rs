@@ -70,6 +70,18 @@ pub async fn execute_counter_command(command: CounterCommand) -> CounterAppResul
     Ok(view)
 }
 
+pub async fn execute_counter_command_authorized(
+    command: CounterCommand,
+    auth: &crate::auth::CounterAuthContext,
+) -> CounterAppResult<CounterViewDto> {
+    let permission = match &command {
+        CounterCommand::Reset => "counter.reset",
+        CounterCommand::Increment { .. } | CounterCommand::Decrement { .. } => "counter.change",
+    };
+    auth.authorize(permission).await?;
+    execute_counter_command(command).await
+}
+
 fn counter_command_name(command: &CounterCommand) -> &'static str {
     match command {
         CounterCommand::Increment { .. } => "increment",

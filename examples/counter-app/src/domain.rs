@@ -1,6 +1,6 @@
-use std::fmt;
-use serde::{Deserialize, Serialize};
 use ddd_cqrs_es::{Aggregate, DomainEvent};
+use serde::{Deserialize, Serialize};
+use std::fmt;
 
 /// Type-safe newtype wrapper for the Counter Aggregate ID.
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -116,13 +116,13 @@ impl Aggregate for Counter {
                 }
                 Ok(vec![CounterEvent::Decremented { amount }])
             }
-            CounterCommand::Reset => {
-                Ok(vec![CounterEvent::ResetPerformed { value: 0 }])
-            }
+            CounterCommand::Reset => Ok(vec![CounterEvent::ResetPerformed { value: 0 }]),
         }
     }
 
-    fn replay(events: &[ddd_cqrs_es::EventEnvelope<Self::Event, Self::Id>]) -> ddd_cqrs_es::LoadedAggregate<Self> {
+    fn replay(
+        events: &[ddd_cqrs_es::EventEnvelope<Self::Event, Self::Id>],
+    ) -> ddd_cqrs_es::LoadedAggregate<Self> {
         let mut state = Self::new();
         let mut revision = ddd_cqrs_es::INITIAL_REVISION;
 
@@ -166,52 +166,68 @@ mod tests {
     #[test]
     fn test_increment_command() {
         let counter = Counter::new();
-        let events = counter.handle(CounterCommand::Increment { amount: 5 }).unwrap();
+        let events = counter
+            .handle(CounterCommand::Increment { amount: 5 })
+            .unwrap();
         assert_eq!(events, vec![CounterEvent::Incremented { amount: 5 }]);
     }
 
     #[test]
     fn test_increment_validation_errors() {
         let counter = Counter::new();
-        
+
         // Negative amount
-        let err = counter.handle(CounterCommand::Increment { amount: -5 }).unwrap_err();
+        let err = counter
+            .handle(CounterCommand::Increment { amount: -5 })
+            .unwrap_err();
         assert_eq!(err, "amount to increment must be positive");
 
         // Zero amount
-        let err = counter.handle(CounterCommand::Increment { amount: 0 }).unwrap_err();
+        let err = counter
+            .handle(CounterCommand::Increment { amount: 0 })
+            .unwrap_err();
         assert_eq!(err, "amount to increment must be positive");
 
         // Overflow
         let mut max_counter = Counter::new();
         max_counter.value = i32::MAX;
-        let err = max_counter.handle(CounterCommand::Increment { amount: 1 }).unwrap_err();
+        let err = max_counter
+            .handle(CounterCommand::Increment { amount: 1 })
+            .unwrap_err();
         assert_eq!(err, "increment would overflow integer boundary");
     }
 
     #[test]
     fn test_decrement_command() {
         let counter = Counter::new();
-        let events = counter.handle(CounterCommand::Decrement { amount: 5 }).unwrap();
+        let events = counter
+            .handle(CounterCommand::Decrement { amount: 5 })
+            .unwrap();
         assert_eq!(events, vec![CounterEvent::Decremented { amount: 5 }]);
     }
 
     #[test]
     fn test_decrement_validation_errors() {
         let counter = Counter::new();
-        
+
         // Negative amount
-        let err = counter.handle(CounterCommand::Decrement { amount: -10 }).unwrap_err();
+        let err = counter
+            .handle(CounterCommand::Decrement { amount: -10 })
+            .unwrap_err();
         assert_eq!(err, "amount to decrement must be positive");
 
         // Zero amount
-        let err = counter.handle(CounterCommand::Decrement { amount: 0 }).unwrap_err();
+        let err = counter
+            .handle(CounterCommand::Decrement { amount: 0 })
+            .unwrap_err();
         assert_eq!(err, "amount to decrement must be positive");
 
         // Underflow
         let mut min_counter = Counter::new();
         min_counter.value = i32::MIN;
-        let err = min_counter.handle(CounterCommand::Decrement { amount: 1 }).unwrap_err();
+        let err = min_counter
+            .handle(CounterCommand::Decrement { amount: 1 })
+            .unwrap_err();
         assert_eq!(err, "decrement would underflow integer boundary");
     }
 
@@ -226,7 +242,7 @@ mod tests {
     #[test]
     fn test_apply_events() {
         let mut counter = Counter::new();
-        
+
         counter.apply(&CounterEvent::Incremented { amount: 10 });
         assert_eq!(counter.value, 10);
         assert_eq!(counter.revision, 1);

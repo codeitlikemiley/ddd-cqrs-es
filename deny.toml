@@ -1,0 +1,19 @@
+[advisories]
+version = 2
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[licenses]
+version = 2
+confidence-threshold = 0.93
+allow = [
+    "Apache-2.0",
+    "LGPL-2.1-or-later",
+    "MIT",
+]
+
+[sources]
+unknown-git = "deny"
+unknown-registry = "deny"

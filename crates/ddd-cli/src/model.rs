@@ -8,15 +8,17 @@ use std::fmt::{Display, Formatter};
 pub enum Preset {
     Basic,
     LeptosWasi,
+    Fullstack,
     NativeApi,
     Worker,
     Custom,
 }
 
 impl Preset {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Basic,
         Self::LeptosWasi,
+        Self::Fullstack,
         Self::NativeApi,
         Self::Worker,
         Self::Custom,
@@ -26,6 +28,7 @@ impl Preset {
         match self {
             Self::Basic => "basic",
             Self::LeptosWasi => "leptos-wasi",
+            Self::Fullstack => "fullstack",
             Self::NativeApi => "native-api",
             Self::Worker => "worker",
             Self::Custom => "custom",
@@ -196,6 +199,73 @@ impl Display for Ui {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+#[value(rename_all = "kebab-case")]
+pub enum OAuthProviderKind {
+    Google,
+    Apple,
+    Facebook,
+}
+
+impl OAuthProviderKind {
+    pub const ALL: [Self; 3] = [Self::Google, Self::Apple, Self::Facebook];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Google => "google",
+            Self::Apple => "apple",
+            Self::Facebook => "facebook",
+        }
+    }
+
+    pub const fn issuer(self) -> &'static str {
+        match self {
+            Self::Google => "https://accounts.google.com",
+            Self::Apple => "https://appleid.apple.com",
+            Self::Facebook => "https://www.facebook.com",
+        }
+    }
+
+    pub const fn scopes(self) -> &'static [&'static str] {
+        match self {
+            Self::Google => &["openid", "email", "profile"],
+            Self::Apple => &["name", "email"],
+            Self::Facebook => &["email", "public_profile"],
+        }
+    }
+
+    pub const fn client_id_env(self) -> &'static str {
+        match self {
+            Self::Google => "AUTH_GOOGLE_CLIENT_ID",
+            Self::Apple => "AUTH_APPLE_CLIENT_ID",
+            Self::Facebook => "AUTH_FACEBOOK_CLIENT_ID",
+        }
+    }
+
+    pub const fn enabled_env(self) -> &'static str {
+        match self {
+            Self::Google => "AUTH_GOOGLE_ENABLED",
+            Self::Apple => "AUTH_APPLE_ENABLED",
+            Self::Facebook => "AUTH_FACEBOOK_ENABLED",
+        }
+    }
+
+    pub const fn client_secret_env(self) -> &'static str {
+        match self {
+            Self::Google => "AUTH_GOOGLE_CLIENT_SECRET",
+            Self::Apple => "AUTH_APPLE_PRIVATE_KEY",
+            Self::Facebook => "AUTH_FACEBOOK_CLIENT_SECRET",
+        }
+    }
+}
+
+impl Display for OAuthProviderKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
 pub enum OutputFormat {
@@ -218,6 +288,19 @@ impl AppSelection {
         if self.preset == Preset::Basic && self.ui == Ui::Leptos {
             anyhow::bail!("preset=basic is domain-only; use preset=leptos-wasi for ui=leptos");
         }
+        if self.preset == Preset::Fullstack {
+            if self.db != DbBackend::Postgres {
+                anyhow::bail!("preset=fullstack requires db=postgres");
+            }
+            if self.transport != Transport::Both {
+                anyhow::bail!(
+                    "preset=fullstack requires transport=both for web, REST, and gRPC surfaces"
+                );
+            }
+            if self.ui != Ui::Leptos {
+                anyhow::bail!("preset=fullstack requires ui=leptos for fullstack auth pages");
+            }
+        }
 
         Ok(())
     }
@@ -237,6 +320,13 @@ pub fn defaults_for_preset(preset: Preset) -> (Runtime, DbBackend, Realtime, Tra
             DbBackend::Sqlite,
             Realtime::Off,
             Transport::Http,
+            Ui::Leptos,
+        ),
+        Preset::Fullstack => (
+            Runtime::Spin,
+            DbBackend::Postgres,
+            Realtime::Off,
+            Transport::Both,
             Ui::Leptos,
         ),
         Preset::NativeApi | Preset::Worker | Preset::Custom => (

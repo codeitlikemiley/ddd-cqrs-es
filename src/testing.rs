@@ -1,9 +1,13 @@
 use crate::aggregate::Aggregate;
+#[cfg(feature = "async")]
+use crate::async_api::{AsyncEventStore, AsyncIdempotencyStore};
 use crate::error::{ConcurrencyError, EventStoreFailure, RepositoryError};
 use crate::event::{ExpectedRevision, NewEvent};
 use crate::event_store::EventStore;
 use crate::idempotency::{IdempotencyKey, IdempotencyState, IdempotencyStore};
 use crate::metadata::Metadata;
+#[cfg(feature = "async")]
+use crate::projection::AsyncCheckpointStore;
 use crate::projection::CheckpointStore;
 use crate::snapshot::{Snapshot, SnapshotStore};
 use std::fmt::Debug;
@@ -203,6 +207,82 @@ pub fn assert_event_store_global_replay_contract<A, S>(
     }
 }
 
+/// Runs the common async event-store contract against a store implementation.
+///
+/// Adapter crates can call this from async integration tests to verify stream
+/// loading, optimistic concurrency, metadata preservation, revision assignment,
+/// and global sequencing for [`AsyncEventStore`] implementations.
+#[cfg(feature = "async")]
+pub async fn assert_async_event_store_contract<A, S>(
+    store: S,
+    aggregate_id: A::Id,
+    first_event: A::Event,
+    second_event: A::Event,
+    options: EventStoreContractOptions,
+) where
+    A: Aggregate + Send + Sync,
+    A::Event: PartialEq + Debug,
+    S: AsyncEventStore<A>,
+    S::Error: EventStoreFailure + Debug,
+{
+    assert!(store.load(&aggregate_id).await.unwrap().is_empty());
+
+    let first_metadata = Metadata::new().with_correlation_id("async-contract-1");
+    let first = store
+        .append(
+            &aggregate_id,
+            ExpectedRevision::NoStream,
+            vec![NewEvent::new(first_event.clone(), first_metadata.clone())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].revision, 1);
+    if let Some(expected) = options.expected_first_global_sequence {
+        assert_eq!(first[0].sequence, Some(expected));
+    }
+    assert_eq!(first[0].metadata, first_metadata);
+
+    let duplicate = store
+        .append(
+            &aggregate_id,
+            ExpectedRevision::NoStream,
+            vec![NewEvent::new(second_event.clone(), Metadata::default())],
+        )
+        .await;
+    let Err(duplicate) = duplicate else {
+        panic!("expected NoStream append to fail after stream creation");
+    };
+    assert!(matches!(
+        duplicate.into_repository_error::<()>(),
+        RepositoryError::Concurrency(ConcurrencyError::StreamAlreadyExists)
+    ));
+
+    let second = store
+        .append(
+            &aggregate_id,
+            ExpectedRevision::Exact(1),
+            vec![NewEvent::new(second_event.clone(), Metadata::default())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(second[0].revision, 2);
+    if let Some(expected) = options.expected_first_global_sequence {
+        assert_eq!(second[0].sequence, Some(expected + 1));
+    }
+
+    let stream = store.load(&aggregate_id).await.unwrap();
+    assert_eq!(stream.len(), 2);
+    assert_eq!(stream[0].payload, first_event);
+    assert_eq!(stream[1].payload, second_event);
+
+    if let Some(first_sequence) = first[0].sequence {
+        let global = store.load_global_after(Some(first_sequence)).await.unwrap();
+        assert_eq!(global.len(), 1);
+        assert_eq!(global[0].revision, 2);
+    }
+}
+
 /// Runs a focused checkpoint-store contract.
 pub fn assert_checkpoint_store_contract<C>(store: C, projection_name: &str)
 where
@@ -216,6 +296,31 @@ where
     assert_eq!(store.load_checkpoint(projection_name).unwrap(), Some(100));
     store.save_checkpoint(projection_name, 90).unwrap();
     assert_eq!(store.load_checkpoint(projection_name).unwrap(), Some(100));
+}
+
+/// Runs a focused async checkpoint-store contract.
+#[cfg(feature = "async")]
+pub async fn assert_async_checkpoint_store_contract<C>(store: C, projection_name: &str)
+where
+    C: AsyncCheckpointStore,
+    C::Error: Debug,
+{
+    assert_eq!(store.load_checkpoint(projection_name).await.unwrap(), None);
+    store.save_checkpoint(projection_name, 42).await.unwrap();
+    assert_eq!(
+        store.load_checkpoint(projection_name).await.unwrap(),
+        Some(42)
+    );
+    store.save_checkpoint(projection_name, 100).await.unwrap();
+    assert_eq!(
+        store.load_checkpoint(projection_name).await.unwrap(),
+        Some(100)
+    );
+    store.save_checkpoint(projection_name, 90).await.unwrap();
+    assert_eq!(
+        store.load_checkpoint(projection_name).await.unwrap(),
+        Some(100)
+    );
 }
 
 /// Runs a focused idempotency-store contract.
@@ -237,6 +342,31 @@ where
     assert!(!store.reserve(key.clone()).unwrap());
     store.remove(&key).unwrap();
     assert_eq!(store.load(&key).unwrap(), None);
+}
+
+/// Runs a focused async idempotency-store contract.
+#[cfg(feature = "async")]
+pub async fn assert_async_idempotency_store_contract<S, V>(store: S, key: IdempotencyKey, value: V)
+where
+    S: AsyncIdempotencyStore<V>,
+    S::Error: Debug,
+    V: Clone + PartialEq + Debug + Send + Sync + 'static,
+{
+    assert_eq!(store.load(&key).await.unwrap(), None);
+    assert!(store.reserve(key.clone()).await.unwrap());
+    assert_eq!(
+        store.load(&key).await.unwrap(),
+        Some(IdempotencyState::Pending)
+    );
+    assert!(!store.reserve(key.clone()).await.unwrap());
+    store.save(key.clone(), value.clone()).await.unwrap();
+    assert_eq!(
+        store.load(&key).await.unwrap(),
+        Some(IdempotencyState::Complete(value))
+    );
+    assert!(!store.reserve(key.clone()).await.unwrap());
+    store.remove(&key).await.unwrap();
+    assert_eq!(store.load(&key).await.unwrap(), None);
 }
 
 /// Runs a focused snapshot-store contract.

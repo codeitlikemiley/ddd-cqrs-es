@@ -10,15 +10,21 @@ DOCS_JSON="docs/docs.json"
 
 nav_pages=$(mktemp)
 fs_pages=$(mktemp)
+version_refs=$(mktemp)
 cleanup() {
-  rm -f "$nav_pages" "$fs_pages"
+  rm -f "$nav_pages" "$fs_pages" "$version_refs"
 }
 trap cleanup EXIT
 
 jq -r '.navigation.groups[].pages[]' "$DOCS_JSON" | sort | grep -v '^README$' > "$nav_pages"
-find docs -type f -name '*.md' \
-  | grep -v '/README\.md$' \
-  | sed 's#^docs/##' \
+{
+  # Individual authentication PRDs are archived evidence. Publish their index
+  # only, so obsolete multi-crate guidance cannot silently re-enter nav.
+  find docs -type f -name '*.md' \
+    | grep -v '^docs/README\.md$' \
+    | grep -v '^docs/prd/'
+  printf '%s\n' docs/prd/README.md
+} | sed 's#^docs/##' \
   | sed 's#\.md$##' \
   | sort > "$fs_pages"
 
@@ -33,4 +39,25 @@ if ! diff -u "$nav_pages" "$fs_pages" > /tmp/verify-docs.diff; then
   exit 1
 fi
 
-echo "docs.json navigation and docs/**/*.md are aligned."
+crate_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+if [ -z "$crate_version" ]; then
+  echo "Unable to determine root crate version from Cargo.toml." >&2
+  exit 1
+fi
+
+{
+  printf '%s\n' README.md
+  find docs -type f -name '*.md' | sort
+} | while IFS= read -r file; do
+  grep -nE 'ddd_cqrs_es = (\{ version = )?"[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?"' "$file" \
+    | sed "s#^#$file:#" || true
+done > "$version_refs"
+
+if mismatches=$(awk -v version="$crate_version" 'index($0, "\"" version "\"") == 0 { print; bad = 1 } END { exit bad ? 0 : 1 }' "$version_refs"); then
+  echo "Documentation crate version mismatch detected." >&2
+  echo "Expected ddd_cqrs_es install snippets to use version $crate_version." >&2
+  echo "$mismatches" >&2
+  exit 1
+fi
+
+echo "docs.json navigation, docs/**/*.md, and ddd_cqrs_es install snippets are aligned."

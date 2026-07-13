@@ -6,6 +6,9 @@ version = "0.1.0"
 authors = ["codeitlikemiley <codeitlikemiley@gmail.com>"]
 description = "A Leptos application running as a WASIp3 Component on Spin"
 
+[variables]
+counter_auth_base_url = { default = "http://127.0.0.1:3008" }
+
 [[trigger.http]]
 route = "/..."
 component = "counter-app"
@@ -16,6 +19,7 @@ source = "target/wasm32-wasip2/release/counter_app.wasm"
 allowed_outbound_hosts = ["*://*.turso.io:*", "*://*.neon.tech:*", "*://*.supabase.co:*", "*://localhost:*", "*://127.0.0.1:*", "postgres://*:*", "postgresql://*:*", "mysql://*:*", "redis://*:*", "rediss://*:*"]
 key_value_stores = ["default"]
 sqlite_databases = ["default"]
+variables = { counter_auth_base_url = "{{ counter_auth_base_url }}" }
 files = [
   { source = "Cargo.toml", destination = "/Cargo.toml" }
 ]
@@ -23,7 +27,7 @@ files = [
 [component.counter-app.build]
 # The Makefile is the canonical matrix entrypoint for db/realtime selection.
 # This fallback is for plain `spin build --from spin.toml`.
-command = "WASI_RUNTIME=spin cargo leptos build --release && WASI_RUNTIME=spin LEPTOS_OUTPUT_NAME=counter_app cargo build --lib --target wasm32-wasip2 --release --no-default-features --features ssr"
+command = "bash scripts/verify_toolchain.sh && WASI_RUNTIME=spin cargo leptos build --release --split --frontend-only && WASI_RUNTIME=spin LEPTOS_OUTPUT_NAME=counter_app cargo build --lib --target wasm32-wasip2 --release --no-default-features --features sqlite,spin-grpc && bash scripts/verify_wasi_artifact.sh"
 watch = ["src/**/*.rs", "Cargo.toml", "proto/**/*.proto"]
 
 [[trigger.http]]

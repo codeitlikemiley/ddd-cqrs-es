@@ -107,6 +107,7 @@ Choose a preset with `ddd init --preset <preset>`.
 | --- | --- | --- |
 | `basic` | Learning the framework or building a pure domain crate. | Aggregate, command, event, fixture test, and in-memory example. |
 | `leptos-wasi` | Full-stack app scaffolding for Leptos WASI on Spin. | Domain/application/store/server boundaries with REST/SSE and optional gRPC. |
+| `fullstack` | Production-oriented Spin fullstack application. | Leptos islands, complete account/organization/admin pages, trusted auth, embedded Cedar, REST, and unary plus streaming gRPC. |
 | `native-api` | Native Rust API service shape. | Axum-style API scaffold with native SQL adapter features. |
 | `worker` | Projection or process-manager workers. | Worker entrypoint plus projection/process-manager-oriented stubs. |
 | `custom` | A minimal base for explicit, agent-chosen capabilities. | Starts from the basic shape and lets you add capabilities intentionally. |
@@ -117,10 +118,26 @@ Examples:
 ddd init billing --preset basic --domain Invoice
 ddd init counter-app --preset leptos-wasi --domain Counter --db sqlite --runtime spin --transport http --ui leptos
 ddd init counter-grpc --preset leptos-wasi --domain Counter --db postgres --runtime spin --transport both --ui leptos
+ddd init fullstack --preset fullstack --runtime spin --db postgres --transport both --ui leptos
 ddd init projector --preset worker --domain Invoice --db mysql --realtime polling
 ```
 
 Current CLI-generated apps are Spin-focused. The runtime value is `spin`.
+The `fullstack` preset is intentionally fullstack; it defaults to
+`transport=both` and `ui=leptos`, and rejects narrower transport/UI shapes.
+Generated fullstack projects include the same Leptos, REST, gRPC, storage,
+OAuth, passkey, organization, administration, audit-stream, smoke-test, and rollout surface as the reference
+`examples/fullstack-app` app. They also include `spin.production.toml.example`
+with exact OAuth/database outbound hosts to use as the production hardening
+starting point. The generated Makefile includes `oauth-credentials`,
+`oauth-preflight`, `oauth-evidence`, `oauth-dev-browser-smoke`,
+`oauth-browser-smoke`, `oauth-callback`, `browser-smoke`, and
+`passkey-browser-smoke` targets for local OAuth UI regression checks, live
+provider readiness, redacted event evidence, callback evidence, page checks,
+and WebAuthn checks. Generated manifests depend on the single `wasi-auth`
+crate plus `ddd_cqrs_es`; they never contain cross-repository path dependencies.
+This source checkout uses `.cargo/config.toml` patches only for local alpha
+verification, while generated projects retain publishable registry manifests.
 
 ## Generated Manifest
 
@@ -147,6 +164,76 @@ module = "invoice"
 commands = ["CreateInvoice"]
 events = ["InvoiceCreated"]
 ```
+
+Fullstack projects also include stable auth and authorization configuration sections. Provider
+entries reference environment variable names only; the CLI never writes OAuth
+client secrets into source files.
+
+Passkeys are disabled by default until `AUTH_ENABLE_PASSKEYS=true`. Configure
+`AUTH_PASSKEY_RP_ID`, `AUTH_PASSKEY_RP_NAME`, `AUTH_PASSKEY_ORIGIN`, and
+`AUTH_PASSKEY_CHALLENGE_TTL_SECONDS` in `.env` or Spin variables before testing
+WebAuthn in a browser. For local browser passkeys, use `localhost` as the RP ID
+and visit `http://localhost:3008`, not the numeric loopback URL.
+
+```toml
+[auth]
+issuer = "http://127.0.0.1:3008"
+audience = "fullstack-app"
+access_token_ttl_seconds = 900
+refresh_token_ttl_seconds = 2592000
+cookie_mode = "http-only"
+
+[[auth.providers]]
+provider_id = "google"
+issuer = "https://accounts.google.com"
+scopes = ["openid", "email", "profile"]
+enabled_env = "AUTH_GOOGLE_ENABLED"
+client_id_env = "AUTH_GOOGLE_CLIENT_ID"
+client_secret_env = "AUTH_GOOGLE_CLIENT_SECRET"
+userinfo_url_env = "AUTH_GOOGLE_USERINFO_URL"
+
+[[auth.providers]]
+provider_id = "facebook"
+issuer = "https://www.facebook.com"
+scopes = ["email", "public_profile"]
+enabled_env = "AUTH_FACEBOOK_ENABLED"
+client_id_env = "AUTH_FACEBOOK_CLIENT_ID"
+client_secret_env = "AUTH_FACEBOOK_CLIENT_SECRET"
+userinfo_url_env = "AUTH_FACEBOOK_USERINFO_URL"
+
+[[auth.providers]]
+provider_id = "apple"
+issuer = "https://appleid.apple.com"
+scopes = ["openid", "email", "name"]
+enabled_env = "AUTH_APPLE_ENABLED"
+client_id_env = "AUTH_APPLE_CLIENT_ID"
+generated_client_secret_env = "AUTH_APPLE_GENERATED_CLIENT_SECRET"
+team_id_env = "AUTH_APPLE_TEAM_ID"
+key_id_env = "AUTH_APPLE_KEY_ID"
+private_key_env = "AUTH_APPLE_PRIVATE_KEY"
+client_secret_ttl_seconds_env = "AUTH_APPLE_CLIENT_SECRET_TTL_SECONDS"
+
+[authorization]
+provider = "embedded-cedar"
+policy_revision = "embedded-v1"
+default_decision = "deny"
+```
+
+`AUTH_PRODUCTION_MODE=false` keeps the generated stack simple for local
+development. Set `AUTH_PRODUCTION_MODE=true` only with a pre-provisioned
+`AUTH_JWT_KEY_RING_JSON` containing ES256 keys, HTTPS secure cookies, CSRF
+secrets, and a production mail adapter. Administration is derived exclusively
+from an MFA-authenticated `VerifiedAuthContext`; there is no admin-token field
+or header. Production mode rejects runtime HS256 defaults, capture mail, and
+missing secrets.
+
+Generated fullstack projects also expose `AUTH_COOKIE_SECURE`. Keep it
+`false` for local HTTP development and set it to `true` for HTTPS deployments
+so browser sessions are issued with `Secure`, `HttpOnly`, and `SameSite=Lax`.
+The generated Makefile and Spin manifests pass the declared auth variables into
+the runtime component; changing JWT, OAuth, passkey, cookie, or
+public-base-url values in `.env` or Spin variables is intended to affect the
+running auth stack.
 
 If a project does not have `ddd.toml`, treat it as outside the supported generated-project patching path unless you intentionally adopt it.
 
@@ -220,6 +307,12 @@ ddd enable realtime redis
 ddd enable grpc
 ddd enable rest
 ddd enable leptos
+ddd enable auth
+ddd enable authz
+ddd enable passkeys
+ddd enable oauth-provider google
+ddd enable oauth-provider apple
+ddd enable oauth-provider facebook
 ddd enable idempotency
 ddd enable snapshots
 ddd enable tracing

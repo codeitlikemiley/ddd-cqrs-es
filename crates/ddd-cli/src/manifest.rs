@@ -1,10 +1,11 @@
 use crate::model::{
-    parse_model_value, AppSelection, DbBackend, Preset, Realtime, Runtime, Transport, Ui,
+    parse_model_value, AppSelection, DbBackend, OAuthProviderKind, Preset, Realtime, Runtime,
+    Transport, Ui,
 };
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use toml_edit::{value, Array, DocumentMut, Item, Table};
+use toml_edit::{value, Array, ArrayOfTables, DocumentMut, Item, Table};
 
 pub const MANIFEST_FILE: &str = "ddd.toml";
 
@@ -18,7 +19,36 @@ pub struct ProjectManifest {
     pub transport: Transport,
     pub ui: Ui,
     pub capabilities: Vec<String>,
+    pub auth: Option<AuthConfig>,
+    pub authorization: Option<AuthorizationConfig>,
     pub domains: Vec<DomainRecord>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AuthConfig {
+    pub issuer: String,
+    pub audience: String,
+    pub access_token_ttl_seconds: u64,
+    pub refresh_token_ttl_seconds: u64,
+    pub cookie_mode: String,
+    pub providers: Vec<AuthProviderRecord>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AuthProviderRecord {
+    pub provider_id: String,
+    pub issuer: String,
+    pub scopes: Vec<String>,
+    pub enabled_env: String,
+    pub client_id_env: String,
+    pub client_secret_env: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AuthorizationConfig {
+    pub provider: String,
+    pub policy_revision: String,
+    pub default_decision: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -31,6 +61,7 @@ pub struct DomainRecord {
 
 impl ProjectManifest {
     pub fn new(name: impl Into<String>, selection: AppSelection, domain: DomainRecord) -> Self {
+        let name = name.into();
         let mut capabilities = Vec::new();
         if selection.ui == Ui::Leptos {
             capabilities.push("leptos".to_string());
@@ -46,9 +77,26 @@ impl ProjectManifest {
         if selection.db == DbBackend::Redis {
             capabilities.push("redis-store".to_string());
         }
+        let (auth, authorization) = if selection.preset == Preset::Fullstack {
+            capabilities.push("auth".to_string());
+            capabilities.push("authorization".to_string());
+            (
+                Some(AuthConfig::default_for_project(&name)),
+                Some(AuthorizationConfig::embedded_cedar()),
+            )
+        } else {
+            (None, None)
+        };
+        capabilities.sort();
+        capabilities.dedup();
+        let domains = if selection.preset == Preset::Fullstack {
+            Vec::new()
+        } else {
+            vec![domain]
+        };
 
         Self {
-            name: name.into(),
+            name,
             preset: selection.preset,
             runtime: selection.runtime,
             db: selection.db,
@@ -56,7 +104,9 @@ impl ProjectManifest {
             transport: selection.transport,
             ui: selection.ui,
             capabilities,
-            domains: vec![domain],
+            auth,
+            authorization,
+            domains,
         }
     }
 
@@ -97,6 +147,43 @@ impl ProjectManifest {
             enabled.push(capability.as_str());
         }
         doc["capabilities"]["enabled"] = value(enabled);
+
+        if let Some(auth) = &self.auth {
+            doc["auth"] = Item::Table(Table::new());
+            doc["auth"]["issuer"] = value(auth.issuer.as_str());
+            doc["auth"]["audience"] = value(auth.audience.as_str());
+            doc["auth"]["access_token_ttl_seconds"] = value(auth.access_token_ttl_seconds as i64);
+            doc["auth"]["refresh_token_ttl_seconds"] = value(auth.refresh_token_ttl_seconds as i64);
+            doc["auth"]["cookie_mode"] = value(auth.cookie_mode.as_str());
+
+            if !auth.providers.is_empty() {
+                let mut providers = ArrayOfTables::new();
+                for provider in &auth.providers {
+                    let mut table = Table::new();
+                    table["provider_id"] = value(provider.provider_id.as_str());
+                    table["issuer"] = value(provider.issuer.as_str());
+
+                    let mut scopes = Array::default();
+                    for scope in &provider.scopes {
+                        scopes.push(scope.as_str());
+                    }
+                    table["scopes"] = value(scopes);
+                    table["enabled_env"] = value(provider.enabled_env.as_str());
+                    table["client_id_env"] = value(provider.client_id_env.as_str());
+                    table["client_secret_env"] = value(provider.client_secret_env.as_str());
+                    providers.push(table);
+                }
+                doc["auth"]["providers"] = Item::ArrayOfTables(providers);
+            }
+        }
+
+        if let Some(authorization) = &self.authorization {
+            doc["authorization"] = Item::Table(Table::new());
+            doc["authorization"]["provider"] = value(authorization.provider.as_str());
+            doc["authorization"]["policy_revision"] = value(authorization.policy_revision.as_str());
+            doc["authorization"]["default_decision"] =
+                value(authorization.default_decision.as_str());
+        }
 
         doc["domains"] = Item::Table(Table::new());
         for domain in &self.domains {
@@ -140,6 +227,20 @@ impl ProjectManifest {
             })
             .unwrap_or_default();
 
+        let auth = doc
+            .get("auth")
+            .and_then(Item::as_table)
+            .map(AuthConfig::from_table);
+        let authorization = doc
+            .get("authorization")
+            .and_then(Item::as_table)
+            .map(AuthorizationConfig::from_table)
+            .or_else(|| {
+                doc.get("authz")
+                    .and_then(Item::as_table)
+                    .map(AuthorizationConfig::from_legacy_table)
+            });
+
         let mut domains = Vec::new();
         if let Some(domain_table) = doc["domains"].as_table() {
             for (module, item) in domain_table {
@@ -164,8 +265,39 @@ impl ProjectManifest {
             transport,
             ui,
             capabilities,
+            auth,
+            authorization,
             domains,
         })
+    }
+
+    pub fn enable_auth(&mut self) {
+        self.add_capability("auth");
+        if self.auth.is_none() {
+            self.auth = Some(AuthConfig::default_for_project(&self.name));
+        }
+    }
+
+    pub fn enable_authorization(&mut self) {
+        self.add_capability("authorization");
+        self.capabilities.retain(|capability| capability != "authz");
+        if self.authorization.is_none() {
+            self.authorization = Some(AuthorizationConfig::embedded_cedar());
+        }
+    }
+
+    pub fn enable_passkeys(&mut self) {
+        self.enable_auth();
+        self.add_capability("passkeys");
+    }
+
+    pub fn enable_oauth_provider(&mut self, provider: OAuthProviderKind) {
+        self.enable_auth();
+        self.add_capability(format!("oauth:{}", provider.as_str()));
+        let auth = self
+            .auth
+            .get_or_insert_with(|| AuthConfig::default_for_project(&self.name));
+        auth.add_provider(provider);
     }
 
     pub fn set_db(&mut self, db: DbBackend) {
@@ -226,6 +358,159 @@ impl ProjectManifest {
         {
             push_unique(&mut domain.commands, command);
         }
+    }
+}
+
+impl AuthConfig {
+    fn default_for_project(name: &str) -> Self {
+        Self {
+            issuer: "http://127.0.0.1:3008".to_string(),
+            audience: name.to_string(),
+            access_token_ttl_seconds: 900,
+            refresh_token_ttl_seconds: 2_592_000,
+            cookie_mode: "http-only".to_string(),
+            providers: Vec::new(),
+        }
+    }
+
+    fn from_table(table: &Table) -> Self {
+        let mut config = Self {
+            issuer: table
+                .get("issuer")
+                .and_then(Item::as_str)
+                .unwrap_or("http://127.0.0.1:3008")
+                .to_string(),
+            audience: table
+                .get("audience")
+                .and_then(Item::as_str)
+                .unwrap_or("fullstack-app")
+                .to_string(),
+            access_token_ttl_seconds: table
+                .get("access_token_ttl_seconds")
+                .and_then(Item::as_integer)
+                .and_then(|value| u64::try_from(value).ok())
+                .unwrap_or(900),
+            refresh_token_ttl_seconds: table
+                .get("refresh_token_ttl_seconds")
+                .and_then(Item::as_integer)
+                .and_then(|value| u64::try_from(value).ok())
+                .unwrap_or(2_592_000),
+            cookie_mode: table
+                .get("cookie_mode")
+                .and_then(Item::as_str)
+                .unwrap_or("http-only")
+                .to_string(),
+            providers: Vec::new(),
+        };
+        if let Some(providers) = table.get("providers").and_then(Item::as_array_of_tables) {
+            config.providers = providers
+                .iter()
+                .map(AuthProviderRecord::from_table)
+                .collect();
+        }
+        config
+    }
+
+    fn add_provider(&mut self, provider: OAuthProviderKind) {
+        let provider_id = provider.as_str();
+        if self
+            .providers
+            .iter()
+            .any(|existing| existing.provider_id == provider_id)
+        {
+            return;
+        }
+        self.providers.push(AuthProviderRecord::from_kind(provider));
+        self.providers
+            .sort_by(|left, right| left.provider_id.cmp(&right.provider_id));
+    }
+}
+
+impl AuthProviderRecord {
+    fn from_kind(provider: OAuthProviderKind) -> Self {
+        Self {
+            provider_id: provider.as_str().to_string(),
+            issuer: provider.issuer().to_string(),
+            scopes: provider
+                .scopes()
+                .iter()
+                .map(|scope| (*scope).to_string())
+                .collect(),
+            enabled_env: provider.enabled_env().to_string(),
+            client_id_env: provider.client_id_env().to_string(),
+            client_secret_env: provider.client_secret_env().to_string(),
+        }
+    }
+
+    fn from_table(table: &Table) -> Self {
+        Self {
+            provider_id: table
+                .get("provider_id")
+                .and_then(Item::as_str)
+                .unwrap_or("")
+                .to_string(),
+            issuer: table
+                .get("issuer")
+                .and_then(Item::as_str)
+                .unwrap_or("")
+                .to_string(),
+            scopes: table.get("scopes").map(string_array).unwrap_or_default(),
+            enabled_env: table
+                .get("enabled_env")
+                .and_then(Item::as_str)
+                .unwrap_or("")
+                .to_string(),
+            client_id_env: table
+                .get("client_id_env")
+                .and_then(Item::as_str)
+                .unwrap_or("")
+                .to_string(),
+            client_secret_env: table
+                .get("client_secret_env")
+                .and_then(Item::as_str)
+                .unwrap_or("")
+                .to_string(),
+        }
+    }
+}
+
+impl AuthorizationConfig {
+    fn embedded_cedar() -> Self {
+        Self {
+            provider: "embedded-cedar".to_string(),
+            policy_revision: "embedded-v1".to_string(),
+            default_decision: "deny".to_string(),
+        }
+    }
+
+    fn from_table(table: &Table) -> Self {
+        Self {
+            provider: table
+                .get("provider")
+                .and_then(Item::as_str)
+                .unwrap_or("embedded-cedar")
+                .to_string(),
+            policy_revision: table
+                .get("policy_revision")
+                .and_then(Item::as_str)
+                .unwrap_or("embedded-v1")
+                .to_string(),
+            default_decision: table
+                .get("default_decision")
+                .and_then(Item::as_str)
+                .unwrap_or("deny")
+                .to_string(),
+        }
+    }
+
+    fn from_legacy_table(table: &Table) -> Self {
+        let mut config = Self::embedded_cedar();
+        config.default_decision = table
+            .get("default_decision")
+            .and_then(Item::as_str)
+            .unwrap_or("deny")
+            .to_string();
+        config
     }
 }
 

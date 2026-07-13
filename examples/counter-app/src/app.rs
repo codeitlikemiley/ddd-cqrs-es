@@ -5,9 +5,22 @@ use leptos_router::*;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "hydrate")]
-use wasm_bindgen::{JsCast, closure::Closure};
+use leptos::task::spawn_local;
+#[cfg(feature = "hydrate")]
+use wasm_bindgen::{JsCast, closure::Closure, prelude::wasm_bindgen};
 #[cfg(feature = "hydrate")]
 use web_sys::{EventSource, MessageEvent, window};
+
+#[cfg(feature = "hydrate")]
+#[wasm_bindgen(inline_js = r#"
+export function afterIslandHydration() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+"#)]
+extern "C" {
+    #[wasm_bindgen(catch, js_name = afterIslandHydration)]
+    async fn after_island_hydration() -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue>;
+}
 
 #[allow(dead_code)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -61,7 +74,7 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                 <meta charset="utf-8" />
                 <meta name="viewport" content="width=device-width, initial-scale=1" />
                 <AutoReload options=options.clone() />
-                <HydrationScripts options=options.clone() root="" />
+                <HydrationScripts options=options.clone() islands=true root="" />
                 <MetaTags />
             </head>
             <body>
@@ -99,6 +112,11 @@ pub fn App() -> impl IntoView {
 
 #[component]
 fn HomePage() -> impl IntoView {
+    view! { <CounterPanel /> }
+}
+
+#[island(lazy)]
+pub fn CounterPanel() -> impl IntoView {
     let increment_action = ServerAction::<IncrementCount>::new();
     let decrement_action = ServerAction::<DecrementCount>::new();
     let reset_action = ServerAction::<ResetCount>::new();
@@ -108,13 +126,15 @@ fn HomePage() -> impl IntoView {
 
     let (custom_amount, set_custom_amount) = signal(5);
 
-    let counter_view = Resource::new(|| (), |_| get_counter_view());
+    let (counter_view, set_counter_view) = signal(None::<Result<CounterViewDto, ServerFnError>>);
     let (current_view, set_current_view) = signal(None::<CounterViewDto>);
     let (optimistic_count, set_optimistic_count) = signal(None::<i32>);
     let (last_seen_sequence, set_last_seen_sequence) = signal(0_u64);
     let (pending_until_sequence, set_pending_until_sequence) = signal(None::<u64>);
     let (deferred_realtime_message, set_deferred_realtime_message) =
         signal(None::<CounterRealtimeMessage>);
+
+    Effect::new(move |_| reload_counter_view(set_counter_view));
 
     // Hydrate from local cache while the first server read is in flight.
     Effect::new(move |_| {
@@ -205,7 +225,7 @@ fn HomePage() -> impl IntoView {
             && !has_deferred_realtime
             && pending_until_sequence.get_untracked().is_some()
         {
-            counter_view.refetch();
+            reload_counter_view(set_counter_view);
         }
 
         if let Some(view_data) = next_view {
@@ -353,13 +373,20 @@ fn HomePage() -> impl IntoView {
         }
     });
 
-    let display_count = move || {
-        if let Some(opt_count) = optimistic_count.get() {
-            opt_count.to_string()
-        } else {
-            "...".to_string()
-        }
-    };
+    #[cfg(feature = "hydrate")]
+    spawn_local(async move {
+        let _ = after_island_hydration().await;
+        Effect::new(move |_| {
+            let value = optimistic_count
+                .get()
+                .map_or_else(|| "...".to_string(), |count| count.to_string());
+            if let Some(document) = window().and_then(|window| window.document())
+                && let Ok(Some(element)) = document.query_selector("[data-testid='counter-value']")
+            {
+                element.set_text_content(Some(&value));
+            }
+        });
+    });
 
     let is_pending = move || {
         pending_until_sequence.get().is_some()
@@ -380,6 +407,28 @@ fn HomePage() -> impl IntoView {
             None
         }
     };
+
+    #[cfg(feature = "hydrate")]
+    spawn_local(async move {
+        let _ = after_island_hydration().await;
+        Effect::new(move |_| {
+            let value = latest_error().unwrap_or_default();
+            if let Some(document) = window().and_then(|window| window.document())
+                && let Ok(Some(element)) = document.query_selector("[data-testid='counter-error']")
+            {
+                element.set_text_content(Some(&value));
+                if let Ok(Some(panel)) =
+                    document.query_selector("[data-testid='counter-error-panel']")
+                {
+                    if value.is_empty() {
+                        let _ = panel.set_attribute("style", "display: none;");
+                    } else {
+                        let _ = panel.remove_attribute("style");
+                    }
+                }
+            }
+        });
+    });
 
     let status = move || {
         if is_pending() {
@@ -465,8 +514,11 @@ fn HomePage() -> impl IntoView {
                     </div>
 
                     <div class="relative bg-slate-900/60 rounded-2xl p-8 border border-slate-800/80 backdrop-blur-sm shadow-inner">
-                        <div class="text-6xl md:text-7xl font-black text-white tracking-tighter tabular-nums drop-shadow-[0_2px_10px_rgba(56,189,248,0.15)]">
-                            {display_count}
+                        <div
+                            data-testid="counter-value"
+                            class="text-6xl md:text-7xl font-black text-white tracking-tighter tabular-nums drop-shadow-[0_2px_10px_rgba(56,189,248,0.15)]"
+                        >
+                            "..."
                         </div>
                         <div class="text-slate-500 text-xs mt-3 uppercase tracking-widest font-semibold">
                             "Live Aggregate Value"
@@ -474,19 +526,21 @@ fn HomePage() -> impl IntoView {
 
                     </div>
 
-                    <Show when=move || latest_error().is_some()>
-                        <div class="bg-red-500/15 border border-red-500/30 rounded-xl p-4 text-left space-y-1">
-                            <div class="flex items-center gap-2 text-red-400 font-bold text-sm">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
-                                </svg>
-                                "Constraint Validation Error"
-                            </div>
-                            <p class="text-xs text-red-300 font-mono">
-                                {latest_error}
-                            </p>
+                    <div
+                        data-testid="counter-error-panel"
+                        style="display: none;"
+                        class="bg-red-500/15 border border-red-500/30 rounded-xl p-4 text-left space-y-1"
+                    >
+                        <div class="flex items-center gap-2 text-red-400 font-bold text-sm">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                            </svg>
+                            "Constraint Validation Error"
                         </div>
-                    </Show>
+                        <p data-testid="counter-error" class="text-xs text-red-300 font-mono">
+                            " "
+                        </p>
+                    </div>
 
                     <div class="grid grid-cols-3 gap-3">
                         <button
@@ -654,11 +708,24 @@ fn HomePage() -> impl IntoView {
 
                 <div class="pt-4 border-t border-slate-800/80 flex justify-between items-center text-[10px] font-mono text-slate-500">
                     <span>"Engine: WASM Component"</span>
-                    <span>"Target: wasm32-wasip2"</span>
+                    <span>"Spin component: final WASI HTTP (P3 world)"</span>
                 </div>
             </div>
         </div>
     }
+}
+
+fn reload_counter_view(
+    set_counter_view: WriteSignal<Option<Result<CounterViewDto, ServerFnError>>>,
+) {
+    #[cfg(feature = "hydrate")]
+    spawn_local(async move {
+        let _ = after_island_hydration().await;
+        set_counter_view.set(Some(get_counter_view().await));
+    });
+
+    #[cfg(not(feature = "hydrate"))]
+    let _ = set_counter_view;
 }
 
 #[component]
@@ -684,7 +751,10 @@ pub async fn get_counter_view_db() -> Result<CounterViewDto, ServerFnError> {
 async fn run_cqrs_command(
     command: crate::domain::CounterCommand,
 ) -> Result<CounterViewDto, ServerFnError> {
-    crate::application::execute_counter_command(command)
+    let auth = use_context::<http::request::Parts>()
+        .map(|parts| crate::auth::CounterAuthContext::from_http_headers(&parts.headers))
+        .unwrap_or_default();
+    crate::application::execute_counter_command_authorized(command, &auth)
         .await
         .map_err(server_fn_error)
 }

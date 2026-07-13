@@ -15,18 +15,58 @@ log "Running rustfmt"
 cargo fmt --all -- --check
 
 log "Compiling library crate"
-cargo check --all-targets -p ddd_cqrs_es
+cargo check --locked --all-targets -p ddd_cqrs_es
+
+log "Running locked clippy with warnings denied"
+cargo clippy --locked --all-targets --all-features -p ddd_cqrs_es -- -D warnings
 
 log "Running unit and integration tests"
-cargo test --all-targets --all-features -p ddd_cqrs_es
+cargo test --locked --all-targets --all-features -p ddd_cqrs_es
 
 log "Running doc tests"
-cargo test --doc --all-features -p ddd_cqrs_es
+cargo test --locked --doc --all-features -p ddd_cqrs_es
+
+log "Checking representative feature powerset"
+cargo hack check --locked -p ddd_cqrs_es --feature-powerset --depth 2
+
+log "Checking RustSec advisories and dependency policy"
+cargo audit --deny warnings
+cargo deny check advisories bans licenses sources
+
+log "Inspecting publishable package"
+package_archive="$PWD/target/package/ddd_cqrs_es-0.3.0-rc.1.crate"
+rm -f "$package_archive"
+cargo package --locked -p ddd_cqrs_es --allow-dirty --no-verify
+test -f "$package_archive"
+# Do not use grep -q in these pipefail pipelines: an early successful exit
+# closes the pipe and makes tar report SIGPIPE as a CI failure.
+tar -tf "$package_archive" | grep '/Cargo.toml$' >/dev/null
+if tar -xOf "$package_archive" 'ddd_cqrs_es-0.3.0-rc.1/Cargo.toml' | grep -E 'rustls-rustcrypto|(^|[[:space:]])rsa[[:space:]]*=' >/dev/null; then
+  echo "Error: quarantined direct-TCP dependencies leaked into the package." >&2
+  exit 1
+fi
 
 log "Running docs hardening checks"
 bash scripts/verify-docs-rust.sh
 
+log "Running CLI tests and generated fullstack drift check"
+cargo test --all-targets -p ddd-cqrs-es-cli
+bash scripts/regenerate-fullstack-example.sh --check
+
 log "Compiling counter-app example with sqlite"
-make example-check
+patch_config="$PWD/target/ci-local-patches.toml"
+mkdir -p "$(dirname "$patch_config")"
+{
+  printf '%s\n' '[patch.crates-io]'
+  printf 'ddd_cqrs_es = { path = "%s" }\n' "$PWD"
+  if [[ -f ../wasi-auth/crates/wasi-auth/Cargo.toml ]]; then
+    printf 'wasi-auth = { path = "%s" }\n' "$PWD/../wasi-auth/crates/wasi-auth"
+  fi
+  if [[ -f ../leptos_wasi/Cargo.toml ]]; then
+    printf '"leptos-wasi-runtime" = { path = "%s" }\n' "$PWD/../leptos_wasi"
+  fi
+} >"$patch_config"
+local_patch_args="--config $patch_config"
+make example-check CARGO_CONFIG_ARGS="$local_patch_args"
 
 log "CI check suite complete"

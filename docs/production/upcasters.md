@@ -27,6 +27,8 @@ flowchart LR
 
 Because upcasters operate during the loading loop, the database remains completely untouched, preserving our historical audit guarantees, while your application code only ever has to reason about the latest, current event structure.
 
+Upcasting is related to Event Sourcing because it keeps old event streams replayable after payload schemas change, but it is not the Decider/Evolver pattern. `EventUpcaster` transforms stored payload bytes before deserialization. Command decisions still belong in `Aggregate::handle`, and aggregate state evolution still belongs in `Aggregate::apply`.
+
 ---
 
 ## Implementing the `EventUpcaster` Trait
@@ -88,6 +90,12 @@ store.register_upcaster("account_opened", AccountOpenedUpcaster);
 ```
 
 If multiple upcasters are registered for the same event type (e.g., `v1 -> v2` and `v2 -> v3`), the engine automatically constructs an upcaster chain and applies them sequentially when replaying events.
+
+Upcasters run in adapters that deserialize stored event payload bytes, including
+the SQL stores and Redis. `InMemoryEventStore` stores already-typed Rust events
+and intentionally does not run raw-byte upcasters. For tests that need to prove
+event schema migration behavior, use `SqliteEventStore::in_memory()` or the same
+SQL adapter family that production uses instead of `InMemoryEventStore`.
 
 ---
 

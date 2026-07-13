@@ -6,10 +6,18 @@ under both raw Wasmtime and Fermyon Spin.
 
 ## Prerequisites
 
-- **Rust Toolchain:** Version 1.93.0 or later (required by `spin-sdk` v6.0.0).
-- **Rust target:** `rustup target add wasm32-wasip2`
-- **Cargo Leptos:** `cargo install --locked cargo-leptos`
-- **Spin CLI:** Version 4.0.0 or later.
+- **Rust Toolchain:** Version 1.93.0 or later. The libraries retain a Rust 1.93
+  MSRV, but async final-WASI components require the Rust 1.94 component linker.
+- **WASI codegen target:** `rustup target add wasm32-wasip2`. This distributed
+  Rust target supplies `std`; the resulting component is inspected to prove it
+  exports the final `wasi:http/handler@0.3.0` world and has no Preview 1 imports.
+  The unstable `wasm32-wasip3` Rust target remains a canary until Rust ships its
+  self-contained target libraries.
+- **Cargo Leptos:** 0.3.7 or newer:
+  `cargo install --locked cargo-leptos --version '^0.3.7'`.
+- **wasm-tools:** Required for component-world inspection.
+- **Spin CLI:** the maintained `4.1.0-pre0` fork pinned by revision; no upstream
+  tagged release is yet claimed as production-compatible with this graph.
 - **Wasmtime CLI:** Version 45.0.0 or later.
 - **Redis CLI/server:** Optional, only needed for `db=redis` or `realtime=redis`.
 - **MySQL server/client:** Optional, only needed for `db=mysql`.
@@ -73,9 +81,7 @@ environment variables for you.
 | :--- | :--- |
 | `make wasmtime` | Local JSON-file fallback mounted at `/data`. |
 | `make spin` | Spin SQLite host-call store. |
-| `make wasmtime db=postgres` | PostgreSQL over TCP. |
 | `make spin db=postgres` | Spin PostgreSQL connector. |
-| `make wasmtime db=postgres realtime=redis` | PostgreSQL durable store with Redis wake notifications. |
 | `make spin db=postgres realtime=redis` | Spin PostgreSQL connector with Redis wake notifications. |
 | `make wasmtime db=neon` | Neon HTTP SQL helper. |
 | `make wasmtime db=neon realtime=redis` | Neon durable store with Redis wake notifications. |
@@ -87,9 +93,7 @@ environment variables for you.
 | `make wasmtime db=turso` | Turso/LibSQL Hrana HTTP helper. |
 | `make wasmtime db=turso realtime=redis` | Turso durable store with Redis wake notifications. |
 | `make spin db=turso realtime=redis` | Spin-hosted app using Turso durable store with Redis wake notifications. |
-| `make wasmtime db=mysql` | Raw TCP MySQL helper using `wasi-mysql`. |
 | `make spin db=mysql realtime=polling` | Spin SDK MySQL helper using `spin-mysql`. |
-| `make wasmtime db=mysql realtime=redis` | Raw TCP MySQL with Redis wake notifications. |
 | `make spin db=mysql realtime=redis` | Spin SDK MySQL with Redis wake notifications. |
 | `make wasmtime db=redis realtime=redis` | Experimental Redis event store with SSE notifications. |
 | `make spin db=redis realtime=redis` | Experimental Spin Redis event store with SSE notifications. |
@@ -111,10 +115,13 @@ derived by the Makefile, not a public fallback.
 
 ```bash
 make db=mysql fresh
-make wasmtime db=mysql
 make spin db=mysql realtime=polling
 make spin db=mysql realtime=redis
 ```
+
+PostgreSQL and MySQL runtime access is Spin-only. Their retired Wasmtime
+raw-TCP adapters are excluded from the published DDD crate because they do not
+meet the production supply-chain and host-capability boundary.
 
 `db=redis` uses `REDIS_URL`, defaulting to `redis://127.0.0.1:6379`.
 
@@ -132,12 +139,11 @@ Use `make help-realtime` to print the current list.
 `realtime=redis` is always a wake/notification transport. It does not switch the
 durable storage backend.
 
-It is supported with every supported `db` backend:
+It is supported with every backend on its supported runtime:
 
 ```bash
 make wasmtime db=sqlite realtime=redis
 make spin db=sqlite realtime=redis
-make wasmtime db=postgres realtime=redis
 make spin db=postgres realtime=redis
 make wasmtime db=neon realtime=redis
 make spin db=neon realtime=redis
@@ -145,7 +151,6 @@ make wasmtime db=supabase realtime=redis
 make spin db=supabase realtime=redis
 make wasmtime db=turso realtime=redis
 make spin db=turso realtime=redis
-make wasmtime db=mysql realtime=redis
 make spin db=mysql realtime=redis
 make wasmtime db=redis realtime=redis
 make spin db=redis realtime=redis

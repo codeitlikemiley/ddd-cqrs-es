@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.93.0"
 authors = ["codeitlikemiley <codeitlikemiley@gmail.com>"]
-description = "A Leptos application running as a WASIp3 Component"
+description = "A Leptos application exporting the final WASI HTTP component world"
 build = "build.rs"
 
 [workspace]
@@ -17,20 +17,24 @@ any_spawner = { version = "0.3.0", features = ["futures-executor"] }
 bytes = "1.7.2"
 console_error_panic_hook = "0.1"
 futures = "0.3.30"
+getrandom03 = { package = "getrandom", version = "0.3.4" }
 hydration_context = { version = "0.3.0" }
-leptos = { version = "0.8.19" }
-leptos_meta = { version = "0.8.6" }
-leptos_router = { version = "0.8.13" }
-leptos_wasi = { version = "0.3.1", default-features = false, features = ["wasip3"], optional = true }
-server_fn = { version = "0.8.12", features = ["axum-no-default"] }
-spin-sdk = { version = "6.0.0", optional = true }
+leptos = { version = "0.8.20", default-features = false }
+leptos_meta = { version = "0.8.6", default-features = false }
+leptos_router = { version = "0.8.14", default-features = false }
+leptos_wasi = { package = "leptos-wasi-runtime", version = "=0.4.2-rc.1", default-features = false, features = ["wasip3", "islands-router", "tracing"], optional = true }
+server_fn = { version = "0.8.13", default-features = false }
+spin-sdk = { git = "https://github.com/codeitlikemiley/spin-rust-sdk", rev = "a02d330fe9357be2d18e6deef400511195ce6f7f", version = "6.0.0", optional = true }
 http = "1.1.0"
 http-body = { version = "1.0", optional = true }
 http-body-util = { version = "0.1.2", optional = true }
-wasip3 = { version = "0.6.0", features = ["http-compat"], optional = true }
-wit-bindgen = { version = "0.57.1", features = ["inter-task-wakeup"], optional = true }
-wasm-bindgen = { version = "=0.2.125", optional = true }
-web-sys = { version = "0.3", features = ["EventSource", "EventTarget", "MessageEvent", "Storage", "Window"], optional = true }
+wasip3 = { version = "=0.7.0", features = ["http-compat"], optional = true }
+# `wasip3 0.7.0` is generated against wit-bindgen 0.57.1. Keep one runtime
+# version so async unit-stream intrinsics have one canonical implementation.
+wit-bindgen = { version = "=0.57.1", features = ["async-spawn", "inter-task-wakeup"], optional = true }
+wasm-bindgen = { version = "=0.2.126", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+web-sys = { version = "0.3", features = ["Document", "Element", "EventSource", "EventTarget", "MessageEvent", "Storage", "Window"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2"
@@ -48,6 +52,10 @@ pbkdf2 = { version = "0.12.2", optional = true }
 base64 = { version = "0.22.1", optional = true }
 prost = { version = "0.13", optional = true }
 tonic = { version = "0.12", default-features = false, features = ["codegen", "prost"], optional = true }
+wasi-auth = { version = "=0.1.0-rc.1", default-features = false, optional = true }
+
+[target.wasm32-unknown-unknown.dependencies]
+getrandom03 = { package = "getrandom", version = "0.3.4", features = ["wasm_js"] }
 
 [build-dependencies]
 tonic-build = { version = "0.12", default-features = false, features = ["prost"] }
@@ -55,13 +63,19 @@ tonic-build = { version = "0.12", default-features = false, features = ["prost"]
 [features]
 hydrate = [
   "leptos/hydrate",
+  "leptos/islands",
+  "leptos/islands-router",
   "dep:wasm-bindgen",
+  "dep:wasm-bindgen-futures",
   "dep:web-sys",
 ]
 ssr = [
   "leptos/ssr",
+  "leptos/islands",
+  "leptos/islands-router",
   "leptos_meta/ssr",
   "leptos_router/ssr",
+  "server_fn/axum-no-default",
   "dep:leptos_wasi",
   "dep:wasip3",
   "dep:wit-bindgen",
@@ -84,7 +98,6 @@ postgres = [
   "dep:pbkdf2",
   "dep:base64",
   "dep:spin-sdk",
-  "ddd_cqrs_es/wasi-postgres-tcp",
   "ddd_cqrs_es/spin-postgres",
 ]
 neon = [
@@ -112,10 +125,6 @@ spin-mysql = [
   "spin-sdk/mysql",
   "ddd_cqrs_es/spin-mysql",
 ]
-wasi-mysql = [
-  "mysql",
-  "ddd_cqrs_es/wasi-mysql",
-]
 spin-redis = [
   "redis",
   "dep:spin-sdk",
@@ -131,7 +140,10 @@ spin-grpc = [
   "spin-sdk/grpc",
   "dep:prost",
   "dep:tonic",
+  "dep:wasi-auth",
+  "wasi-auth/spin-grpc",
 ]
+auth = ["spin-grpc", "spin-sdk/variables"]
 
 [profile.wasm-release]
 inherits = "release"
@@ -140,10 +152,19 @@ lto = true
 codegen-units = 1
 panic = "abort"
 
+[profile.wasm-benchmark]
+inherits = "release"
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+
 [package.metadata.leptos]
 output-name = "counter_app"
 tailwind-input-file = "input.css"
 assets-dir = "public"
+disable-erase-components = true
 
 # == Hydrate (client)
 lib-profile-release = "wasm-release"

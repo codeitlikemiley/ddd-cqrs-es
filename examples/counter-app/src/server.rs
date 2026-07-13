@@ -1,6 +1,5 @@
 use leptos::config::get_configuration;
-use leptos_wasi::executor::init_wasip3_spawner;
-use leptos_wasi::prelude::Handler;
+use leptos_wasi::wasip3::prelude::{Handler, HandlerConfig, init_wasip3_spawner};
 use wasip3::http::types::{ErrorCode, Request, Response};
 
 use crate::app::{App, DecrementCount, GetCounterView, IncrementCount, ResetCount, shell};
@@ -9,8 +8,7 @@ struct LeptosServer;
 
 impl wasip3::exports::http::handler::Guest for LeptosServer {
     async fn handle(request: Request) -> Result<Response, ErrorCode> {
-        // 1. Initialize host async task scheduling
-        let _ = init_wasip3_spawner();
+        init_wasip3_spawner().map_err(internal_error)?;
 
         let _ = tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -78,37 +76,36 @@ impl wasip3::exports::http::handler::Guest for LeptosServer {
             return wasip3::http_compat::http_into_wasi_response(response);
         }
 
-        let conf = get_configuration(None).unwrap();
+        let conf = get_configuration(None).map_err(internal_error)?;
         let leptos_options = conf.leptos_options;
 
-        // 2. Build and handle request natively
-        let wasi_res = Handler::build(req)
-            .await
-            .map_err(|e| {
-                tracing::error!(
-                    error = ?e,
-                    "failed to build Leptos WASI handler"
-                );
-                ErrorCode::InternalError(None)
-            })?
+        let handler = Handler::build_with_config(
+            req,
+            HandlerConfig::default().with_max_request_body_size(256 * 1024),
+        )
+        .await
+        .map_err(internal_error)?;
+        let handler = handler
             .static_files_handler("/pkg", serve_static_files)
+            .map_err(internal_error)?
             .with_server_fn::<GetCounterView>()
             .with_server_fn::<IncrementCount>()
             .with_server_fn::<DecrementCount>()
             .with_server_fn::<ResetCount>()
             .generate_routes(App)
+            .map_err(internal_error)?;
+        let wasi_res = handler
             .handle_with_context(move || shell(leptos_options.clone()), || {})
             .await
-            .map_err(|e| {
-                tracing::error!(
-                    error = ?e,
-                    "failed to handle Leptos WASI request"
-                );
-                ErrorCode::InternalError(None)
-            })?;
+            .map_err(internal_error)?;
 
         Ok(wasi_res)
     }
+}
+
+fn internal_error(error: impl std::fmt::Debug) -> ErrorCode {
+    tracing::error!(error = ?error, "counter request failed");
+    ErrorCode::InternalError(None)
 }
 
 fn serve_static_files(path: String) -> Option<leptos_wasi::response::Body> {

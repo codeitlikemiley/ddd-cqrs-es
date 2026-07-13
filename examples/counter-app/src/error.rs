@@ -7,6 +7,10 @@ pub type CounterAppResult<T> = Result<T, CounterAppError>;
 
 #[derive(Debug, Error)]
 pub enum CounterAppError {
+    #[error("authentication is required")]
+    AuthRequired,
+    #[error("counter operation is forbidden")]
+    Forbidden,
     #[error("validation error: {message}")]
     Validation { message: String },
     #[error("domain error: {message}")]
@@ -113,6 +117,8 @@ impl CounterAppError {
 
     pub fn http_status(&self) -> StatusCode {
         match self {
+            Self::AuthRequired => StatusCode::UNAUTHORIZED,
+            Self::Forbidden => StatusCode::FORBIDDEN,
             Self::Validation { .. } | Self::Domain { .. } => StatusCode::BAD_REQUEST,
             Self::Concurrency { .. } => StatusCode::CONFLICT,
             Self::Configuration { .. } => StatusCode::SERVICE_UNAVAILABLE,
@@ -131,6 +137,8 @@ impl CounterAppError {
 
     pub fn public_code(&self) -> &'static str {
         match self {
+            Self::AuthRequired => "authentication_required",
+            Self::Forbidden => "forbidden",
             Self::Validation { .. } => "validation",
             Self::Domain { .. } => "domain",
             Self::Concurrency { .. } => "concurrency",
@@ -146,10 +154,10 @@ impl CounterAppError {
 
     pub fn public_message(&self) -> String {
         match self {
+            Self::AuthRequired => "authentication is required".to_string(),
+            Self::Forbidden => "counter operation is forbidden".to_string(),
             Self::Validation { message } | Self::Domain { message } => message.clone(),
-            Self::Concurrency { .. } => {
-                "counter command conflicted; retry the request".to_string()
-            }
+            Self::Concurrency { .. } => "counter command conflicted; retry the request".to_string(),
             Self::Configuration { .. } => {
                 "counter service is not configured for this operation".to_string()
             }
@@ -162,16 +170,18 @@ impl CounterAppError {
             | Self::Projection { .. }
             | Self::Realtime { .. }
             | Self::Serialization { .. }
-            | Self::Transport { .. } => {
-                "counter service failed; check server logs".to_string()
-            }
+            | Self::Transport { .. } => "counter service failed; check server logs".to_string(),
         }
     }
 
     pub fn is_client_error(&self) -> bool {
         matches!(
             self,
-            Self::Validation { .. } | Self::Domain { .. } | Self::Concurrency { .. }
+            Self::AuthRequired
+                | Self::Forbidden
+                | Self::Validation { .. }
+                | Self::Domain { .. }
+                | Self::Concurrency { .. }
         )
     }
 
@@ -196,10 +206,14 @@ impl CounterAppError {
     #[cfg(feature = "spin-grpc")]
     pub fn grpc_code(&self) -> tonic::Code {
         match self {
+            Self::AuthRequired => tonic::Code::Unauthenticated,
+            Self::Forbidden => tonic::Code::PermissionDenied,
             Self::Validation { .. } | Self::Domain { .. } => tonic::Code::InvalidArgument,
             Self::Concurrency { .. } => tonic::Code::Aborted,
             Self::Configuration { .. } => tonic::Code::Unavailable,
-            Self::Store { source } if is_unavailable_store_error(source) => tonic::Code::Unavailable,
+            Self::Store { source } if is_unavailable_store_error(source) => {
+                tonic::Code::Unavailable
+            }
             Self::Store { .. }
             | Self::StoreMessage { .. }
             | Self::ReadModel { .. }

@@ -343,6 +343,44 @@ where
     A::Event: serde::Serialize + serde::de::DeserializeOwned,
     A::Id: serde::Serialize + serde::de::DeserializeOwned,
 {
+    fn load_idempotent(
+        &self,
+        idempotency_key: &IdempotencyKey,
+    ) -> Result<Option<IdempotencyState<EventStream<A>>>, Self::Error> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| EventStoreError::Poisoned)?;
+        let query = format!(
+            "SELECT state, value FROM {} WHERE idempotency_key = ?1;",
+            self.idempotency_table
+        );
+        let row = connection
+            .query_row(&query, params![idempotency_key.as_str()], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })
+            .optional()
+            .map_err(map_sqlite_error)?;
+
+        row.map(|(state, value)| match (state.as_str(), value) {
+            ("pending", _) => Ok(IdempotencyState::Pending),
+            ("complete", Some(value)) => serde_json::from_str(&value)
+                .map(IdempotencyState::Complete)
+                .map_err(|error| {
+                    EventStoreError::Deserialization(format!(
+                        "idempotent committed events JSON: {error}"
+                    ))
+                }),
+            ("complete", None) => Err(EventStoreError::Deserialization(
+                "completed idempotency row is missing value".to_owned(),
+            )),
+            (state, _) => Err(EventStoreError::Deserialization(format!(
+                "unknown idempotency state: {state}"
+            ))),
+        })
+        .transpose()
+    }
+
     fn append_idempotent(
         &self,
         idempotency_key: IdempotencyKey,
@@ -589,6 +627,19 @@ where
     A::Event: serde::Serialize + serde::de::DeserializeOwned + Send + Sync + 'static,
     A::Id: serde::Serialize + serde::de::DeserializeOwned + Send + Sync + 'static,
 {
+    async fn load_idempotent(
+        &self,
+        idempotency_key: &IdempotencyKey,
+    ) -> Result<Option<IdempotencyState<EventStream<A>>>, Self::Error> {
+        let this = self.clone();
+        let idempotency_key = idempotency_key.clone();
+        tokio::task::spawn_blocking(move || {
+            AtomicIdempotentEventStore::load_idempotent(&this, &idempotency_key)
+        })
+        .await
+        .map_err(|error| EventStoreError::Backend(error.to_string()))?
+    }
+
     async fn append_idempotent(
         &self,
         idempotency_key: IdempotencyKey,

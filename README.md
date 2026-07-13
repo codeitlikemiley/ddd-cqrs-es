@@ -62,14 +62,14 @@ Add the crate to `Cargo.toml`:
 
 ```toml
 [dependencies]
-ddd_cqrs_es = "0.2.3"
+ddd_cqrs_es = "0.3.0-rc.1"
 ```
 
 Enable only the adapters you need:
 
 ```toml
 [dependencies]
-ddd_cqrs_es = { version = "0.2.3", features = ["serde", "json", "sqlite"] }
+ddd_cqrs_es = { version = "0.3.0-rc.1", features = ["serde", "json", "sqlite"] }
 ```
 
 Common features:
@@ -94,6 +94,18 @@ Redis has two distinct roles:
 
 SQLite, PostgreSQL, and MySQL are the stable SQL adapter family. Redis, WASI, and Spin helpers support edge and realtime-oriented deployments.
 
+## Fullstack authentication
+
+Authentication and authorization are maintained in the separate, single
+`wasi-auth` crate. The former `ddd-auth` and `ddd-authz` workspace crates have
+been removed so the DDD core remains independent of identity concerns.
+
+Use `ddd init <name> --preset fullstack` to generate the canonical Leptos
+islands + REST + Spin gRPC application. The committed
+`examples/fullstack-app` is generated from that embedded template, while
+`examples/counter-app` demonstrates unary, server-streaming, client-streaming,
+and bidirectional-streaming gRPC with optional `wasi-auth` authorization.
+
 ## Learn More
 
 - Live docs: [https://ddd-cqrs-es.mintlify.site/](https://ddd-cqrs-es.mintlify.site/)
@@ -102,6 +114,7 @@ SQLite, PostgreSQL, and MySQL are the stable SQL adapter family. Redis, WASI, an
 - Persisted stores: [docs/production/persisted-store.md](./docs/production/persisted-store.md)
 - Redis and realtime: [docs/production/redis.md](./docs/production/redis.md)
 - Leptos/WASI tutorial: [docs/tutorial/leptos-ssr.md](./docs/tutorial/leptos-ssr.md)
+- wasi-auth fullstack template: [docs/production/wasi-auth-fullstack.md](./docs/production/wasi-auth-fullstack.md)
 
 ## Agent Workflows
 
