@@ -521,7 +521,7 @@ new_password="new-correct-456"
 
 register_response="$(json_post /api/auth/password/register \
   "{\"email\":\"$email\",\"password\":\"$old_password\",\"redirect_url\":\"/dashboard\"}")"
-jq -e '.authenticated == false and .redirect_url == "/verify-email" and .session_id == null and .access_token == null and .refresh_token == null' \
+jq -e '.authenticated == false and .redirect_url == "/verify-email/pending" and .session_id == null and .access_token == null and .refresh_token == null' \
   <<<"$register_response" >/dev/null
 verification_mail="$(captured_mail "$email" email-verification)"
 verification_path="$(jq -r '.body_text' <<<"$verification_mail")"

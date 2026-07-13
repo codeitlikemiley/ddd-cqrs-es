@@ -72,6 +72,9 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
                 false
             }
         };
+        let is_browser_navigation = !is_grpc
+            && !crate::rest::is_rest_request(&req)
+            && matches!(*req.method(), http::Method::GET | http::Method::HEAD);
         if matches!(
             *req.method(),
             http::Method::POST | http::Method::PUT | http::Method::PATCH | http::Method::DELETE
@@ -91,25 +94,25 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
             return plain_text_response(http::StatusCode::UNAUTHORIZED, "Request rejected.");
         } else {
             match crate::application::authenticate_ingress(&req).await {
-            Ok(context) => context,
-            Err(
-                crate::error::AuthStackError::AuthRequired
-                | crate::error::AuthStackError::InvalidCredentials
-                | crate::error::AuthStackError::InvalidToken
-                | crate::error::AuthStackError::SessionExpired,
-            ) if public_authentication_route(&request_path)
-                && !req.headers().contains_key(http::header::AUTHORIZATION) =>
-            {
-                None
-            }
-            Err(error) => {
-                tracing::warn!(
-                    error = %error,
-                    error_code = error.public_code(),
-                    "trusted ingress rejected request"
-                );
-                return plain_text_response(error.http_status(), "Request rejected.");
-            }
+                Ok(context) => context,
+                Err(
+                    crate::error::AuthStackError::AuthRequired
+                    | crate::error::AuthStackError::InvalidCredentials
+                    | crate::error::AuthStackError::InvalidToken
+                    | crate::error::AuthStackError::SessionExpired,
+                ) if (public_authentication_route(&request_path) || is_browser_navigation)
+                    && !req.headers().contains_key(http::header::AUTHORIZATION) =>
+                {
+                    None
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        error_code = error.public_code(),
+                        "trusted ingress rejected request"
+                    );
+                    return plain_text_response(error.http_status(), "Request rejected.");
+                }
             }
         };
         let session_id = request_context

@@ -4,7 +4,7 @@
 
 use crate::contracts::{
     AcceptedResponse, AccountSessionListResponse, AdminUserListResponse, AuditEventListResponse,
-    AuthCapabilities, AuthProviderSummary, AuthorizationCapabilitiesResponse,
+    AuthCapabilities, AuthProviderSummary, AuthorizationCapabilitiesResponse, CapturedMailResponse,
     EmailPasswordLoginRequest, EmailPasswordRegisterRequest, EmailVerificationCompleteRequest,
     EmailVerificationResendRequest, HealthStatusResponse, InvitationCreateRequest,
     InvitationListResponse, LoginCompletionResponse, LogoutResponse, MembershipListResponse,
@@ -164,6 +164,7 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/forgot-password") view=ForgotPasswordPage />
                     <Route path=path!("/reset-password") view=ResetPasswordPage />
                     <Route path=path!("/verify-email") view=VerifyEmailPage />
+                    <Route path=path!("/verify-email/pending") view=VerificationPendingPage />
                     <Route path=path!("/verify-email/resend") view=ResendVerificationPage />
                     <Route path=path!("/dashboard") view=DashboardPage />
                     <Route path=path!("/logout") view=LogoutPage />
@@ -288,6 +289,30 @@ fn VerifyEmailPage() -> impl IntoView {
             <section class="auth-card">
                 <AuthBrand />
                 <EmailVerificationForm />
+            </section>
+        </div>
+    }
+}
+
+#[component]
+fn VerificationPendingPage() -> impl IntoView {
+    view! {
+        <div class="auth-page">
+            <section class="auth-card">
+                <AuthBrand />
+                <section class="auth-form">
+                    <div>
+                        <p class="auth-kicker">"Email verification"</p>
+                        <h1 class="auth-title">"Check your inbox"</h1>
+                        <p class="auth-copy">
+                            "Your account is pending. Open the one-time verification link before signing in."
+                        </p>
+                    </div>
+                    <p class="auth-notice">
+                        "Local capture mode keeps messages on this machine. Start the app with `make dev` to run delivery automatically."
+                    </p>
+                    <a class="auth-text-link" href="/verify-email/resend">"Send another verification link"</a>
+                </section>
             </section>
         </div>
     }
@@ -1066,6 +1091,11 @@ fn EmailPasswordAuthForm(register_default: bool) -> impl IntoView {
     let (email, set_email) = signal(String::new());
     let (password, set_password) = signal(String::new());
     let (client_error, set_client_error) = signal(None::<String>);
+    let capture_enabled = browser_load(development_mail_capture_enabled);
+    let capture_action = ServerAction::<LatestDevelopmentMail>::new();
+    let capture_pending = capture_action.pending();
+    let capture_value = capture_action.value();
+    let registration_complete = RwSignal::new(false);
 
     Effect::new(move |_| {
         if let Some(Ok(response)) = login_value.get() {
@@ -1073,8 +1103,13 @@ fn EmailPasswordAuthForm(register_default: bool) -> impl IntoView {
         }
     });
     Effect::new(move |_| {
-        if let Some(Ok(response)) = register_value.get() {
-            redirect_browser(&response.redirect_url);
+        if register_value.get().is_some_and(|result| result.is_ok()) {
+            registration_complete.set(true);
+        }
+    });
+    Effect::new(move |_| {
+        if let Some(Ok(message)) = capture_value.get() {
+            redirect_browser(&message.body_text);
         }
     });
 
@@ -1120,7 +1155,34 @@ fn EmailPasswordAuthForm(register_default: bool) -> impl IntoView {
                 </p>
             </div>
 
-            <div class="auth-mode-switch" role="tablist" aria-label="Authentication mode">
+            <Show when=move || registration_complete.get()>
+                <div class="auth-success">
+                    <p><strong>"Account created."</strong> " Check your inbox for the one-time verification link."</p>
+                    <Show when=move || matches!(capture_enabled.get(), Some(Ok(true)))>
+                        <p>"Capture mode does not send internet email. The local worker stores the message for this example."</p>
+                        <button
+                            type="button"
+                            class="auth-secondary"
+                            disabled=move || capture_pending.get()
+                            on:click=move |_| {
+                                capture_action.dispatch(LatestDevelopmentMail {
+                                    recipient: email.get_untracked(),
+                                    message_kind: "email-verification".to_owned(),
+                                });
+                            }
+                        >
+                            {move || if capture_pending.get() { "Looking for message" } else { "Open captured verification link" }}
+                        </button>
+                        <Show when=move || selected_action_error(capture_value.get()).is_some()>
+                            <p class="auth-inline-error">
+                                {move || selected_action_error(capture_value.get()).unwrap_or_default()}
+                            </p>
+                        </Show>
+                    </Show>
+                </div>
+            </Show>
+
+            <div class="auth-mode-switch" role="tablist" aria-label="Authentication mode" hidden=move || registration_complete.get()>
                 <button
                     type="button"
                     class=move || if register_mode.get() {
@@ -1151,7 +1213,7 @@ fn EmailPasswordAuthForm(register_default: bool) -> impl IntoView {
                 </button>
             </div>
 
-            <form class="auth-fields" on:submit=move |event| {
+            <form class="auth-fields" hidden=move || registration_complete.get() on:submit=move |event| {
                 event.prevent_default();
                 submit_credentials();
             }>
@@ -1282,7 +1344,7 @@ fn EmailVerificationForm() -> impl IntoView {
                 <p class="auth-error">{move || selected_action_error(value.get()).unwrap_or_default()}</p>
             </Show>
             <Show when=move || one_time_token_from_url().is_none()>
-                <p class="auth-error">"Verification token is missing."</p>
+                <p class="auth-notice">"Open this page from the one-time link in your verification message."</p>
             </Show>
             <a class="auth-text-link" href="/verify-email/resend">"Request another message"</a>
         </section>
@@ -1295,6 +1357,16 @@ fn ResendVerificationForm() -> impl IntoView {
     let pending = action.pending();
     let value = action.value();
     let (email, set_email) = signal(String::new());
+    let capture_enabled = browser_load(development_mail_capture_enabled);
+    let capture_action = ServerAction::<LatestDevelopmentMail>::new();
+    let capture_pending = capture_action.pending();
+    let capture_value = capture_action.value();
+
+    Effect::new(move |_| {
+        if let Some(Ok(message)) = capture_value.get() {
+            redirect_browser(&message.body_text);
+        }
+    });
 
     view! {
         <section class="auth-form">
@@ -1325,6 +1397,25 @@ fn ResendVerificationForm() -> impl IntoView {
                 </button>
                 <Show when=move || value.get().is_some()>
                     <p class="result-line">{move || action_result_text(value.get())}</p>
+                </Show>
+                <Show when=move || value.get().is_some() && matches!(capture_enabled.get(), Some(Ok(true)))>
+                    <p class="auth-notice">"Capture mode stores this message locally; it will not arrive in an external inbox."</p>
+                    <button
+                        type="button"
+                        class="auth-secondary"
+                        disabled=move || capture_pending.get()
+                        on:click=move |_| {
+                            capture_action.dispatch(LatestDevelopmentMail {
+                                recipient: email.get_untracked(),
+                                message_kind: "email-verification".to_owned(),
+                            });
+                        }
+                    >
+                        {move || if capture_pending.get() { "Looking for message" } else { "Open captured verification link" }}
+                    </button>
+                    <Show when=move || selected_action_error(capture_value.get()).is_some()>
+                        <p class="auth-inline-error">{move || selected_action_error(capture_value.get()).unwrap_or_default()}</p>
+                    </Show>
                 </Show>
             </form>
         </section>
@@ -2114,12 +2205,13 @@ fn error_page_shell(
     children: impl IntoView + 'static,
 ) -> impl IntoView {
     view! {
-        <div class="grid min-h-[100dvh] place-items-center bg-[#f6f3ee] px-5 py-12 text-[#1b2228]">
-            <section class="w-full max-w-[480px] rounded-[18px] border border-[#ded8cf] bg-[#fffdf9] p-8 shadow-[0_28px_80px_-54px_rgba(31,27,22,0.55)] sm:p-10">
-                <p class="text-xs font-bold uppercase tracking-[0.14em] text-[#80786d]">"wasi-auth / ddd_cqrs_es"</p>
-                <h1 class="mt-4 text-[2rem] font-semibold leading-[1.05] tracking-[-0.035em] text-[#151b20] sm:text-[2.35rem]">{title}</h1>
-                <p class="mt-3 text-[0.95rem] leading-6 text-[#68635b]">{subtitle}</p>
-                <div class="mt-7 flex flex-wrap gap-3">{children}</div>
+        <div class="error-page">
+            <section class="error-card">
+                <AuthBrand />
+                <p class="auth-kicker">"Request interrupted"</p>
+                <h1 class="error-title">{title}</h1>
+                <p class="error-copy">{subtitle}</p>
+                <div class="error-actions">{children}</div>
             </section>
         </div>
     }
@@ -2459,6 +2551,34 @@ pub async fn resend_email_verification(
     #[cfg(not(feature = "ssr"))]
     {
         let _ = (email, redirect_url);
+        unreachable!()
+    }
+}
+
+#[server(prefix = "/api/ui")]
+pub async fn development_mail_capture_enabled() -> Result<bool, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        Ok(crate::auth_product::development_mail_capture_enabled().await)
+    }
+    #[cfg(not(feature = "ssr"))]
+    unreachable!()
+}
+
+#[server(prefix = "/api/ui")]
+pub async fn latest_development_mail(
+    recipient: String,
+    message_kind: String,
+) -> Result<CapturedMailResponse, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        crate::application::latest_captured_mail(recipient, message_kind)
+            .await
+            .map_err(server_fn_error)
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (recipient, message_kind);
         unreachable!()
     }
 }

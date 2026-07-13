@@ -43,9 +43,65 @@ development:
 
 ```bash
 make -C examples/fullstack-app db-up
-make -C examples/fullstack-app outbox-worker # separate terminal
-make -C examples/fullstack-app spin transport=both # separate terminal
+make -C examples/fullstack-app dev transport=both
 ```
+
+`make dev` installs the exact `wasi-auth-outbox-worker` release into the
+example's `target/wasi-auth-tools` directory and stops it when Spin exits. HTTP
+requests commit durable mail intents; the worker marks them delivered. The
+default `capture` transport never sends internet email. The registration and
+resend pages provide an **Open captured verification link** action after local
+delivery. Run `make outbox-worker` and `make spin` separately only when you need
+independent process logs.
+
+For real local or production delivery through Resend, use a verified sender:
+
+```bash
+AUTH_MAIL_TRANSPORT=resend
+AUTH_RESEND_API_KEY=re_replace_me
+AUTH_RESEND_FROM="wasi-auth <auth@example.com>"
+```
+
+These values belong in the native worker environment. The Makefile never adds
+the Resend API key to Spin variables. Resend delivery uses the outbox
+correlation ID as the provider idempotency key, so worker retries do not send a
+second message during the provider's idempotency window.
+
+For local testing, put those values in `examples/fullstack-app/.env` and run
+`make -C examples/fullstack-app dev`. For production, inject them only into
+the worker service or its secret manager, not into the Spin component.
+
+### What the outbox worker is
+
+The outbox worker is not an SMTP server, mail server, or replacement for
+Resend. It is a native background delivery process:
+
+```text
+request -> PostgreSQL transaction
+           user state + encrypted mail intent
+        -> HTTP response
+worker  -> leases pending intent -> calls Resend -> records delivery ID
+```
+
+The application commits the account change and mail intent together. The
+worker later delivers verification, reset, invitation, and security messages,
+then records whether each intent was delivered, retried, or dead-lettered. If
+the worker is down, requests remain usable but email jobs accumulate as
+`pending`; restarting the worker drains them. This is why production runs the
+Spin service and at least one outbox-worker process against the same
+PostgreSQL database.
+
+For local development, `make dev` owns both processes. Use this only when you
+need separate logs:
+
+```bash
+make spin
+make outbox-worker
+```
+
+Running only `make spin` does not send mail. Running only the worker cannot
+serve pages or API requests. The worker owns Resend and SpiceDB write
+credentials; the Spin guest receives neither.
 
 The stale Spin SQLite migration-only feature was removed before the first RC.
 It did not implement the product workflows and had already diverged from the
@@ -79,8 +135,8 @@ Spin host is built separately at its truthful Rust 1.94 floor because Wasmtime
 
 The dependency graph requires a staged RC release: publish
 `leptos-wasi-runtime 0.4.2-rc.1` (aliased as `leptos_wasi`), then
-`wasi-auth 0.1.0-rc.1`, the `ddd_cqrs_es 0.3.0-rc.1` library, and finally the
-`ddd-cqrs-es-cli 0.3.0-rc.1` generator and generated consumers. The library
+`wasi-auth 0.1.0-rc.2`, the `ddd_cqrs_es 0.3.0-rc.2` library, and finally the
+`ddd-cqrs-es-cli 0.3.0-rc.2` generator and generated consumers. The library
 and CLI follow `wasi-auth` because the `fullstack` preset emits that exact
 public dependency. Stable releases repeat the same dependency order.
 

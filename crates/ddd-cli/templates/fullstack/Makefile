@@ -2,7 +2,12 @@ transport ?= both
 listen ?= 127.0.0.1:3008
 backend_listen ?= 127.0.0.1:3009
 WASI_AUTH_INGRESS_BIN ?= wasi-auth-ingress
-WASI_AUTH_OUTBOX_WORKER_BIN ?= wasi-auth-outbox-worker
+WASI_AUTH_VERSION ?= 0.1.0-rc.2
+WASI_AUTH_LOCAL_SOURCE := $(abspath $(CURDIR)/../../../wasi-auth/crates/wasi-auth)
+WASI_AUTH_SOURCE ?= $(if $(wildcard $(WASI_AUTH_LOCAL_SOURCE)/Cargo.toml),$(WASI_AUTH_LOCAL_SOURCE),)
+WASI_AUTH_TOOLS_PROFILE := $(if $(WASI_AUTH_SOURCE),local,$(WASI_AUTH_VERSION))
+WASI_AUTH_TOOLS_ROOT ?= $(CURDIR)/target/wasi-auth-tools/$(WASI_AUTH_TOOLS_PROFILE)
+WASI_AUTH_OUTBOX_WORKER_BIN ?= $(WASI_AUTH_TOOLS_ROOT)/bin/wasi-auth-outbox-worker
 SPIN_BIN ?= spin
 SPIN_UP_BUILD_FLAG ?= --build
 CARGO_CONFIG_ARGS ?=
@@ -46,6 +51,9 @@ AUTH_DEV_TOOLS ?= true
 AUTH_MAIL_TRANSPORT ?= capture
 AUTH_MAIL_HTTP_URL ?=
 AUTH_MAIL_HTTP_TOKEN ?=
+AUTH_RESEND_API_KEY ?=
+AUTH_RESEND_FROM ?=
+AUTH_RESEND_FROM_VALUE = $(subst ",,$(strip $(AUTH_RESEND_FROM)))
 AUTH_SPICEDB_ENABLED ?= false
 AUTH_SPICEDB_CHECK_URL ?=
 AUTH_SPICEDB_WRITE_URL ?=
@@ -109,7 +117,10 @@ ifeq ($(db),postgres)
 AUTH_DATABASE_URL := $(POSTGRES_URL)
 endif
 
-MAIL_FEATURE := mail-$(AUTH_MAIL_TRANSPORT)
+MAIL_FEATURE := mail-http
+ifeq ($(AUTH_MAIL_TRANSPORT),capture)
+MAIL_FEATURE := mail-capture
+endif
 OPTIONAL_SPICEDB_FEATURE :=
 ifeq ($(AUTH_SPICEDB_ENABLED),true)
 OPTIONAL_SPICEDB_FEATURE := ,spicedb
@@ -200,7 +211,7 @@ SPIN_VARIABLE_ARGS = \
 	--variable auth_apple_scopes='$(AUTH_APPLE_SCOPES)' \
 	--variable auth_apple_redirect_uri=$(AUTH_APPLE_REDIRECT_URI)
 
-.PHONY: help validate-toolchain validate-mail db-up db-down db-migrate db-verify check grpc-check spin spin-backend spin-backend-prebuilt trusted-ingress outbox-worker fresh smoke oauth-credentials oauth-preflight oauth-evidence oauth-callback oauth-browser-smoke oauth-dev-browser-smoke browser-smoke passkey-browser-smoke
+.PHONY: help validate-toolchain validate-mail db-up db-down db-migrate db-verify check grpc-check dev spin spin-backend spin-backend-prebuilt trusted-ingress install-outbox-worker outbox-worker fresh smoke oauth-credentials oauth-preflight oauth-evidence oauth-callback oauth-browser-smoke oauth-dev-browser-smoke browser-smoke passkey-browser-smoke
 
 help:
 	@echo "Fullstack targets:"
@@ -209,11 +220,12 @@ help:
 	@echo "  make db-up                Start the local PostgreSQL development container"
 	@echo "  make db-migrate           Apply lock-protected wasi-auth migrations"
 	@echo "  make db-verify            Verify migration history and required tables"
+	@echo "  make dev                   Run Spin and the development mail worker together"
 	@echo "  make spin transport=both   Build and run the Spin fullstack app on $(listen)"
 	@echo "  make spin-backend          Run loopback Spin backend on $(backend_listen)"
 	@echo "  make spin-backend-prebuilt Run the already verified component without rebuilding"
 	@echo "  make trusted-ingress       Run native ingress on $(listen) in a second terminal"
-	@echo "  make outbox-worker         Run native mail/SpiceDB delivery in a separate terminal"
+	@echo "  make outbox-worker         Install and run matching native mail/SpiceDB delivery"
 	@echo "  make fresh db=postgres     Erase PostgreSQL data using POSTGRES_URL"
 	@echo "  make smoke                 Run REST/web route smoke checks against BASE_URL"
 	@echo "  make oauth-credentials     Check required live OAuth credential variables"
@@ -243,7 +255,10 @@ db-verify:
 validate-mail:
 	@case "$(AUTH_MAIL_TRANSPORT)" in \
 		capture|http) ;; \
-		*) echo "Error: unsupported AUTH_MAIL_TRANSPORT=$(AUTH_MAIL_TRANSPORT). Use capture or http."; exit 2 ;; \
+		resend) \
+			test -n "$(AUTH_RESEND_API_KEY)" || { echo "Error: AUTH_RESEND_API_KEY is required for Resend."; exit 2; }; \
+			test -n "$(AUTH_RESEND_FROM_VALUE)" || { echo "Error: AUTH_RESEND_FROM is required for Resend."; exit 2; } ;; \
+		*) echo "Error: unsupported AUTH_MAIL_TRANSPORT=$(AUTH_MAIL_TRANSPORT). Use capture, resend, or http."; exit 2 ;; \
 	esac
 
 check: validate-toolchain validate-mail
@@ -251,6 +266,12 @@ check: validate-toolchain validate-mail
 
 grpc-check: validate-toolchain validate-mail
 	WASI_RUNTIME=spin AUTH_TRANSPORT=grpc cargo check --target wasm32-wasip2 --no-default-features --features $(GRPC_FEATURES)
+
+dev: install-outbox-worker
+	@set -eu; \
+		$(MAKE) --no-print-directory outbox-worker & worker_pid=$$!; \
+		trap 'kill $$worker_pid 2>/dev/null || true; wait $$worker_pid 2>/dev/null || true' EXIT INT TERM; \
+		$(MAKE) --no-print-directory spin transport=$(transport)
 
 spin: validate-toolchain validate-mail db-migrate
 	@case "$(db)" in \
@@ -276,7 +297,7 @@ trusted-ingress: db-migrate
 		(echo "Error: AUTH_TRUSTED_INGRESS_KEY_BASE64 must be a base64-encoded 32-byte key."; exit 2)
 	@command -v "$(WASI_AUTH_INGRESS_BIN)" >/dev/null 2>&1 || \
 		(echo "Error: $(WASI_AUTH_INGRESS_BIN) is not installed or WASI_AUTH_INGRESS_BIN is incorrect."; exit 2)
-	DATABASE_URL='$(POSTGRES_URL)' \
+	@DATABASE_URL='$(POSTGRES_URL)' \
 	AUTH_PRODUCTION_MODE=$(AUTH_PRODUCTION_MODE) \
 	AUTH_TRUSTED_INGRESS_KEY_BASE64='$(AUTH_TRUSTED_INGRESS_KEY_BASE64)' \
 	AUTH_TRUSTED_INGRESS_AUDIENCE='$(AUTH_TRUSTED_INGRESS_AUDIENCE)' \
@@ -289,12 +310,26 @@ trusted-ingress: db-migrate
 	AUTH_PUBLIC_BASE_URL='$(AUTH_PUBLIC_BASE_URL)' \
 	"$(WASI_AUTH_INGRESS_BIN)"
 
-outbox-worker: validate-mail db-migrate
+install-outbox-worker:
+	@if [ ! -x "$(WASI_AUTH_OUTBOX_WORKER_BIN)" ]; then \
+		if [ -n "$(WASI_AUTH_SOURCE)" ]; then \
+			echo "Installing local wasi-auth-outbox-worker from $(WASI_AUTH_SOURCE)..."; \
+			cargo install --path "$(WASI_AUTH_SOURCE)" --locked --root "$(WASI_AUTH_TOOLS_ROOT)" \
+				--features outbox-worker --bin wasi-auth-outbox-worker; \
+		else \
+			echo "Installing wasi-auth-outbox-worker $(WASI_AUTH_VERSION) into $(WASI_AUTH_TOOLS_ROOT)..."; \
+			cargo install wasi-auth --version '=$(WASI_AUTH_VERSION)' --locked \
+				--root "$(WASI_AUTH_TOOLS_ROOT)" --features outbox-worker \
+				--bin wasi-auth-outbox-worker; \
+		fi; \
+	fi
+
+outbox-worker: validate-mail db-migrate install-outbox-worker
 	@test -n "$(AUTH_OUTBOX_KEY_BASE64)" || \
 		(echo "Error: AUTH_OUTBOX_KEY_BASE64 must be a base64-encoded 32-byte key."; exit 2)
-	@command -v "$(WASI_AUTH_OUTBOX_WORKER_BIN)" >/dev/null 2>&1 || \
-		(echo "Error: $(WASI_AUTH_OUTBOX_WORKER_BIN) is not installed or WASI_AUTH_OUTBOX_WORKER_BIN is incorrect."; exit 2)
-	DATABASE_URL='$(POSTGRES_URL)' \
+	@test -x "$(WASI_AUTH_OUTBOX_WORKER_BIN)" || \
+		(echo "Error: $(WASI_AUTH_OUTBOX_WORKER_BIN) is not executable."; exit 2)
+	@DATABASE_URL='$(POSTGRES_URL)' \
 	AUTH_PRODUCTION_MODE=$(AUTH_PRODUCTION_MODE) \
 	AUTH_PUBLIC_BASE_URL='$(AUTH_PUBLIC_BASE_URL)' \
 	AUTH_OUTBOX_KEY_BASE64='$(AUTH_OUTBOX_KEY_BASE64)' \
@@ -306,6 +341,8 @@ outbox-worker: validate-mail db-migrate
 	AUTH_MAIL_TRANSPORT=$(AUTH_MAIL_TRANSPORT) \
 	AUTH_MAIL_HTTP_URL='$(AUTH_MAIL_HTTP_URL)' \
 	AUTH_MAIL_HTTP_TOKEN='$(AUTH_MAIL_HTTP_TOKEN)' \
+	AUTH_RESEND_API_KEY='$(AUTH_RESEND_API_KEY)' \
+	AUTH_RESEND_FROM='$(AUTH_RESEND_FROM_VALUE)' \
 	AUTH_SPICEDB_ENABLED=$(AUTH_SPICEDB_ENABLED) \
 	AUTH_SPICEDB_WRITE_URL='$(AUTH_SPICEDB_WRITE_URL)' \
 	AUTH_SPICEDB_TOKEN='$(AUTH_SPICEDB_TOKEN)' \

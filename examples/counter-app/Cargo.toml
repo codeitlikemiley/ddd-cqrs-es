@@ -52,7 +52,7 @@ pbkdf2 = { version = "0.12.2", optional = true }
 base64 = { version = "0.22.1", optional = true }
 prost = { version = "0.13", optional = true }
 tonic = { version = "0.12", default-features = false, features = ["codegen", "prost"], optional = true }
-wasi-auth = { version = "=0.1.0-rc.1", default-features = false, optional = true }
+wasi-auth = { version = "=0.1.0-rc.2", default-features = false, optional = true }
 
 [target.wasm32-unknown-unknown.dependencies]
 getrandom03 = { package = "getrandom", version = "0.3.4", features = ["wasm_js"] }

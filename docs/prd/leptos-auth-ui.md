@@ -216,8 +216,9 @@ transport-native errors from the same application service decision:
 6. Add browser-side error states for expired challenge, invalid callback,
    denied action, and configuration missing.
 7. Add forgot-password and reset-password forms backed by server functions.
-   - Status: done for local reset-token flow; SMTP/email delivery remains a
-     future feature flag.
+   - Status: done; reset and verification messages are delivered through the
+     durable native outbox worker. Capture mail is development-only; Resend or
+     the HTTP provider is configured outside the browser component.
 8. Redact token-bearing login completion data at the browser server-function
    boundary while preserving REST and gRPC token responses.
    - Status: done; Leptos password register/login, password reset completion,

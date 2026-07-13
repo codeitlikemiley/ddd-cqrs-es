@@ -11,11 +11,17 @@ This project is a Spin fullstack authentication and authorization service with L
 - Auth: email/password enabled by default
 - OAuth and passkeys: feature-flagged until credentials are configured
 
-Start with `.env.example`. Run `make db-up`, then keep `make outbox-worker` and `make spin` running in separate terminals before executing `make smoke` or `make browser-smoke`. Mail and optional SpiceDB writes are never dispatched from an HTTP request.
+Start with `.env.example`. Run `make db-up`, then `make dev`. The development target installs the exact matching `wasi-auth-outbox-worker` into `target/wasi-auth-tools` and runs it with Spin. Mail and optional SpiceDB writes are never dispatched from an HTTP request. Capture mail stays local and the registration UI opens the captured verification link after delivery. For real mail, set `AUTH_MAIL_TRANSPORT=resend`, `AUTH_RESEND_API_KEY`, and a verified `AUTH_RESEND_FROM`; the secret is passed only to the native worker.
+
+## What the outbox worker does
+
+`wasi-auth-outbox-worker` is not an email server and it does not replace Resend. It is a native background process that leases encrypted mail and optional SpiceDB jobs from PostgreSQL, calls the selected provider, and records delivery or retry status. The application commits the user change and mail intent together, then returns without waiting for the provider.
+
+If the worker is stopped, requests can still commit but mail remains `pending` until a worker starts again. `make dev` starts Spin and the worker together. Use `make spin` and `make outbox-worker` separately only when you need independent logs. Production runs the worker beside Spin, sharing PostgreSQL and the outbox key; provider credentials stay only in the worker environment.
 
 The toolchain gate requires Rust 1.93.0+, `cargo-leptos >= 0.3.7`, `wasm32-wasip2`, and `wasm-tools`. The distributed P2 Rust target supplies `std`; the generated component is inspected to prove it exports `wasi:http/handler@0.3.0` and has no Preview 1 imports. The unstable `wasm32-wasip3` Rust target remains a canary.
 
-`wasi-auth` owns the only PostgreSQL auth schema. `make db-migrate` uses its native, advisory-lock-protected migration runner before Spin starts; the WASM request component never mutates schema. `make fresh` resets PostgreSQL and reapplies the immutable migration catalog. Install the same-version `wasi-auth-outbox-worker` binary and point `WASI_AUTH_OUTBOX_WORKER_BIN` to it. The app and worker must share `AUTH_OUTBOX_KEY_BASE64` and `AUTH_OUTBOX_KEY_VERSION`; production rejects the documented development key and requires distinct ingress, vault, outbox, and recovery-code secrets.
+`wasi-auth` owns the only PostgreSQL auth schema. `make db-migrate` uses its native, advisory-lock-protected migration runner before Spin starts; the WASM request component never mutates schema. `make fresh` resets PostgreSQL and reapplies the immutable migration catalog. The app and worker must share `AUTH_OUTBOX_KEY_BASE64` and `AUTH_OUTBOX_KEY_VERSION`; production rejects capture mail and the documented development key, and requires distinct ingress, vault, outbox, and recovery-code secrets.
 
 For production, start from `spin.production.toml.example`, replace the example auth domain and database hosts with exact deployment hosts, and run the same migration binary as an explicit deployment step. Keep mail and SpiceDB write credentials only in the native worker environment. The Spin guest receives a check-only SpiceDB credential.
 

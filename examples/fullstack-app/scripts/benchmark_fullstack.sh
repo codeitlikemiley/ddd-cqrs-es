@@ -68,7 +68,7 @@ json_post() {
 }
 
 registration="$(json_post /api/auth/password/register   "{\"email\":\"${email}\",\"password\":\"${password}\",\"redirect_url\":\"/dashboard\"}")"
-jq -e '.authenticated == false and .redirect_url == "/verify-email"'   <<<"${registration}" >/dev/null
+jq -e '.authenticated == false and .redirect_url == "/verify-email/pending"'   <<<"${registration}" >/dev/null
 
 verification_mail=""
 for _ in $(seq 1 50); do

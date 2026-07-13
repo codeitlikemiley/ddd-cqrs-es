@@ -9,7 +9,7 @@ Usage:
 If version is omitted, patch version is auto-incremented from Cargo.toml.
 Examples:
   scripts/version.sh
-  scripts/version.sh 0.2.1
+  scripts/version.sh 0.3.0-rc.2
 USAGE
 }
 
@@ -71,7 +71,7 @@ if [ -z "$target_version" ]; then
   target_version="${MAJOR}.${MINOR}.${PATCH}"
 fi
 
-if ! [[ "$target_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+if ! [[ "$target_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
   usage
   echo "Error: version must follow semver pattern MAJOR.MINOR.PATCH" >&2
   exit 1

@@ -95,7 +95,7 @@ When this plan is complete:
 ## Non-Goals
 
 - Live external OAuth credential smoke (A11 remains operator-pending).
-- Full email delivery provider (dev evidence path only until mail is added).
+- Provider delivery is implemented through the native `wasi-auth-outbox-worker`; live provider credentials and deliverability remain deployment concerns.
 - Redesign of ReBAC model language beyond tenant fail-closed and PRD parity.
 - Multi-region HA, WAF product selection, or external IdP federation beyond
   current Google/Facebook/Apple scaffolding.
@@ -605,8 +605,9 @@ Each slice must include tests or smoke evidence in the commit message body.
 ## Assumptions
 
 1. This is security hardening, not a product redesign of OAuth/passkeys.
-2. Email delivery remains out of scope; use safe dev-only evidence until a mail
-   provider lands.
+2. Email delivery is asynchronous: the application commits a durable mail intent
+   and the native `wasi-auth-outbox-worker` delivers it through Resend or the
+   configured HTTP provider. Capture mail is development-only.
 3. Existing local/demo data may contain legacy PBKDF2 hashes and predictable IDs;
    login rehash handles passwords; reset scripts/expiry invalidate old grants/sessions.
 4. Backward compatibility for insecure query credentials is intentionally not

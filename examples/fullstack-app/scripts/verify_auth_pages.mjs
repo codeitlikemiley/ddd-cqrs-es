@@ -390,6 +390,12 @@ try {
       "/reset-password?token=browser-smoke-token",
       "Choose a new password",
     );
+    await assertPage(page, "/verify-email", "Verify your email");
+    await assertVisibleText(
+      page,
+      "Open this page from the one-time link in your verification message.",
+    );
+    await assertPage(page, "/verify-email/pending", "Check your inbox");
     await assertPage(page, "/auth/required", "Authentication required");
     await assertPage(page, "/auth/forbidden", "Access denied");
     await assertPage(page, "/auth/session-expired", "Session expired");
@@ -426,23 +432,29 @@ try {
       "split_authorization_policy_page_loader_",
       false,
     );
-    await assertPage(page, "/admin/authorization/policy", "Authorization policy");
-    await waitForSplitWasm(
-      page,
-      requestedWasm,
-      pendingWasm,
-      "split_authorization_policy_page_loader_",
-    );
-    assertSplitRequestState(
-      requestedWasm,
-      "split_authorization_policy_page_loader_",
-      true,
-    );
     if (expectSystemAdministrator) {
+      await assertPage(page, "/admin/authorization/policy", "Authorization policy");
+      await waitForSplitWasm(
+        page,
+        requestedWasm,
+        pendingWasm,
+        "split_authorization_policy_page_loader_",
+      );
+      assertSplitRequestState(
+        requestedWasm,
+        "split_authorization_policy_page_loader_",
+        true,
+      );
       await assertPage(page, "/admin/auth/signing-keys", "Signing keys");
       await assertPage(page, "/admin/auth/providers", "Auth providers");
       await assertPage(page, "/admin/auth/redirects", "Redirect allowlist");
     } else {
+      await assertRedirect(page, "/admin/authorization/policy", "/auth/forbidden");
+      assertSplitRequestState(
+        requestedWasm,
+        "split_authorization_policy_page_loader_",
+        false,
+      );
       await assertRedirect(page, "/admin/auth/signing-keys", "/auth/forbidden");
       await assertRedirect(page, "/admin/auth/providers", "/auth/forbidden");
       await assertRedirect(page, "/admin/auth/redirects", "/auth/forbidden");

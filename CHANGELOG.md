@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0-rc.2
+
+- Added native Resend delivery through `wasi-auth-outbox-worker` with durable
+  delivery status, provider idempotency, and secret-isolated worker startup.
+- Clarified the outbox worker, capture mail, Resend configuration, and local
+  versus production process topology in the fullstack documentation.
+- Fixed verification-page navigation, capture-link UX, stale-cookie handling,
+  and browser smoke expectations for ordinary users versus system admins.
+
 ## 0.3.0-rc.1
 
 - Removed the duplicate `ddd-auth` and `ddd-authz` products in favor of the

@@ -27,12 +27,61 @@ the final-WASI Spin backend remains loopback-only; migration
 Migration `0010_typed_relationship_outbox` atomically emits resource-scoped
 SpiceDB intents from membership changes.
 
-Mail and optional SpiceDB writes run in the separately installed
-`wasi-auth-outbox-worker`; HTTP requests only commit durable outbox rows. Start
-`make outbox-worker` and `make spin` in separate terminals. Both processes use
-the same outbox key/version, while mail and SpiceDB write credentials are
-supplied only to the worker. Production rejects the documented development key
-and requires distinct ingress, vault, outbox, and recovery-code secrets.
+Mail and optional SpiceDB writes run in `wasi-auth-outbox-worker`; HTTP requests
+only commit durable outbox rows. For local development, `make dev` installs the
+matching worker version into `target/wasi-auth-tools` and runs it with Spin.
+Use `make outbox-worker` and `make spin` in separate terminals only when you
+want to inspect their logs independently. Both processes use the same outbox
+key/version, while mail and SpiceDB write credentials are supplied only to the
+worker. Capture mode does not send internet email: registration and resend
+pages expose the locally captured one-time link after the worker delivers it.
+To send real mail with Resend, set `AUTH_MAIL_TRANSPORT=resend`,
+`AUTH_RESEND_API_KEY`, and `AUTH_RESEND_FROM` in `.env`; the key is passed only
+to the native worker and never to Spin.
+
+```dotenv
+AUTH_MAIL_TRANSPORT=resend
+AUTH_RESEND_API_KEY=re_your_real_key
+AUTH_RESEND_FROM="wasi-auth <auth@your-verified-domain.com>"
+```
+
+Then run `make dev`. Keep the sender quoted when it contains a display name or
+angle brackets. Do not put the API key in `spin.toml`, browser code, or a Spin
+variable.
+Production rejects capture mail and the documented development key, and
+requires distinct ingress, vault, outbox, and recovery-code secrets.
+
+## What the outbox worker does
+
+`wasi-auth-outbox-worker` is not an email server and it does not replace Resend.
+It is a small native background process that reliably delivers work already
+committed by the application. Registration, password reset, invitation, and
+security-notification requests write the user change and an encrypted mail job
+to PostgreSQL in one transaction. The HTTP request then returns; the worker
+leases the pending job, calls the selected provider, and records `delivered`,
+retry, or `dead_letter` status. Optional SpiceDB relationship writes use the
+same mechanism.
+
+```text
+Spin request -> PostgreSQL user change + pending mail job -> HTTP response
+                                      |
+                                      v
+                           outbox worker -> Resend / HTTP mail provider
+                                      |
+                                      v
+                           delivery ID + final status in PostgreSQL
+```
+
+If the worker is stopped, the application still accepts the request but the
+mail job remains pending; starting the worker later delivers the backlog. This
+keeps provider outages and worker restarts from losing verification messages.
+The worker is also where provider credentials belong, so the Resend key never
+enters the Spin WASM component.
+
+`make dev` starts both processes and cleans them up together. Run
+`make outbox-worker` and `make spin` separately only to inspect logs or deploy
+the processes independently. A production deployment runs at least one
+worker replica beside the Spin service, sharing PostgreSQL and the outbox key.
 
 The checked-in scripts make the release gates reproducible: run
 `benchmark_ingress_overhead.sh` against a direct guest baseline and native

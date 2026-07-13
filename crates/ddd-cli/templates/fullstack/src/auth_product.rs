@@ -504,12 +504,18 @@ pub async fn register_email_password(
         .map_err(map_registration_error)?;
     Ok(LoginCompletionResponse {
         authenticated: false,
-        redirect_url: "/verify-email".to_owned(),
+        redirect_url: "/verify-email/pending".to_owned(),
         session_id: None,
         access_token: None,
         refresh_token: None,
         expires_in_seconds: 0,
     })
+}
+
+pub async fn development_mail_capture_enabled() -> bool {
+    !config_bool("AUTH_PRODUCTION_MODE", false).await
+        && config_bool("AUTH_DEV_TOOLS", false).await
+        && runtime_config_value("AUTH_MAIL_TRANSPORT").await.as_deref() == Some("capture")
 }
 
 pub async fn enforce_account_rate_limit(
@@ -622,9 +628,7 @@ pub async fn complete_email_verification(
     let service = EmailVerificationService::new(store().await?, RuntimeClock, RuntimeRandom)
         .with_session_ttl_seconds(session_ttl_seconds().await?)
         .map_err(map_verification_error)?
-        .with_bootstrap_system_administrator_emails(
-            bootstrap_system_administrator_emails().await,
-        )
+        .with_bootstrap_system_administrator_emails(bootstrap_system_administrator_emails().await)
         .map_err(map_verification_error)?;
     let receipt = service
         .verify(EmailVerificationRequest::new(

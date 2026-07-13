@@ -184,6 +184,17 @@
     padding: 8px 12px;
   }
 
+  .auth-notice {
+    background: #f1f5f2;
+    border: 1px solid #cbd9d2;
+    border-radius: 12px;
+    color: #34534c;
+    font-size: 14px;
+    line-height: 20px;
+    margin: 0;
+    padding: 10px 12px;
+  }
+
   .auth-success {
     background: #eff8f4;
     border: 1px solid #bdd9cf;
@@ -232,6 +243,43 @@
     min-height: 48px;
     padding: 0 16px;
     transition: background-color 200ms ease, box-shadow 200ms ease, transform 200ms ease, opacity 200ms ease;
+  }
+
+  .auth-secondary {
+    align-items: center;
+    background: #fffdf9;
+    border: 1px solid #9bb9b2;
+    border-radius: 12px;
+    color: #1b625d;
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 13px;
+    font-weight: 700;
+    justify-content: center;
+    min-height: 42px;
+    padding: 0 14px;
+    transition: background-color 200ms ease, border-color 200ms ease, transform 200ms ease;
+  }
+
+  .auth-secondary:hover {
+    background: #edf5f1;
+    border-color: #5f9187;
+  }
+
+  .auth-secondary:active {
+    transform: translateY(1px);
+  }
+
+  .auth-secondary:disabled {
+    cursor: wait;
+    opacity: .6;
+  }
+
+  .auth-inline-error {
+    color: #8b332f;
+    font-size: 12px;
+    line-height: 18px;
+    margin: 0;
   }
 
   .auth-submit:hover {
@@ -289,7 +337,7 @@
 
 html {
   color-scheme: light;
-  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: "Geist Sans", Geist, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 body {
@@ -310,82 +358,99 @@ select {
 }
 
 .page {
+  background:
+    radial-gradient(circle at 82% 4%, rgb(28 108 102 / 8%), transparent 32rem),
+    #f4f1ec;
   box-sizing: border-box;
   min-height: 100dvh;
-  padding: 24px;
+  padding: clamp(20px, 4vw, 48px) 24px 64px;
 }
 
 .top-nav {
+  align-items: center;
+  border-bottom: 1px solid #ddd7ce;
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  margin: 0 auto 30px;
-  max-width: 1040px;
+  gap: 8px;
+  margin: 0 auto 52px;
+  max-width: 1120px;
+  padding-bottom: 18px;
 }
 
 .top-nav a,
 .link-button {
-  background: #fffdf9;
+  background: rgb(255 253 249 / 82%);
   border: 1px solid #d9d4cb;
-  border-radius: 8px;
+  border-radius: 10px;
   color: #263038;
   display: inline-flex;
   font-size: 14px;
   font-weight: 650;
   line-height: 1;
-  padding: 10px 12px;
+  padding: 11px 14px;
   text-decoration: none;
+  transition: background-color 180ms ease, border-color 180ms ease, transform 180ms ease;
 }
 
 .top-nav a:hover,
 .link-button:hover {
-  border-color: #9b9185;
+  background: #fffdf9;
+  border-color: #8f8980;
+  transform: translateY(-1px);
 }
 
 .page-header,
 .page-grid {
   margin: 0 auto;
-  max-width: 1040px;
+  max-width: 1120px;
 }
 
 .page-header {
-  margin-bottom: 24px;
+  margin-bottom: 34px;
+  max-width: 1120px;
 }
 
 .page-header p {
   color: #6b665d;
   font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0;
-  margin: 0 0 8px;
+  letter-spacing: .12em;
+  margin: 0 0 14px;
   text-transform: uppercase;
 }
 
 .page-header h1 {
-  font-size: 34px;
-  line-height: 1.05;
-  margin: 0 0 10px;
+  font-size: clamp(38px, 6vw, 64px);
+  font-weight: 680;
+  letter-spacing: -.055em;
+  line-height: .98;
+  margin: 0 0 18px;
+  max-width: 13ch;
 }
 
 .page-header span {
   color: #5d6570;
+  display: block;
+  font-size: 16px;
+  line-height: 26px;
+  max-width: 68ch;
 }
 
 .page-grid {
   align-items: start;
   display: grid;
-  gap: 16px;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
 }
 
 .panel {
   background: #fffdf9;
   border: 1px solid #ddd7ce;
-  border-radius: 8px;
-  box-shadow: 0 16px 38px rgb(28 24 19 / 7%);
+  border-radius: 16px;
+  box-shadow: 0 24px 60px -44px rgb(28 24 19 / 45%);
   display: grid;
   gap: 14px;
-  padding: 18px;
+  padding: clamp(22px, 3vw, 30px);
 }
 
 .compact-panel {
@@ -394,8 +459,59 @@ select {
 }
 
 .panel h2 {
-  font-size: 16px;
+  font-size: 18px;
+  letter-spacing: -.02em;
   margin: 0;
+}
+
+.error-page {
+  background:
+    radial-gradient(circle at 75% 18%, rgb(29 107 102 / 9%), transparent 26rem),
+    #f6f3ee;
+  box-sizing: border-box;
+  color: #1b2228;
+  display: grid;
+  min-height: 100dvh;
+  padding: 48px 20px;
+  place-items: center;
+}
+
+.error-card {
+  background: #fffdf9;
+  border: 1px solid #ded8cf;
+  border-radius: 18px;
+  box-shadow: 0 28px 80px -54px rgba(31, 27, 22, .55);
+  box-sizing: border-box;
+  max-width: 480px;
+  padding: 36px;
+  width: 100%;
+}
+
+.error-card .auth-brand {
+  margin-bottom: 34px;
+}
+
+.error-title {
+  color: #151b20;
+  font-size: clamp(32px, 7vw, 42px);
+  font-weight: 650;
+  letter-spacing: -.045em;
+  line-height: 1.02;
+  margin: 14px 0 0;
+}
+
+.error-copy {
+  color: #68635b;
+  font-size: 15px;
+  line-height: 24px;
+  margin: 14px 0 0;
+}
+
+.error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 28px;
 }
 
 .panel label {
@@ -774,7 +890,15 @@ select {
   }
 
   .page-header h1 {
-    font-size: 30px;
+    font-size: 40px;
+  }
+
+  .top-nav {
+    margin-bottom: 36px;
+  }
+
+  .error-card {
+    padding: 28px;
   }
 }
 
