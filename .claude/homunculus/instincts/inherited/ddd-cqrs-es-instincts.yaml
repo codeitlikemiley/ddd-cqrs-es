@@ -1,0 +1,545 @@
+# Instincts generated from https://github.com/codeitlikemiley/ddd-cqrs-es
+# Generated: 2026-07-13T02:06:05.779Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: ddd-cqrs-es-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Commit Length
+
+## Action
+
+Keep commit messages concise (~45 characters)
+
+## Evidence
+
+- Average commit message length: 45 chars
+- Based on 19 commits
+
+---
+id: ddd-cqrs-es-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Naming Files
+
+## Action
+
+Use camelCase naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: camelCase
+
+---
+id: ddd-cqrs-es-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: ddd-cqrs-es-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: ddd-cqrs-es-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: ddd-cqrs-es-test-naming
+trigger: "when creating a test file"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Test Naming
+
+## Action
+
+Name test files using the pattern: *.test.ts
+
+## Evidence
+
+- File pattern: *.test.ts
+- Consistent across test files
+
+---
+id: ddd-cqrs-es-workflow-feature-development
+trigger: "when implementing a new feature"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Workflow Feature Development
+
+## Action
+
+Follow the feature-development workflow:
+1. Add feature implementation
+2. Add tests for feature
+3. Update documentation
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~14x per month
+- Files: **/*.test.*, **/api/**
+
+---
+id: ddd-cqrs-es-workflow-add-or-update-stack-template-and-example
+trigger: "when doing add or update stack template and example"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Workflow Add Or Update Stack Template And Example
+
+## Action
+
+Follow the add-or-update-stack-template-and-example workflow:
+1. Edit or add files in crates/ddd-cli/templates/<stack-name>/** to define the template
+2. Edit or add files in examples/<stack-name>-app/** to provide a runnable example
+3. Update CLI code (crates/ddd-cli/src/render.rs, etc.) to support the template
+4. Update or add test coverage in crates/ddd-cli/tests/cli.rs
+5. Optionally update documentation (docs/cli.md) and manifest/model files
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: crates/ddd-cli/templates/auth-stack/**, crates/ddd-cli/templates/fullstack/**, examples/auth-stack/**
+
+---
+id: ddd-cqrs-es-workflow-document-feature-or-rollout
+trigger: "when doing document feature or rollout"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Workflow Document Feature Or Rollout
+
+## Action
+
+Follow the document-feature-or-rollout workflow:
+1. Edit or add markdown files in docs/prd/** or docs/production/**
+2. Update docs/docs.json or docs/index.md if needed
+3. Optionally update related CLI or template docs
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: docs/prd/*.md, docs/production/*.md, docs/docs.json
+
+---
+id: ddd-cqrs-es-workflow-harden-or-enhance-stack-implementation
+trigger: "when doing harden or enhance stack implementation"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Workflow Harden Or Enhance Stack Implementation
+
+## Action
+
+Follow the harden-or-enhance-stack-implementation workflow:
+1. Edit implementation files in examples/<stack-name>-app/src/**
+2. Edit corresponding files in crates/ddd-cli/templates/<stack-name>/src/**
+3. Update scripts, configuration, or proto files as needed in both template and example
+4. Update CLI tests if necessary
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: examples/auth-stack/src/**, examples/fullstack-app/src/**, crates/ddd-cli/templates/auth-stack/src/**
+
+---
+id: ddd-cqrs-es-workflow-release-preparation
+trigger: "when doing release preparation"
+confidence: 0.55
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Workflow Release Preparation
+
+## Action
+
+Follow the release-preparation workflow:
+1. Update version in Cargo.toml and crates/ddd-cli/Cargo.toml
+2. Update CHANGELOG.md
+3. Update README.md and docs/index.md as needed
+4. Update example app manifests or docs
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~1x per month
+- Files: CHANGELOG.md, Cargo.toml, crates/ddd-cli/Cargo.toml
+
+---
+id: ddd-cqrs-es-instinct-naming-files
+trigger: "When creating or renaming files"
+confidence: 0.85
+domain: code-style
+source: repo-analysis
+source_repo: codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Instinct Naming Files
+
+## Action
+
+Use camelCase for file names
+
+## Evidence
+
+- Pattern in codeStyle.namingConventions.files
+- Consistent with src/adapters layout
+
+---
+id: ddd-cqrs-es-instinct-naming-functions
+trigger: "When defining functions"
+confidence: 0.85
+domain: code-style
+source: repo-analysis
+source_repo: codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Instinct Naming Functions
+
+## Action
+
+Use camelCase for function names
+
+## Evidence
+
+- Pattern in codeStyle.namingConventions.functions
+
+---
+id: ddd-cqrs-es-instinct-naming-classes
+trigger: "When defining classes or types"
+confidence: 0.85
+domain: code-style
+source: repo-analysis
+source_repo: codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Instinct Naming Classes
+
+## Action
+
+Use PascalCase for class/type names
+
+## Evidence
+
+- Pattern in codeStyle.namingConventions.classes
+
+---
+id: ddd-cqrs-es-instinct-naming-constants
+trigger: "When defining constants"
+confidence: 0.85
+domain: code-style
+source: repo-analysis
+source_repo: codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Instinct Naming Constants
+
+## Action
+
+Use SCREAMING_SNAKE_CASE for constants
+
+## Evidence
+
+- Pattern in codeStyle.namingConventions.constants
+
+---
+id: ddd-cqrs-es-instinct-import-style
+trigger: "When importing modules"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Instinct Import Style
+
+## Action
+
+Use relative imports
+
+## Evidence
+
+- Pattern in codeStyle.importStyle
+
+---
+id: ddd-cqrs-es-instinct-export-style
+trigger: "When exporting modules or functions"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Instinct Export Style
+
+## Action
+
+Use named exports
+
+## Evidence
+
+- Pattern in codeStyle.exportStyle
+
+---
+id: ddd-cqrs-es-instinct-testing-file-pattern
+trigger: "When creating test files"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Instinct Testing File Pattern
+
+## Action
+
+Name test files with the pattern *.test.ts
+
+## Evidence
+
+- Pattern in testing.filePattern
+
+---
+id: ddd-cqrs-es-instinct-testing-unit-tests
+trigger: "When writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Instinct Testing Unit Tests
+
+## Action
+
+Write unit tests for new features or modules
+
+## Evidence
+
+- Pattern in testing.testTypes
+- Seen in feature-development workflow
+
+---
+id: ddd-cqrs-es-instinct-git-commit-prefix
+trigger: "When writing a commit message"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Instinct Git Commit Prefix
+
+## Action
+
+Prefix the commit message with feat, fix, docs, refactor, or release as appropriate
+
+## Evidence
+
+- Pattern in commits.prefixes
+- Seen in commit examples like 'feat(auth-stack): ...'
+
+---
+id: ddd-cqrs-es-instinct-git-commit-length
+trigger: "When writing a commit message"
+confidence: 0.7
+domain: git
+source: repo-analysis
+source_repo: codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Instinct Git Commit Length
+
+## Action
+
+Keep the commit message concise (~45 characters on average)
+
+## Evidence
+
+- Pattern in commits.averageLength
+
+---
+id: ddd-cqrs-es-instinct-git-commit-sequence-feature
+trigger: "When implementing a new feature"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Instinct Git Commit Sequence Feature
+
+## Action
+
+Sequence commits as: implementation, tests, then documentation
+
+## Evidence
+
+- feature-development workflow commitSequence
+- Seen in commits: 'Add reusable auth and authz crates', 'Add Spin auth stack example', 'Add auth stack preset to ddd CLI'
+
+---
+id: ddd-cqrs-es-instinct-workflow-add-update-stack-template
+trigger: "When introducing or updating a stack template and its example"
+confidence: 0.95
+domain: workflow
+source: repo-analysis
+source_repo: codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Instinct Workflow Add Update Stack Template
+
+## Action
+
+Edit both crates/ddd-cli/templates/<stack-name>/** and examples/<stack-name>-app/**, update CLI code, tests, and optionally docs to ensure parity
+
+## Evidence
+
+- add-or-update-stack-template-and-example workflow
+- Pattern in files involved
+- Seen in commit sequences
+
+---
+id: ddd-cqrs-es-instinct-workflow-document-feature-rollout
+trigger: "When documenting a new feature, rollout, or production process"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Instinct Workflow Document Feature Rollout
+
+## Action
+
+Edit or add markdown in docs/prd/** or docs/production/**, update docs/docs.json or docs/index.md as needed
+
+## Evidence
+
+- document-feature-or-rollout workflow
+- Pattern in files involved
+
+---
+id: ddd-cqrs-es-instinct-workflow-harden-enhance-stack
+trigger: "When enhancing or hardening a stack implementation"
+confidence: 0.93
+domain: workflow
+source: repo-analysis
+source_repo: codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Instinct Workflow Harden Enhance Stack
+
+## Action
+
+Edit both example and template implementation files, update scripts/configs, and update CLI tests if necessary
+
+## Evidence
+
+- harden-or-enhance-stack-implementation workflow
+- Pattern in files involved
+
+---
+id: ddd-cqrs-es-instinct-workflow-release-preparation
+trigger: "When preparing for a new release"
+confidence: 0.88
+domain: workflow
+source: repo-analysis
+source_repo: codeitlikemiley/ddd-cqrs-es
+---
+
+# Ddd Cqrs Es Instinct Workflow Release Preparation
+
+## Action
+
+Update version numbers in Cargo.toml, update CHANGELOG.md, README.md, docs/index.md, and example app manifests/docs
+
+## Evidence
+
+- release-preparation workflow
+- Pattern in files involved
+- Seen in commit: 'release: prepare ddd 0.3.0-rc.1'
+
