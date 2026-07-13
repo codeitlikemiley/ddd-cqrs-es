@@ -6,8 +6,15 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use base64::{Engine as _, engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD}};
+use base64::{
+    Engine as _,
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+};
 use sha2::{Digest, Sha256};
+#[cfg(feature = "mail-capture")]
+use wasi_auth::mail::{EmailKind, Recipient};
+#[cfg(feature = "mail-capture")]
+use wasi_auth::postgres::outbox::{MailOutboxWorker, PublicBaseUrl};
 use wasi_auth::{
     authentication::jwt::JwksDocument,
     authentication::mfa::TotpConfig,
@@ -15,17 +22,32 @@ use wasi_auth::{
     authentication::{Clock, RandomSource},
     context::{AuthenticationAssurance, RequestId, SessionId, UserId},
     http::{AuthenticatedSession, TrustedContextCodec},
+    postgres::workflows::{
+        Argon2Policy, EmailVerificationError, EmailVerificationRequest,
+        EmailVerificationResendRequest as ProductEmailVerificationResendRequest,
+        EmailVerificationService, OutboxSealingKey,
+        PasswordChangeRequest as ProductPasswordChangeRequest, PasswordLoginError,
+        PasswordLoginRequest, PasswordLoginService, PasswordRegistrationError,
+        PasswordRegistrationRequest, PasswordRegistrationService,
+        PasswordResetCompleteRequest as ProductPasswordResetCompleteRequest, PasswordResetError,
+        PasswordResetService, PasswordResetStartRequest as ProductPasswordResetStartRequest,
+    },
     postgres::{
+        PostgresAuthStore, PostgresStoreError,
         flows::FlowSealingKey,
         management::{
             AdminUserRecord, AuditEventRecord, InvitationRecord, InvitationService,
-            ManagementError, MembershipRecord, OrganizationManagementService, RoleRecord,
-            UpsertRoleRequest as ProductUpsertRoleRequest, ORGANIZATION_PERMISSION_CATALOG,
+            ManagementError, MembershipRecord, ORGANIZATION_PERMISSION_CATALOG,
+            OrganizationManagementService, RoleRecord,
+            UpsertRoleRequest as ProductUpsertRoleRequest,
         },
         mfa::{MfaKeyMaterial, MfaService, MfaServiceError},
         oauth::{
-            OAuthFlowService, OAuthProviderService, OAuthProviderServiceError,
-            OAuthServiceConfig, OAuthServiceError, PendingOAuthFlow, VerifiedOAuthIdentity,
+            OAuthFlowService, OAuthProviderService, OAuthProviderServiceError, OAuthServiceConfig,
+            OAuthServiceError, PendingOAuthFlow, VerifiedOAuthIdentity,
+        },
+        organizations::{
+            CreateOrganizationRequest, OrganizationError, OrganizationRecord, OrganizationService,
         },
         passkeys::{
             PasskeyConfigurationError, PasskeyService, PasskeyServiceConfig, PasskeyServiceError,
@@ -33,10 +55,6 @@ use wasi_auth::{
         policy::{
             ActivePolicyBundle, PolicyBundleLoadError, PolicyBundleRecord, PolicyBundleService,
             PolicyBundleServiceError,
-        },
-        PostgresAuthStore, PostgresStoreError,
-        organizations::{
-            CreateOrganizationRequest, OrganizationError, OrganizationRecord, OrganizationService,
         },
         rate_limits::{RateLimitError, RateLimitService},
         sessions::{SessionService, SessionServiceError},
@@ -47,36 +65,20 @@ use wasi_auth::{
             TokenServiceError, VerifiedAccessToken,
         },
     },
-    postgres::workflows::{
-        Argon2Policy, EmailVerificationError, EmailVerificationRequest,
-        EmailVerificationResendRequest as ProductEmailVerificationResendRequest,
-        EmailVerificationService, OutboxSealingKey,
-        PasswordChangeRequest as ProductPasswordChangeRequest,
-        PasswordLoginError, PasswordLoginRequest, PasswordLoginService,
-        PasswordRegistrationError, PasswordRegistrationRequest, PasswordRegistrationService,
-        PasswordResetCompleteRequest as ProductPasswordResetCompleteRequest, PasswordResetError,
-        PasswordResetService, PasswordResetStartRequest as ProductPasswordResetStartRequest,
-    },
 };
-#[cfg(feature = "mail-capture")]
-use wasi_auth::mail::{EmailKind, Recipient};
-#[cfg(feature = "mail-capture")]
-use wasi_auth::postgres::outbox::{MailOutboxWorker, PublicBaseUrl};
 
 use crate::{
     contracts::{
-        AccountSessionListResponse, AccountSessionSummary, AdminUserListResponse,
-        AdminUserSummary, AuditEventListResponse, AuditEventSummary, AuthProviderSummary,
-        CapturedMailResponse,
+        AccountSessionListResponse, AccountSessionSummary, AdminUserListResponse, AdminUserSummary,
+        AuditEventListResponse, AuditEventSummary, AuthProviderSummary, CapturedMailResponse,
         EmailPasswordLoginRequest, EmailPasswordRegisterRequest, EmailVerificationCompleteRequest,
         InvitationListResponse, InvitationSummary, LoginCompletionResponse, LogoutResponse,
         MembershipListResponse, MembershipSummary, MfaEnrollConfirmResponse,
         MfaEnrollStartResponse, MfaStatusResponse, OrganizationListResponse, OrganizationSummary,
-        PasskeyStartResponse,
-        PasswordResetCompleteRequest, PasswordResetStartRequest, PasswordResetStartResponse,
-        PolicyVersionListResponse, PolicyVersionSummary, RoleListResponse, RoleSummary,
-        SessionView, SigningKeyListResponse, SigningKeyRotateResponse, SigningKeySummary,
-        TokenRefreshResponse, TokenVerifyResponse,
+        PasskeyStartResponse, PasswordResetCompleteRequest, PasswordResetStartRequest,
+        PasswordResetStartResponse, PolicyVersionListResponse, PolicyVersionSummary,
+        RoleListResponse, RoleSummary, SessionView, SigningKeyListResponse,
+        SigningKeyRotateResponse, SigningKeySummary, TokenRefreshResponse, TokenVerifyResponse,
     },
     error::{AuthStackError, AuthStackResult},
 };
@@ -619,6 +621,10 @@ pub async fn complete_email_verification(
 ) -> AuthStackResult<LoginCompletionResponse> {
     let service = EmailVerificationService::new(store().await?, RuntimeClock, RuntimeRandom)
         .with_session_ttl_seconds(session_ttl_seconds().await?)
+        .map_err(map_verification_error)?
+        .with_bootstrap_system_administrator_emails(
+            bootstrap_system_administrator_emails().await,
+        )
         .map_err(map_verification_error)?;
     let receipt = service
         .verify(EmailVerificationRequest::new(
@@ -640,10 +646,7 @@ pub async fn complete_email_verification(
     })
 }
 
-pub async fn resend_email_verification(
-    email: &str,
-    redirect_uri: &str,
-) -> AuthStackResult<()> {
+pub async fn resend_email_verification(email: &str, redirect_uri: &str) -> AuthStackResult<()> {
     PasswordRegistrationService::new(
         store().await?,
         RuntimeClock,
@@ -727,7 +730,8 @@ pub async fn refresh_tokens(
     refresh_token: &str,
 ) -> AuthStackResult<TokenRefreshResponse> {
     let session_id = session_id.map(bounded_session_id).transpose()?;
-    let pair = token_service().await?
+    let pair = token_service()
+        .await?
         .refresh(
             session_id.as_ref(),
             refresh_token,
@@ -747,11 +751,7 @@ pub async fn verify_access_token(token: &str) -> AuthStackResult<TokenVerifyResp
     let cached = cached_verified_token(token);
     let verified = match token_verification_service()
         .await?
-        .verify_cached(
-            token,
-            &request_id("verify-access-token")?,
-            cached.as_ref(),
-        )
+        .verify_cached(token, &request_id("verify-access-token")?, cached.as_ref())
         .await
     {
         Ok(verified) => verified,
@@ -787,8 +787,8 @@ pub async fn change_password(
     new_password: &str,
 ) -> AuthStackResult<()> {
     let user_id = UserId::new(user_id.to_owned()).map_err(|_| AuthStackError::AuthRequired)?;
-    let session_id = SessionId::new(session_id.to_owned())
-        .map_err(|_| AuthStackError::AuthRequired)?;
+    let session_id =
+        SessionId::new(session_id.to_owned()).map_err(|_| AuthStackError::AuthRequired)?;
     PasswordLoginService::new(
         store().await?,
         RuntimeClock,
@@ -808,7 +808,8 @@ pub async fn change_password(
 
 pub async fn mfa_status(session_id: &str) -> AuthStackResult<MfaStatusResponse> {
     let session_id = bounded_session_id(session_id)?;
-    let status = mfa_service().await?
+    let status = mfa_service()
+        .await?
         .status(&session_id)
         .await
         .map_err(map_mfa_error)?;
@@ -819,13 +820,12 @@ pub async fn mfa_status(session_id: &str) -> AuthStackResult<MfaStatusResponse> 
     })
 }
 
-pub async fn start_totp_enrollment(
-    session_id: &str,
-) -> AuthStackResult<MfaEnrollStartResponse> {
+pub async fn start_totp_enrollment(session_id: &str) -> AuthStackResult<MfaEnrollStartResponse> {
     let session_id = bounded_session_id(session_id)?;
     let session = get_session(Some(session_id.as_str())).await?;
     let user_id = session.user_id.ok_or(AuthStackError::AuthRequired)?;
-    let enrollment = mfa_service().await?
+    let enrollment = mfa_service()
+        .await?
         .start(&session_id, &request_id("mfa-start")?)
         .await
         .map_err(map_mfa_error)?;
@@ -842,7 +842,8 @@ pub async fn confirm_totp_enrollment(
     code: &str,
 ) -> AuthStackResult<MfaEnrollConfirmResponse> {
     let session_id = bounded_session_id(session_id)?;
-    let confirmation = mfa_service().await?
+    let confirmation = mfa_service()
+        .await?
         .confirm(&session_id, code, &request_id("mfa-confirm")?)
         .await
         .map_err(map_mfa_error)?;
@@ -852,24 +853,20 @@ pub async fn confirm_totp_enrollment(
     })
 }
 
-pub async fn verify_totp_step_up(
-    session_id: &str,
-    code: &str,
-) -> AuthStackResult<SessionView> {
+pub async fn verify_totp_step_up(session_id: &str, code: &str) -> AuthStackResult<SessionView> {
     let session_id = bounded_session_id(session_id)?;
-    mfa_service().await?
+    mfa_service()
+        .await?
         .verify_step_up(&session_id, code, &request_id("mfa-step-up")?)
         .await
         .map_err(map_mfa_error)?;
     get_session(Some(session_id.as_str())).await
 }
 
-pub async fn use_recovery_code(
-    session_id: &str,
-    code: &str,
-) -> AuthStackResult<SessionView> {
+pub async fn use_recovery_code(session_id: &str, code: &str) -> AuthStackResult<SessionView> {
     let session_id = bounded_session_id(session_id)?;
-    mfa_service().await?
+    mfa_service()
+        .await?
         .use_recovery_code(&session_id, code, &request_id("mfa-recovery")?)
         .await
         .map_err(map_mfa_error)?;
@@ -955,8 +952,8 @@ pub async fn create_organization(
     name: &str,
     session_id: &str,
 ) -> AuthStackResult<OrganizationSummary> {
-    let session_id = SessionId::new(session_id.to_owned())
-        .map_err(|_| AuthStackError::AuthRequired)?;
+    let session_id =
+        SessionId::new(session_id.to_owned()).map_err(|_| AuthStackError::AuthRequired)?;
     let name_key = URL_SAFE_NO_PAD.encode(Sha256::digest(name.trim().as_bytes()));
     let organization = OrganizationService::new(store().await?, RuntimeClock, RuntimeRandom)
         .create(CreateOrganizationRequest {
@@ -974,8 +971,8 @@ pub async fn select_organization(
     session_id: &str,
     organization_id: &str,
 ) -> AuthStackResult<SessionView> {
-    let session_id = SessionId::new(session_id.to_owned())
-        .map_err(|_| AuthStackError::AuthRequired)?;
+    let session_id =
+        SessionId::new(session_id.to_owned()).map_err(|_| AuthStackError::AuthRequired)?;
     OrganizationService::new(store().await?, RuntimeClock, RuntimeRandom)
         .select(
             &session_id,
@@ -992,7 +989,8 @@ pub async fn organization_for_session(
     organization_id: &str,
 ) -> AuthStackResult<OrganizationSummary> {
     let session_id = bounded_session_id(session_id)?;
-    management_service().await?
+    management_service()
+        .await?
         .organization(&session_id, organization_id)
         .await
         .map(organization_summary)
@@ -1005,7 +1003,8 @@ pub async fn update_organization(
     name: &str,
 ) -> AuthStackResult<OrganizationSummary> {
     let session_id = bounded_session_id(session_id)?;
-    management_service().await?
+    management_service()
+        .await?
         .update_organization(
             &session_id,
             organization_id,
@@ -1022,7 +1021,8 @@ pub async fn list_memberships(
     organization_id: &str,
 ) -> AuthStackResult<MembershipListResponse> {
     let session_id = bounded_session_id(session_id)?;
-    let memberships = management_service().await?
+    let memberships = management_service()
+        .await?
         .list_memberships(&session_id, organization_id)
         .await
         .map_err(map_management_error)?;
@@ -1039,7 +1039,10 @@ pub async fn create_invitation(
 ) -> AuthStackResult<InvitationSummary> {
     let session_id = bounded_session_id(session_id)?;
     let invitation = InvitationService::new(
-        store().await?, RuntimeClock, RuntimeRandom, outbox_key().await?,
+        store().await?,
+        RuntimeClock,
+        RuntimeRandom,
+        outbox_key().await?,
     )
     .create(
         &session_id,
@@ -1058,7 +1061,8 @@ pub async fn list_invitations(
     organization_id: &str,
 ) -> AuthStackResult<InvitationListResponse> {
     let session_id = bounded_session_id(session_id)?;
-    let invitations = management_service().await?
+    let invitations = management_service()
+        .await?
         .list_invitations(&session_id, organization_id)
         .await
         .map_err(map_management_error)?;
@@ -1073,7 +1077,10 @@ pub async fn accept_invitation(
 ) -> AuthStackResult<OrganizationSummary> {
     let session_id = bounded_session_id(session_id)?;
     InvitationService::new(
-        store().await?, RuntimeClock, RuntimeRandom, outbox_key().await?,
+        store().await?,
+        RuntimeClock,
+        RuntimeRandom,
+        outbox_key().await?,
     )
     .accept(&session_id, token, &request_id("accept-invitation")?)
     .await
@@ -1086,7 +1093,8 @@ pub async fn list_roles(
     organization_id: &str,
 ) -> AuthStackResult<RoleListResponse> {
     let session_id = bounded_session_id(session_id)?;
-    let roles = management_service().await?
+    let roles = management_service()
+        .await?
         .list_roles(&session_id, organization_id)
         .await
         .map_err(map_management_error)?;
@@ -1103,7 +1111,8 @@ pub async fn upsert_role(
     permissions: Vec<String>,
 ) -> AuthStackResult<RoleSummary> {
     let session_id = bounded_session_id(session_id)?;
-    management_service().await?
+    management_service()
+        .await?
         .upsert_role(ProductUpsertRoleRequest {
             session_id,
             organization_id: organization_id.to_owned(),
@@ -1124,7 +1133,8 @@ pub async fn assign_role(
     role_id: &str,
 ) -> AuthStackResult<MembershipSummary> {
     let session_id = bounded_session_id(session_id)?;
-    management_service().await?
+    management_service()
+        .await?
         .assign_role(
             &session_id,
             organization_id,
@@ -1143,7 +1153,8 @@ pub async fn remove_member(
     user_id: &str,
 ) -> AuthStackResult<()> {
     let session_id = bounded_session_id(session_id)?;
-    management_service().await?
+    management_service()
+        .await?
         .remove_member(
             &session_id,
             organization_id,
@@ -1163,7 +1174,8 @@ pub fn organization_permission_catalog() -> Vec<String> {
 
 pub async fn list_admin_users(session_id: &str) -> AuthStackResult<AdminUserListResponse> {
     let session_id = bounded_session_id(session_id)?;
-    let users = management_service().await?
+    let users = management_service()
+        .await?
         .list_admin_users(&session_id)
         .await
         .map_err(map_management_error)?;
@@ -1178,7 +1190,8 @@ pub async fn set_user_disabled(
     disabled: bool,
 ) -> AuthStackResult<AdminUserSummary> {
     let session_id = bounded_session_id(session_id)?;
-    management_service().await?
+    management_service()
+        .await?
         .set_user_disabled(
             &session_id,
             user_id,
@@ -1197,7 +1210,8 @@ pub async fn list_audit_events(
     limit: usize,
 ) -> AuthStackResult<AuditEventListResponse> {
     let session_id = bounded_session_id(session_id)?;
-    let page = management_service().await?
+    let page = management_service()
+        .await?
         .list_audit_events(&session_id, organization_id, after_cursor, limit)
         .await
         .map_err(map_management_error)?;
@@ -1237,8 +1251,8 @@ pub async fn revoke_user_session(
 ) -> AuthStackResult<()> {
     let target = SessionId::new(target_session_id.to_owned())
         .map_err(|_| AuthStackError::validation("session_id is invalid"))?;
-    let actor = SessionId::new(actor_session_id.to_owned())
-        .map_err(|_| AuthStackError::AuthRequired)?;
+    let actor =
+        SessionId::new(actor_session_id.to_owned()).map_err(|_| AuthStackError::AuthRequired)?;
     SessionService::new(store().await?, RuntimeClock, RuntimeRandom)
         .revoke(&target, &actor, &request_id("revoke-session")?)
         .await
@@ -1320,10 +1334,13 @@ fn audit_event_summary(record: AuditEventRecord) -> AuditEventSummary {
     }
 }
 
-async fn management_service(
-) -> AuthStackResult<OrganizationManagementService<SpinPostgresTransport, RuntimeClock, RuntimeRandom>> {
+async fn management_service() -> AuthStackResult<
+    OrganizationManagementService<SpinPostgresTransport, RuntimeClock, RuntimeRandom>,
+> {
     Ok(OrganizationManagementService::new(
-        store().await?, RuntimeClock, RuntimeRandom,
+        store().await?,
+        RuntimeClock,
+        RuntimeRandom,
     ))
 }
 
@@ -1331,11 +1348,9 @@ fn bounded_session_id(session_id: &str) -> AuthStackResult<SessionId> {
     SessionId::new(session_id.to_owned()).map_err(|_| AuthStackError::AuthRequired)
 }
 
-async fn load_session(
-    session_id: &str,
-) -> AuthStackResult<wasi_auth::postgres::VerifiedSession> {
-    let session_id = SessionId::new(session_id.to_owned())
-        .map_err(|_| AuthStackError::AuthRequired)?;
+async fn load_session(session_id: &str) -> AuthStackResult<wasi_auth::postgres::VerifiedSession> {
+    let session_id =
+        SessionId::new(session_id.to_owned()).map_err(|_| AuthStackError::AuthRequired)?;
     store()
         .await?
         .load_verified_session(
@@ -1426,8 +1441,8 @@ async fn flow_sealing_key() -> AuthStackResult<FlowSealingKey> {
         .map_err(|_| AuthStackError::configuration("flow sealing key is invalid"))
 }
 
-async fn oauth_flow_service(
-) -> AuthStackResult<OAuthFlowService<SpinPostgresTransport, RuntimeClock, RuntimeRandom>> {
+async fn oauth_flow_service()
+-> AuthStackResult<OAuthFlowService<SpinPostgresTransport, RuntimeClock, RuntimeRandom>> {
     let config = OAuthServiceConfig::new(
         config_u64("AUTH_OAUTH_STATE_TTL_SECONDS", 10 * 60).await?,
         session_ttl_seconds().await?,
@@ -1442,8 +1457,8 @@ async fn oauth_flow_service(
     ))
 }
 
-async fn oauth_provider_service(
-) -> AuthStackResult<OAuthProviderService<SpinPostgresTransport, RuntimeClock, RuntimeRandom>> {
+async fn oauth_provider_service()
+-> AuthStackResult<OAuthProviderService<SpinPostgresTransport, RuntimeClock, RuntimeRandom>> {
     Ok(OAuthProviderService::new(
         store().await?,
         RuntimeClock,
@@ -1451,8 +1466,8 @@ async fn oauth_provider_service(
     ))
 }
 
-async fn policy_bundle_service(
-) -> AuthStackResult<PolicyBundleService<SpinPostgresTransport, RuntimeClock, RuntimeRandom>> {
+async fn policy_bundle_service()
+-> AuthStackResult<PolicyBundleService<SpinPostgresTransport, RuntimeClock, RuntimeRandom>> {
     Ok(PolicyBundleService::new(
         store().await?,
         RuntimeClock,
@@ -1460,8 +1475,8 @@ async fn policy_bundle_service(
     ))
 }
 
-async fn signing_key_service(
-) -> AuthStackResult<SigningKeyService<SpinPostgresTransport, RuntimeClock, RuntimeRandom>> {
+async fn signing_key_service()
+-> AuthStackResult<SigningKeyService<SpinPostgresTransport, RuntimeClock, RuntimeRandom>> {
     Ok(SigningKeyService::new(
         store().await?,
         RuntimeClock,
@@ -1469,8 +1484,8 @@ async fn signing_key_service(
     ))
 }
 
-async fn passkey_service(
-) -> AuthStackResult<PasskeyService<SpinPostgresTransport, RuntimeClock, RuntimeRandom>> {
+async fn passkey_service()
+-> AuthStackResult<PasskeyService<SpinPostgresTransport, RuntimeClock, RuntimeRandom>> {
     let attachment = match runtime_config_value("AUTH_PASSKEY_AUTHENTICATOR_ATTACHMENT")
         .await
         .unwrap_or_else(|| "platform".to_owned())
@@ -1594,9 +1609,7 @@ pub async fn trusted_context_codec() -> AuthStackResult<Option<&'static TrustedC
         .ok()
         .and_then(|bytes| bytes.try_into().ok())
         .ok_or_else(|| {
-            AuthStackError::configuration(
-                "AUTH_TRUSTED_INGRESS_KEY_BASE64 must decode to 32 bytes",
-            )
+            AuthStackError::configuration("AUTH_TRUSTED_INGRESS_KEY_BASE64 must decode to 32 bytes")
         })?;
     let audience = runtime_config_value("AUTH_TRUSTED_INGRESS_AUDIENCE")
         .await
@@ -1679,44 +1692,52 @@ async fn configured_token_service(key_ring: JwtKeyRing) -> AuthStackResult<Runti
     )
     .map_err(|_| AuthStackError::configuration("token lifetime configuration is invalid"))?;
     Ok(TokenService::new(
-        store().await?, RuntimeClock, RuntimeRandom, key_ring, sealing_key, config,
+        store().await?,
+        RuntimeClock,
+        RuntimeRandom,
+        key_ring,
+        sealing_key,
+        config,
     ))
 }
 
 async fn configured_jwt_key_ring() -> AuthStackResult<JwtKeyRing> {
     let production = config_bool("AUTH_PRODUCTION_MODE", false).await;
-    Ok(match runtime_config_value("AUTH_JWT_KEY_RING_JSON")
-        .await
-        .filter(|value| !value.trim().is_empty())
-    {
-        Some(value) => JwtKeyRing::from_json(&value, production)
-            .map_err(|_| AuthStackError::configuration("AUTH_JWT_KEY_RING_JSON is invalid"))?,
-        None if production => {
-            return Err(AuthStackError::configuration(
-                "AUTH_JWT_KEY_RING_JSON with an active ES256 key is required in production",
-            ));
-        }
-        None => {
-            let kid = runtime_config_value("AUTH_JWT_KID")
-                .await
-                .unwrap_or_else(|| "fullstack-app-dev-hs256".to_owned());
-            let secret = runtime_config_value("AUTH_JWT_SECRET")
-                .await
-                .unwrap_or_else(|| "dev-fullstack-app-secret-change-me".to_owned());
-            JwtKeyRing::development_hs256(kid, secret.into_bytes())
-                .map_err(|_| AuthStackError::configuration("development JWT key is invalid"))?
-        }
-    })
+    Ok(
+        match runtime_config_value("AUTH_JWT_KEY_RING_JSON")
+            .await
+            .filter(|value| !value.trim().is_empty())
+        {
+            Some(value) => JwtKeyRing::from_json(&value, production)
+                .map_err(|_| AuthStackError::configuration("AUTH_JWT_KEY_RING_JSON is invalid"))?,
+            None if production => {
+                return Err(AuthStackError::configuration(
+                    "AUTH_JWT_KEY_RING_JSON with an active ES256 key is required in production",
+                ));
+            }
+            None => {
+                let kid = runtime_config_value("AUTH_JWT_KID")
+                    .await
+                    .unwrap_or_else(|| "fullstack-app-dev-hs256".to_owned());
+                let secret = runtime_config_value("AUTH_JWT_SECRET")
+                    .await
+                    .unwrap_or_else(|| "dev-fullstack-app-secret-change-me".to_owned());
+                JwtKeyRing::development_hs256(kid, secret.into_bytes())
+                    .map_err(|_| AuthStackError::configuration("development JWT key is invalid"))?
+            }
+        },
+    )
 }
 
 async fn synchronize_signing_keys(key_ring: &mut JwtKeyRing) -> AuthStackResult<()> {
     let service = signing_key_service().await?;
     let configured = key_ring.descriptors();
     let mut metadata = service.list().await.map_err(map_signing_key_error)?;
-    if configured
-        .iter()
-        .any(|descriptor| !metadata.iter().any(|record| record.key_id == descriptor.kid))
-    {
+    if configured.iter().any(|descriptor| {
+        !metadata
+            .iter()
+            .any(|record| record.key_id == descriptor.kid)
+    }) {
         let version = runtime_config_value("AUTH_JWT_KEY_VERSION")
             .await
             .filter(|value| !value.trim().is_empty())
@@ -1735,8 +1756,8 @@ async fn synchronize_signing_keys(key_ring: &mut JwtKeyRing) -> AuthStackResult<
         .map_err(|_| AuthStackError::configuration("signing-key lifecycle is invalid"))
 }
 
-async fn mfa_service(
-) -> AuthStackResult<MfaService<SpinPostgresTransport, RuntimeClock, RuntimeRandom>> {
+async fn mfa_service()
+-> AuthStackResult<MfaService<SpinPostgresTransport, RuntimeClock, RuntimeRandom>> {
     let (version, encryption_key) = vault_key_material().await?;
     let production = config_bool("AUTH_PRODUCTION_MODE", false).await;
     let recovery_pepper = match runtime_config_value("AUTH_RECOVERY_CODE_PEPPER_BASE64")
@@ -1759,13 +1780,19 @@ async fn mfa_service(
         .await
         .unwrap_or_else(|| "fullstack-app".to_owned());
     MfaService::new(
-        store().await?, RuntimeClock, RuntimeRandom, keys, TotpConfig::default(), issuer,
+        store().await?,
+        RuntimeClock,
+        RuntimeRandom,
+        keys,
+        TotpConfig::default(),
+        issuer,
     )
     .map_err(|_| AuthStackError::configuration("MFA service configuration is invalid"))
 }
 
 async fn issue_tokens(session_id: &SessionId) -> AuthStackResult<(String, String, u64)> {
-    token_service().await?
+    token_service()
+        .await?
         .issue(session_id, &request_id("issue-token")?)
         .await
         .map(|pair| pair.into_parts())
@@ -1789,6 +1816,17 @@ async fn session_ttl_seconds() -> AuthStackResult<u64> {
             AuthStackError::configuration("AUTH_SESSION_TTL_SECONDS must be an integer")
         })
     })
+}
+
+async fn bootstrap_system_administrator_emails() -> Vec<String> {
+    runtime_config_value("AUTH_BOOTSTRAP_ADMIN_EMAILS")
+        .await
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|email| !email.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 async fn config_u32(name: &str, default: u32) -> AuthStackResult<u32> {
@@ -1818,7 +1856,12 @@ async fn config_u64(name: &str, default: u64) -> AuthStackResult<u64> {
 async fn config_bool(name: &str, default: bool) -> bool {
     runtime_config_value(name)
         .await
-        .map(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
         .unwrap_or(default)
 }
 
@@ -1848,9 +1891,7 @@ fn request_id(prefix: &str) -> AuthStackResult<RequestId> {
         .map_err(|_| AuthStackError::store("failed to construct request identifier"))
 }
 
-fn map_registration_error(
-    error: PasswordRegistrationError<SpinPostgresError>,
-) -> AuthStackError {
+fn map_registration_error(error: PasswordRegistrationError<SpinPostgresError>) -> AuthStackError {
     match error {
         PasswordRegistrationError::InvalidRequest => {
             AuthStackError::validation("registration request is invalid")
@@ -1875,7 +1916,9 @@ fn map_registration_error(
 
 fn map_login_error(error: PasswordLoginError<SpinPostgresError>) -> AuthStackError {
     match error {
-        PasswordLoginError::InvalidRequest => AuthStackError::validation("login request is invalid"),
+        PasswordLoginError::InvalidRequest => {
+            AuthStackError::validation("login request is invalid")
+        }
         PasswordLoginError::InvalidCredentials => AuthStackError::InvalidCredentials,
         PasswordLoginError::InvalidConfiguration => {
             AuthStackError::configuration("password login is not configured")
@@ -1894,7 +1937,9 @@ fn map_verification_error(error: EmailVerificationError<SpinPostgresError>) -> A
         EmailVerificationError::InvalidRequest => {
             AuthStackError::validation("verification request is invalid")
         }
-        EmailVerificationError::InvalidToken => AuthStackError::InvalidToken,
+        EmailVerificationError::InvalidToken => {
+            AuthStackError::validation("verification token is invalid or expired")
+        }
         EmailVerificationError::InvalidConfiguration => {
             AuthStackError::configuration("email verification is not configured")
         }
@@ -1938,7 +1983,9 @@ fn map_password_reset_error(error: PasswordResetError<SpinPostgresError>) -> Aut
         PasswordResetError::InvalidRequest => {
             AuthStackError::validation("password reset request is invalid")
         }
-        PasswordResetError::InvalidToken => AuthStackError::InvalidToken,
+        PasswordResetError::InvalidToken => {
+            AuthStackError::validation("password reset token is invalid or expired")
+        }
         PasswordResetError::InvalidConfiguration => {
             AuthStackError::configuration("password reset is not configured")
         }
@@ -1976,15 +2023,19 @@ fn map_rate_limit_error(error: RateLimitError<SpinPostgresError>) -> AuthStackEr
 
 fn map_management_error(error: ManagementError<SpinPostgresError>) -> AuthStackError {
     match error {
-        ManagementError::InvalidRequest => AuthStackError::validation("management request is invalid"),
+        ManagementError::InvalidRequest => {
+            AuthStackError::validation("management request is invalid")
+        }
         ManagementError::NotAuthorized => AuthStackError::Forbidden,
-        ManagementError::ProtectedInvariant => AuthStackError::conflict(
-            "operation would violate an ownership or account invariant",
-        ),
+        ManagementError::ProtectedInvariant => {
+            AuthStackError::conflict("operation would violate an ownership or account invariant")
+        }
         ManagementError::RestrictedPermission => {
             AuthStackError::validation("custom role contains a restricted permission")
         }
-        ManagementError::InvalidToken => AuthStackError::InvalidToken,
+        ManagementError::InvalidToken => {
+            AuthStackError::validation("invitation token is invalid or expired")
+        }
         ManagementError::RandomnessUnavailable
         | ManagementError::Crypto
         | ManagementError::Transport(_)
@@ -1997,6 +2048,7 @@ fn map_management_error(error: ManagementError<SpinPostgresError>) -> AuthStackE
 fn map_token_error(error: TokenServiceError<SpinPostgresError>) -> AuthStackError {
     match error {
         TokenServiceError::InvalidSession => AuthStackError::AuthRequired,
+        TokenServiceError::ExpiredToken => AuthStackError::SessionExpired,
         TokenServiceError::InvalidToken | TokenServiceError::ReuseDetected => {
             AuthStackError::InvalidToken
         }
@@ -2041,9 +2093,7 @@ fn map_oauth_error(error: OAuthServiceError<SpinPostgresError>) -> AuthStackErro
     }
 }
 
-fn map_oauth_provider_error(
-    error: OAuthProviderServiceError<SpinPostgresError>,
-) -> AuthStackError {
+fn map_oauth_provider_error(error: OAuthProviderServiceError<SpinPostgresError>) -> AuthStackError {
     match error {
         OAuthProviderServiceError::InvalidInput => {
             AuthStackError::validation("OAuth provider input is invalid")

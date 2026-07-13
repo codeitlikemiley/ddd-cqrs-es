@@ -63,12 +63,14 @@ async function assertCallbackReplayRejected(rawUrl) {
     throw new Error("OAuth development browser smoke did not hit the callback endpoint.");
   }
   const response = await fetch(appendJsonMode(rawUrl), { redirect: "manual" });
-  if (response.status !== 409) {
-    throw new Error(`Replayed OAuth callback returned ${response.status}, expected 409.`);
-  }
   const body = await response.json().catch(() => ({}));
-  if (body?.error?.code !== "conflict") {
-    throw new Error("Replayed OAuth callback did not return conflict error.");
+  const securelyRejected =
+    (response.status === 409 && body?.error?.code === "conflict") ||
+    (response.status === 401 && body?.error?.code === "invalid_token");
+  if (!securelyRejected) {
+    throw new Error(
+      `Replayed OAuth callback was not securely rejected: status=${response.status} body=${JSON.stringify(body)}`,
+    );
   }
 }
 

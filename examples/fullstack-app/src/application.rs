@@ -296,7 +296,9 @@ pub async fn require_authorized_route_for(
     session_id: Option<String>,
 ) -> AuthStackResult<SessionView> {
     let session = require_authenticated_route_for(session_id).await?;
-    if session.permissions.iter().any(|value| value == permission) {
+    if session.permissions.iter().any(|value| value == permission)
+        || system_administrator_may(permission, &session)
+    {
         Ok(session)
     } else {
         Err(AuthStackError::Forbidden)
@@ -316,7 +318,11 @@ pub async fn require_permission_for(
             access_token: access_token.to_string(),
         })
         .await?;
-        if verified.scopes.iter().any(|scope| scope == permission) {
+        if verified.scopes.iter().any(|scope| scope == permission)
+            || (verified.system_administrator
+                && verified.assurance == "aal2"
+                && is_system_administration_permission(permission))
+        {
             return Ok(SessionView {
                 authenticated: true,
                 session_id: verified.session_id.clone(),
@@ -335,6 +341,18 @@ pub async fn require_permission_for(
     }
 
     require_authorized_route_for(permission, auth.session_id).await
+}
+
+fn system_administrator_may(permission: &str, session: &SessionView) -> bool {
+    session.system_administrator
+        && session.assurance == "aal2"
+        && is_system_administration_permission(permission)
+}
+
+fn is_system_administration_permission(permission: &str) -> bool {
+    permission.starts_with("system.")
+        || permission.starts_with("auth:")
+        || permission.starts_with("authz:")
 }
 
 pub async fn require_step_up_permission_for(

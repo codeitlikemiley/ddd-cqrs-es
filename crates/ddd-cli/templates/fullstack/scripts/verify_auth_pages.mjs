@@ -1,6 +1,13 @@
 #!/usr/bin/env node
 
 const baseUrl = process.env.BASE_URL || "http://127.0.0.1:3008";
+const expectSystemAdministrator =
+  process.env.BROWSER_SMOKE_EXPECT_SYSTEM_ADMIN === "true";
+const configuredSessionEmails = (process.env.BROWSER_SMOKE_EMAILS || "")
+  .split(",")
+  .map((email) => email.trim())
+  .filter(Boolean);
+let sessionEmailIndex = 0;
 const desktop = { width: 1280, height: 720 };
 const mobile = { width: 390, height: 844 };
 const pendingWasmByPage = new WeakMap();
@@ -158,7 +165,9 @@ async function capturedMail(email, kind) {
 }
 
 async function createSessionCookie() {
-  const email = `browser-smoke-${Date.now()}@example.test`;
+  const email =
+    configuredSessionEmails[sessionEmailIndex++] ||
+    `browser-smoke-${Date.now()}-${sessionEmailIndex}@example.test`;
   const response = await fetch(url("/api/auth/password/register"), {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -429,10 +438,16 @@ try {
       "split_authorization_policy_page_loader_",
       true,
     );
-    await assertRedirect(page, "/admin/auth/signing-keys", "/auth/forbidden");
-    await assertRedirect(page, "/admin/auth/providers", "/auth/forbidden");
-    await assertRedirect(page, "/admin/auth/redirects", "/auth/forbidden");
-    await assertAnyText(page, ["Access denied"]);
+    if (expectSystemAdministrator) {
+      await assertPage(page, "/admin/auth/signing-keys", "Signing keys");
+      await assertPage(page, "/admin/auth/providers", "Auth providers");
+      await assertPage(page, "/admin/auth/redirects", "Redirect allowlist");
+    } else {
+      await assertRedirect(page, "/admin/auth/signing-keys", "/auth/forbidden");
+      await assertRedirect(page, "/admin/auth/providers", "/auth/forbidden");
+      await assertRedirect(page, "/admin/auth/redirects", "/auth/forbidden");
+      await assertAnyText(page, ["Access denied"]);
+    }
     await assertRedirect(page, "/login", "/dashboard");
     await assertRedirect(page, "/login?next=/account/security", "/account/security");
     await assertRedirect(page, "/login?next=https://evil.example", "/dashboard");

@@ -116,7 +116,7 @@ OPTIONAL_SPICEDB_FEATURE := ,spicedb
 endif
 BASE_FEATURES := ssr,$(db),$(MAIL_FEATURE)$(OPTIONAL_SPICEDB_FEATURE)
 GRPC_FEATURES := ssr,$(db),spin-grpc,$(MAIL_FEATURE)$(OPTIONAL_SPICEDB_FEATURE)
-SPIN_VARIABLE_ARGS := \
+SPIN_VARIABLE_ARGS = \
 	--variable database_backend=$(db) \
 	--variable database_url='$(AUTH_DATABASE_URL)' \
 	--variable auth_transport=$(transport) \
@@ -263,10 +263,11 @@ spin: validate-toolchain validate-mail db-migrate
 	esac
 	FULLSTACK_FEATURES=$(GRPC_FEATURES) AUTH_TRANSPORT=$(transport) "$(SPIN_BIN)" up $(SPIN_UP_BUILD_FLAG) --listen $(listen) $(SPIN_VARIABLE_ARGS)
 
-spin-backend: AUTH_REQUIRE_TRUSTED_INGRESS=true
+spin-backend: override AUTH_REQUIRE_TRUSTED_INGRESS := true
 spin-backend: listen=$(backend_listen)
 spin-backend: spin
 
+spin-backend-prebuilt: override AUTH_REQUIRE_TRUSTED_INGRESS := true
 spin-backend-prebuilt: SPIN_UP_BUILD_FLAG=
 spin-backend-prebuilt: spin-backend
 

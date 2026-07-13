@@ -16,6 +16,15 @@ reset_postgres() {
   psql "$DATABASE_URL" <<'SQL'
 BEGIN;
 DROP TABLE IF EXISTS
+    auth_application_redirects,
+    auth_flows,
+    auth_one_time_tokens,
+    auth_passwords,
+    auth_rate_limit_buckets,
+    auth_redirect_uris,
+    auth_refresh_tokens,
+    auth_system_administrators,
+    auth_totp_factors,
     auth_audit_log,
     auth_outbox,
     auth_idempotency,
@@ -55,6 +64,12 @@ DROP TABLE IF EXISTS
     checkpoints,
     events,
     auth_schema_migrations
+CASCADE;
+DROP FUNCTION IF EXISTS
+    auth_adjust_owner_count(),
+    auth_notify_context_invalidation(),
+    auth_track_membership_authorization(),
+    auth_validate_owner_count()
 CASCADE;
 COMMIT;
 SQL

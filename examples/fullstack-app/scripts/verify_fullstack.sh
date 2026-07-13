@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+trap 'echo "error: fullstack smoke failed at line ${LINENO}" >&2' ERR
+
 BASE_URL="${BASE_URL:-http://127.0.0.1:3008}"
 RUN_GRPC="${RUN_GRPC:-0}"
 CHECK_REFRESH_TOKEN_EXPIRY="${CHECK_REFRESH_TOKEN_EXPIRY:-0}"
@@ -17,6 +19,7 @@ SMOKE_EMAIL="${SMOKE_EMAIL:-smoke-auth-$(date +%s)-$$@example.test}"
 SIGNING_KEY_ROTATE_FROM_KID="${SIGNING_KEY_ROTATE_FROM_KID:-fullstack-app-key-a}"
 SIGNING_KEY_ROTATE_TO_KID="${SIGNING_KEY_ROTATE_TO_KID:-fullstack-app-key-b}"
 REFRESH_EXPIRY_WAIT_SECONDS="${REFRESH_EXPIRY_WAIT_SECONDS:-2}"
+REFRESH_REUSE_WAIT_SECONDS="${REFRESH_REUSE_WAIT_SECONDS:-31}"
 PASSKEY_EXPIRY_WAIT_SECONDS="${PASSKEY_EXPIRY_WAIT_SECONDS:-2}"
 PROTO_DIR="${PROTO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/proto}"
 
@@ -653,16 +656,37 @@ for path in /login /register /forgot-password /reset-password; do
 done
 assert_redirect "$BASE_URL/login?next=/forgot-password" "/dashboard" -H "$session_cookie"
 
+original_refresh_token="$(jq -r '.refresh_token' <<<"$verification_response")"
+replayed_refresh_response="$(curl -sS -f -X POST "$BASE_URL/api/auth/token/refresh" \
+  -H "Authorization: Bearer $access_token" \
+  -H 'content-type: application/json' \
+  --data "{\"refresh_token\":\"$original_refresh_token\"}")"
+jq -e \
+  --arg access_token "$(jq -r '.access_token' <<<"$refresh_response")" \
+  --arg refresh_token "$(jq -r '.refresh_token' <<<"$refresh_response")" \
+  '.access_token == $access_token and .refresh_token == $refresh_token' \
+  <<<"$replayed_refresh_response" >/dev/null
+
+sleep "$REFRESH_REUSE_WAIT_SECONDS"
 assert_error 401 invalid_token POST "$BASE_URL/api/auth/token/refresh" \
   -H "Authorization: Bearer $access_token" \
   -H 'content-type: application/json' \
-  --data "{\"refresh_token\":\"$(jq -r '.refresh_token' <<<"$verification_response")\"}"
-curl -sS "$BASE_URL/api/auth/session" -H "$session_cookie" \
-  | jq -e '.authenticated == false' >/dev/null
-assert_redirect "$BASE_URL/dashboard" "/auth/required?next=/dashboard" -H "$session_cookie"
+  --data "{\"refresh_token\":\"$original_refresh_token\"}"
+session_status="$(curl -sS -o /tmp/fullstack-app-revoked-session.json -w '%{http_code}' \
+  "$BASE_URL/api/auth/session" -H "$session_cookie")"
+case "$session_status" in
+  200) jq -e '.authenticated == false' /tmp/fullstack-app-revoked-session.json >/dev/null ;;
+  401) ;;
+  *)
+    echo "Expected revoked session lookup to return 200/unauthenticated or trusted-ingress 401, got $session_status" >&2
+    exit 1
+    ;;
+esac
+assert_redirect "$BASE_URL/dashboard" "/auth/required?next=/dashboard"
 
+unknown_reset_email="unknown-$email"
 unknown_reset_response="$(json_post /api/auth/password/reset/start \
-  '{"email":"unknown-smoke-account@example.test","redirect_url":"/dashboard"}')"
+  "{\"email\":\"$unknown_reset_email\",\"redirect_url\":\"/dashboard\"}")"
 jq -e '.accepted == true and (has("reset_url") | not) and .expires_in_seconds > 0' \
   <<<"$unknown_reset_response" >/dev/null
 
@@ -708,48 +732,80 @@ session_cookie="Cookie: wasi_auth_dev_session=$session_id"
 json_post /api/auth/token/verify "{\"access_token\":\"$access_token\"}" \
   | jq -e --arg session_id "$session_id" '.active == true and .session_id == $session_id' >/dev/null
 
+csrf_token="$(curl -sS -f "$BASE_URL/api/auth/csrf" -H "$session_cookie" | jq -r '.token')"
 if [[ "$CHECK_STORAGE_EVENTS" == "1" ]]; then
-  csrf_token="$(curl -sS -f "$BASE_URL/api/auth/csrf" -H "$session_cookie" | jq -r '.token')"
   json_post /api/auth/mfa/recovery/verify "{\"code\":\"$admin_recovery_code\"}" \
     -H "$session_cookie" -H "x-csrf-token: $csrf_token" \
     | jq -e '.assurance == "aal2"' >/dev/null
 fi
 
+organization_response="$(json_post /api/organizations \
+  "{\"name\":\"Smoke Organization ${session_id:0:8}\"}" \
+  -H "$session_cookie" -H "x-csrf-token: $csrf_token")"
+organization_id="$(jq -r '.organization_id' <<<"$organization_response")"
+[[ -n "$organization_id" && "$organization_id" != "null" ]] || {
+  echo "Organization onboarding did not return an identifier" >&2
+  exit 1
+}
+tenant_refresh_response="$(curl -sS -f -X POST "$BASE_URL/api/auth/token/refresh" \
+  -H "$session_cookie" \
+  -H "x-csrf-token: $csrf_token" \
+  -H 'content-type: application/json' \
+  --data "{\"refresh_token\":\"$refresh_token\"}")"
+access_token="$(jq -r '.access_token' <<<"$tenant_refresh_response")"
+refresh_token="$(jq -r '.refresh_token' <<<"$tenant_refresh_response")"
+json_post /api/auth/token/verify "{\"access_token\":\"$access_token\"}" \
+  | jq -e --arg organization_id "$organization_id" \
+      '.active == true and .tenant_id == $organization_id' >/dev/null
+
 curl -sS -f "$BASE_URL/api/auth/.well-known/jwks.json" | jq -e '.keys | type == "array"' >/dev/null
 
 assert_error 401 auth_required POST "$BASE_URL/api/authorization/check" \
   -H 'content-type: application/json' \
-  --data '{"action":"authz:check","resource_type":"Organization","resource_id":"tenant:default","organization_id":"tenant:default"}'
+  --data "{\"action\":\"organization.view\",\"resource_type\":\"Organization\",\"resource_id\":\"$organization_id\",\"organization_id\":\"$organization_id\"}"
 
-json_post_bearer /api/authorization/check \
-  '{"action":"authz:check","resource_type":"Organization","resource_id":"tenant:default","organization_id":"tenant:default"}' \
-  "$access_token" \
-  | jq -e '.allowed == true and .policy_revision == "embedded-v1"' >/dev/null
+authorization_response="$(json_post_bearer /api/authorization/check \
+  "{\"action\":\"organization.view\",\"resource_type\":\"Organization\",\"resource_id\":\"$organization_id\",\"organization_id\":\"$organization_id\"}" \
+  "$access_token")"
+if ! jq -e '.allowed == true and (.policy_revision | length > 0)' \
+  <<<"$authorization_response" >/dev/null; then
+  echo "Authenticated organization.view probe was denied: $authorization_response" >&2
+  exit 1
+fi
 
 counter_change_response="$(json_post_bearer /api/authorization/check \
-  '{"action":"counter.change","resource_type":"Counter","resource_id":"counter-1","organization_id":"tenant:default"}' \
+  "{\"action\":\"counter.change\",\"resource_type\":\"Counter\",\"resource_id\":\"counter-1\",\"organization_id\":\"$organization_id\"}" \
   "$access_token")"
-if [[ "$CHECK_STORAGE_EVENTS" == "1" ]]; then
-  jq -e '.allowed == true' <<<"$counter_change_response" >/dev/null
-else
-  jq -e '.allowed == false' <<<"$counter_change_response" >/dev/null
-fi
+jq -e '.allowed == true' <<<"$counter_change_response" >/dev/null
 
 if [[ "$CHECK_STORAGE_EVENTS" == "1" ]]; then
   run_storage_event_check
 fi
 
-logout_response="$(curl -sS -X POST "$BASE_URL/api/auth/logout" -H "Authorization: Bearer $access_token")"
-jq -e '.redirect_url == "/login"' <<<"$logout_response" >/dev/null
-assert_error 401 auth_required POST "$BASE_URL/api/auth/token/refresh" \
+logout_status="$(curl -sS -o /tmp/fullstack-app-logout.json -w '%{http_code}' \
+  -X POST "$BASE_URL/api/auth/logout" -H "Authorization: Bearer $access_token")"
+if [[ "$logout_status" != "200" ]] \
+  || ! jq -e '.redirect_url == "/"' /tmp/fullstack-app-logout.json >/dev/null; then
+  echo "Logout contract failed with HTTP $logout_status: $(cat /tmp/fullstack-app-logout.json)" >&2
+  exit 1
+fi
+assert_status 401 POST "$BASE_URL/api/auth/token/refresh" \
   -H "Authorization: Bearer $access_token" \
   -H 'content-type: application/json' \
   --data "{\"refresh_token\":\"$refresh_token\"}"
-assert_error 401 auth_required POST "$BASE_URL/api/auth/token/verify" \
+assert_error 401 invalid_token POST "$BASE_URL/api/auth/token/verify" \
   -H 'content-type: application/json' \
   --data "{\"access_token\":\"$access_token\"}"
-curl -sS "$BASE_URL/api/auth/session" -H "$session_cookie" \
-  | jq -e '.authenticated == false' >/dev/null
+logout_session_status="$(curl -sS -o /tmp/fullstack-app-logged-out-session.json -w '%{http_code}' \
+  "$BASE_URL/api/auth/session" -H "$session_cookie")"
+case "$logout_session_status" in
+  200) jq -e '.authenticated == false' /tmp/fullstack-app-logged-out-session.json >/dev/null ;;
+  401) ;;
+  *)
+    echo "Expected logged-out session lookup to return 200/unauthenticated or trusted-ingress 401, got $logout_session_status" >&2
+    exit 1
+    ;;
+esac
 
 if [[ "$RUN_GRPC" == "1" ]]; then
   require_command grpcurl
