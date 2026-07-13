@@ -38,8 +38,10 @@ package_archive="$PWD/target/package/ddd_cqrs_es-0.3.0-rc.1.crate"
 rm -f "$package_archive"
 cargo package --locked -p ddd_cqrs_es --allow-dirty --no-verify
 test -f "$package_archive"
-tar -tf "$package_archive" | grep -q '/Cargo.toml$'
-if tar -xOf "$package_archive" 'ddd_cqrs_es-0.3.0-rc.1/Cargo.toml' | grep -Eq 'rustls-rustcrypto|(^|[[:space:]])rsa[[:space:]]*='; then
+# Do not use grep -q in these pipefail pipelines: an early successful exit
+# closes the pipe and makes tar report SIGPIPE as a CI failure.
+tar -tf "$package_archive" | grep '/Cargo.toml$' >/dev/null
+if tar -xOf "$package_archive" 'ddd_cqrs_es-0.3.0-rc.1/Cargo.toml' | grep -E 'rustls-rustcrypto|(^|[[:space:]])rsa[[:space:]]*=' >/dev/null; then
   echo "Error: quarantined direct-TCP dependencies leaked into the package." >&2
   exit 1
 fi
