@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MAX_LOC="${MAX_LOC:-1200}"
 # Files allowed to exceed temporarily while still being split (comma-separated basenames).
 # Basenames still being split under the modularization plan.
-ALLOWLIST="${LOC_ALLOWLIST:-mod.rs,grpc.rs}"
+ALLOWLIST="${LOC_ALLOWLIST:-mod.rs}"
 
 fail=0
 while IFS= read -r -d '' file; do

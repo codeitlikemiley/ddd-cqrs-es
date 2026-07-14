@@ -1,6 +1,6 @@
 # Fullstack modularization goal (pre-Tailwind)
 
-**Status:** in progress  
+**Status:** complete  
 **Branch:** `codex/fullstack-verification-flow`  
 **Rule:** do **not** push or open PRs unless the human explicitly asks.
 
@@ -20,7 +20,8 @@ Finish structural cleanup of `examples/fullstack-app` (and dual-sync template) s
    - [x] `src/application.rs` (~2.9k) → `application/{mod,request_auth,common,session,auth,profile,dashboard,vault,account,organization,admin,authorization,ingress}`
    - [x] `src/store.rs` (~4.5k) → `store/{sql,profile,keys,org_slug,board,vault,seed,resources,query_exec,notifications,health}`
    - [x] `src/auth_product.rs` (~2.3k) → `auth_product/{runtime,providers,flows,password,session,organization,admin,infra,config,errors}`
-4. Every change: `make check` green in `examples/fullstack-app`.
+   - [x] `src/grpc.rs` (~1.5k) → `grpc/{serve,auth,authorization,organization,admin,audit,convert}`
+4. Every change: `make check` green in `examples/fullstack-app` (and `make grpc-check` when touching gRPC).
 5. Dual-sync: `bash scripts/sync_fullstack_template.sh` so `crates/ddd-cli/templates/fullstack` matches.
 6. Local commits only (group by task). No force-push, no remote push.
 
@@ -33,9 +34,12 @@ Finish structural cleanup of `examples/fullstack-app` (and dual-sync template) s
 
 ### Next work unit (update after each run)
 
-1. Split `src/grpc.rs` (~1509 LOC) into domain modules (only remaining over-budget product file besides allowlisted `mod.rs` if still large).
-2. Drop `grpc.rs` from LOC allowlist when under budget.
-3. Goal complete when no non-allowlisted file exceeds 1200 LOC and remaining allowlist entries are intentional/shrinking (or empty).
+**Goal complete.** Optional follow-ups (out of scope for this goal unless reopened):
+1. Thin remaining near-budget files further if desired (e.g. `app/auth/forms.rs` ~1175).
+2. Tailwind utility rewrite (explicitly deferred until after this goal).
+3. Cancel the durable 30m scheduler if no further modularization units remain.
+
+LOC allowlist is now only `mod.rs` (barrel modules; not a monolith).
 
 ### Agent loop
 
@@ -52,5 +56,6 @@ Session goal tracks the same objective via `/goal` / `update_goal`.
 - 2026-07-14 (scheduled): Split `application` into domain modules (~51–511 LOC each); fixed cross-module imports/helpers; removed `application.rs` from LOC allowlist. `make check` green; dual-sync done.
 - 2026-07-15 (scheduled): Split `store` into domain modules (~106–937 LOC each); removed `store.rs` from LOC allowlist. `make check` green; dual-sync done.
 - 2026-07-15 (scheduled): Split `auth_product` into domain modules (~148–682 LOC each); removed `auth_product.rs` from LOC allowlist. `make check` green; dual-sync done.
+- 2026-07-15 (scheduled): Split `grpc` into domain modules (~64–494 LOC each); `make check` + `make grpc-check` green; removed `grpc.rs` from LOC allowlist; dual-sync done. **Modularization goal complete.**
 
 Update this file every scheduled run: checkboxes, progress log line, and the single “Next work unit”.
