@@ -600,6 +600,7 @@ impl OrganizationService for OrganizationGrpcService {
         let response = crate::application::create_organization(
             crate::contracts::OrganizationCreateRequest {
                 name: request.into_inner().name,
+                slug: String::new(),
             },
             auth,
         )

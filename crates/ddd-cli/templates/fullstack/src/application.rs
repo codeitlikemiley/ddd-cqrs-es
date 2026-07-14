@@ -32,11 +32,14 @@ use crate::contracts::{
     OrganizationSelectRequest, OrganizationSummary, OrganizationUpdateRequest, PasskeyStartRequest,
     PasskeyStartResponse, PasskeyVerifyRequest, PasswordChangeRequest,
     PasswordResetCompleteRequest, PasswordResetStartRequest, PasswordResetStartResponse,
+    BoardNode, DashboardCatalogItem, DashboardLayout, DashboardLayoutUpdate, DashboardNoteUpdate,
+    DashboardNotification, DashboardSnapshot, DashboardWidgetKind, DataSourceSummary,
+    DataSourceUpsert, HttpQueryResult, SecretCreateRequest, SecretSummary,
     PermissionCatalogResponse, PolicyPublishRequest, PolicyVersionListResponse,
-    PolicyVersionSummary, RoleListResponse, RoleSummary, RoleUpsertRequest, SessionRevokeRequest,
-    SessionView, SigningKeyListResponse, SigningKeyRotateRequest, SigningKeyRotateResponse,
-    StorageProjectionRunResponse, StorageStatusResponse, TokenRefreshResponse, TokenVerifyRequest,
-    TokenVerifyResponse,
+    PolicyVersionSummary, ProfileUpdateRequest, ProfileView, PublicProfileView, RoleListResponse,
+    RoleSummary, RoleUpsertRequest, SessionRevokeRequest, SessionView, SigningKeyListResponse,
+    SigningKeyRotateRequest, SigningKeyRotateResponse, StorageProjectionRunResponse,
+    StorageStatusResponse, TokenRefreshResponse, TokenVerifyRequest, TokenVerifyResponse,
 };
 use crate::error::{AuthStackError, AuthStackResult};
 
@@ -203,7 +206,790 @@ pub async fn complete_password_reset(
 }
 
 pub async fn get_current_session_for(session_id: Option<String>) -> AuthStackResult<SessionView> {
-    crate::auth_product::get_session(session_id.as_deref()).await
+    let Some(session_id) = session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return crate::auth_product::get_session(None).await;
+    };
+    let session = crate::auth_product::get_session(Some(session_id)).await?;
+    if !session.authenticated {
+        return Ok(session);
+    }
+    let Some(user_id) = session.user_id.as_deref() else {
+        return Ok(session);
+    };
+    // Restore first workspace as default when login left selected_organization_id null.
+    crate::auth_product::ensure_default_organization(session_id, user_id).await
+}
+
+pub async fn get_account_profile(auth: RequestAuth) -> AuthStackResult<ProfileView> {
+    let (context, _) = verified_context_and_permissions(auth, false).await?;
+    let user_id = context.principal().user_id().as_str().to_owned();
+    let email = crate::auth_product::get_session(Some(context.session_id().as_str()))
+        .await
+        .ok()
+        .and_then(|session| session.primary_email);
+    crate::store::get_profile_for_user(&user_id, email).await
+}
+
+pub async fn update_account_profile(
+    request: ProfileUpdateRequest,
+    auth: RequestAuth,
+) -> AuthStackResult<ProfileView> {
+    let (context, _) = verified_context_and_permissions(auth, false).await?;
+    let user_id = context.principal().user_id().as_str().to_owned();
+    let email = crate::auth_product::get_session(Some(context.session_id().as_str()))
+        .await
+        .ok()
+        .and_then(|session| session.primary_email);
+    crate::store::update_profile_for_user(&user_id, email, request).await
+}
+
+pub async fn get_public_profile(username: String) -> AuthStackResult<PublicProfileView> {
+    crate::store::get_public_profile_by_username(&username).await
+}
+
+pub async fn get_dashboard_snapshot(auth: RequestAuth) -> AuthStackResult<DashboardSnapshot> {
+    let (context, _) = verified_context_and_permissions(auth.clone(), false).await?;
+    let user_id = context.principal().user_id().as_str().to_owned();
+    let session_id = context.session_id().as_str().to_owned();
+    // Always restore a default workspace (first membership) when none is selected.
+    let session = crate::auth_product::ensure_default_organization(&session_id, &user_id).await?;
+    let email = session.primary_email.clone();
+    let greeting_name = email
+        .as_deref()
+        .and_then(|value| value.split('@').next())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("there")
+        .to_owned();
+    let has_tenant = session
+        .tenant_id
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty());
+
+    let sessions = crate::auth_product::list_user_sessions(
+        context.principal().user_id().as_str(),
+        context.session_id().as_str(),
+    )
+    .await
+    .map(|response| response.sessions)
+    .unwrap_or_default();
+
+    let organizations = crate::auth_product::list_organizations(context.principal().user_id().as_str())
+        .await
+        .map(|response| response.organizations)
+        .unwrap_or_default();
+
+    // Prefer human workspace name (+ slug) over raw UUID for UI labels.
+    let tenant_label = session
+        .tenant_id
+        .as_ref()
+        .and_then(|tid| {
+            organizations
+                .iter()
+                .find(|o| o.organization_id == *tid)
+                .map(|o| {
+                    if o.slug.is_empty() {
+                        o.name.clone()
+                    } else {
+                        format!("{} · /org/{}", o.name, o.slug)
+                    }
+                })
+                .or_else(|| Some(tid.clone()))
+        });
+
+    let mfa = crate::auth_product::mfa_status(context.session_id().as_str())
+        .await
+        .ok();
+    let totp_enrolled = mfa.as_ref().map(|status| status.totp_enrolled).unwrap_or(false);
+    let recovery_codes_remaining = mfa
+        .as_ref()
+        .map(|status| status.recovery_codes_remaining)
+        .unwrap_or(0);
+
+    let activity = if has_tenant {
+        crate::auth_product::list_audit_events(
+            context.session_id().as_str(),
+            session.tenant_id.as_deref(),
+            0,
+            12,
+        )
+        .await
+        .map(|response| response.events)
+        .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    let notifications = crate::store::load_dashboard_notifications(&user_id).await?;
+    let sources = crate::store::load_data_sources(&user_id).await?;
+    let vault_org_id = session
+        .tenant_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned);
+    if let Some(org) = vault_org_id.as_deref() {
+        let _ = crate::store::migrate_legacy_user_board_to_org(&user_id, org).await;
+        let _ = crate::store::migrate_legacy_user_secrets_to_org(&user_id, org).await;
+    }
+    // Workspace-scoped board: layout/resources/queries/secrets require selected tenant.
+    let layout = match vault_org_id.as_deref() {
+        Some(org) => crate::store::load_dashboard_layout(org).await?,
+        None => crate::store::default_dashboard_layout_public(),
+    };
+    let secrets = match vault_org_id.as_deref() {
+        Some(org) => crate::store::list_secret_summaries(org).await.unwrap_or_default(),
+        None => Vec::new(),
+    };
+    let http_enabled = dashboard_http_enabled().await;
+    let allow_private = dashboard_http_allow_private().await;
+
+    let mut security_score: u8 = 35;
+    if totp_enrolled {
+        security_score = security_score.saturating_add(35);
+    }
+    if recovery_codes_remaining > 0 {
+        security_score = security_score.saturating_add(15);
+    }
+    if sessions.len() <= 3 {
+        security_score = security_score.saturating_add(15);
+    }
+    if session.assurance.to_ascii_lowercase().contains("aal2")
+        || session.assurance.to_ascii_lowercase().contains("2")
+    {
+        security_score = security_score.saturating_add(10);
+    }
+    security_score = security_score.min(100);
+
+    let mut placed = std::collections::HashSet::new();
+    fn collect_kinds(nodes: &[BoardNode], placed: &mut std::collections::HashSet<String>) {
+        for node in nodes {
+            match node {
+                BoardNode::Widget { kind, .. } => {
+                    placed.insert(kind.as_str().to_owned());
+                }
+                BoardNode::Container { children, .. } => collect_kinds(children, placed),
+            }
+        }
+    }
+    collect_kinds(&layout.nodes, &mut placed);
+
+    let catalog = DashboardWidgetKind::catalog()
+        .iter()
+        .map(|kind| DashboardCatalogItem {
+            already_added: !kind.allows_multiple() && placed.contains(kind.as_str()),
+            allows_multiple: kind.allows_multiple(),
+            default_span: kind.default_span(),
+            description: kind.description().to_owned(),
+            kind: kind.clone(),
+            label: kind.label().to_owned(),
+        })
+        .collect();
+
+    let data_sources: Vec<DataSourceSummary> = sources
+        .iter()
+        .map(crate::store::data_source_to_summary)
+        .collect();
+
+    let resources = match vault_org_id.as_deref() {
+        Some(org) => crate::store::load_resources(org).await.unwrap_or_default(),
+        None => Vec::new(),
+    };
+    let queries = match vault_org_id.as_deref() {
+        Some(org) => crate::store::load_queries(org).await.unwrap_or_default(),
+        None => Vec::new(),
+    };
+    let resource_summaries: Vec<crate::contracts::ResourceSummary> = resources
+        .iter()
+        .map(crate::store::resource_to_summary)
+        .collect();
+    let query_summaries: Vec<crate::contracts::QuerySummary> = queries
+        .iter()
+        .map(|q| crate::store::query_to_summary(q, &resources))
+        .collect();
+
+    // Execute queries referenced by bound board widgets (capped).
+    let mut http_source_ids = Vec::new();
+    fn collect_query_ids(nodes: &[BoardNode], out: &mut Vec<String>) {
+        for node in nodes {
+            match node {
+                BoardNode::Widget {
+                    kind,
+                    source_id: Some(id),
+                    ..
+                } if kind.is_query_bound() => {
+                    if !out.contains(id) {
+                        out.push(id.clone());
+                    }
+                }
+                BoardNode::Container { children, .. } => collect_query_ids(children, out),
+                _ => {}
+            }
+        }
+    }
+    collect_query_ids(&layout.nodes, &mut http_source_ids);
+    http_source_ids.truncate(8);
+    let mut http_results = Vec::new();
+    let mut query_results = Vec::new();
+    if http_enabled {
+        for source_id in http_source_ids {
+            // Prefer QueryResult path (also feeds legacy HttpQueryResult for HttpPanel).
+            let Some(org) = vault_org_id.as_deref() else {
+                continue;
+            };
+            match crate::store::execute_dashboard_query(org, &source_id, allow_private).await {
+                Ok(result) => {
+                    http_results.push(HttpQueryResult {
+                        source_id: result.query_id.clone(),
+                        ok: result.ok,
+                        error: result.error.clone(),
+                        data_json: result.data_json.clone(),
+                        display_mode: crate::contracts::HttpDisplayMode::List,
+                    });
+                    query_results.push(result);
+                }
+                Err(error) => {
+                    http_results.push(HttpQueryResult {
+                        source_id: source_id.clone(),
+                        ok: false,
+                        error: Some(error.public_message()),
+                        data_json: "null".to_owned(),
+                        display_mode: crate::contracts::HttpDisplayMode::List,
+                    });
+                    query_results.push(crate::contracts::QueryResult::err(
+                        source_id,
+                        crate::contracts::ResourceKind::Rest,
+                        error.public_message(),
+                    ));
+                }
+            }
+        }
+    }
+
+    let grpc_resources_enabled = dashboard_grpc_enabled().await;
+    let postgres_resources_enabled = true;
+
+    Ok(DashboardSnapshot {
+        greeting_name,
+        email,
+        assurance: session.assurance,
+        has_tenant,
+        tenant_label,
+        system_administrator: session.system_administrator,
+        organization_count: organizations.len() as u32,
+        active_session_count: sessions.len() as u32,
+        security_score,
+        totp_enrolled,
+        recovery_codes_remaining,
+        sessions,
+        organizations,
+        activity,
+        notifications,
+        layout,
+        catalog,
+        data_sources,
+        secrets,
+        http_results,
+        http_enabled,
+        resources: resource_summaries,
+        queries: query_summaries,
+        query_results,
+        postgres_resources_enabled,
+        grpc_resources_enabled,
+    })
+}
+
+async fn dashboard_grpc_enabled() -> bool {
+    matches!(
+        config_value("AUTH_DASHBOARD_GRPC_ENABLED")
+            .await
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("1" | "true" | "yes" | "on")
+    )
+}
+
+async fn dashboard_http_enabled() -> bool {
+    !matches!(
+        config_value("AUTH_DASHBOARD_HTTP_ENABLED")
+            .await
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("0" | "false" | "no" | "off")
+    )
+}
+
+async fn dashboard_http_allow_private() -> bool {
+    matches!(
+        config_value("AUTH_DASHBOARD_HTTP_ALLOW_PRIVATE")
+            .await
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("1" | "true" | "yes" | "on")
+    )
+}
+
+/// Require a selected workspace; migrate legacy user board once; return `(user_id, org_id)`.
+async fn require_workspace_board(auth: RequestAuth) -> AuthStackResult<(String, String)> {
+    let (context, _) = verified_context_and_permissions(auth, false).await?;
+    let user_id = context.principal().user_id().as_str().to_owned();
+    let session_id = context.session_id().as_str().to_owned();
+    let session = crate::auth_product::ensure_default_organization(&session_id, &user_id).await?;
+    let org_id = session
+        .tenant_id
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| {
+            AuthStackError::validation(
+                "create a workspace first (sidebar → Create workspace)",
+            )
+        })?;
+    enforce_organization_scope(&context, &org_id).await?;
+    let _ = crate::store::migrate_legacy_user_board_to_org(&user_id, &org_id).await;
+    let _ = crate::store::migrate_legacy_user_secrets_to_org(&user_id, &org_id).await;
+    Ok((user_id, org_id))
+}
+
+pub async fn save_dashboard_layout(
+    request: DashboardLayoutUpdate,
+    auth: RequestAuth,
+) -> AuthStackResult<DashboardLayout> {
+    let (_user_id, org_id) = require_workspace_board(auth).await?;
+    let mut layout = request.layout;
+    layout.migrate_if_needed();
+    crate::store::save_dashboard_layout(&org_id, &layout).await?;
+    crate::store::load_dashboard_layout(&org_id).await
+}
+
+pub async fn dismiss_dashboard_notification(
+    notification_id: String,
+    auth: RequestAuth,
+) -> AuthStackResult<Vec<DashboardNotification>> {
+    if notification_id.trim().is_empty() {
+        return Err(AuthStackError::validation("notification_id is required"));
+    }
+    let (context, _) = verified_context_and_permissions(auth, false).await?;
+    let user_id = context.principal().user_id().as_str().to_owned();
+    crate::store::dismiss_dashboard_notification(&user_id, notification_id.trim()).await
+}
+
+pub async fn update_dashboard_note(
+    request: DashboardNoteUpdate,
+    auth: RequestAuth,
+) -> AuthStackResult<DashboardLayout> {
+    if request.widget_id.trim().is_empty() {
+        return Err(AuthStackError::validation("widget_id is required"));
+    }
+    if request.text.chars().count() > 2_000 {
+        return Err(AuthStackError::validation("note is too long"));
+    }
+    let (_user_id, org_id) = require_workspace_board(auth).await?;
+    let mut layout = crate::store::load_dashboard_layout(&org_id).await?;
+    let Some(node) = layout.find_widget_mut(request.widget_id.trim()) else {
+        return Err(AuthStackError::not_found("widget not found"));
+    };
+    match node {
+        BoardNode::Widget {
+            kind: DashboardWidgetKind::Notes,
+            note_text,
+            ..
+        } => {
+            *note_text = Some(request.text);
+        }
+        _ => return Err(AuthStackError::validation("widget is not a notes tile")),
+    }
+    crate::store::save_dashboard_layout(&org_id, &layout).await?;
+    crate::store::load_dashboard_layout(&org_id).await
+}
+
+pub async fn list_dashboard_sources(auth: RequestAuth) -> AuthStackResult<Vec<DataSourceSummary>> {
+    let (context, _) = verified_context_and_permissions(auth, false).await?;
+    let user_id = context.principal().user_id().as_str().to_owned();
+    Ok(crate::store::load_data_sources(&user_id)
+        .await?
+        .iter()
+        .map(crate::store::data_source_to_summary)
+        .collect())
+}
+
+pub async fn upsert_dashboard_source(
+    request: DataSourceUpsert,
+    auth: RequestAuth,
+) -> AuthStackResult<DataSourceSummary> {
+    if !dashboard_http_enabled().await {
+        return Err(AuthStackError::configuration(
+            "HTTP dashboard sources are disabled",
+        ));
+    }
+    let (context, _) = verified_context_and_permissions(auth, false).await?;
+    let user_id = context.principal().user_id().as_str().to_owned();
+    crate::store::upsert_http_source(&user_id, request, dashboard_http_allow_private().await).await
+}
+
+pub async fn delete_dashboard_source(
+    source_id: String,
+    auth: RequestAuth,
+) -> AuthStackResult<AcceptedResponse> {
+    let (context, _) = verified_context_and_permissions(auth, false).await?;
+    let user_id = context.principal().user_id().as_str().to_owned();
+    crate::store::delete_data_source(&user_id, source_id.trim()).await?;
+    Ok(AcceptedResponse { accepted: true })
+}
+
+/// Resolve org id from slug or explicit id and assert membership + vault permission.
+async fn require_vault_org(
+    context: &VerifiedAuthContext,
+    organization_id: Option<&str>,
+    org_slug: Option<&str>,
+    required_permission: &str,
+) -> AuthStackResult<String> {
+    let org_id = if let Some(slug) = org_slug.map(str::trim).filter(|s| !s.is_empty()) {
+        crate::store::resolve_org_id_for_slug(slug).await?
+    } else if let Some(id) = organization_id.map(str::trim).filter(|s| !s.is_empty()) {
+        id.to_owned()
+    } else {
+        // Fall back to session-selected tenant (auto-bind first org if unset).
+        let user_id = context.principal().user_id().as_str();
+        let session = crate::auth_product::ensure_default_organization(
+            context.session_id().as_str(),
+            user_id,
+        )
+        .await?;
+        session
+            .tenant_id
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| {
+                AuthStackError::validation(
+                    "create a workspace before using the secret vault",
+                )
+            })?
+    };
+    // Membership + role permission (vault.view | vault.manage | vault.reveal).
+    let org = crate::auth_product::organization_for_session(
+        context.session_id().as_str(),
+        &org_id,
+    )
+    .await?;
+    if !org
+        .permissions
+        .iter()
+        .any(|p| p == required_permission)
+    {
+        // Soft-compat: if migration 0012 not applied yet, allow owner/admin by role.
+        let legacy_ok = matches!(
+            (required_permission, org.current_user_role.as_str()),
+            ("vault.view", _)
+                | ("vault.manage", "owner" | "admin")
+                | ("vault.reveal", "owner" | "admin")
+        ) && org.permissions.iter().all(|p| !p.starts_with("vault."));
+        if !legacy_ok {
+            return Err(AuthStackError::Forbidden);
+        }
+    }
+    let user_id = context.principal().user_id().as_str();
+    let _ = crate::store::migrate_legacy_user_secrets_to_org(user_id, &org_id).await;
+    Ok(org_id)
+}
+
+pub async fn list_dashboard_secrets(
+    organization_id: Option<String>,
+    org_slug: Option<String>,
+    auth: RequestAuth,
+) -> AuthStackResult<Vec<SecretSummary>> {
+    let (context, _) = verified_context_and_permissions(auth, false).await?;
+    let org_id = require_vault_org(
+        &context,
+        organization_id.as_deref(),
+        org_slug.as_deref(),
+        "vault.view",
+    )
+    .await?;
+    crate::store::list_secret_summaries(&org_id).await
+}
+
+pub async fn create_dashboard_secret(
+    organization_id: Option<String>,
+    org_slug: Option<String>,
+    request: SecretCreateRequest,
+    auth: RequestAuth,
+) -> AuthStackResult<SecretSummary> {
+    let (context, _) = verified_context_and_permissions(auth, false).await?;
+    let org_id = require_vault_org(
+        &context,
+        organization_id.as_deref(),
+        org_slug.as_deref(),
+        "vault.manage",
+    )
+    .await?;
+    crate::store::create_secret(&org_id, &request).await
+}
+
+pub async fn delete_dashboard_secret(
+    organization_id: Option<String>,
+    org_slug: Option<String>,
+    secret_id: String,
+    auth: RequestAuth,
+) -> AuthStackResult<AcceptedResponse> {
+    let (context, _) = verified_context_and_permissions(auth, false).await?;
+    let org_id = require_vault_org(
+        &context,
+        organization_id.as_deref(),
+        org_slug.as_deref(),
+        "vault.manage",
+    )
+    .await?;
+    crate::store::delete_secret(&org_id, secret_id.trim()).await?;
+    Ok(AcceptedResponse { accepted: true })
+}
+
+async fn vault_reveal_require_step_up() -> bool {
+    let production = matches!(
+        config_value("AUTH_PRODUCTION_MODE")
+            .await
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("1" | "true" | "yes" | "on")
+    );
+    match config_value("AUTH_VAULT_REVEAL_REQUIRE_STEP_UP")
+        .await
+        .as_deref()
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+    {
+        Some(v) if matches!(v.as_str(), "1" | "true" | "yes" | "on") => true,
+        Some(v) if matches!(v.as_str(), "0" | "false" | "no" | "off") => false,
+        // Default: require AAL2 in production; allow in local dev.
+        _ => production,
+    }
+}
+
+pub async fn reveal_dashboard_secret(
+    organization_id: Option<String>,
+    org_slug: Option<String>,
+    secret_id: String,
+    auth: RequestAuth,
+) -> AuthStackResult<crate::contracts::SecretRevealResponse> {
+    let (context, _) = verified_context_and_permissions(auth, false).await?;
+    if vault_reveal_require_step_up().await
+        && context.assurance() != AuthenticationAssurance::Aal2
+    {
+        return Err(AuthStackError::Forbidden);
+    }
+    let org_id = require_vault_org(
+        &context,
+        organization_id.as_deref(),
+        org_slug.as_deref(),
+        "vault.reveal",
+    )
+    .await?;
+    crate::store::reveal_secret(&org_id, secret_id.trim()).await
+}
+
+pub async fn seed_dashboard_demos(auth: RequestAuth) -> AuthStackResult<AcceptedResponse> {
+    let (_user_id, org_id) = require_workspace_board(auth).await?;
+    let _seeded = crate::store::seed_dashboard_demos(&org_id).await?;
+    Ok(AcceptedResponse { accepted: true })
+}
+
+pub async fn migrate_workspace_legacy_data(
+    request: crate::contracts::WorkspaceLegacyMigrateRequest,
+    auth: RequestAuth,
+) -> AuthStackResult<crate::contracts::WorkspaceLegacyMigrateReport> {
+    let (context, _) = verified_context_and_permissions(auth, false).await?;
+    let org_id = request.organization_id.trim().to_owned();
+    if org_id.is_empty() {
+        return Err(AuthStackError::validation("organization_id is required"));
+    }
+    // Owner/admin via vault.manage (or legacy role).
+    let _ = require_vault_org(
+        &context,
+        Some(&org_id),
+        None,
+        "vault.manage",
+    )
+    .await?;
+    let user_id = context.principal().user_id().as_str().to_owned();
+    let dry_run = request.dry_run;
+
+    let board_copied = if dry_run {
+        // Report whether legacy keys exist without writing.
+        false
+    } else {
+        crate::store::migrate_legacy_user_board_to_org(&user_id, &org_id).await?
+    };
+
+    let (secrets_copied, secret_rows, skipped, reenter) =
+        crate::store::migrate_legacy_user_secrets_to_org_detailed(
+            &user_id,
+            &org_id,
+            dry_run,
+        )
+        .await?;
+
+    tracing::info!(
+        user_id = %user_id,
+        organization_id = %org_id,
+        dry_run,
+        board_copied,
+        secrets_copied,
+        secret_rows,
+        skipped,
+        "workspace legacy migrate"
+    );
+
+    let message = if dry_run {
+        format!(
+            "Dry run: would copy secrets rows={secret_rows}, reenter_required={}",
+            reenter.len()
+        )
+    } else if board_copied || secrets_copied {
+        "Legacy workspace data migrated into this organization.".to_owned()
+    } else if !reenter.is_empty() {
+        "Nothing copied automatically; re-enter secrets listed in reenter_required_keys.".to_owned()
+    } else {
+        "No legacy user data found (or destination already populated).".to_owned()
+    };
+
+    Ok(crate::contracts::WorkspaceLegacyMigrateReport {
+        organization_id: org_id,
+        dry_run,
+        board_copied,
+        secrets_copied,
+        secret_rows_copied: secret_rows,
+        secret_rows_skipped_reenter: skipped,
+        reenter_required_keys: reenter,
+        message,
+    })
+}
+
+pub async fn resolve_workspace_vault_target(
+    auth: RequestAuth,
+) -> AuthStackResult<crate::contracts::OrganizationSummary> {
+    let (context, _) = verified_context_and_permissions(auth, false).await?;
+    let user_id = context.principal().user_id().as_str();
+    let orgs = crate::auth_product::list_organizations(user_id)
+        .await?
+        .organizations;
+    if orgs.is_empty() {
+        return Err(AuthStackError::not_found("no workspace yet"));
+    }
+    let session = crate::auth_product::ensure_default_organization(
+        context.session_id().as_str(),
+        user_id,
+    )
+    .await?;
+    if let Some(tid) = session
+        .tenant_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if let Some(org) = orgs.iter().find(|o| o.organization_id == tid) {
+            return Ok(org.clone());
+        }
+    }
+    Ok(orgs.into_iter().next().expect("non-empty"))
+}
+
+pub async fn test_dashboard_http_source(
+    source_id: String,
+    auth: RequestAuth,
+) -> AuthStackResult<HttpQueryResult> {
+    if !dashboard_http_enabled().await {
+        return Err(AuthStackError::configuration(
+            "HTTP dashboard sources are disabled",
+        ));
+    }
+    let (_user_id, org_id) = require_workspace_board(auth).await?;
+    let result = crate::store::execute_dashboard_query(
+        &org_id,
+        source_id.trim(),
+        dashboard_http_allow_private().await,
+    )
+    .await?;
+    Ok(HttpQueryResult {
+        source_id: result.query_id,
+        ok: result.ok,
+        error: result.error,
+        data_json: result.data_json,
+        display_mode: crate::contracts::HttpDisplayMode::List,
+    })
+}
+
+pub async fn upsert_dashboard_resource(
+    request: crate::contracts::ResourceUpsert,
+    auth: RequestAuth,
+) -> AuthStackResult<crate::contracts::ResourceSummary> {
+    if matches!(request.kind, crate::contracts::ResourceKind::Rest)
+        && !dashboard_http_enabled().await
+    {
+        return Err(AuthStackError::configuration(
+            "HTTP dashboard resources are disabled",
+        ));
+    }
+    if matches!(request.kind, crate::contracts::ResourceKind::Grpc)
+        && !dashboard_grpc_enabled().await
+    {
+        return Err(AuthStackError::configuration(
+            "gRPC dashboard resources are disabled (set AUTH_DASHBOARD_GRPC_ENABLED=true)",
+        ));
+    }
+    let (_user_id, org_id) = require_workspace_board(auth).await?;
+    crate::store::upsert_resource(
+        &org_id,
+        request,
+        dashboard_http_allow_private().await,
+    )
+    .await
+}
+
+pub async fn upsert_dashboard_query(
+    request: crate::contracts::QueryUpsert,
+    auth: RequestAuth,
+) -> AuthStackResult<crate::contracts::QuerySummary> {
+    let (_user_id, org_id) = require_workspace_board(auth).await?;
+    crate::store::upsert_query(&org_id, request).await
+}
+
+pub async fn delete_dashboard_resource(
+    resource_id: String,
+    auth: RequestAuth,
+) -> AuthStackResult<AcceptedResponse> {
+    let (_user_id, org_id) = require_workspace_board(auth).await?;
+    crate::store::delete_resource(&org_id, resource_id.trim()).await?;
+    Ok(AcceptedResponse { accepted: true })
+}
+
+pub async fn delete_dashboard_query(
+    query_id: String,
+    auth: RequestAuth,
+) -> AuthStackResult<AcceptedResponse> {
+    let (_user_id, org_id) = require_workspace_board(auth).await?;
+    crate::store::delete_query(&org_id, query_id.trim()).await?;
+    Ok(AcceptedResponse { accepted: true })
+}
+
+pub async fn run_dashboard_query(
+    query_id: String,
+    auth: RequestAuth,
+) -> AuthStackResult<crate::contracts::QueryResult> {
+    let (_user_id, org_id) = require_workspace_board(auth).await?;
+    crate::store::execute_dashboard_query(
+        &org_id,
+        query_id.trim(),
+        dashboard_http_allow_private().await,
+    )
+    .await
 }
 
 pub async fn csrf_token_for_session(
@@ -598,7 +1384,10 @@ pub async fn change_password(
     if request.current_password == request.new_password {
         return Err(AuthStackError::validation("new password must be different"));
     }
-    let (context, _) = verified_context_and_permissions(auth, true).await?;
+    // Current password is the re-auth factor. Do not require AAL2 step-up so
+    // password-only accounts can still rotate credentials (MFA step-up remains
+    // available for higher-assurance sessions).
+    let (context, _) = verified_context_and_permissions(auth, false).await?;
     crate::auth_product::change_password(
         context.principal().user_id().as_str(),
         context.session_id().as_str(),
@@ -861,8 +1650,31 @@ pub async fn create_organization(
     auth: RequestAuth,
 ) -> AuthStackResult<OrganizationSummary> {
     validate_display_name("organization name", &request.name, 120)?;
+    let mut slug = request.slug.trim().to_ascii_lowercase();
+    if slug.is_empty() {
+        slug = crate::store::suggest_org_slug(request.name.trim());
+    }
+    crate::store::validate_org_slug(&slug)?;
+    // Fail fast if taken.
+    if crate::store::resolve_org_id_for_slug(&slug).await.is_ok() {
+        return Err(AuthStackError::validation(format!(
+            "workspace URL “{slug}” is already taken"
+        )));
+    }
     let (context, _) = verified_context_and_permissions(auth, false).await?;
-    crate::auth_product::create_organization(request.name.trim(), context.session_id().as_str()).await
+    let summary = crate::auth_product::create_organization(
+        request.name.trim(),
+        &slug,
+        context.session_id().as_str(),
+    )
+    .await?;
+    // Auto-select the new workspace on the session.
+    let _ = crate::auth_product::select_organization(
+        context.session_id().as_str(),
+        &summary.organization_id,
+    )
+    .await;
+    Ok(summary)
 }
 
 pub async fn update_organization(
@@ -888,11 +1700,18 @@ pub async fn select_organization(
 ) -> AuthStackResult<SessionView> {
     validate_identifier("organization_id", &request.organization_id)?;
     let (context, _) = verified_context_and_permissions(auth, false).await?;
-    crate::auth_product::select_organization(
+    match crate::auth_product::select_organization(
         context.session_id().as_str(),
         &request.organization_id,
     )
     .await
+    {
+        Ok(session) => Ok(session),
+        Err(AuthStackError::Forbidden) => Err(AuthStackError::validation(
+            "cannot select this workspace — you may not be an active member, or the session expired. Sign in again and retry.",
+        )),
+        Err(error) => Err(error),
+    }
 }
 
 pub async fn list_members(
@@ -1364,9 +2183,7 @@ impl CredentialAuthenticator for ApplicationCredentialAuthenticator {
 pub async fn authenticate_ingress<B>(
     request: &http::Request<B>,
 ) -> AuthStackResult<Option<VerifiedRequestContext>> {
-    let public_base_url = config_value("AUTH_PUBLIC_BASE_URL")
-        .await
-        .unwrap_or_else(|| "http://localhost:3008".to_string());
+    let public_base_url = public_base_url().await;
     TrustedIngress::new(
         TrustedIngressConfig::new(public_base_url)
             .map_err(|_| AuthStackError::configuration("trusted ingress origin is invalid"))?
@@ -1451,7 +2268,11 @@ pub async fn validate_browser_origin(headers: &http::HeaderMap) -> AuthStackResu
         .get(http::header::ORIGIN)
         .and_then(|value| value.to_str().ok())
         .ok_or_else(|| AuthStackError::validation("browser mutation origin is required"))?;
-    if origin != allowed {
+    // Browsers send Origin as scheme://host[:port]. AUTH_PUBLIC_BASE_URL is the
+    // configured public origin. Treat loopback host aliases as equivalent so
+    // developers can use either http://localhost:3008 or http://127.0.0.1:3008
+    // without a cryptic server-function deserialization failure.
+    if !browser_origins_match(origin, &allowed) {
         return Err(AuthStackError::validation(
             "browser mutation origin is not allowed",
         ));
@@ -1459,10 +2280,79 @@ pub async fn validate_browser_origin(headers: &http::HeaderMap) -> AuthStackResu
     Ok(())
 }
 
+/// Canonical browser-facing origin fallback when Spin variables are unset.
+/// Prefer `AUTH_PUBLIC_BASE_URL` / Makefile `listen` in real runs.
+pub const DEFAULT_PUBLIC_BASE_URL: &str = "http://127.0.0.1:3008";
+
 pub async fn public_base_url() -> String {
     config_value("AUTH_PUBLIC_BASE_URL")
         .await
-        .unwrap_or_else(|| "http://localhost:3008".to_owned())
+        .unwrap_or_else(|| DEFAULT_PUBLIC_BASE_URL.to_owned())
+}
+
+/// Compare a browser `Origin` header to the configured public base URL.
+///
+/// Exact string match wins first. Loopback hosts (`localhost`, `127.0.0.1`,
+/// `::1`) are interchangeable when scheme and port match, which mirrors how
+/// local fullstack demos are actually opened in a browser.
+pub(crate) fn browser_origins_match(request_origin: &str, allowed_base_url: &str) -> bool {
+    let request_origin = request_origin.trim();
+    let allowed_base_url = allowed_base_url.trim().trim_end_matches('/');
+    if request_origin == allowed_base_url {
+        return true;
+    }
+
+    let Some(request) = parse_browser_origin(request_origin) else {
+        return false;
+    };
+    let Some(allowed) = parse_browser_origin(allowed_base_url) else {
+        return false;
+    };
+
+    if !request.scheme.eq_ignore_ascii_case(&allowed.scheme) {
+        return false;
+    }
+    if request.effective_port() != allowed.effective_port() {
+        return false;
+    }
+    if request.host.eq_ignore_ascii_case(&allowed.host) {
+        return true;
+    }
+    is_loopback_host(&request.host) && is_loopback_host(&allowed.host)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BrowserOrigin {
+    scheme: String,
+    host: String,
+    port: Option<u16>,
+}
+
+impl BrowserOrigin {
+    fn effective_port(&self) -> u16 {
+        self.port.unwrap_or_else(|| match self.scheme.as_str() {
+            "https" => 443,
+            _ => 80,
+        })
+    }
+}
+
+fn parse_browser_origin(value: &str) -> Option<BrowserOrigin> {
+    let uri = value.parse::<http::Uri>().ok()?;
+    let scheme = uri.scheme_str()?.to_owned();
+    let authority = uri.authority()?;
+    Some(BrowserOrigin {
+        scheme,
+        host: authority
+            .host()
+            .trim_matches(|c| c == '[' || c == ']')
+            .to_owned(),
+        port: authority.port_u16(),
+    })
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "::1"
 }
 
 async fn verified_context_and_permissions(
@@ -1514,9 +2404,7 @@ async fn verified_context_and_permissions(
     let request = builder
         .body(())
         .map_err(|_| AuthStackError::configuration("trusted ingress request is invalid"))?;
-    let public_base_url = config_value("AUTH_PUBLIC_BASE_URL")
-        .await
-        .unwrap_or_else(|| "http://localhost:3008".to_string());
+    let public_base_url = public_base_url().await;
     let ingress = TrustedIngress::new(
         TrustedIngressConfig::new(public_base_url)
             .map_err(|_| AuthStackError::configuration("trusted ingress origin is invalid"))?
@@ -1608,7 +2496,7 @@ async fn authenticated_session(
         AuthenticationAssurance::Aal1
     };
     let issuer =
-        std::env::var("AUTH_JWT_ISSUER").unwrap_or_else(|_| "http://localhost:3008".to_string());
+        std::env::var("AUTH_JWT_ISSUER").unwrap_or_else(|_| DEFAULT_PUBLIC_BASE_URL.to_string());
     let principal = Principal::new(user_id, issuer, parts.system_administrator)
         .map_err(|_| AuthStackError::configuration("authenticated issuer is invalid"))?;
     let role_ids = parts
@@ -1965,6 +2853,46 @@ mod tests {
             safe_redirect_or_default(Some("https://example.com".to_string())),
             "/dashboard"
         );
+    }
+
+    #[test]
+    fn browser_origin_accepts_loopback_aliases() {
+        assert!(browser_origins_match(
+            "http://localhost:3008",
+            "http://127.0.0.1:3008"
+        ));
+        assert!(browser_origins_match(
+            "http://127.0.0.1:3008",
+            "http://localhost:3008"
+        ));
+        assert!(browser_origins_match(
+            "http://[::1]:3008",
+            "http://localhost:3008"
+        ));
+        assert!(browser_origins_match(
+            "http://localhost:3008",
+            "http://localhost:3008/"
+        ));
+    }
+
+    #[test]
+    fn browser_origin_rejects_host_or_port_mismatch() {
+        assert!(!browser_origins_match(
+            "http://localhost:3009",
+            "http://localhost:3008"
+        ));
+        assert!(!browser_origins_match(
+            "https://localhost:3008",
+            "http://localhost:3008"
+        ));
+        assert!(!browser_origins_match(
+            "http://evil.example:3008",
+            "http://localhost:3008"
+        ));
+        assert!(!browser_origins_match(
+            "http://localhost:3008",
+            "http://example.com:3008"
+        ));
     }
 
     #[test]

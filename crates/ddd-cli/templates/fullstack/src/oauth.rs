@@ -320,7 +320,7 @@ async fn oauth_redirect_uri(provider_id: &str, prefix: &str) -> String {
     let base_url = config_value("AUTH_PUBLIC_BASE_URL")
         .await
         .or_else(|| std::env::var("AUTH_JWT_ISSUER").ok())
-        .unwrap_or_else(|| "http://127.0.0.1:3008".to_string());
+        .unwrap_or_else(|| crate::application::DEFAULT_PUBLIC_BASE_URL.to_string());
     format!(
         "{}/api/auth/oauth/{provider_id}/callback",
         base_url.trim_end_matches('/')

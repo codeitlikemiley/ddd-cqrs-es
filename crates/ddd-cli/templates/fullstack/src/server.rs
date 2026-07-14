@@ -4,17 +4,26 @@ use leptos_wasi::wasip3::prelude::{Handler, HandlerConfig, init_wasip3_spawner};
 use wasip3::http::types::{ErrorCode, Request, Response};
 
 use crate::app::{
-    App, ChangePassword, CompleteEmailVerification, CompleteOauthCallback, CompletePasswordReset,
-    CreateOrganization, GetAdminHealth, GetAuthCapabilities, GetAuthorizationCapabilities,
-    GetCurrentSession, InviteCurrentOrganizationMember, ListAccountSessions, ListAdminUsers,
+    AcceptOrganizationInvitation, App, ChangePassword, CompleteEmailVerification,
+    CompleteOauthCallback, CompletePasswordReset, ConfirmTotpEnrollment, CreateOrganization,
+    CreateDashboardSecret, DeleteDashboardQuery, DeleteDashboardResource, DeleteDashboardSecret,
+    DeleteDashboardSource, DevelopmentMailCaptureEnabled, DismissDashboardNotification,
+    GetAccountProfile, GetAdminHealth, GetAuthCapabilities, GetAuthorizationCapabilities,
+    GetCurrentSession, GetDashboardSnapshot, GetMfaStatus, GetPublicProfile,
+    InviteCurrentOrganizationMember, LatestDevelopmentMail, ListAccountSessions, ListAdminUsers,
     ListAuthProviders, ListCurrentOrganizationAudit, ListCurrentOrganizationInvitations,
-    ListCurrentOrganizationMembers, ListCurrentOrganizationRoles, ListOrganizations,
-    ListPolicyVersions, ListSigningKeys, LoginEmailPassword, LogoutCurrentSession,
-    PublishPolicyVersion, RegisterEmailPassword, RequireAuthenticatedRoute, RequireAuthorizedRoute,
-    ResendEmailVerification, RevokeAccountSession, RotateSigningKey, SaveAuthProvider,
-    SaveRedirectAllowlist, SelectOrganization, StartOauthLogin, StartPasskeyLogin,
-    StartPasskeyRegistration, StartPasswordReset, UpsertCurrentOrganizationRole,
-    VerifyPasskeyLogin, VerifyPasskeyRegistration, shell,
+    ListCurrentOrganizationMembers, ListCurrentOrganizationRoles, ListDashboardSecrets,
+    ListOrganizations, ListPolicyVersions, ListSigningKeys, LoginEmailPassword,
+    LogoutCurrentSession, PublishPolicyVersion, RegisterEmailPassword, RequireAuthenticatedRoute,
+    MigrateWorkspaceLegacyData, RequireAuthorizedRoute, ResendEmailVerification,
+    ResolveWorkspaceVaultTarget, RevealDashboardSecret, RevokeAccountSession, RotateSigningKey,
+    RunDashboardQuery, SaveAuthProvider, SaveDashboardLayout, SaveRedirectAllowlist,
+    SeedDashboardDemos, SelectOrganization, StartOauthLogin,
+    StartPasskeyLogin, StartPasskeyRegistration, StartPasswordReset, StartTotpEnrollment,
+    TestDashboardHttpSource, UpdateAccountProfile, UpdateDashboardNote,
+    UpsertCurrentOrganizationRole, UpsertDashboardQuery, UpsertDashboardResource,
+    UpsertDashboardSource, VerifyPasskeyLogin, VerifyPasskeyRegistration, VerifyRecoveryCode,
+    VerifyTotpStepUp, shell,
 };
 
 struct FullstackServer;
@@ -82,6 +91,14 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
             && !is_grpc
             && let Err(error) = crate::application::validate_browser_origin(req.headers()).await
         {
+            // Server functions expect `Type|message` error bodies. Plain text
+            // yields "error deserializing server function results: missing delimiter".
+            if request_path.starts_with("/api/ui/") {
+                return server_fn_error_response(
+                    error.http_status(),
+                    "Request origin rejected. Open the app with the same host as AUTH_PUBLIC_BASE_URL (localhost and 127.0.0.1 are interchangeable on loopback).",
+                );
+            }
             return plain_text_response(error.http_status(), "Request origin rejected.");
         }
 
@@ -148,11 +165,27 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
             return wasip3::http_compat::http_into_wasi_response(response);
         }
 
-        if guest_only_ui_route(&request_path) && authenticated_session(session_id.clone()).await {
+        // Logout is an action, not a document. Keep direct navigations safe and
+        // prevent the browser from ever rendering a logout page.
+        if request_path == "/logout"
+            && matches!(*req.method(), http::Method::GET | http::Method::HEAD)
+        {
+            return redirect_response("/");
+        }
+
+        // Guest-only pages bounce authenticated browsers away, but one-time
+        // token links must still render. Dropping `?token=` here is what made
+        // password reset appear to "already be signed in" without a form.
+        if guest_only_ui_route(&request_path)
+            && !tokenized_public_ui_route(&request_path, request_query.as_deref())
+            && authenticated_session(session_id.clone()).await
+        {
             return redirect_response(login_success_redirect(request_query.as_deref()));
         }
 
-        if let Some(location) = protected_ui_redirect(&request_path, session_id).await {
+        if let Some(location) =
+            protected_ui_redirect(&request_path, request_query.as_deref(), session_id).await
+        {
             return redirect_response(&location);
         }
 
@@ -183,6 +216,30 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
             .with_server_fn::<StartPasswordReset>()
             .with_server_fn::<CompletePasswordReset>()
             .with_server_fn::<GetCurrentSession>()
+            .with_server_fn::<GetAccountProfile>()
+            .with_server_fn::<UpdateAccountProfile>()
+            .with_server_fn::<GetPublicProfile>()
+            .with_server_fn::<GetDashboardSnapshot>()
+            .with_server_fn::<SaveDashboardLayout>()
+            .with_server_fn::<DismissDashboardNotification>()
+            .with_server_fn::<UpdateDashboardNote>()
+            .with_server_fn::<UpsertDashboardSource>()
+            .with_server_fn::<DeleteDashboardSource>()
+            .with_server_fn::<CreateDashboardSecret>()
+            .with_server_fn::<DeleteDashboardSecret>()
+            .with_server_fn::<RevealDashboardSecret>()
+            .with_server_fn::<ListDashboardSecrets>()
+            .with_server_fn::<ResolveWorkspaceVaultTarget>()
+            .with_server_fn::<SeedDashboardDemos>()
+            .with_server_fn::<MigrateWorkspaceLegacyData>()
+            .with_server_fn::<TestDashboardHttpSource>()
+            .with_server_fn::<UpsertDashboardResource>()
+            .with_server_fn::<UpsertDashboardQuery>()
+            .with_server_fn::<DeleteDashboardResource>()
+            .with_server_fn::<DeleteDashboardQuery>()
+            .with_server_fn::<RunDashboardQuery>()
+            .with_server_fn::<DevelopmentMailCaptureEnabled>()
+            .with_server_fn::<LatestDevelopmentMail>()
             .with_server_fn::<RequireAuthenticatedRoute>()
             .with_server_fn::<RequireAuthorizedRoute>()
             .with_server_fn::<StartPasskeyRegistration>()
@@ -200,12 +257,18 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
             .with_server_fn::<ChangePassword>()
             .with_server_fn::<ListAccountSessions>()
             .with_server_fn::<RevokeAccountSession>()
+            .with_server_fn::<GetMfaStatus>()
+            .with_server_fn::<StartTotpEnrollment>()
+            .with_server_fn::<ConfirmTotpEnrollment>()
+            .with_server_fn::<VerifyTotpStepUp>()
+            .with_server_fn::<VerifyRecoveryCode>()
             .with_server_fn::<ListOrganizations>()
             .with_server_fn::<CreateOrganization>()
             .with_server_fn::<SelectOrganization>()
             .with_server_fn::<ListCurrentOrganizationMembers>()
             .with_server_fn::<ListCurrentOrganizationInvitations>()
             .with_server_fn::<InviteCurrentOrganizationMember>()
+            .with_server_fn::<AcceptOrganizationInvitation>()
             .with_server_fn::<ListCurrentOrganizationRoles>()
             .with_server_fn::<UpsertCurrentOrganizationRole>()
             .with_server_fn::<ListCurrentOrganizationAudit>()
@@ -239,25 +302,31 @@ async fn authenticated_session(session_id: Option<String>) -> bool {
         .unwrap_or(false)
 }
 
-async fn protected_ui_redirect(path: &str, session_id: Option<String>) -> Option<String> {
+async fn protected_ui_redirect(
+    path: &str,
+    query: Option<&str>,
+    session_id: Option<String>,
+) -> Option<String> {
     if !protected_ui_route(path) {
         return None;
     }
 
+    let next = encode_next_target(path, query);
+
     let Some(permission) = ui_route_permission(path) else {
         return (!authenticated_session(session_id).await)
-            .then(|| format!("/auth/required?next={path}"));
+            .then(|| format!("/auth/required?next={next}"));
     };
 
     match crate::application::require_authorized_route_for(permission, session_id).await {
         Ok(_) => None,
         Err(crate::error::AuthStackError::Forbidden) => {
-            Some(format!("/auth/forbidden?next={path}"))
+            Some(format!("/auth/forbidden?next={next}"))
         }
         Err(crate::error::AuthStackError::AuthRequired)
         | Err(crate::error::AuthStackError::InvalidToken)
         | Err(crate::error::AuthStackError::SessionExpired) => {
-            Some(format!("/auth/required?next={path}"))
+            Some(format!("/auth/required?next={next}"))
         }
         Err(error) => {
             tracing::error!(
@@ -267,9 +336,36 @@ async fn protected_ui_redirect(path: &str, session_id: Option<String>) -> Option
                 permission,
                 "failed to authorize protected UI route"
             );
-            Some(format!("/auth/session-expired?next={path}"))
+            Some(format!("/auth/session-expired?next={next}"))
         }
     }
+}
+
+fn encode_next_target(path: &str, query: Option<&str>) -> String {
+    match query {
+        // Preserve path-only next= values unencoded for stable smoke URLs.
+        // Encode when a query is present so tokens survive auth redirects.
+        Some(query) if !query.is_empty() => {
+            percent_encode_component(&format!("{path}?{query}"))
+        }
+        _ => path.to_owned(),
+    }
+}
+
+fn percent_encode_component(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() * 3);
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char);
+            }
+            _ => {
+                use std::fmt::Write as _;
+                let _ = write!(out, "%{byte:02X}");
+            }
+        }
+    }
+    out
 }
 
 fn guest_only_ui_route(path: &str) -> bool {
@@ -282,6 +378,25 @@ fn guest_only_ui_route(path: &str) -> bool {
             | "/verify-email"
             | "/verify-email/resend"
     )
+}
+
+/// Email deep links that must remain reachable even when a session cookie exists.
+///
+/// Without this, authenticated users who open reset/verify mail never see the
+/// form: the guest-only redirect sends them to `/dashboard` and discards `token`.
+fn tokenized_public_ui_route(path: &str, query: Option<&str>) -> bool {
+    let Some(query) = query else {
+        return false;
+    };
+    let has_token = query.split('&').any(|part| {
+        part.strip_prefix("token=")
+            .is_some_and(|value| !value.is_empty())
+    });
+    has_token
+        && matches!(
+            path,
+            "/reset-password" | "/verify-email"
+        )
 }
 
 fn public_authentication_route(path: &str) -> bool {
@@ -305,6 +420,7 @@ fn public_authentication_route(path: &str) -> bool {
 
 fn protected_ui_route(path: &str) -> bool {
     path == "/dashboard"
+        || path == "/invitations/accept"
         || path.starts_with("/account/")
         || path.starts_with("/organizations")
         || path.starts_with("/admin/")
@@ -441,6 +557,33 @@ fn plain_text_response(
             tracing::error!(
                 error = %error,
                 "failed to build auth plain text response"
+            );
+            ErrorCode::InternalError(None)
+        })?;
+    wasip3::http_compat::http_into_wasi_response(response)
+}
+
+fn server_fn_error_response(
+    status: http::StatusCode,
+    message: &'static str,
+) -> Result<Response, ErrorCode> {
+    use http_body_util::BodyExt;
+
+    // Matches `server_fn::error::ServerFnErrorEncoding` (`ServerError|{message}`).
+    let body_text = format!("ServerError|{message}");
+    let stream = futures::stream::once(async move {
+        Ok::<_, std::io::Error>(http_body::Frame::data(bytes::Bytes::from(body_text)))
+    });
+    let body = http_body_util::StreamBody::new(stream).boxed_unsync();
+    let response = http::Response::builder()
+        .status(status)
+        .header(http::header::CONTENT_TYPE, "text/plain")
+        .header("serverfnerror", "true")
+        .body(body)
+        .map_err(|error| {
+            tracing::error!(
+                error = %error,
+                "failed to build server function error response"
             );
             ErrorCode::InternalError(None)
         })?;

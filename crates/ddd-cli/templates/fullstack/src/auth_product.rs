@@ -377,8 +377,10 @@ pub async fn complete_oauth_identity(
         .complete(pending, identity, &request_id("oauth-complete")?)
         .await
         .map_err(map_oauth_error)?;
+    let session_id_str = completion.session_id.as_str().to_owned();
     let (access_token, refresh_token, expires_in_seconds) =
         issue_tokens(&completion.session_id).await?;
+    bind_default_organization_for_session(&session_id_str).await;
     Ok(LoginCompletionResponse {
         authenticated: true,
         redirect_url: completion.redirect_path,
@@ -467,8 +469,10 @@ pub async fn finish_passkey_registration(
 async fn passkey_login_response(
     completion: wasi_auth::postgres::passkeys::PasskeyCompletion,
 ) -> AuthStackResult<LoginCompletionResponse> {
+    let session_id_str = completion.session_id.as_str().to_owned();
     let (access_token, refresh_token, expires_in_seconds) =
         issue_tokens(&completion.session_id).await?;
+    bind_default_organization_for_session(&session_id_str).await;
     Ok(LoginCompletionResponse {
         authenticated: true,
         redirect_url: completion.redirect_path,
@@ -558,7 +562,7 @@ pub async fn latest_captured_mail(
             .map_err(|_| AuthStackError::validation("recipient is invalid"))?;
         let public_base_url = runtime_config_value("AUTH_PUBLIC_BASE_URL")
             .await
-            .unwrap_or_else(|| "http://127.0.0.1:3008".to_owned());
+            .unwrap_or_else(|| crate::application::DEFAULT_PUBLIC_BASE_URL.to_owned());
         let worker = MailOutboxWorker::new(
             store().await?,
             RuntimeClock,
@@ -577,6 +581,8 @@ pub async fn latest_captured_mail(
             recipient: captured.recipient().as_str().to_owned(),
             subject: captured.subject().to_owned(),
             body_text: captured.text_body().to_owned(),
+            body_html: captured.html_body().map(ToOwned::to_owned),
+            action_url: captured.action_url().map(ToOwned::to_owned),
         })
     }
     #[cfg(not(feature = "mail-capture"))]
@@ -610,7 +616,9 @@ pub async fn login_email_password(
         .await
         .map_err(map_login_error)?;
     let session_id = receipt.session_id;
+    let session_id_str = session_id.as_str().to_owned();
     let (access_token, refresh_token, expires_in_seconds) = issue_tokens(&session_id).await?;
+    bind_default_organization_for_session(&session_id_str).await;
     Ok(LoginCompletionResponse {
         authenticated: true,
         redirect_url: receipt.redirect_uri,
@@ -639,7 +647,9 @@ pub async fn complete_email_verification(
         .await
         .map_err(map_verification_error)?;
     let session_id = receipt.session_id;
+    let session_id_str = session_id.as_str().to_owned();
     let (access_token, refresh_token, expires_in_seconds) = issue_tokens(&session_id).await?;
+    bind_default_organization_for_session(&session_id_str).await;
     Ok(LoginCompletionResponse {
         authenticated: true,
         redirect_url: receipt.redirect_uri,
@@ -718,7 +728,9 @@ pub async fn complete_password_reset(
         .await
         .map_err(map_password_reset_error)?;
     let session_id = receipt.session_id;
+    let session_id_str = session_id.as_str().to_owned();
     let (access_token, refresh_token, expires_in_seconds) = issue_tokens(&session_id).await?;
+    bind_default_organization_for_session(&session_id_str).await;
     Ok(LoginCompletionResponse {
         authenticated: true,
         redirect_url: receipt.redirect_uri,
@@ -944,31 +956,40 @@ pub async fn list_organizations(user_id: &str) -> AuthStackResult<OrganizationLi
         .list(&user_id)
         .await
         .map_err(map_organization_error)?;
+    let mut summaries = Vec::with_capacity(organizations.len());
+    for record in organizations {
+        summaries.push(organization_summary_with_slug(record).await);
+    }
     Ok(OrganizationListResponse {
-        organizations: organizations
-            .into_iter()
-            .map(organization_summary)
-            .collect(),
+        organizations: summaries,
     })
 }
 
 pub async fn create_organization(
     name: &str,
+    slug: &str,
     session_id: &str,
 ) -> AuthStackResult<OrganizationSummary> {
     let session_id =
         SessionId::new(session_id.to_owned()).map_err(|_| AuthStackError::AuthRequired)?;
-    let name_key = URL_SAFE_NO_PAD.encode(Sha256::digest(name.trim().as_bytes()));
+    let slug = slug.trim().to_ascii_lowercase();
+    let name_key = URL_SAFE_NO_PAD.encode(Sha256::digest(
+        format!("{}:{slug}", name.trim()).as_bytes(),
+    ));
     let organization = OrganizationService::new(store().await?, RuntimeClock, RuntimeRandom)
         .create(CreateOrganizationRequest {
             idempotency_key: format!("create-organization:{}:{name_key}", session_id.as_str()),
             session_id,
             name: name.to_owned(),
+            slug: slug.clone(),
             request_id: request_id("create-organization")?,
         })
         .await
         .map_err(map_organization_error)?;
-    Ok(organization_summary(organization))
+    let summary = organization_summary(organization);
+    // Dual-write slug to Spin KV for resolve fallback during transition.
+    let _ = crate::store::register_org_slug(&summary.organization_id, &summary.slug).await;
+    Ok(summary)
 }
 
 pub async fn select_organization(
@@ -986,6 +1007,43 @@ pub async fn select_organization(
         .await
         .map_err(map_organization_error)?;
     get_session(Some(session_id.as_str())).await
+}
+
+/// If the session has no selected workspace, select the first membership
+/// (oldest by `created_at` — the product default until the user switches).
+///
+/// Best-effort: failures leave the session unselected rather than failing login.
+pub async fn ensure_default_organization(
+    session_id: &str,
+    user_id: &str,
+) -> AuthStackResult<SessionView> {
+    let session = get_session(Some(session_id)).await?;
+    if session
+        .tenant_id
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return Ok(session);
+    }
+    let organizations = list_organizations(user_id).await?.organizations;
+    let Some(default_org) = organizations.into_iter().next() else {
+        return Ok(session);
+    };
+    match select_organization(session_id, &default_org.organization_id).await {
+        Ok(selected) => Ok(selected),
+        Err(_) => Ok(session),
+    }
+}
+
+/// After issuing a new session cookie, bind the default workspace when possible.
+pub async fn bind_default_organization_for_session(session_id: &str) {
+    let Ok(view) = get_session(Some(session_id)).await else {
+        return;
+    };
+    let Some(user_id) = view.user_id.as_deref() else {
+        return;
+    };
+    let _ = ensure_default_organization(session_id, user_id).await;
 }
 
 pub async fn organization_for_session(
@@ -1276,11 +1334,27 @@ fn organization_summary(record: OrganizationRecord) -> OrganizationSummary {
     OrganizationSummary {
         organization_id: record.organization_id,
         name: record.name,
+        slug: record.slug,
         status: record.status,
         current_user_role: record.role_id,
         permissions: record.permissions,
         created_at_ms: record.created_at_ms,
     }
+}
+
+async fn organization_summary_with_slug(record: OrganizationRecord) -> OrganizationSummary {
+    let mut summary = organization_summary(record);
+    // Prefer DB slug; fill KV cache and backfill empty DB slugs via ensure.
+    if summary.slug.trim().is_empty() {
+        if let Ok(slug) =
+            crate::store::ensure_org_slug(&summary.organization_id, &summary.name).await
+        {
+            summary.slug = slug;
+        }
+    } else {
+        let _ = crate::store::register_org_slug(&summary.organization_id, &summary.slug).await;
+    }
+    summary
 }
 
 fn membership_summary(record: MembershipRecord) -> MembershipSummary {
@@ -1488,6 +1562,31 @@ async fn signing_key_service()
     ))
 }
 
+/// Browsers reject IP addresses as WebAuthn `rpId` (`SecurityError`). Map
+/// loopback IPs to `localhost` so local Spin defaults remain usable.
+fn normalize_passkey_rp_id(rp_id: String) -> String {
+    match rp_id.trim() {
+        "127.0.0.1" | "::1" | "[::1]" => "localhost".to_owned(),
+        other => other.to_owned(),
+    }
+}
+
+/// Keep passkey origin host aligned with the normalized rpId for loopback.
+fn normalize_passkey_origin(origin: String) -> String {
+    let trimmed = origin.trim().trim_end_matches('/');
+    for host in ["127.0.0.1", "[::1]", "::1"] {
+        let needle = format!("//{host}");
+        if let Some(index) = trimmed.find(&needle) {
+            let mut rewritten = String::with_capacity(trimmed.len() + "localhost".len());
+            rewritten.push_str(&trimmed[..index + 2]);
+            rewritten.push_str("localhost");
+            rewritten.push_str(&trimmed[index + 2 + host.len()..]);
+            return rewritten;
+        }
+    }
+    trimmed.to_owned()
+}
+
 async fn passkey_service()
 -> AuthStackResult<PasskeyService<SpinPostgresTransport, RuntimeClock, RuntimeRandom>> {
     let attachment = match runtime_config_value("AUTH_PASSKEY_AUTHENTICATOR_ATTACHMENT")
@@ -1506,15 +1605,19 @@ async fn passkey_service()
             ));
         }
     };
-    let rp_id = runtime_config_value("AUTH_PASSKEY_RP_ID")
-        .await
-        .unwrap_or_else(|| "localhost".to_owned());
+    let rp_id = normalize_passkey_rp_id(
+        runtime_config_value("AUTH_PASSKEY_RP_ID")
+            .await
+            .unwrap_or_else(|| "localhost".to_owned()),
+    );
     let rp_name = runtime_config_value("AUTH_PASSKEY_RP_NAME")
         .await
         .unwrap_or_else(|| "fullstack-app".to_owned());
-    let origin = runtime_config_value("AUTH_PASSKEY_ORIGIN")
-        .await
-        .unwrap_or_else(|| "http://localhost:3008".to_owned());
+    let origin = normalize_passkey_origin(
+        runtime_config_value("AUTH_PASSKEY_ORIGIN")
+            .await
+            .unwrap_or_else(|| crate::application::DEFAULT_PUBLIC_BASE_URL.to_owned()),
+    );
     let config = PasskeyServiceConfig::new(
         &rp_id,
         &rp_name,
@@ -1580,7 +1683,7 @@ async fn token_verification_service() -> AuthStackResult<&'static RuntimeTokenVe
     }
     let issuer = runtime_config_value("AUTH_JWT_ISSUER")
         .await
-        .unwrap_or_else(|| "http://127.0.0.1:3008".to_owned());
+        .unwrap_or_else(|| crate::application::DEFAULT_PUBLIC_BASE_URL.to_owned());
     let audience = runtime_config_value("AUTH_JWT_AUDIENCE")
         .await
         .unwrap_or_else(|| "fullstack-app".to_owned());
@@ -1683,7 +1786,7 @@ async fn configured_token_service(key_ring: JwtKeyRing) -> AuthStackResult<Runti
         .map_err(|_| AuthStackError::configuration("refresh sealing key is invalid"))?;
     let issuer = runtime_config_value("AUTH_JWT_ISSUER")
         .await
-        .unwrap_or_else(|| "http://127.0.0.1:3008".to_owned());
+        .unwrap_or_else(|| crate::application::DEFAULT_PUBLIC_BASE_URL.to_owned());
     let audience = runtime_config_value("AUTH_JWT_AUDIENCE")
         .await
         .unwrap_or_else(|| "fullstack-app".to_owned());
