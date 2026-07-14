@@ -14,7 +14,7 @@ Finish structural cleanup of `examples/fullstack-app` (and dual-sync template) s
 2. UI tree is modular under `src/app/{router,auth,account,organizations,admin,workspace,dashboard,server_fns,helpers,path}` (already largely true).
 3. Remaining large modules are split:
    - [x] `src/app/account/mod.rs` (~2.4k) → `profile`, `password`, `mfa`, `passkeys`, `sessions`, `providers`, `vault`
-   - [ ] `src/app/auth/mod.rs` (~1.4k) → `pages` + `forms` (or similar)
+   - [x] `src/app/auth/mod.rs` (~1.4k) → `pages` + `forms`
    - [ ] `src/app/dashboard/board.rs` (~1.5k) → tiles/modals/metrics as needed
    - [ ] `src/store.rs` (~4.5k) → `store/{profile,vault,board,query_exec,org_slug,health,...}`
    - [ ] `src/application.rs` (~2.9k) → domain modules
@@ -33,13 +33,13 @@ Finish structural cleanup of `examples/fullstack-app` (and dual-sync template) s
 
 ### Next work unit (update after each run)
 
-1. Split `app/auth/mod.rs` into `pages` + `forms` (or equivalent).
-2. Then `app/dashboard/board.rs`.
-3. Then backend: `contracts` → `application` → `store`.
+1. Split `app/dashboard/board.rs` (~1.5k) into smaller modules (tiles/modals/metrics as fits).
+2. Then backend: `contracts` → `application` → `store`.
 
 ### Progress log
 
 - 2026-07-14: UI shells/primitives; app tree; auth/account/server_fns; orgs/admin; domain server_fns. `app/mod.rs` ~756 LOC.
 - 2026-07-14 (scheduled): Split `app/account/` into profile, password, mfa, passkeys, sessions, providers, vault. All files &lt;700 LOC. `make check` green.
+- 2026-07-14 (scheduled): Split `app/auth/` into `pages.rs` (~229) + `forms.rs` (~1175). `make check` green.
 
 Update this file every scheduled run: checkboxes, progress log line, and the single “Next work unit”.
