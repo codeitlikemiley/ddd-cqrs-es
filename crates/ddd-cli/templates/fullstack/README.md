@@ -1,91 +1,264 @@
-# Fullstack Template
+# fullstack-app
 
-This template entry is advertised by `ddd capabilities --json` for projects
-created with:
+Generated with `ddd init --preset fullstack`.
+
+This project is a Spin fullstack authentication and authorization service with Leptos pages, REST endpoints, and gRPC service contracts.
+
+- Runtime: `spin`
+- DB: `postgres`
+- Transport: `both`
+- UI: `leptos`
+- Auth: email/password enabled by default
+- OAuth and passkeys: feature-flagged until credentials are configured
+
+## Quick start
 
 ```bash
-ddd init fullstack-app --preset fullstack --runtime spin --db postgres --transport both --ui leptos
+cp .env.example .env   # optional; prefer Make-derived origin when possible
+make db-up
+make dev               # Spin + wasi-auth-outbox-worker
+# open the printed public origin (default http://127.0.0.1:3008)
 ```
 
-The renderer lives in `crates/ddd-cli/src/render.rs` so generated projects can
-derive names, manifests, and feature flags from CLI arguments. Generated
-projects include `spin.production.toml.example` as the exact-host production
-manifest starting point.
+`make help` prints targets and the resolved public origin.
 
-The generated project requires Rust 1.93.0+, `cargo-leptos >= 0.3.7`, the
-distributed `wasm32-wasip2` Rust target, and `wasm-tools`. The Rust target supplies `std`;
-artifact verification proves that the component itself exports
-`wasi:http/handler@0.3.0` and retains no Preview 1 imports. The unstable
-`wasm32-wasip3` Rust target remains a canary until its self-contained libraries
-are distributed.
+## Operator guide
 
-`wasi-auth` owns the only authentication schema. The generated PostgreSQL
-profile applies it with the advisory-lock-protected migration runner before
-Spin starts. Production traffic terminates at the signed native ingress while
-the final-WASI Spin backend remains loopback-only; migration
-`0009_context_invalidation` is required for notification-backed revocation.
-Migration `0010_typed_relationship_outbox` atomically emits resource-scoped
-SpiceDB intents from membership changes.
+### Public origin (set once)
 
-Mail and optional SpiceDB writes run in `wasi-auth-outbox-worker`; HTTP requests
-only commit durable outbox rows. For local development, `make dev` installs the
-matching worker version into `target/wasi-auth-tools` and runs it with Spin.
-Use `make outbox-worker` and `make spin` in separate terminals only when you
-want to inspect their logs independently. Both processes use the same outbox
-key/version, while mail and SpiceDB write credentials are supplied only to the
-worker. Capture mode does not send internet email: registration and resend
-pages expose the locally captured one-time link after the worker delivers it.
-To send real mail with Resend, set `AUTH_MAIL_TRANSPORT=resend`,
-`AUTH_RESEND_API_KEY`, and `AUTH_RESEND_FROM` in `.env`; the key is passed only
-to the native worker and never to Spin.
+Browser mutations, JWT issuer, OAuth callbacks, passkey origin, mail links, and smoke tests share **one** public origin.
 
-```dotenv
-AUTH_MAIL_TRANSPORT=resend
-AUTH_RESEND_API_KEY=re_your_real_key
-AUTH_RESEND_FROM="wasi-auth <auth@your-verified-domain.com>"
+| Variable | Default when unset |
+|----------|--------------------|
+| `listen` | `127.0.0.1:3008` |
+| `AUTH_PUBLIC_BASE_URL` | `http://$(listen)` |
+| `AUTH_JWT_ISSUER` | same as public base |
+| OAuth redirect URIs | `$(AUTH_PUBLIC_BASE_URL)/api/auth/oauth/.../callback` |
+| `AUTH_PASSKEY_ORIGIN` | public base |
+| `AUTH_PASSKEY_RP_ID` | host from `listen` (no port) |
+| `BASE_URL` (smoke) | public base |
+
+```bash
+make spin listen=127.0.0.1:3000
+make smoke listen=127.0.0.1:3000
+# open http://127.0.0.1:3000
 ```
 
-Then run `make dev`. Keep the sender quoted when it contains a display name or
-angle brackets. Do not put the API key in `spin.toml`, browser code, or a Spin
-variable.
-Production rejects capture mail and the documented development key, and
-requires distinct ingress, vault, outbox, and recovery-code secrets.
+Explicit `.env` values win over derivation. If `.env` pins `AUTH_PUBLIC_BASE_URL` to another host/port, keep it aligned with `listen` or remove it.
+
+Loopback host aliases (`localhost` ↔ `127.0.0.1`) match for same-scheme same-port browser `Origin` checks. Passkeys require the **browser hostname** to equal `AUTH_PASSKEY_RP_ID` (ports are not allowed in rpId).
+
+### Tokenized auth links (password reset / email verify)
+
+| Route | Guest-only when authenticated? |
+|-------|--------------------------------|
+| `/login`, `/register`, `/forgot-password` | Yes → redirect to dashboard |
+| `/reset-password` without `token` | Yes → redirect to dashboard |
+| `/reset-password?token=…` | **No** — form always renders |
+| `/verify-email?token=…` | **No** — verification always runs |
+| `/invitations/accept?token=…` | Protected; unauth → `/auth/required?next=…` (token preserved) |
+
+If a user is already signed in and opens a reset email, they must still see **Choose a new password**. Completing reset rotates sessions in the kernel.
+
+### Account settings
+
+Authenticated shell: left sidebar + topbar. Account destinations live in the account flyout:
+
+`/account/profile` · `/account/password` · `/account/mfa` · `/account/passkeys` · `/account/sessions` · `/account/providers` · `/u/:handle` (public)
+
+### Dashboard board (`/dashboard`)
+
+Home is a **per-user board** (Spin KV), not a link farm:
+
+| Capability | How |
+|------------|-----|
+| Layout | **12-column** grid; tiles + **row/stack containers** |
+| Edit | **Edit board** → drag reorder, width chips (¼ · ⅓ · ½ · full), remove |
+| Catalog | **Add widget** — builtins + **Query metric/list/table** |
+| Data | Builtin snapshot + **Resources & queries** (REST, Postgres, gRPC gateway) — **workspace-scoped** |
+| Bind | Edit tile → pick query + field paths |
+| Vault | **`/org/{slug}/vault`** — workspace-scoped secrets (AES-GCM); create/delete modals; eye reveal |
+| Board | Layout, resources, queries, and secrets key off the **selected organization** |
+| Onboarding | **`/onboarding/workspace`** — first workspace (name + URL slug) when you have no orgs |
+| Permissions | `vault.view` (all members), `vault.manage` / `vault.reveal` (owner + admin) |
+| Slug | Stored in Postgres (`auth_organizations.slug`) + dual-written to Spin KV for resolve |
+
+**Legacy KV keys** (pre-org): `app_dashboard:{layout,resources,queries,secrets}:{user_id}`  
+**Org keys**: `app_dashboard:{layout,resources,queries,secrets}:org:{organization_id}`  
+
+Opportunistic migrate runs on first board/vault access. Owners/admins can also call server fn `migrate_workspace_legacy_data` (`dry_run` supported). Ciphertext-only legacy secrets cannot be re-keyed automatically — re-enter them in the org vault.
+
+Template dual-sync: `scripts/sync_fullstack_template.sh` (or `… check` for drift).
+| Demos | **Load demo connectors** seeds REST + `@app` Postgres queries and bound widgets |
+| Notes | Personal sticky note (multi-instance) |
+
+**Resources & queries (Retool-style, server-proxied)**
+
+1. Open **Resources** on the dashboard (Catalog · Resource · Query — no secrets tab).
+2. Store API keys in the **org Secret vault** (`/org/{slug}/vault`); pick them from resource auth / headers.
+3. **Catalog** → REST / PostgreSQL / gRPC resource (auth + headers on REST/gRPC).
+4. **Query** → REST method+path, Postgres **SELECT-only** SQL, or gRPC service/method + ProtoJSON (via **gateway_base_url**).
+5. **Test** → Raw / Transformed / Meta; then bind a **Query metric/list/table** widget.
+6. Optional: **Load demos** for JSONPlaceholder + app Postgres bound widgets.
+
+Vault values are encrypted at rest with `AUTH_VAULT_KEY_BASE64` (same family as MFA). Set `AUTH_VAULT_REVEAL_REQUIRE_STEP_UP=true` to require AAL2 before the eye-reveal API returns plaintext (default on in production).
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `AUTH_DASHBOARD_HTTP_ENABLED` | on (unless `false`/`0`) | Master switch for HTTP/REST + gateways |
+| `AUTH_DASHBOARD_HTTP_ALLOW_PRIVATE` | off | Allow `localhost` / RFC1918 when `true` |
+| `AUTH_DASHBOARD_GRPC_ENABLED` | off | Reserved for native Spin HTTP/2 gRPC client |
+| `AUTH_VAULT_REVEAL_REQUIRE_STEP_UP` | production=on | Gate vault reveal behind AAL2 |
+
+**PostgreSQL:** host/port/db/user + password secret, or **App database** (`@app` → app `DATABASE_URL`). Only `SELECT` / `WITH … SELECT`. Rows capped (~500). Requires `postgres://*:*` (or tighter hosts) in `spin.toml` outbound.
+
+**gRPC:** preferred path is a **JSON HTTP gateway** (`gateway_base_url`) — unary POST to `{gateway}/{service}/{method}`. Native wasi-grpc needs Spin HTTP/2 outbound; without a gateway the runtime returns a clear error (no fake success).
+
+`spin.toml` allows broad `https://*:*` / `http://*:*` / `postgres://*:*` for local dev. **Tighten hosts in production.**
+
+Layout is versioned: old flat `widgets[]` boards migrate to `nodes[]` (v2) on load.
+
+### Transactional email
+
+Outbox delivery uses productized **plain text + HTML** for:
+
+- email verification
+- password reset
+- organization invitation
+
+Each message includes a greeting, primary CTA button, plain URL fallback, and ignore-if-not-you footer.
+
+| Mode | Config | Use |
+|------|--------|-----|
+| Capture (default) | `AUTH_MAIL_TRANSPORT=capture` | Local demos; UI uses capture `action_url` |
+| Resend | `AUTH_MAIL_TRANSPORT=resend` + worker secrets | Real delivery |
+
+Provider secrets (`AUTH_RESEND_API_KEY`, `AUTH_RESEND_FROM`) belong on the **outbox worker only**, not in the Spin guest.
+
+Do **not** expect clean Gmail reputation for loopback `http://127.0.0.1` From addresses. Use capture mode locally; production needs a verified domain + SPF/DKIM/DMARC.
+
+### Template mirror rule
+
+When editing this example, keep the CLI scaffold in sync:
+
+`examples/fullstack-app/**` ↔ `crates/ddd-cli/templates/fullstack/**`
+
+Local development may path-patch `wasi-auth` in `Cargo.toml` until the next published rc.
+
+### Agent / automated browser login
+
+Authenticated pages (account settings, vault, board) need a real session cookie.
+Agents (Playwright, computer-use, etc.) should not scrape the login UI when a
+dev API is available.
+
+**Option A — existing password account**
+
+```bash
+export BASE_URL=http://127.0.0.1:3008
+export BROWSER_SMOKE_EMAILS=you@example.test
+export BROWSER_SMOKE_PASSWORD='your-password'
+node scripts/agent_dev_login.mjs
+# → JSON with session_id + cookie_header
+```
+
+**Option B — register + captured verification link (local only)**
+
+Requires `AUTH_MAIL_TRANSPORT=capture`, the `mail-capture` feature, and a running
+outbox worker (`make dev` / `make outbox-worker`).
+
+```bash
+export BASE_URL=http://127.0.0.1:3008
+node scripts/agent_dev_login.mjs --register
+# registers agent-login-*@example.test, polls
+# GET /api/auth/dev/mail/latest?recipient=…&kind=email-verification,
+# verifies the token, returns session_id
+```
+
+Or fetch the link yourself:
+
+```bash
+curl -fsS -G "$BASE_URL/api/auth/dev/mail/latest" \
+  --data-urlencode "recipient=$EMAIL" \
+  --data-urlencode "kind=email-verification" | jq .
+# use .action_url or the token in .body_text
+```
+
+**Playwright storage state**
+
+```bash
+node scripts/agent_dev_login.mjs --register \
+  --storage-state=/tmp/wasi-auth-agent.json
+# then: browser.newContext({ storageState: '/tmp/wasi-auth-agent.json' })
+```
+
+Cookie name in local dev is typically `wasi_auth_dev_session` (value = `session_id`).
+UI pages also expose **Open captured verification link** when capture transport is on.
+
+If your `.env` uses Resend (`AUTH_MAIL_TRANSPORT=resend`), Option B will not see
+captured mail — switch to `capture` for agent loops, or use Option A with a known user.
+
+### Smoke and checks
+
+```bash
+make check                 # Spin SSR compile
+make smoke                 # REST/web route smoke (uses BASE_URL)
+make browser-smoke         # Playwright auth pages
+make passkey-browser-smoke # requires hostname matching AUTH_PASSKEY_RP_ID
+# optional authenticated vault path (needs BROWSER_SMOKE_EMAILS):
+#   node scripts/verify_workspace_vault.mjs
+# agent session helper:
+#   node scripts/agent_dev_login.mjs --register
+```
+
+## Production checklist
+
+Use `spin.production.toml.example` as the base. Before exposing traffic:
+
+1. **HTTPS public origin** — `AUTH_PUBLIC_BASE_URL=https://auth.example.com` (no loopback).
+2. **JWT** — production issuer, audience, key ring / secret rotation; never ship the sample HS256 secret.
+3. **Distinct secrets** — ingress key, vault key, outbox key, recovery-code pepper, CSRF secret must not share development defaults.
+4. **Trusted ingress** — terminate at `wasi-auth-ingress`; Spin listens on loopback only; set `AUTH_REQUIRE_TRUSTED_INGRESS=true` and matching `AUTH_TRUSTED_INGRESS_KEY_BASE64`.
+5. **Migrations** — run `wasi-auth-migrate apply` / `make db-migrate` as a deployment step; WASM request path never mutates schema.
+6. **Outbox worker** — always running beside Spin; share `AUTH_OUTBOX_KEY_*` and Postgres; production rejects capture transport and the documented development outbox key.
+7. **Mail** — Resend (or webhook) with verified From; no provider secrets in Spin variables.
+8. **Cookies** — `AUTH_COOKIE_SECURE=true` behind HTTPS; prefer `__Host-session` production cookie naming.
+9. **OAuth / passkeys** — register exact callback URLs and rpId/origin against the public host.
+10. **Smoke** — `make smoke` / browser smoke against the real `BASE_URL`; optional soak and ingress benchmarks under `scripts/`.
+
+Local two-terminal ingress proof:
+
+```bash
+export AUTH_TRUSTED_INGRESS_KEY_BASE64="$(openssl rand -base64 32)"
+export WASI_AUTH_INGRESS_BIN=/path/to/wasi-auth-ingress
+make spin-backend
+# second terminal, same environment
+make trusted-ingress
+```
 
 ## What the outbox worker does
 
-`wasi-auth-outbox-worker` is not an email server and it does not replace Resend.
-It is a small native background process that reliably delivers work already
-committed by the application. Registration, password reset, invitation, and
-security-notification requests write the user change and an encrypted mail job
-to PostgreSQL in one transaction. The HTTP request then returns; the worker
-leases the pending job, calls the selected provider, and records `delivered`,
-retry, or `dead_letter` status. Optional SpiceDB relationship writes use the
-same mechanism.
+`wasi-auth-outbox-worker` is not an email server and it does not replace Resend. It is a native background process that leases encrypted mail and optional SpiceDB jobs from PostgreSQL, calls the selected provider, and records delivery or retry status. The application commits the user change and mail intent together, then returns without waiting for the provider.
 
-```text
-Spin request -> PostgreSQL user change + pending mail job -> HTTP response
-                                      |
-                                      v
-                           outbox worker -> Resend / HTTP mail provider
-                                      |
-                                      v
-                           delivery ID + final status in PostgreSQL
+If the worker is stopped, requests can still commit but mail remains `pending` until a worker starts again. `make dev` starts Spin and the worker together. Use `make spin` and `make outbox-worker` separately only when you need independent logs. Production runs the worker beside Spin, sharing PostgreSQL and the outbox key; provider credentials stay only in the worker environment.
+
+The toolchain gate requires Rust 1.93.0+, `cargo-leptos >= 0.3.7`, `wasm32-wasip2`, and `wasm-tools`. The distributed P2 Rust target supplies `std`; the generated component is inspected to prove it exports `wasi:http/handler@0.3.0` and has no Preview 1 imports. The unstable `wasm32-wasip3` Rust target remains a canary.
+
+`wasi-auth` owns the only PostgreSQL auth schema. `make db-migrate` uses its native, advisory-lock-protected migration runner before Spin starts; the WASM request component never mutates schema. `make fresh` resets PostgreSQL and reapplies the immutable migration catalog. The app and worker must share `AUTH_OUTBOX_KEY_BASE64` and `AUTH_OUTBOX_KEY_VERSION`; production rejects capture mail and the documented development key, and requires distinct ingress, vault, outbox, and recovery-code secrets.
+
+For production, start from `spin.production.toml.example`, replace the example auth domain and database hosts with exact deployment hosts, and run the same migration binary as an explicit deployment step. Keep mail and SpiceDB write credentials only in the native worker environment. The Spin guest receives a check-only SpiceDB credential.
+
+Production traffic terminates at the signed native ingress; Spin listens only on loopback. Obtain the signed `wasi-auth-ingress` release artifact, generate a 32-byte `AUTH_TRUSTED_INGRESS_KEY_BASE64`, and supply that same secret to both processes. For a local two-terminal ingress proof:
+
+```bash
+export AUTH_TRUSTED_INGRESS_KEY_BASE64="$(openssl rand -base64 32)"
+export WASI_AUTH_INGRESS_BIN=/path/to/wasi-auth-ingress
+make spin-backend
+# second terminal, with the same environment
+make trusted-ingress
 ```
 
-If the worker is stopped, the application still accepts the request but the
-mail job remains pending; starting the worker later delivers the backlog. This
-keeps provider outages and worker restarts from losing verification messages.
-The worker is also where provider credentials belong, so the Resend key never
-enters the Spin WASM component.
+Migrations `0009_context_invalidation` and `0010_typed_relationship_outbox` are mandatory. The native processes refuse unsafe configuration, and the Spin backend must not be exposed outside the pod or host. The ingress proxies Leptos, REST, and every gRPC streaming mode with backpressure, and evaluates the active REST Cedar bundle locally to avoid a second network hop. Run `scripts/benchmark_ingress_overhead.sh` for five protected-path pairs, `scripts/benchmark_fullstack.sh` for the absolute concurrency-100 SLO, and `scripts/soak_fullstack.sh` for ten-minute status, transport, revocation, memory, and sensitive-log gates.
 
-`make dev` starts both processes and cleans them up together. Run
-`make outbox-worker` and `make spin` separately only to inspect logs or deploy
-the processes independently. A production deployment runs at least one
-worker replica beside the Spin service, sharing PostgreSQL and the outbox key.
+After OAuth provider credentials and callback URLs are configured, run `make oauth-preflight` before the browser callback smoke. Use `make oauth-browser-smoke` to complete the provider login in a browser, or `make oauth-callback` with an issued session cookie to capture final callback evidence manually.
 
-The checked-in scripts make the release gates reproducible: run
-`benchmark_ingress_overhead.sh` against a direct guest baseline and native
-terminal, `benchmark_fullstack.sh` for five absolute concurrency-100 samples,
-and `soak_fullstack.sh` for ten-minute status, transport, memory, revocation,
-and sensitive-log checks. The paired gate compares the same protected Cedar
-operation; anonymous proxy traffic is diagnostic only.
+Use `ddd enable oauth-provider google`, `apple`, or `facebook` to record provider placeholders in `ddd.toml` without writing secrets.

@@ -140,12 +140,16 @@ transport-native errors from the same application service decision:
   omit `session_id`, `access_token`, and `refresh_token`.
 - Redirect targets must be normalized and checked against the server-side
   allowlist before use.
-- Guest-only routes (`/`, `/login`, `/register`, `/forgot-password`, and
-  `/reset-password`) must redirect authenticated browser users to `/dashboard`
-  at the Spin HTTP boundary.
-- Protected browser routes (`/dashboard`, `/account/security`, and `/admin/*`)
-  must redirect unauthenticated users to `/auth/required?next=<safe-path>` at
-  the Spin HTTP boundary before rendering protected content.
+- Guest-only routes (`/login`, `/register`, `/forgot-password`, and
+  `/reset-password` without a token) must redirect authenticated browser users
+  to `/dashboard` at the Spin HTTP boundary.
+- Tokenized public routes (`/reset-password?token=…`, `/verify-email?token=…`)
+  must remain reachable even when a session cookie exists so email deep links
+  never drop the token by bouncing to `/dashboard`.
+- Protected browser routes (`/dashboard`, `/account/*`, `/organizations*`,
+  `/invitations/accept`, and `/admin/*`) must redirect unauthenticated users to
+  `/auth/required?next=<safe-encoded-path-and-query>` at the Spin HTTP boundary
+  before rendering protected content.
 - Passkey challenge state is server-owned and expires.
 - `auth/required`, `auth/forbidden`, `auth/session-expired`, callback error, and
   passkey unsupported pages must be first-class route targets, not transient
