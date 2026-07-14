@@ -26,3 +26,9 @@ node_modules/
 Thumbs.db
 *.lock
 !/Cargo.lock
+
+# Local UI audit dumps (not product assets)
+examples/fullstack-app/.audit-shots/
+
+# Accidental duplicate of src/app.rs at template root (source of truth is src/)
+crates/ddd-cli/templates/fullstack/app.rs

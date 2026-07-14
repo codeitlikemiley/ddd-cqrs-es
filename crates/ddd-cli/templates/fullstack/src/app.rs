@@ -19,6 +19,10 @@ use crate::contracts::{
     RoleListResponse, RoleUpsertRequest, SecretCreateRequest, SessionRevokeRequest, SessionView,
     SigningKeyListResponse, SigningKeyRotateRequest, SigningKeyRotateResponse,
 };
+use crate::ui::{
+    account_page_shell, error_page_shell, page_shell, public_page_shell, AuthBrand, ErrorBanner,
+    Field, FieldGroup, Panel, PrimaryButton, SectionLabel, SuccessBanner, TextInput,
+};
 use leptos::prelude::*;
 use leptos_meta::*;
 use server_fn::codec::Json;
@@ -1040,19 +1044,6 @@ fn ResendVerificationPage() -> impl IntoView {
                 <AuthBrand />
                 <ResendVerificationForm />
             </section>
-        </div>
-    }
-}
-
-#[component]
-fn AuthBrand() -> impl IntoView {
-    view! {
-        <div class="auth-brand">
-            <span class="auth-logo" aria-hidden="true">"d"</span>
-            <div>
-                <p class="auth-brand-name">"wasi-auth"</p>
-                <p class="auth-brand-meta">"Secure workspace access"</p>
-            </div>
         </div>
     }
 }
@@ -3167,65 +3158,65 @@ fn ChangePasswordForm() -> impl IntoView {
             && next != current
     };
 
+    let disabled = Signal::derive(move || !can_submit());
+    let success_msg = Signal::derive(move || {
+        if matches!(value.get(), Some(Ok(_))) {
+            Some("Password updated. Other sessions were signed out.".to_owned())
+        } else {
+            None
+        }
+    });
+
     view! {
-        <section class="panel password-change-panel">
+        <Panel class="password-change-panel".to_owned()>
             <div class="session-panel-head">
                 <div>
-                    <p class="section-label">"Credential"</p>
+                    <SectionLabel>"Credential"</SectionLabel>
                     <h2>"Change password"</h2>
                 </div>
             </div>
             <p class="passkey-lede">
                 "Enter your current password to confirm it's you. Use at least 15 characters for the new password. Other signed-in sessions will be signed out."
             </p>
-            <div class="auth-fields">
-                <label class="auth-field">
-                    <span>"Current password"</span>
-                    <input
-                        class="auth-input"
-                        type="password"
+            <FieldGroup>
+                <Field label="Current password">
+                    <TextInput
+                        input_type="password"
                         autocomplete="current-password"
-                        prop:value=move || current_password.get()
-                        on:input=move |event| {
+                        value=current_password
+                        on_input=Callback::new(move |v: String| {
                             set_client_error.set(None);
-                            set_current_password.set(event_target_value(&event));
-                        }
+                            set_current_password.set(v);
+                        })
                     />
-                </label>
-                <label class="auth-field">
-                    <span>"New password"</span>
-                    <input
-                        class="auth-input"
-                        type="password"
+                </Field>
+                <Field label="New password" hint="Minimum 15 characters. Prefer a long phrase.">
+                    <TextInput
+                        input_type="password"
                         autocomplete="new-password"
-                        prop:value=move || new_password.get()
-                        on:input=move |event| {
+                        value=new_password
+                        on_input=Callback::new(move |v: String| {
                             set_client_error.set(None);
-                            set_new_password.set(event_target_value(&event));
-                        }
+                            set_new_password.set(v);
+                        })
                     />
-                    <small>"Minimum 15 characters. Prefer a long phrase."</small>
-                </label>
-                <label class="auth-field">
-                    <span>"Confirm new password"</span>
-                    <input
-                        class="auth-input"
-                        type="password"
+                </Field>
+                <Field label="Confirm new password">
+                    <TextInput
+                        input_type="password"
                         autocomplete="new-password"
-                        prop:value=move || confirm_password.get()
-                        on:input=move |event| {
+                        value=confirm_password
+                        on_input=Callback::new(move |v: String| {
                             set_client_error.set(None);
-                            set_confirm_password.set(event_target_value(&event));
-                        }
+                            set_confirm_password.set(v);
+                        })
                     />
-                </label>
-            </div>
+                </Field>
+            </FieldGroup>
             <div class="account-card-actions">
-                <button
-                    type="button"
-                    class="primary-button"
-                    disabled=move || !can_submit()
-                    on:click=move |_| {
+                <PrimaryButton
+                    disabled=disabled
+                    on_click=Callback::new(move |_| {
                         let current = current_password.get_untracked();
                         let next = new_password.get_untracked();
                         let confirm = confirm_password.get_untracked();
@@ -3246,24 +3237,18 @@ fn ChangePasswordForm() -> impl IntoView {
                             current_password: current,
                             new_password: next,
                         });
-                    }
+                    })
                 >
                     {move || if pending.get() { "Updating password…" } else { "Update password" }}
-                </button>
-                <p class="error-banner" hidden=move || client_error.get().is_none()>
-                    {move || client_error.get().unwrap_or_default()}
-                </p>
+                </PrimaryButton>
+                <ErrorBanner message=client_error />
                 <Show when=move || value.get().is_some()>
                     <p class="result-line">{move || action_result_text(value.get())}</p>
                 </Show>
-                <Show when=move || matches!(value.get(), Some(Ok(_)))>
-                    <p class="auth-success">
-                        <span>"Password updated. Other sessions were signed out."</span>
-                    </p>
-                </Show>
+                <SuccessBanner message=success_msg />
                 <a class="auth-text-link" href="/forgot-password">"Forgot password? Use email reset"</a>
             </div>
-        </section>
+        </Panel>
     }
 }
 
@@ -5688,80 +5673,6 @@ fn ReturnToLoginLink() -> impl IntoView {
     view! { <a class="link-button" href="/login">"Return to sign in"</a> }
 }
 
-/// Page body only — shell chrome lives in `WorkspaceShell` / `AppLayout` and is reused.
-/// Uses the wide `.page-grid` (orgs, admin, dashboard-adjacent).
-fn page_shell(
-    title: &'static str,
-    subtitle: &'static str,
-    children: impl IntoView + 'static,
-) -> impl IntoView {
-    view! {
-        <section class="page-header workspace-page-header">
-            <h1>{title}</h1>
-            <span class="workspace-page-subtitle">{subtitle}</span>
-        </section>
-        <section class="page-grid">
-            {children}
-        </section>
-    }
-}
-
-/// Narrow centered column for account + vault settings (matches profile ~640px).
-/// Title and body share the same column so panels align with the page heading.
-fn account_page_shell(
-    title: &'static str,
-    subtitle: &'static str,
-    _active: &'static str,
-    children: impl IntoView + 'static,
-) -> impl IntoView {
-    view! {
-        <div class="account-page">
-            <header class="account-page-header">
-                <h1>{title}</h1>
-                <p class="account-page-subtitle">{subtitle}</p>
-            </header>
-            <div class="account-page-body">
-                {children}
-            </div>
-        </div>
-    }
-}
-
-// The public shell is referenced by the browser route graph; the server-only
-// component build can otherwise report it as dead code before route expansion.
-#[allow(dead_code)]
-fn public_page_shell(
-    title: &'static str,
-    subtitle: &'static str,
-    children: impl IntoView + 'static,
-) -> impl IntoView {
-    view! {
-        <div class="page">
-            <header class="page-brand">
-                <a class="page-brand-link" href="/" aria-label="wasi-auth home">
-                    <span class="page-brand-mark" aria-hidden="true">"d"</span>
-                    <span>
-                        <strong>"wasi-auth"</strong>
-                        <small>"ddd_cqrs_es fullstack"</small>
-                    </span>
-                </a>
-                <span class="page-brand-status">
-                    <span class="status-dot" aria-hidden="true"></span>
-                    "Spin runtime"
-                </span>
-            </header>
-            <section class="page-header">
-                <p class="page-header-kicker">"wasi-auth / ddd_cqrs_es"</p>
-                <h1>{title}</h1>
-                <span>{subtitle}</span>
-            </section>
-            <section class="page-grid">
-                {children}
-            </section>
-        </div>
-    }
-}
-
 /// Marks active nav links. Island so it runs on the client and follows SPA navigations.
 #[island]
 fn WorkspaceNavActive() -> impl IntoView {
@@ -6055,24 +5966,6 @@ fn can_view_system_navigation(session: &SessionView) -> bool {
 
 fn has_permission(session: &SessionView, permission: &str) -> bool {
     session.permissions.iter().any(|value| value == permission)
-}
-
-fn error_page_shell(
-    title: &'static str,
-    subtitle: &'static str,
-    children: impl IntoView + 'static,
-) -> impl IntoView {
-    view! {
-        <div class="error-page">
-            <section class="error-card">
-                <AuthBrand />
-                <p class="auth-kicker">"Request interrupted"</p>
-                <h1 class="error-title">{title}</h1>
-                <p class="error-copy">{subtitle}</p>
-                <div class="error-actions">{children}</div>
-            </section>
-        </div>
-    }
 }
 
 fn selected_auth_error(
