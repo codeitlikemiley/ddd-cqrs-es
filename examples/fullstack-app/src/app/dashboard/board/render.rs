@@ -1,489 +1,22 @@
-//! Extensible dashboard board (layout v2, containers, HTTP sources).
+//! Board node / widget rendering.
 
-use super::resources as dashboard_resources;
+#![allow(unused_imports)]
 
+use super::layout::{
+    commit_layout, find_col_span, find_node, remove_node, reorder_siblings, set_span_by_id,
+};
+use super::util::{current_unix_ms, event_target_value_board, parse_list_labels, relative_ms};
+use crate::app::{DismissDashboardNotification, SaveDashboardLayout, UpdateDashboardNote};
 use crate::contracts::{
     BoardContainerKind, BoardNode, DashboardLayout, DashboardNotification, DashboardSnapshot,
     DashboardWidgetKind, HttpDisplayMode, HttpQueryResult, QueryResult, QuerySummary, WidgetBind,
 };
 use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
-use leptos::task::spawn_local;
-#[cfg(feature = "hydrate")]
 use wasm_bindgen::JsCast;
 
-use crate::app::helpers::server_error_text;
-use crate::app::{
-    browser_load, get_dashboard_snapshot, DismissDashboardNotification, SaveDashboardLayout,
-    UpdateDashboardNote,
-};
 
-#[component]
-pub fn DashboardPage() -> impl IntoView {
-    view! { <DashboardHome /> }
-}
-
-#[island]
-pub fn DashboardHome() -> impl IntoView {
-    let board = browser_load(get_dashboard_snapshot);
-    let save_layout = ServerAction::<SaveDashboardLayout>::new();
-    let dismiss_action = ServerAction::<DismissDashboardNotification>::new();
-    let note_action = ServerAction::<UpdateDashboardNote>::new();
-
-    let layout = RwSignal::new(DashboardLayout {
-        version: 2,
-        nodes: Vec::new(),
-        widgets: Vec::new(),
-    });
-    let (notifications, set_notifications) = signal(Vec::<DashboardNotification>::new());
-    let (snapshot, set_snapshot) = signal(None::<DashboardSnapshot>);
-    let (editing, set_editing) = signal(false);
-    let (picker_open, set_picker_open) = signal(false);
-    let (sources_open, set_sources_open) = signal(false);
-    let drag_id = RwSignal::new(None::<String>);
-    let drop_target = RwSignal::new(None::<String>);
-    let (seeded, set_seeded) = signal(false);
-    let (save_error, set_save_error) = signal(None::<String>);
-
-    Effect::new(move |_| {
-        if let Some(Ok(data)) = board.get() {
-            if !seeded.get_untracked() {
-                let mut lay = data.layout.clone();
-                lay.migrate_if_needed();
-                layout.set(lay);
-                set_notifications.set(data.notifications.clone());
-                set_seeded.set(true);
-            }
-            set_snapshot.set(Some(data));
-        }
-    });
-
-    Effect::new(move |_| match save_layout.value().get() {
-        Some(Ok(next)) => {
-            layout.set(next);
-            set_save_error.set(None);
-        }
-        Some(Err(error)) => set_save_error.set(Some(error.to_string())),
-        None => {}
-    });
-
-    Effect::new(move |_| {
-        if let Some(Ok(list)) = dismiss_action.value().get() {
-            set_notifications.set(list);
-        }
-    });
-
-    Effect::new(move |_| {
-        if let Some(Ok(next)) = note_action.value().get() {
-            layout.set(next);
-        }
-    });
-
-    // Lock document scroll while any board modal is open (prevents background scroll-through).
-    Effect::new(move |_| {
-        let open = picker_open.get() || sources_open.get();
-        #[cfg(feature = "hydrate")]
-        {
-            if let Some(document) = web_sys::window().and_then(|w| w.document()) {
-                if let Some(root) = document.document_element() {
-                    let _ = if open {
-                        root.class_list().add_1("board-modal-open")
-                    } else {
-                        root.class_list().remove_1("board-modal-open")
-                    };
-                }
-            }
-        }
-        #[cfg(not(feature = "hydrate"))]
-        {
-            let _ = open;
-        }
-    });
-
-    view! {
-        <div class="board-page" class:is-editing=move || editing.get()>
-            {move || match board.get() {
-                None => view! {
-                    <div class="board-skeleton" aria-busy="true">
-                        <div class="board-skeleton-bar"></div>
-                        <div class="board-skeleton-grid">
-                            <span></span><span></span><span></span><span></span>
-                            <span class="span-2"></span><span class="span-2"></span>
-                        </div>
-                    </div>
-                }.into_any(),
-                Some(Err(error)) => view! {
-                    <section class="board-empty">
-                        <p class="error-banner">{server_error_text(error)}</p>
-                    </section>
-                }.into_any(),
-                Some(Ok(_)) => {
-                    let data = snapshot.get().or_else(|| board.get().and_then(Result::ok));
-                    let Some(data) = data else {
-                        return view! { <div class="board-skeleton" aria-busy="true"></div> }.into_any();
-                    };
-                    let greeting = data.greeting_name.clone();
-                    let has_tenant = data.has_tenant;
-                    let tenant_label = data.tenant_label.clone();
-                    let org_count = data.organization_count;
-                    let http_enabled = data.http_enabled;
-                    let first_http_source_id =
-                        data.data_sources.first().map(|s| s.id.clone())
-                            .or_else(|| data.queries.first().map(|q| q.id.clone()));
-                    let http_results = data.http_results.clone();
-                    let query_results = data.query_results.clone();
-                    let query_summaries_for_board = data.queries.clone();
-                    let resource_summaries = data.resources.clone();
-                    let query_summaries = data.queries.clone();
-                    let secrets_for_modal = data.secrets.clone();
-                    let http_enabled_flag = http_enabled;
-                    let grpc_enabled = data.grpc_resources_enabled;
-                    let postgres_enabled = data.postgres_resources_enabled;
-                    let board_actions_disabled = !has_tenant;
-
-                    // Default workspace is auto-selected server-side (first membership).
-                    // No full-width "Workspace required" CTA — keep the board for real data.
-                    let _ = org_count;
-                    view! {
-                        <header class="board-top">
-                            <div class="board-top-copy">
-                                <p class="board-kicker">
-                                    {if has_tenant {
-                                        tenant_label.clone().unwrap_or_else(|| "Workspace".into())
-                                    } else {
-                                        "Dashboard".into()
-                                    }}
-                                </p>
-                                <h1 class="board-title">{format!("Good to see you, {greeting}")}</h1>
-                                <p class="board-sub">
-                                    {if has_tenant {
-                                        "12-column board with containers, bound widgets, and workspace resources."
-                                    } else {
-                                        "Create a workspace from the sidebar switcher to edit the board."
-                                    }}
-                                </p>
-                            </div>
-                            <div class="board-top-actions">
-                                <button type="button" class="secondary-button" class:is-active=move || editing.get()
-                                    disabled=board_actions_disabled
-                                    on:click=move |_| {
-                                        set_editing.update(|v| *v = !*v);
-                                        drag_id.set(None);
-                                        drop_target.set(None);
-                                    }
-                                >
-                                    {move || if editing.get() { "Done" } else { "Edit board" }}
-                                </button>
-                                <button type="button" class="secondary-button" on:click=move |_| set_sources_open.set(true)
-                                    disabled=move || !http_enabled || board_actions_disabled
-                                >
-                                    "Resources"
-                                </button>
-                                <button type="button" class="primary-button" on:click=move |_| set_picker_open.set(true)
-                                    disabled=board_actions_disabled
-                                >
-                                    "Add widget"
-                                </button>
-                            </div>
-                        </header>
-
-                        <Show when=move || editing.get()>
-                            <p class="board-edit-hint">
-                                "Drag tiles to reorder. Size chips use a 12-column grid (3=¼, 4=⅓, 6=½, 12=full). Add a Row/Stack container to group tiles."
-                            </p>
-                        </Show>
-                        <p class="error-banner" hidden=move || save_error.get().is_none()>
-                            {move || save_error.get().unwrap_or_default()}
-                        </p>
-
-                        // Widget catalog modal
-                        <Show when=move || picker_open.get()>
-                            <div
-                                class="board-modal-backdrop"
-                                role="presentation"
-                                on:click=move |_| set_picker_open.set(false)
-                                on:wheel=move |e| e.stop_propagation()
-                            >
-                                <div class="board-modal" role="dialog" aria-modal="true" on:click=move |e| e.stop_propagation()>
-                                    <header class="board-modal-head">
-                                        <div>
-                                            <h2>"Add to board"</h2>
-                                            <p>"Widgets, containers, and HTTP panels. Notes and HTTP panels can be added multiple times."</p>
-                                        </div>
-                                        <button type="button" class="board-modal-close" on:click=move |_| set_picker_open.set(false)>"Close"</button>
-                                    </header>
-                                    <div class="board-picker-grid board-modal-body">
-                                        <article class="board-picker-card">
-                                            <div>
-                                                <strong>"Row container"</strong>
-                                                <p>"Horizontal group for child tiles (12-col)."</p>
-                                            </div>
-                                            <button type="button" class="primary-button" on:click=move |_| {
-                                                let mut next = layout.get_untracked();
-                                                next.nodes.push(BoardNode::Container {
-                                                    id: format!("c-row-{}", next.total_nodes() + 1),
-                                                    kind: BoardContainerKind::Row,
-                                                    col_span: 12,
-                                                    children: Vec::new(),
-                                                });
-                                                commit_layout(layout, save_layout, next);
-                                                set_picker_open.set(false);
-                                            }>"Add row"</button>
-                                        </article>
-                                        <article class="board-picker-card">
-                                            <div>
-                                                <strong>"Stack container"</strong>
-                                                <p>"Vertical stack for child tiles."</p>
-                                            </div>
-                                            <button type="button" class="primary-button" on:click=move |_| {
-                                                let mut next = layout.get_untracked();
-                                                next.nodes.push(BoardNode::Container {
-                                                    id: format!("c-stack-{}", next.total_nodes() + 1),
-                                                    kind: BoardContainerKind::Stack,
-                                                    col_span: 6,
-                                                    children: Vec::new(),
-                                                });
-                                                commit_layout(layout, save_layout, next);
-                                                set_picker_open.set(false);
-                                            }>"Add stack"</button>
-                                        </article>
-                                        {
-                                            let placed = collect_placed_kinds(&layout.get());
-                                            let first_source_base = first_http_source_id.clone();
-                                            DashboardWidgetKind::catalog().iter().cloned().map(|kind| {
-                                                let multi = kind.allows_multiple();
-                                                let already = !multi && placed.contains(kind.as_str());
-                                                let kind_add = kind.clone();
-                                                let first_source = first_source_base.clone();
-                                                view! {
-                                                    <article class="board-picker-card" class:is-added=already>
-                                                        <div>
-                                                            <strong>{kind.label()}</strong>
-                                                            <p>{kind.description()}</p>
-                                                            <Show when=move || multi>
-                                                                <span class="board-picker-badge">"Multiple allowed"</span>
-                                                            </Show>
-                                                        </div>
-                                                        <button type="button" class="primary-button" disabled=already on:click=move |_| {
-                                                            if already { return; }
-                                                            let mut next = layout.get_untracked();
-                                                            let id = next_node_id(kind_add.as_str(), &next);
-                                                            let source_id = if kind_add.is_query_bound() {
-                                                                first_source.clone()
-                                                            } else {
-                                                                None
-                                                            };
-                                                            let mode = kind_add.default_display_mode();
-                                                            next.nodes.push(BoardNode::Widget {
-                                                                id,
-                                                                kind: kind_add.clone(),
-                                                                col_span: kind_add.default_span(),
-                                                                note_text: if matches!(kind_add, DashboardWidgetKind::Notes) {
-                                                                    Some(String::new())
-                                                                } else { None },
-                                                                source_id,
-                                                                bind: WidgetBind::for_display_mode(&mode),
-                                                                http_mode: mode,
-                                                            });
-                                                            commit_layout(layout, save_layout, next);
-                                                            set_picker_open.set(false);
-                                                        }>
-                                                            {if already { "On board" } else { "Add to board" }}
-                                                        </button>
-                                                    </article>
-                                                }
-                                            }).collect_view()
-                                        }
-                                    </div>
-                                </div>
-                            </div>
-                        </Show>
-
-                        {
-                            dashboard_resources::resources_queries_modal(
-                                sources_open,
-                                set_sources_open,
-                                http_enabled_flag,
-                                grpc_enabled,
-                                postgres_enabled,
-                                resource_summaries,
-                                query_summaries,
-                                secrets_for_modal,
-                            )
-                        }
-
-                        <div class="board-grid board-grid-12" aria-label="Dashboard board">
-                            {move || {
-                                let nodes = layout.get().nodes;
-                                let snap = snapshot.get().or_else(|| board.get().and_then(Result::ok));
-                                let notifs = notifications.get();
-                                let results = http_results.clone();
-                                let q_results = query_results.clone();
-                                let q_summaries = query_summaries_for_board.clone();
-                                render_node_list(
-                                    nodes,
-                                    snap,
-                                    notifs,
-                                    results,
-                                    q_results,
-                                    q_summaries,
-                                    editing,
-                                    drag_id,
-                                    drop_target,
-                                    layout,
-                                    save_layout,
-                                    dismiss_action,
-                                    note_action,
-                                )
-                            }}
-                            <Show when=move || layout.get().nodes.is_empty()>
-                                <div class="board-empty-board">
-                                    <h2>"Empty board"</h2>
-                                    <p>"Add widgets or containers to start designing your workspace."</p>
-                                    <button type="button" class="primary-button" on:click=move |_| set_picker_open.set(true)>"Browse catalog"</button>
-                                </div>
-                            </Show>
-                        </div>
-                    }.into_any()
-                }
-            }}
-        </div>
-    }
-}
-
-fn collect_placed_kinds(layout: &DashboardLayout) -> std::collections::HashSet<String> {
-    let mut set = std::collections::HashSet::new();
-    fn walk(nodes: &[BoardNode], set: &mut std::collections::HashSet<String>) {
-        for node in nodes {
-            match node {
-                BoardNode::Widget { kind, .. } => {
-                    set.insert(kind.as_str().to_owned());
-                }
-                BoardNode::Container { children, .. } => walk(children, set),
-            }
-        }
-    }
-    walk(&layout.nodes, &mut set);
-    set
-}
-
-fn next_node_id(prefix: &str, layout: &DashboardLayout) -> String {
-    let mut n = layout.total_nodes().saturating_add(1);
-    loop {
-        let candidate = format!("{prefix}-{n}");
-        if !id_exists(&layout.nodes, &candidate) {
-            return candidate;
-        }
-        n += 1;
-    }
-}
-
-fn id_exists(nodes: &[BoardNode], id: &str) -> bool {
-    for node in nodes {
-        if node.id() == id {
-            return true;
-        }
-        if let BoardNode::Container { children, .. } = node
-            && id_exists(children, id)
-        {
-            return true;
-        }
-    }
-    false
-}
-
-fn remove_node(nodes: &mut Vec<BoardNode>, id: &str) -> bool {
-    if let Some(idx) = nodes.iter().position(|n| n.id() == id) {
-        nodes.remove(idx);
-        return true;
-    }
-    for node in nodes.iter_mut() {
-        if let BoardNode::Container { children, .. } = node
-            && remove_node(children, id)
-        {
-            return true;
-        }
-    }
-    false
-}
-
-/// Reorder two nodes that share the same parent list (root or container children).
-fn reorder_siblings(nodes: &mut Vec<BoardNode>, from_id: &str, to_id: &str) -> bool {
-    if from_id == to_id {
-        return false;
-    }
-    if let (Some(from_idx), Some(to_idx)) = (
-        nodes.iter().position(|n| n.id() == from_id),
-        nodes.iter().position(|n| n.id() == to_id),
-    ) {
-        let mut to_idx = to_idx;
-        let item = nodes.remove(from_idx);
-        if from_idx < to_idx {
-            to_idx -= 1;
-        }
-        nodes.insert(to_idx.min(nodes.len()), item);
-        return true;
-    }
-    for node in nodes.iter_mut() {
-        if let BoardNode::Container { children, .. } = node
-            && reorder_siblings(children, from_id, to_id)
-        {
-            return true;
-        }
-    }
-    false
-}
-
-fn set_span_by_id(nodes: &mut [BoardNode], id: &str, span: u8) -> bool {
-    for node in nodes.iter_mut() {
-        if node.id() == id {
-            node.set_col_span(span);
-            return true;
-        }
-        if let BoardNode::Container { children, .. } = node
-            && set_span_by_id(children, id, span)
-        {
-            return true;
-        }
-    }
-    false
-}
-
-fn find_col_span(nodes: &[BoardNode], id: &str) -> Option<u8> {
-    for node in nodes {
-        if node.id() == id {
-            return Some(node.col_span());
-        }
-        if let BoardNode::Container { children, .. } = node
-            && let Some(span) = find_col_span(children, id)
-        {
-            return Some(span);
-        }
-    }
-    None
-}
-
-fn find_node<'a>(nodes: &'a [BoardNode], id: &str) -> Option<&'a BoardNode> {
-    for node in nodes {
-        if node.id() == id {
-            return Some(node);
-        }
-        if let BoardNode::Container { children, .. } = node
-            && let Some(found) = find_node(children, id)
-        {
-            return Some(found);
-        }
-    }
-    None
-}
-
-fn commit_layout(layout: RwSignal<DashboardLayout>, save_layout: ServerAction<SaveDashboardLayout>, next: DashboardLayout) {
-    // Write signal first so fine-grained attrs (data-span / chip active) update immediately.
-    layout.set(next.clone());
-    save_layout.dispatch(SaveDashboardLayout { layout: next });
-}
-
-fn render_node_list(
+pub(crate) fn render_node_list(
     nodes: Vec<BoardNode>,
     snap: Option<DashboardSnapshot>,
     notifs: Vec<DashboardNotification>,
@@ -528,7 +61,7 @@ fn render_node_list(
         .into_any()
 }
 
-fn render_node(
+pub(crate) fn render_node(
     node: BoardNode,
     snap: Option<DashboardSnapshot>,
     notifs: Vec<DashboardNotification>,
@@ -887,7 +420,7 @@ fn render_node(
     }
 }
 
-fn update_widget_bind(
+pub(crate) fn update_widget_bind(
     layout: RwSignal<DashboardLayout>,
     save_layout: ServerAction<SaveDashboardLayout>,
     widget_id: &str,
@@ -906,7 +439,7 @@ fn update_widget_bind(
     }
 }
 
-fn bind_fields_editor(
+pub(crate) fn bind_fields_editor(
     widget_id: String,
     source_id: Option<String>,
     bind: WidgetBind,
@@ -1066,30 +599,7 @@ fn bind_fields_editor(
     .into_any()
 }
 
-fn event_target_value_board(event: &leptos::ev::Event) -> String {
-    #[cfg(feature = "hydrate")]
-    {
-        use wasm_bindgen::JsCast;
-        return event
-            .target()
-            .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
-            .map(|el| el.value())
-            .or_else(|| {
-                event
-                    .target()
-                    .and_then(|t| t.dyn_into::<web_sys::HtmlSelectElement>().ok())
-                    .map(|el| el.value())
-            })
-            .unwrap_or_default();
-    }
-    #[cfg(not(feature = "hydrate"))]
-    {
-        let _ = event;
-        String::new()
-    }
-}
-
-fn span_chips(
+pub(crate) fn span_chips(
     id: String,
     layout: RwSignal<DashboardLayout>,
     save_layout: ServerAction<SaveDashboardLayout>,
@@ -1123,7 +633,7 @@ fn span_chips(
     .into_any()
 }
 
-fn render_widget_body(
+pub(crate) fn render_widget_body(
     kind: DashboardWidgetKind,
     data: Option<DashboardSnapshot>,
     notifications: Vec<DashboardNotification>,
@@ -1323,7 +833,7 @@ fn render_widget_body(
     }
 }
 
-fn render_bound_widget(
+pub(crate) fn render_bound_widget(
     source_id: Option<String>,
     bind: WidgetBind,
     http_mode: HttpDisplayMode,
@@ -1426,71 +936,5 @@ fn render_bound_widget(
             }
             .into_any()
         }
-    }
-}
-
-fn parse_list_labels(data_json: &str) -> Vec<String> {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(data_json) else {
-        return vec![data_json.to_owned()];
-    };
-    match value {
-        serde_json::Value::Array(items) => items
-            .into_iter()
-            .map(|item| match item {
-                serde_json::Value::String(s) => s,
-                serde_json::Value::Object(map) => map
-                    .get("name")
-                    .or_else(|| map.get("title"))
-                    .or_else(|| map.get("id"))
-                    .map(|v| match v {
-                        serde_json::Value::String(s) => s.clone(),
-                        other => other.to_string(),
-                    })
-                    .unwrap_or_else(|| "{}".to_owned()),
-                other => other.to_string(),
-            })
-            .collect(),
-        serde_json::Value::String(s) => vec![s],
-        other => vec![other.to_string()],
-    }
-}
-
-fn relative_ms(ms: u64) -> String {
-    let now_ms = current_unix_ms();
-    if ms > now_ms {
-        let delta = ms - now_ms;
-        if delta < 60_000 {
-            return "soon".to_owned();
-        }
-        if delta < 3_600_000 {
-            return format!("in {}m", delta / 60_000);
-        }
-        return format!("in {}h", delta / 3_600_000);
-    }
-    let delta = now_ms.saturating_sub(ms);
-    if delta < 60_000 {
-        return "just now".to_owned();
-    }
-    if delta < 3_600_000 {
-        return format!("{}m ago", delta / 60_000);
-    }
-    if delta < 86_400_000 {
-        return format!("{}h ago", delta / 3_600_000);
-    }
-    format!("{}d ago", delta / 86_400_000)
-}
-
-fn current_unix_ms() -> u64 {
-    #[cfg(feature = "hydrate")]
-    {
-        js_sys::Date::now() as u64
-    }
-    #[cfg(not(feature = "hydrate"))]
-    {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0)
     }
 }
