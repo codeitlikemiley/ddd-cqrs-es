@@ -27,7 +27,10 @@ function loadDotenvDefaults(path) {
 
 loadDotenvDefaults(resolve(appDir, ".env"));
 
-const baseUrl = process.env.BASE_URL || "http://127.0.0.1:3008";
+const baseUrl =
+  process.env.BASE_URL ||
+  process.env.AUTH_PUBLIC_BASE_URL ||
+  "http://127.0.0.1:3008";
 const systemAccessToken = process.env.AUTH_SYSTEM_ACCESS_TOKEN || "";
 const providerList = (process.env.OAUTH_PROVIDERS || process.env.OAUTH_PROVIDER || "google")
   .split(/\s+/)

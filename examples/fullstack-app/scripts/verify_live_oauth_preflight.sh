@@ -25,7 +25,7 @@ load_dotenv_defaults() {
 
 load_dotenv_defaults "$APP_DIR/.env"
 
-BASE_URL="${BASE_URL:-http://127.0.0.1:3008}"
+BASE_URL="${BASE_URL:-${AUTH_PUBLIC_BASE_URL:-http://127.0.0.1:3008}}"
 OAUTH_PROVIDERS="${OAUTH_PROVIDERS:-google facebook apple}"
 REDIRECT_PATH="${REDIRECT_PATH:-/dashboard}"
 AUTH_SYSTEM_ACCESS_TOKEN="${AUTH_SYSTEM_ACCESS_TOKEN:-}"

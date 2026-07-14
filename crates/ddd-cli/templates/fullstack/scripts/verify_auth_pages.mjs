@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
-const baseUrl = process.env.BASE_URL || "http://127.0.0.1:3008";
+const baseUrl =
+  process.env.BASE_URL ||
+  process.env.AUTH_PUBLIC_BASE_URL ||
+  "http://127.0.0.1:3008";
 const expectSystemAdministrator =
   process.env.BROWSER_SMOKE_EXPECT_SYSTEM_ADMIN === "true";
 const configuredSessionEmails = (process.env.BROWSER_SMOKE_EMAILS || "")
@@ -51,6 +54,34 @@ async function assertPage(page, path, expectedTitle) {
   }
   await waitForPageWasm(page);
   return state;
+}
+
+async function assertServerFunction(page, path, functionName, expectedTitle) {
+  const responses = [];
+  const onResponse = (response) => {
+    const pathname = new URL(response.url()).pathname;
+    if (pathname.startsWith(`/api/ui/${functionName}`)) {
+      responses.push({ pathname, status: response.status() });
+    }
+  };
+  page.on("response", onResponse);
+  try {
+    const state = await assertPage(page, path, expectedTitle);
+    if (responses.length === 0) {
+      throw new Error(
+        `Expected ${functionName} to be called while loading ${path}`,
+      );
+    }
+    const failed = responses.find(({ status }) => status === 404);
+    if (failed) {
+      throw new Error(
+        `Server function ${failed.pathname} returned 404 while loading ${path}`,
+      );
+    }
+    return state;
+  } finally {
+    page.off("response", onResponse);
+  }
 }
 
 async function waitForPageWasm(page) {
@@ -378,7 +409,12 @@ try {
       "EmailPasswordAuthForm_",
       "OptionalLoginMethods_",
     ]);
-    const register = await assertPage(page, "/register", "Create your workspace");
+    const register = await assertServerFunction(
+      page,
+      "/register",
+      "development_mail_capture_enabled",
+      "Create your workspace",
+    );
     if (register.submitText !== "Create workspace") {
       throw new Error(
         `Expected /register submit text to be "Create workspace", got "${register.submitText}"`,
@@ -403,8 +439,22 @@ try {
     await assertPage(page, "/auth/callback/google", "Completing sign-in");
     await assertPage(page, "/auth/callback/google/error", "Sign-in failed");
     await assertRedirect(page, "/dashboard", "/auth/required");
-    await assertRedirect(page, "/account/security", "/auth/required");
+    await assertRedirect(page, "/account/profile", "/auth/required");
     await assertRedirect(page, "/admin/auth/signing-keys", "/auth/required");
+    await assertRedirect(
+      page,
+      "/invitations/accept?token=browser-smoke-invite",
+      "/auth/required",
+    );
+    {
+      const requiredUrl = new URL(page.url());
+      const next = requiredUrl.searchParams.get("next");
+      if (next !== "/invitations/accept?token=browser-smoke-invite") {
+        throw new Error(
+          `Expected auth/required next to preserve invite token, got ${JSON.stringify(next)}`,
+        );
+      }
+    }
 
     const parsed = new URL(baseUrl);
     await context.addCookies([
@@ -423,8 +473,16 @@ try {
     const session = await createSessionCookie();
     await context.addCookies([session.cookie]);
     await assertPage(page, "/dashboard", "Dashboard");
-    await assertVisibleText(page, session.email);
-    await assertPage(page, "/account/security", "Account security");
+    if (viewport.width > 520) {
+      await assertVisibleText(page, session.email);
+    }
+    await assertPage(
+      page,
+      "/invitations/accept?token=browser-smoke-invite",
+      "Accept invitation",
+    );
+    await assertPage(page, "/account/profile", "Profile");
+    await assertPage(page, "/account/password", "Password");
     await assertPage(page, "/account/mfa", "Multi-factor authentication");
     await verifyMfaFlow(session.sessionId);
     assertSplitRequestState(
@@ -461,16 +519,30 @@ try {
       await assertAnyText(page, ["Access denied"]);
     }
     await assertRedirect(page, "/login", "/dashboard");
-    await assertRedirect(page, "/login?next=/account/security", "/account/security");
+    await assertRedirect(page, "/login?next=/account/profile", "/account/profile");
     await assertRedirect(page, "/login?next=https://evil.example", "/dashboard");
     await assertRedirect(page, "/login?next=//evil.example", "/dashboard");
     await assertRedirect(page, "/register", "/dashboard");
     await assertRedirect(page, "/forgot-password", "/dashboard");
-    await assertRedirect(page, "/reset-password?token=browser-smoke-token", "/dashboard");
+    // Tokenized reset must stay reachable while authenticated so the form can run.
+    await assertPage(
+      page,
+      "/reset-password?token=browser-smoke-token",
+      "Choose a new password",
+    );
+    // Without a token, guest-only behavior still applies.
+    await assertRedirect(page, "/reset-password", "/dashboard");
 
-    await assertPage(page, "/logout", "Log out");
-    await page.getByRole("button", { name: "Log out" }).click();
-    await assertVisibleText(page, "Request accepted");
+    await assertPage(page, "/dashboard", "Dashboard");
+    const signOut = page.getByRole("button", { name: "Sign out", exact: true });
+    const signOutCount = await signOut.count();
+    if (signOutCount !== 1) {
+      throw new Error(`Expected one Sign out action, got ${signOutCount}`);
+    }
+    await signOut.click();
+    await page.waitForURL(url("/"), { waitUntil: "domcontentloaded", timeout: 5000 });
+    await assertPage(page, "/", "Production fullstack Rust");
+    await assertRedirect(page, "/logout", "/");
     await assertRedirect(page, "/dashboard", "/auth/required");
 
     await waitForPageWasm(page);

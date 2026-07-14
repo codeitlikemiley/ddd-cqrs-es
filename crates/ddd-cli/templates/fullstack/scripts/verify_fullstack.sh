@@ -3,7 +3,9 @@ set -euo pipefail
 
 trap 'echo "error: fullstack smoke failed at line ${LINENO}" >&2' ERR
 
-BASE_URL="${BASE_URL:-http://127.0.0.1:3008}"
+BASE_URL="${BASE_URL:-${AUTH_PUBLIC_BASE_URL:-http://127.0.0.1:3008}}"
+AUTH_PUBLIC_BASE_URL="${AUTH_PUBLIC_BASE_URL:-$BASE_URL}"
+AUTH_JWT_ISSUER="${AUTH_JWT_ISSUER:-$AUTH_PUBLIC_BASE_URL}"
 RUN_GRPC="${RUN_GRPC:-0}"
 CHECK_REFRESH_TOKEN_EXPIRY="${CHECK_REFRESH_TOKEN_EXPIRY:-0}"
 CHECK_ES256_JWKS="${CHECK_ES256_JWKS:-0}"
@@ -371,7 +373,10 @@ run_passkey_check() {
     "{\"email\":\"$passkey_email\",\"password\":\"passkey-correct-123\",\"redirect_url\":\"/dashboard\"}")"
   jq -e '.authenticated == false and .session_id == null' <<<"$register_response" >/dev/null
   verification_mail="$(captured_mail "$passkey_email" email-verification)"
-  verification_path="$(jq -r '.body_text' <<<"$verification_mail")"
+  verification_path="$(jq -r '.action_url // empty' <<<"$verification_mail")"
+  if [[ -z "$verification_path" ]]; then
+    verification_path="$(jq -r '.body_text' <<<"$verification_mail" | grep -Eo 'https?://[^[:space:]]+' | head -n1)"
+  fi
   verification_token="${verification_path##*token=}"
   local verification_response passkey_session passkey_cookie passkey_csrf
   verification_response="$(json_post /api/auth/email/verify \
@@ -512,7 +517,7 @@ assert_error 503 configuration POST "$BASE_URL/api/auth/passkeys/login/options" 
   --data '{"email":"nobody@example.test","redirect_url":"/dashboard"}'
 
 assert_redirect "$BASE_URL/dashboard" "/auth/required?next=/dashboard"
-assert_redirect "$BASE_URL/account/security" "/auth/required?next=/account/security"
+assert_redirect "$BASE_URL/account/profile" "/auth/required?next=/account/profile"
 assert_redirect "$BASE_URL/admin/authorization/policy" "/auth/required?next=/admin/authorization/policy"
 
 email="$SMOKE_EMAIL"
@@ -524,7 +529,12 @@ register_response="$(json_post /api/auth/password/register \
 jq -e '.authenticated == false and .redirect_url == "/verify-email/pending" and .session_id == null and .access_token == null and .refresh_token == null' \
   <<<"$register_response" >/dev/null
 verification_mail="$(captured_mail "$email" email-verification)"
-verification_path="$(jq -r '.body_text' <<<"$verification_mail")"
+verification_path="$(jq -r '.action_url // empty' <<<"$verification_mail")"
+if [[ -z "$verification_path" ]]; then
+  verification_path="$(jq -r '.body_text' <<<"$verification_mail" | grep -Eo 'https?://[^[:space:]]+' | head -n1)"
+fi
+# Productized mail must include readable copy, not only a raw URL.
+jq -e '(.body_text | length) > 40 and (.body_text | test("http"))' <<<"$verification_mail" >/dev/null
 verification_token="${verification_path##*token=}"
 if [[ -z "$verification_token" || "$verification_token" == "$verification_path" ]]; then
   echo "Mail capture returned an invalid verification path" >&2
@@ -624,10 +634,10 @@ PY
   exit 0
 fi
 
-bad_issuer_token="$(mint_hs256_jwt "https://wrong-issuer.example" "fullstack-app" "fullstack-app-dev-hs256" "$session_id" 300)"
-bad_audience_token="$(mint_hs256_jwt "http://127.0.0.1:3008" "wrong-audience" "fullstack-app-dev-hs256" "$session_id" 300)"
-unknown_kid_token="$(mint_hs256_jwt "http://127.0.0.1:3008" "fullstack-app" "unknown-kid" "$session_id" 300)"
-expired_token="$(mint_hs256_jwt "http://127.0.0.1:3008" "fullstack-app" "fullstack-app-dev-hs256" "$session_id" -1000000000)"
+bad_issuer_token="$(mint_hs256_jwt "https://wrong-issuer.example" "${AUTH_JWT_AUDIENCE:-fullstack-app}" "fullstack-app-dev-hs256" "$session_id" 300)"
+bad_audience_token="$(mint_hs256_jwt "$AUTH_JWT_ISSUER" "wrong-audience" "fullstack-app-dev-hs256" "$session_id" 300)"
+unknown_kid_token="$(mint_hs256_jwt "$AUTH_JWT_ISSUER" "${AUTH_JWT_AUDIENCE:-fullstack-app}" "unknown-kid" "$session_id" 300)"
+expired_token="$(mint_hs256_jwt "$AUTH_JWT_ISSUER" "${AUTH_JWT_AUDIENCE:-fullstack-app}" "fullstack-app-dev-hs256" "$session_id" -1000000000)"
 assert_error 401 invalid_token POST "$BASE_URL/api/auth/token/verify" \
   -H 'content-type: application/json' \
   --data "{\"access_token\":\"$bad_issuer_token\"}"
@@ -654,6 +664,16 @@ curl -sS -f "$BASE_URL/" -H "$session_cookie" | grep -q "Production fullstack Ru
 for path in /login /register /forgot-password /reset-password; do
   assert_redirect "$BASE_URL$path" "/dashboard" -H "$session_cookie"
 done
+# Tokenized password-reset must not bounce authenticated browsers away.
+reset_body="$(curl -sS -f "$BASE_URL/reset-password?token=browser-smoke-token" -H "$session_cookie")"
+grep -q "Choose a new password" <<<"$reset_body"
+# Invitation accept is authenticated and must render with token preserved.
+invite_body="$(curl -sS -f "$BASE_URL/invitations/accept?token=browser-smoke-invite" -H "$session_cookie")"
+grep -q "Accept invitation" <<<"$invite_body"
+# Unauthenticated invite links must send users through auth with next preserved.
+assert_redirect \
+  "$BASE_URL/invitations/accept?token=browser-smoke-invite" \
+  "/auth/required?next=%2Finvitations%2Faccept%3Ftoken%3Dbrowser-smoke-invite"
 assert_redirect "$BASE_URL/login?next=/forgot-password" "/dashboard" -H "$session_cookie"
 
 original_refresh_token="$(jq -r '.refresh_token' <<<"$verification_response")"
@@ -700,7 +720,11 @@ jq -e '.accepted == true and (has("reset_url") | not) and .expires_in_seconds > 
   <<<"$start_reset_response" >/dev/null
 captured_reset_mail="$(captured_mail "$email" password-reset)"
 if [[ -n "$captured_reset_mail" ]]; then
-  reset_path="$(jq -r '.body_text' <<<"$captured_reset_mail")"
+  reset_path="$(jq -r '.action_url // empty' <<<"$captured_reset_mail")"
+  if [[ -z "$reset_path" ]]; then
+    reset_path="$(jq -r '.body_text' <<<"$captured_reset_mail" | grep -Eo 'https?://[^[:space:]]+' | head -n1)"
+  fi
+  jq -e '(.body_text | test("password|reset"; "i"))' <<<"$captured_reset_mail" >/dev/null
   reset_token="${reset_path##*token=}"
   if [[ -z "$reset_token" || "$reset_token" == "$reset_path" ]]; then
     echo "Mail capture returned an invalid reset path" >&2
@@ -739,14 +763,22 @@ if [[ "$CHECK_STORAGE_EVENTS" == "1" ]]; then
     | jq -e '.assurance == "aal2"' >/dev/null
 fi
 
+smoke_slug="smoke-$(echo "${session_id:0:8}" | tr '[:upper:]' '[:lower:]')"
 organization_response="$(json_post /api/organizations \
-  "{\"name\":\"Smoke Organization ${session_id:0:8}\"}" \
+  "{\"name\":\"Smoke Organization ${session_id:0:8}\",\"slug\":\"${smoke_slug}\"}" \
   -H "$session_cookie" -H "x-csrf-token: $csrf_token")"
 organization_id="$(jq -r '.organization_id' <<<"$organization_response")"
+organization_slug="$(jq -r '.slug // empty' <<<"$organization_response")"
 [[ -n "$organization_id" && "$organization_id" != "null" ]] || {
   echo "Organization onboarding did not return an identifier" >&2
   exit 1
 }
+if [[ -n "$organization_slug" && "$organization_slug" != "null" ]]; then
+  [[ "$organization_slug" == "$smoke_slug" ]] || {
+    echo "Organization slug mismatch: expected $smoke_slug got $organization_slug" >&2
+    exit 1
+  }
+fi
 tenant_refresh_response="$(curl -sS -f -X POST "$BASE_URL/api/auth/token/refresh" \
   -H "$session_cookie" \
   -H "x-csrf-token: $csrf_token" \
