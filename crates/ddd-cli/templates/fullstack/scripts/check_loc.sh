@@ -5,7 +5,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MAX_LOC="${MAX_LOC:-1200}"
 # Files allowed to exceed temporarily while still being split (comma-separated basenames).
-ALLOWLIST="${LOC_ALLOWLIST:-app.rs,store.rs,application.rs,auth_product.rs,contracts.rs,grpc.rs,app_dashboard_board.rs}"
+# Basenames still being split under the modularization plan.
+ALLOWLIST="${LOC_ALLOWLIST:-mod.rs,store.rs,application.rs,auth_product.rs,contracts.rs,grpc.rs,board.rs,resources.rs}"
 
 fail=0
 while IFS= read -r -d '' file; do

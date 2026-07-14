@@ -547,355 +547,72 @@ export async function copyText(value) {
 "#)]
 extern "C" {
     #[wasm_bindgen(catch, js_name = afterIslandHydration)]
-    async fn after_island_hydration() -> Result<JsValue, JsValue>;
+    pub(crate) async fn after_island_hydration() -> Result<JsValue, JsValue>;
 
     #[wasm_bindgen(js_name = initWorkspaceSidebar)]
-    fn init_workspace_sidebar();
+    pub(crate) fn init_workspace_sidebar();
 
     #[wasm_bindgen(js_name = bindWorkspaceNavActive)]
-    fn bind_workspace_nav_active();
+    pub(crate) fn bind_workspace_nav_active();
 
     #[wasm_bindgen(js_name = bindUserMenuDismiss)]
-    fn bind_user_menu_dismiss();
+    pub(crate) fn bind_user_menu_dismiss();
 
     #[wasm_bindgen(catch, js_name = pickImageDataUrl)]
-    async fn pick_image_data_url(
+    pub(crate) async fn pick_image_data_url(
         input: web_sys::HtmlInputElement,
         max_bytes: u32,
     ) -> Result<JsValue, JsValue>;
 
     #[wasm_bindgen(js_name = passkeySupported)]
-    fn passkey_supported() -> bool;
+    pub(crate) fn passkey_supported() -> bool;
 
     #[wasm_bindgen(catch, js_name = isConditionalMediationAvailable)]
-    async fn is_conditional_mediation_available() -> Result<JsValue, JsValue>;
+    pub(crate) async fn is_conditional_mediation_available() -> Result<JsValue, JsValue>;
 
     #[wasm_bindgen(catch, js_name = copyText)]
-    async fn copy_text(value: String) -> Result<JsValue, JsValue>;
+    pub(crate) async fn copy_text(value: String) -> Result<JsValue, JsValue>;
 
     #[wasm_bindgen(catch, js_name = createPasskeyCredential)]
-    async fn create_passkey_credential(options_json: String) -> Result<JsValue, JsValue>;
+    pub(crate) async fn create_passkey_credential(options_json: String) -> Result<JsValue, JsValue>;
 
     #[wasm_bindgen(catch, js_name = getPasskeyCredential)]
-    async fn get_passkey_credential(
+    pub(crate) async fn get_passkey_credential(
         options_json: String,
         mediation: String,
     ) -> Result<JsValue, JsValue>;
 }
 
-#[cfg(feature = "ssr")]
-pub fn shell(options: LeptosOptions) -> impl IntoView {
-    view! {
-        <!DOCTYPE html>
-        <html lang="en">
-            <head>
-                <meta charset="utf-8" />
-                <meta name="viewport" content="width=device-width, initial-scale=1" />
-                // Apply sidebar preference before first paint so every navigation
-                // keeps mini/hidden without flashing full → mini.
-                <script>
-                    {r#"(function(){try{var m=localStorage.getItem("workspace-sidebar-mode");if(m==="mini"||m==="hidden"||m==="full"){document.documentElement.setAttribute("data-sidebar-pref",m);}}catch(e){}})();"#}
-                </script>
-                <AutoReload options=options.clone() />
-                <HydrationScripts options=options.clone() islands=true root="" />
-                <MetaTags />
-            </head>
-            <body>
-                <App />
-            </body>
-        </html>
-    }
-}
+pub mod dashboard;
+pub mod helpers;
+pub mod path;
+pub mod router;
+pub mod workspace;
+
+pub use dashboard::{DashboardHome, DashboardPage};
+pub use helpers::*;
+pub use path::*;
+pub use router::{shell, App};
+pub use workspace::{
+    AppLayout, WorkspaceOnboardingGate, WorkspaceOnboardingPage, WorkspaceShell,
+};
+
+use crate::app::helpers::{
+    action_result_text, current_browser_pathname, has_permission, next_url, optional_text,
+    org_monogram, org_tone_index, redirect_browser, selected_action_error, selected_auth_error,
+    server_error_text, short_id_label, validate_email_only, validate_login_form,
+};
+use crate::app::path::{is_workspace_path, workspace_topbar_title};
+
+
+
+
+
+
+
 
 #[component]
-pub fn App() -> impl IntoView {
-    provide_meta_context();
-
-    let fallback = || view! { <NotFoundPage /> }.into_view();
-
-    // ParentRoute + Outlet: workspace chrome mounts once and is reused across
-    // authenticated navigations (islands-router). Only page content swaps.
-    view! {
-        <Stylesheet id="leptos" href="/pkg/fullstack_app.css" />
-        // Inline SVG avoids a static-file route for /favicon.ico.
-        <Link
-            rel="icon"
-            type_="image/svg+xml"
-            href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230d0d0d'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-family='system-ui,sans-serif' font-size='16' font-weight='700' fill='%23fff'%3Ed%3C/text%3E%3C/svg%3E"
-        />
-        <Meta name="description" content="Production fullstack Rust with Leptos islands, verified sessions, REST, and Spin gRPC." />
-        <Title text="wasi-auth / fullstack" />
-
-        <Router>
-            <Routes fallback>
-                <ParentRoute path=path!("") view=AppLayout>
-                    <Route path=path!("") view=HomePage />
-                    <Route path=path!("/login") view=LoginPage />
-                    <Route path=path!("/register") view=RegisterPage />
-                    <Route path=path!("/forgot-password") view=ForgotPasswordPage />
-                    <Route path=path!("/reset-password") view=ResetPasswordPage />
-                    <Route path=path!("/verify-email") view=VerifyEmailPage />
-                    <Route path=path!("/verify-email/pending") view=VerificationPendingPage />
-                    <Route path=path!("/verify-email/resend") view=ResendVerificationPage />
-                    <Route path=path!("/dashboard") view=DashboardPage />
-                    <Route path=path!("/invitations/accept") view=InvitationAcceptPage />
-                    <Route path=path!("/auth/callback/:provider") view=OAuthCallbackPage />
-                    <Route path=path!("/auth/callback/:provider/error") view=OAuthCallbackErrorPage />
-                    <Route path=path!("/auth/required") view=AuthRequiredPage />
-                    <Route path=path!("/auth/forbidden") view=ForbiddenPage />
-                    <Route path=path!("/auth/session-expired") view=SessionExpiredPage />
-                    <Route path=path!("/auth/passkey-unsupported") view=PasskeyUnsupportedPage />
-                    <Route path=path!("/account/profile") view=AccountProfilePage />
-                    <Route path=path!("/account/password") view=AccountPasswordPage />
-                    <Route path=path!("/account/providers") view=AccountProvidersPage />
-                    <Route path=path!("/account/passkeys") view=AccountPasskeysPage />
-                    <Route path=path!("/account/mfa") view=AccountMfaPage />
-                    <Route path=path!("/account/sessions") view=AccountSessionsPage />
-                    <Route path=path!("/account/vault") view=AccountVaultRedirectPage />
-                    <Route path=path!("/onboarding/workspace") view=WorkspaceOnboardingPage />
-                    <Route path=path!("/org/:slug/vault") view=OrgVaultPage />
-                    <Route path=path!("/u/:handle") view=PublicProfilePage />
-                    <Route path=path!("/organizations") view=OrganizationsPage />
-                    <Route path=path!("/organizations/settings") view=OrganizationSettingsPage />
-                    <Route path=path!("/organizations/members") view=OrganizationMembersPage />
-                    <Route path=path!("/organizations/invitations") view=OrganizationInvitationsPage />
-                    <Route path=path!("/organizations/roles") view=OrganizationRolesPage />
-                    <Route path=path!("/organizations/permissions") view=OrganizationPermissionsPage />
-                    <Route path=path!("/organizations/audit") view=OrganizationAuditPage />
-                    <Route path=path!("/admin/users") view=AdminUsersPage />
-                    <Route path=path!("/admin/health") view=AdminHealthPage />
-                    <Route path=path!("/admin/policies") view=AdminPoliciesPage />
-                    <Route path=path!("/admin/auth/signing-keys") view=SigningKeyAdminPage />
-                    <Route path=path!("/admin/auth/providers") view=AuthProviderAdminPage />
-                    <Route path=path!("/admin/auth/redirects") view=RedirectAllowlistPage />
-                    <Route path=path!("/admin/authorization/policy") view=AuthorizationPolicyPage />
-                    <Route path=path!("/*any") view=NotFoundPage />
-                </ParentRoute>
-            </Routes>
-        </Router>
-    }
-}
-
-fn is_workspace_path(path: &str) -> bool {
-    let path = path.trim_end_matches('/');
-    path == "/dashboard"
-        || path.starts_with("/dashboard/")
-        || path.starts_with("/account")
-        || path.starts_with("/organizations")
-        || path.starts_with("/org/")
-        || path.starts_with("/onboarding")
-        || path.starts_with("/admin")
-        || path.starts_with("/invitations")
-        || path.starts_with("/auth/callback")
-}
-
-fn workspace_topbar_title(path: &str) -> &'static str {
-    let path = path.trim_end_matches('/');
-    if path == "/dashboard" || path.is_empty() {
-        "Dashboard"
-    } else if path.starts_with("/account/profile") {
-        "Profile"
-    } else if path.starts_with("/account/password") {
-        "Password"
-    } else if path.starts_with("/account/providers") {
-        "Providers"
-    } else if path.starts_with("/account/passkeys") {
-        "Passkeys"
-    } else if path.starts_with("/account/mfa") {
-        "MFA"
-    } else if path.starts_with("/account/sessions") {
-        "Sessions"
-    } else if path.starts_with("/account/vault") || path.contains("/vault") {
-        "Secret vault"
-    } else if path.starts_with("/onboarding") {
-        "Create workspace"
-    } else if path.starts_with("/account") {
-        "Account"
-    } else if path.starts_with("/organizations/settings") {
-        "Organization settings"
-    } else if path.starts_with("/organizations/members") {
-        "Members"
-    } else if path.starts_with("/organizations/invitations") {
-        "Invitations"
-    } else if path.starts_with("/organizations/roles") {
-        "Roles"
-    } else if path.starts_with("/organizations/permissions") {
-        "Permissions"
-    } else if path.starts_with("/organizations/audit") {
-        "Audit"
-    } else if path.starts_with("/organizations") {
-        "Organizations"
-    } else if path.starts_with("/admin/users") {
-        "Users"
-    } else if path.starts_with("/admin/health") {
-        "Health"
-    } else if path.starts_with("/admin/policies") {
-        "Policies"
-    } else if path.starts_with("/admin/auth/signing-keys") {
-        "Signing keys"
-    } else if path.starts_with("/admin/auth/providers") {
-        "Auth providers"
-    } else if path.starts_with("/admin/auth/redirects") {
-        "Redirects"
-    } else if path.starts_with("/admin/authorization") {
-        "Authorization"
-    } else if path.starts_with("/admin") {
-        "Admin"
-    } else if path.starts_with("/invitations") {
-        "Invitation"
-    } else {
-        "Workspace"
-    }
-}
-
-/// Root layout: keep the workspace shell mounted across workspace navigations.
-#[component]
-fn AppLayout() -> impl IntoView {
-    let location = use_location();
-    // Memo only flips when entering/leaving the workspace chrome — not on every path.
-    let workspace_mode =
-        Memo::new(move |_| is_workspace_path(&location.pathname.get()));
-
-    view! {
-        {move || {
-            if workspace_mode.get() {
-                view! {
-                    <WorkspaceShell>
-                        <Outlet />
-                    </WorkspaceShell>
-                }
-                .into_any()
-            } else {
-                view! {
-                    <main class="auth-shell">
-                        <Outlet />
-                    </main>
-                }
-                .into_any()
-            }
-        }}
-    }
-}
-
-/// Persistent workspace chrome. Children render in the main content outlet.
-#[component]
-fn WorkspaceShell(children: Children) -> impl IntoView {
-    let location = use_location();
-    let topbar_title =
-        Memo::new(move |_| workspace_topbar_title(&location.pathname.get()).to_string());
-
-    view! {
-        <WorkspaceOnboardingGate />
-        <div class="workspace-shell" id="workspace-shell" data-sidebar="full">
-            <script>
-                {r#"(function(){try{var s=document.getElementById("workspace-shell");if(!s)return;var m=localStorage.getItem("workspace-sidebar-mode");if(m==="mini"||m==="hidden"||m==="full"){s.setAttribute("data-sidebar",m);}}catch(e){}})();"#}
-            </script>
-            <input
-                type="checkbox"
-                id="workspace-nav-toggle"
-                class="workspace-nav-toggle"
-                aria-controls="workspace-sidebar"
-            />
-            <label
-                class="workspace-nav-backdrop"
-                for="workspace-nav-toggle"
-                aria-label="Close navigation"
-            ></label>
-            <aside class="workspace-sidebar" id="workspace-sidebar" aria-label="Workspace">
-                <div class="workspace-sidebar-top">
-                    <a class="workspace-brand" href="/dashboard" aria-label="Workspace home">
-                        <span class="workspace-brand-mark" aria-hidden="true">"d"</span>
-                        <span class="workspace-brand-copy">
-                            <strong>"wasi-auth"</strong>
-                            <small>"workspace"</small>
-                        </span>
-                    </a>
-                    <button
-                        type="button"
-                        class="workspace-sidebar-rail-toggle"
-                        data-sidebar-action="toggle-mini"
-                        aria-label="Toggle mini sidebar"
-                        title="Toggle mini sidebar"
-                    >
-                        <span class="workspace-sidebar-rail-icon" aria-hidden="true"></span>
-                    </button>
-                    <label
-                        class="workspace-sidebar-close"
-                        for="workspace-nav-toggle"
-                        aria-label="Close navigation"
-                    >
-                        "Close"
-                    </label>
-                </div>
-                <nav class="workspace-nav" aria-label="Authenticated workspace">
-                    <a class="workspace-nav-link" href="/dashboard" data-nav="overview" title="Overview">
-                        <span class="workspace-nav-icon" aria-hidden="true" data-icon="overview"></span>
-                        <span class="workspace-nav-text">"Overview"</span>
-                    </a>
-                    <a class="workspace-nav-link" href="/organizations" data-nav="organizations" title="Organizations">
-                        <span class="workspace-nav-icon" aria-hidden="true" data-icon="organizations"></span>
-                        <span class="workspace-nav-text">"Organizations"</span>
-                    </a>
-                    <WorkspaceSystemNav />
-                </nav>
-                <div class="workspace-sidebar-foot">
-                    <WorkspaceOrgSwitcher />
-                    <WorkspaceUserMenu />
-                </div>
-            </aside>
-            <div class="workspace-main">
-                <header class="workspace-topbar">
-                    <label
-                        class="workspace-menu-button workspace-menu-button-mobile"
-                        for="workspace-nav-toggle"
-                        aria-label="Open navigation"
-                        aria-controls="workspace-sidebar"
-                    >
-                        <span class="workspace-menu-button-bars" aria-hidden="true">
-                            <span></span>
-                            <span></span>
-                            <span></span>
-                        </span>
-                    </label>
-                    <a class="workspace-topbar-brand" href="/dashboard" aria-label="Workspace home">
-                        <span class="workspace-brand-mark" aria-hidden="true">"d"</span>
-                        <span class="workspace-brand-copy">
-                            <strong>"wasi-auth"</strong>
-                            <small>"workspace"</small>
-                        </span>
-                    </a>
-                    <div class="workspace-topbar-title">
-                        <span class="workspace-topbar-page">{move || topbar_title.get()}</span>
-                    </div>
-                    <div class="workspace-topbar-org">
-                        <WorkspaceOrgSwitcher />
-                    </div>
-                    <button
-                        type="button"
-                        class="workspace-menu-button workspace-menu-button-desktop"
-                        data-sidebar-action="toggle-visibility"
-                        aria-label="Show sidebar"
-                        title="Show sidebar (⌘B)"
-                    >
-                        <span class="workspace-menu-button-bars" aria-hidden="true">
-                            <span></span>
-                            <span></span>
-                            <span></span>
-                        </span>
-                    </button>
-                    <WorkspaceSidebarControls />
-                    <WorkspaceNavActive />
-                </header>
-                <div class="workspace-content">
-                    {children()}
-                </div>
-            </div>
-        </div>
-    }
-}
-
-#[component]
-fn HomePage() -> impl IntoView {
+pub fn HomePage() -> impl IntoView {
     public_page_shell(
         "Production fullstack Rust",
         "Leptos islands, trusted authentication, embedded Cedar, DDD persistence, REST, and Spin gRPC in one component.",
@@ -934,7 +651,7 @@ fn HomePage() -> impl IntoView {
 }
 
 #[component]
-fn LoginPage() -> impl IntoView {
+pub fn LoginPage() -> impl IntoView {
     view! {
         <div class="auth-page">
             <ExistingSessionRedirect />
@@ -947,7 +664,7 @@ fn LoginPage() -> impl IntoView {
 }
 
 #[component]
-fn RegisterPage() -> impl IntoView {
+pub fn RegisterPage() -> impl IntoView {
     view! {
         <div class="auth-page">
             <ExistingSessionRedirect />
@@ -960,7 +677,7 @@ fn RegisterPage() -> impl IntoView {
 }
 
 #[component]
-fn ForgotPasswordPage() -> impl IntoView {
+pub fn ForgotPasswordPage() -> impl IntoView {
     view! {
         <div class="auth-page">
             <ExistingSessionRedirect />
@@ -973,7 +690,7 @@ fn ForgotPasswordPage() -> impl IntoView {
 }
 
 #[component]
-fn ResetPasswordPage() -> impl IntoView {
+pub fn ResetPasswordPage() -> impl IntoView {
     // Do not mount ExistingSessionRedirect here. Tokenized reset links must
     // render the form even when a stale session cookie is still present.
     view! {
@@ -987,7 +704,7 @@ fn ResetPasswordPage() -> impl IntoView {
 }
 
 #[component]
-fn InvitationAcceptPage() -> impl IntoView {
+pub fn InvitationAcceptPage() -> impl IntoView {
     // Authenticated document shell; unauthenticated browsers are redirected by
     // protected_ui_redirect with next= preserving ?token=.
     view! {
@@ -1001,7 +718,7 @@ fn InvitationAcceptPage() -> impl IntoView {
 }
 
 #[component]
-fn VerifyEmailPage() -> impl IntoView {
+pub fn VerifyEmailPage() -> impl IntoView {
     view! {
         <div class="auth-page">
             <section class="auth-card">
@@ -1013,7 +730,7 @@ fn VerifyEmailPage() -> impl IntoView {
 }
 
 #[component]
-fn VerificationPendingPage() -> impl IntoView {
+pub fn VerificationPendingPage() -> impl IntoView {
     view! {
         <div class="auth-page">
             <section class="auth-card">
@@ -1037,7 +754,7 @@ fn VerificationPendingPage() -> impl IntoView {
 }
 
 #[component]
-fn ResendVerificationPage() -> impl IntoView {
+pub fn ResendVerificationPage() -> impl IntoView {
     view! {
         <div class="auth-page">
             <section class="auth-card">
@@ -1066,29 +783,10 @@ fn ExistingSessionRedirect() -> impl IntoView {
     }
 }
 
-#[path = "app_dashboard_board.rs"]
-mod dashboard_board;
-pub use dashboard_board::{DashboardHome, DashboardPage};
 
-fn short_id_label(id: &str) -> String {
-    let trimmed = id.trim();
-    if trimmed.len() <= 12 {
-        return trimmed.to_owned();
-    }
-    let head: String = trimmed.chars().take(6).collect();
-    let tail: String = trimmed
-        .chars()
-        .rev()
-        .take(4)
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect();
-    format!("{head}…{tail}")
-}
 
 #[component]
-fn OAuthCallbackPage() -> impl IntoView {
+pub fn OAuthCallbackPage() -> impl IntoView {
     page_shell(
         "Completing sign-in",
         "The provider callback will be verified by the server.",
@@ -1097,7 +795,7 @@ fn OAuthCallbackPage() -> impl IntoView {
 }
 
 #[component]
-fn OAuthCallbackErrorPage() -> impl IntoView {
+pub fn OAuthCallbackErrorPage() -> impl IntoView {
     set_page_status(http::StatusCode::BAD_REQUEST);
     error_page_shell(
         "Sign-in failed",
@@ -1107,7 +805,7 @@ fn OAuthCallbackErrorPage() -> impl IntoView {
 }
 
 #[component]
-fn AuthRequiredPage() -> impl IntoView {
+pub fn AuthRequiredPage() -> impl IntoView {
     set_page_status(http::StatusCode::UNAUTHORIZED);
     error_page_shell(
         "Authentication required",
@@ -1117,7 +815,7 @@ fn AuthRequiredPage() -> impl IntoView {
 }
 
 #[component]
-fn ForbiddenPage() -> impl IntoView {
+pub fn ForbiddenPage() -> impl IntoView {
     set_page_status(http::StatusCode::FORBIDDEN);
     error_page_shell(
         "Access denied",
@@ -1132,7 +830,7 @@ fn ForbiddenPage() -> impl IntoView {
 }
 
 #[component]
-fn SessionExpiredPage() -> impl IntoView {
+pub fn SessionExpiredPage() -> impl IntoView {
     set_page_status(http::StatusCode::UNAUTHORIZED);
     error_page_shell(
         "Session expired",
@@ -1142,7 +840,7 @@ fn SessionExpiredPage() -> impl IntoView {
 }
 
 #[island(lazy)]
-fn PasskeyUnsupportedPage() -> impl IntoView {
+pub fn PasskeyUnsupportedPage() -> impl IntoView {
     error_page_shell(
         "Passkey unavailable",
         "Use email and password or an enabled provider.",
@@ -1151,7 +849,7 @@ fn PasskeyUnsupportedPage() -> impl IntoView {
 }
 
 #[component]
-fn AuthProviderAdminPage() -> impl IntoView {
+pub fn AuthProviderAdminPage() -> impl IntoView {
     page_shell(
         "Auth providers",
         "Configure OAuth and OIDC providers.",
@@ -1160,7 +858,7 @@ fn AuthProviderAdminPage() -> impl IntoView {
 }
 
 #[component]
-fn SigningKeyAdminPage() -> impl IntoView {
+pub fn SigningKeyAdminPage() -> impl IntoView {
     page_shell(
         "Signing keys",
         "Rotate the active access-token signing key.",
@@ -1169,7 +867,7 @@ fn SigningKeyAdminPage() -> impl IntoView {
 }
 
 #[component]
-fn RedirectAllowlistPage() -> impl IntoView {
+pub fn RedirectAllowlistPage() -> impl IntoView {
     page_shell(
         "Redirect allowlist",
         "Restrict browser redirect targets.",
@@ -1178,7 +876,7 @@ fn RedirectAllowlistPage() -> impl IntoView {
 }
 
 #[island(lazy)]
-fn AuthorizationPolicyPage() -> impl IntoView {
+pub fn AuthorizationPolicyPage() -> impl IntoView {
     let capabilities = browser_load(get_authorization_capabilities);
     page_shell(
         "Authorization policy",
@@ -1207,7 +905,7 @@ fn AuthorizationPolicyPage() -> impl IntoView {
 }
 
 #[component]
-fn AccountProfilePage() -> impl IntoView {
+pub fn AccountProfilePage() -> impl IntoView {
     account_page_shell(
         "Profile",
         "Your name, @handle, avatar, and whether others can find you.",
@@ -1217,7 +915,7 @@ fn AccountProfilePage() -> impl IntoView {
 }
 
 #[component]
-fn PublicProfilePage() -> impl IntoView {
+pub fn PublicProfilePage() -> impl IntoView {
     let params = use_params_map();
     public_page_shell(
         "Profile",
@@ -1236,7 +934,7 @@ fn PublicProfilePage() -> impl IntoView {
 }
 
 #[component]
-fn AccountPasswordPage() -> impl IntoView {
+pub fn AccountPasswordPage() -> impl IntoView {
     account_page_shell(
         "Password",
         "Update the password for this account. Enter your current password to confirm.",
@@ -1246,7 +944,7 @@ fn AccountPasswordPage() -> impl IntoView {
 }
 
 #[island(lazy)]
-fn AccountProvidersPage() -> impl IntoView {
+pub fn AccountProvidersPage() -> impl IntoView {
     account_page_shell(
         "Providers",
         "Social sign-in options for this deployment. Enabled providers can be used on the login page.",
@@ -1372,7 +1070,7 @@ fn provider_logo_svg(provider_id: &str) -> String {
 }
 
 #[component]
-fn AccountPasskeysPage() -> impl IntoView {
+pub fn AccountPasskeysPage() -> impl IntoView {
     account_page_shell(
         "Passkeys",
         "Sign in with Face ID, Touch ID, Windows Hello, or a security key — no password to type.",
@@ -1382,7 +1080,7 @@ fn AccountPasskeysPage() -> impl IntoView {
 }
 
 #[component]
-fn AccountMfaPage() -> impl IntoView {
+pub fn AccountMfaPage() -> impl IntoView {
     account_page_shell(
         "Authenticator app",
         "Protect sign-in with a time-based code from an app you already trust.",
@@ -1822,7 +1520,7 @@ fn otpauth_qr_svg(uri: &str) -> String {
 }
 
 #[component]
-fn AccountSessionsPage() -> impl IntoView {
+pub fn AccountSessionsPage() -> impl IntoView {
     account_page_shell(
         "Sessions",
         "Review and revoke browser access for this account.",
@@ -1831,76 +1529,12 @@ fn AccountSessionsPage() -> impl IntoView {
     )
 }
 
-/// If the user has zero organizations, force Linear-style first-workspace onboarding
-/// (except account security + onboarding itself).
-///
-/// Island must not call `use_location()` — islands hydrate outside the Router context.
-#[island]
-fn WorkspaceOnboardingGate() -> impl IntoView {
-    let orgs = browser_load(list_organizations);
-    Effect::new(move |_| {
-        let path = current_browser_pathname();
-        let path = path.trim_end_matches('/');
-        let allow = path.starts_with("/onboarding")
-            || path.starts_with("/account")
-            || path.starts_with("/auth")
-            || path.starts_with("/invitations")
-            || path.starts_with("/login")
-            || path.starts_with("/register");
-        if allow {
-            return;
-        }
-        if let Some(Ok(list)) = orgs.get() {
-            if list.organizations.is_empty() {
-                redirect_browser("/onboarding/workspace");
-            }
-        }
-    });
-    view! { <></> }
-}
 
-/// Pathname for island code (no Router context on hydrate).
-fn current_browser_pathname() -> String {
-    #[cfg(feature = "hydrate")]
-    {
-        window()
-            .and_then(|w| w.location().pathname().ok())
-            .unwrap_or_else(|| "/".to_owned())
-    }
-    #[cfg(not(feature = "hydrate"))]
-    {
-        "/".to_owned()
-    }
-}
 
-/// True when URL has `new=1` / `new=true` (create-workspace intent).
-fn current_browser_search_has_new() -> bool {
-    #[cfg(feature = "hydrate")]
-    {
-        let search = window()
-            .and_then(|w| w.location().search().ok())
-            .unwrap_or_default();
-        let q = search.trim_start_matches('?');
-        q.split('&').any(|pair| {
-            let mut parts = pair.splitn(2, '=');
-            let key = parts.next().unwrap_or("");
-            let val = parts.next().unwrap_or("1");
-            key == "new"
-                && matches!(
-                    val.to_ascii_lowercase().as_str(),
-                    "" | "1" | "true" | "yes" | "on"
-                )
-        })
-    }
-    #[cfg(not(feature = "hydrate"))]
-    {
-        false
-    }
-}
 
 /// Legacy `/account/vault` → selected org vault or onboarding.
 #[component]
-fn AccountVaultRedirectPage() -> impl IntoView {
+pub fn AccountVaultRedirectPage() -> impl IntoView {
     page_shell(
         "Secret vault",
         "Opening your workspace vault…",
@@ -1932,7 +1566,7 @@ fn AccountVaultRedirect() -> impl IntoView {
 }
 
 #[component]
-fn OrgVaultPage() -> impl IntoView {
+pub fn OrgVaultPage() -> impl IntoView {
     let params = use_params_map();
     account_page_shell(
         "Secret vault",
@@ -1951,151 +1585,7 @@ fn OrgVaultPage() -> impl IntoView {
     )
 }
 
-#[component]
-fn WorkspaceOnboardingPage() -> impl IntoView {
-    // Minimal chrome — Linear-style focused create.
-    view! {
-        <div class="page onboarding-page">
-            <header class="page-brand">
-                <a class="page-brand-link" href="/" aria-label="wasi-auth home">
-                    <span class="page-brand-mark" aria-hidden="true">"d"</span>
-                    <span>
-                        <strong>"wasi-auth"</strong>
-                        <small>"Create your workspace"</small>
-                    </span>
-                </a>
-            </header>
-            <WorkspaceOnboardingPanel />
-        </div>
-    }
-}
 
-#[island]
-fn WorkspaceOnboardingPanel() -> impl IntoView {
-    let create_action = ServerAction::<CreateOrganization>::new();
-    let pending = create_action.pending();
-    let value = create_action.value();
-    let name = RwSignal::new(String::new());
-    let slug = RwSignal::new(String::new());
-    let slug_touched = RwSignal::new(false);
-    let client_error = RwSignal::new(None::<String>);
-
-    // Force-create intent: /onboarding/workspace?new=1 (from workspace switcher).
-    // Without new=1, users who already have orgs are sent to their workspace (first-time gate only).
-    let force_new = current_browser_search_has_new();
-
-    let existing = browser_load(list_organizations);
-    Effect::new(move |_| {
-        if force_new {
-            return;
-        }
-        if let Some(Ok(list)) = existing.get() {
-            if list.organizations.is_empty() {
-                return;
-            }
-            if let Some(org) = list.organizations.iter().find(|o| !o.slug.is_empty()) {
-                redirect_browser(&format!("/org/{}/vault", org.slug));
-            } else {
-                redirect_browser("/organizations");
-            }
-        }
-    });
-
-    Effect::new(move |_| match value.get() {
-        Some(Ok(org)) => {
-            let dest = if org.slug.is_empty() {
-                "/dashboard".to_owned()
-            } else {
-                format!("/org/{}/vault", org.slug)
-            };
-            redirect_browser(&dest);
-        }
-        Some(Err(e)) => client_error.set(Some(e.to_string())),
-        None => {}
-    });
-
-    let derive_slug = |raw: &str| -> String {
-        let mut out = String::new();
-        let mut prev_dash = false;
-        for ch in raw.trim().chars() {
-            let lower = ch.to_ascii_lowercase();
-            if lower.is_ascii_alphanumeric() {
-                out.push(lower);
-                prev_dash = false;
-            } else if !prev_dash && !out.is_empty() {
-                out.push('-');
-                prev_dash = true;
-            }
-        }
-        out.trim_matches('-').chars().take(48).collect()
-    };
-
-    view! {
-        <section class="panel onboarding-card">
-            <p class="section-label">"Welcome"</p>
-            <h1 class="onboarding-title">"Create your workspace"</h1>
-            <p class="onboarding-lede">
-                "Workspaces hold your team, secret vault, and connectors. "
-                "Pick a name and a short URL — you can invite others later."
-            </p>
-            <div class="onboarding-form">
-                <label class="auth-field">
-                    <span>"Workspace name"</span>
-                    <input
-                        class="auth-input"
-                        type="text"
-                        maxlength="120"
-                        placeholder="Acme Inc"
-                        prop:value=move || name.get()
-                        on:input=move |e| {
-                            let v = event_target_value(&e);
-                            name.set(v.clone());
-                            if !slug_touched.get_untracked() {
-                                slug.set(derive_slug(&v));
-                            }
-                            client_error.set(None);
-                        }
-                    />
-                </label>
-                <label class="auth-field">
-                    <span>"Workspace URL"</span>
-                    <div class="onboarding-slug-row">
-                        <span class="onboarding-slug-prefix">"/org/"</span>
-                        <input
-                            class="auth-input mono-value"
-                            type="text"
-                            maxlength="48"
-                            placeholder="acme"
-                            prop:value=move || slug.get()
-                            on:input=move |e| {
-                                slug_touched.set(true);
-                                slug.set(derive_slug(&event_target_value(&e)));
-                                client_error.set(None);
-                            }
-                        />
-                    </div>
-                    <span class="board-muted">"Used in links like /org/acme/vault. Letters, numbers, hyphens."</span>
-                </label>
-                <button
-                    type="button"
-                    class="primary-button"
-                    disabled=move || pending.get() || name.get().trim().is_empty() || slug.get().trim().len() < 2
-                    on:click=move |_| {
-                        create_action.dispatch(CreateOrganization {
-                            name: name.get_untracked().trim().to_owned(),
-                            slug: slug.get_untracked().trim().to_owned(),
-                        });
-                    }
-                >
-                    {move || if pending.get() { "Creating…" } else { "Create workspace" }}
-                </button>
-                <p class="error-banner" hidden=move || client_error.get().is_none()>
-                    {move || client_error.get().unwrap_or_default()}
-                </p>
-            </div>
-        </section>
-    }
-}
 
 #[island]
 fn AccountVaultPanel(org_slug: String) -> impl IntoView {
@@ -3411,7 +2901,7 @@ fn AccountSessionManager() -> impl IntoView {
 }
 
 #[island(lazy)]
-fn OrganizationsPage() -> impl IntoView {
+pub fn OrganizationsPage() -> impl IntoView {
     page_shell(
         "Organizations",
         "Workspaces you belong to. Select one to scope members, roles, and audit.",
@@ -3753,30 +3243,10 @@ fn OrganizationsHome() -> impl IntoView {
     }
 }
 
-fn org_monogram(name: &str) -> String {
-    let cleaned: String = name
-        .chars()
-        .filter(|c| c.is_alphanumeric())
-        .collect();
-    let mut chars = cleaned.chars();
-    match (chars.next(), chars.next()) {
-        (Some(a), Some(b)) => format!(
-            "{}{}",
-            a.to_ascii_uppercase(),
-            b.to_ascii_uppercase()
-        ),
-        (Some(a), None) => a.to_ascii_uppercase().to_string(),
-        _ => "?".to_owned(),
-    }
-}
 
-fn org_tone_index(name: &str) -> u8 {
-    let hash = name.bytes().fold(0u32, |acc, b| acc.wrapping_mul(33).wrapping_add(b as u32));
-    (hash % 6) as u8
-}
 
 #[component]
-fn OrganizationSettingsPage() -> impl IntoView {
+pub fn OrganizationSettingsPage() -> impl IntoView {
     page_shell(
         "Organization settings",
         "The selected tenant comes from the verified session, never from an untrusted form alone.",
@@ -3785,7 +3255,7 @@ fn OrganizationSettingsPage() -> impl IntoView {
 }
 
 #[island(lazy)]
-fn OrganizationMembersPage() -> impl IntoView {
+pub fn OrganizationMembersPage() -> impl IntoView {
     let members = browser_load(list_current_organization_members);
     page_shell(
         "Members",
@@ -3818,7 +3288,7 @@ fn OrganizationMembersPage() -> impl IntoView {
 }
 
 #[island(lazy)]
-fn OrganizationInvitationsPage() -> impl IntoView {
+pub fn OrganizationInvitationsPage() -> impl IntoView {
     let invitations = browser_load(list_current_organization_invitations);
     let invite_action = ServerAction::<InviteCurrentOrganizationMember>::new();
     let invite_pending = invite_action.pending();
@@ -3860,7 +3330,7 @@ fn OrganizationInvitationsPage() -> impl IntoView {
 }
 
 #[island(lazy)]
-fn OrganizationRolesPage() -> impl IntoView {
+pub fn OrganizationRolesPage() -> impl IntoView {
     let roles = browser_load(list_current_organization_roles);
     let upsert_action = ServerAction::<UpsertCurrentOrganizationRole>::new();
     let (role_id, set_role_id) = signal(String::new());
@@ -3901,7 +3371,7 @@ fn OrganizationRolesPage() -> impl IntoView {
 }
 
 #[island(lazy)]
-fn OrganizationPermissionsPage() -> impl IntoView {
+pub fn OrganizationPermissionsPage() -> impl IntoView {
     let roles = browser_load(list_current_organization_roles);
     page_shell(
         "Permissions",
@@ -3923,7 +3393,7 @@ fn OrganizationPermissionsPage() -> impl IntoView {
 }
 
 #[island(lazy)]
-fn OrganizationAuditPage() -> impl IntoView {
+pub fn OrganizationAuditPage() -> impl IntoView {
     let audit = browser_load(list_current_organization_audit);
     page_shell(
         "Audit activity",
@@ -3952,7 +3422,7 @@ fn OrganizationLinks() -> impl IntoView {
 }
 
 #[island(lazy)]
-fn AdminUsersPage() -> impl IntoView {
+pub fn AdminUsersPage() -> impl IntoView {
     let users = browser_load(list_admin_users);
     page_shell(
         "System users",
@@ -3970,7 +3440,7 @@ fn AdminUsersPage() -> impl IntoView {
 }
 
 #[island(lazy)]
-fn AdminHealthPage() -> impl IntoView {
+pub fn AdminHealthPage() -> impl IntoView {
     let health = browser_load(get_admin_health);
     page_shell(
         "Configuration health",
@@ -3991,7 +3461,7 @@ fn AdminHealthPage() -> impl IntoView {
 }
 
 #[island(lazy)]
-fn AdminPoliciesPage() -> impl IntoView {
+pub fn AdminPoliciesPage() -> impl IntoView {
     let versions = browser_load(list_policy_versions);
     let publish_action = ServerAction::<PublishPolicyVersion>::new();
     let (policy_text, set_policy_text) = signal(String::new());
@@ -4025,7 +3495,7 @@ fn AdminPoliciesPage() -> impl IntoView {
 }
 
 #[component]
-fn NotFoundPage() -> impl IntoView {
+pub fn NotFoundPage() -> impl IntoView {
     set_page_status(http::StatusCode::NOT_FOUND);
     error_page_shell(
         "Not found",
@@ -5377,7 +4847,7 @@ fn OptionalPasskeyRegistration() -> impl IntoView {
 }
 
 #[island]
-fn LogoutForm() -> impl IntoView {
+pub fn LogoutForm() -> impl IntoView {
     let action = ServerAction::<LogoutCurrentSession>::new();
     let pending = action.pending();
     let value = action.value();
@@ -5408,7 +4878,7 @@ fn LogoutForm() -> impl IntoView {
 }
 
 #[island]
-fn LogoutButton() -> impl IntoView {
+pub fn LogoutButton() -> impl IntoView {
     let action = ServerAction::<LogoutCurrentSession>::new();
     let pending = action.pending();
     let value = action.value();
@@ -5673,366 +5143,22 @@ fn ReturnToLoginLink() -> impl IntoView {
     view! { <a class="link-button" href="/login">"Return to sign in"</a> }
 }
 
-/// Marks active nav links. Island so it runs on the client and follows SPA navigations.
-#[island]
-fn WorkspaceNavActive() -> impl IntoView {
-    Effect::new(move |_| {
-        #[cfg(feature = "hydrate")]
-        {
-            use wasm_bindgen::closure::Closure;
-            use wasm_bindgen::JsCast;
 
-            let on_mark = Closure::wrap(Box::new(move |_event: web_sys::Event| {
-                if let Some(window) = window() {
-                    if let Ok(pathname) = window.location().pathname() {
-                        mark_active_nav(&pathname);
-                    }
-                }
-            }) as Box<dyn FnMut(_)>);
-            if let Some(window) = window() {
-                let _ = window.add_event_listener_with_callback(
-                    "workspace-nav-mark",
-                    on_mark.as_ref().unchecked_ref(),
-                );
-                on_mark.forget();
-                bind_workspace_nav_active();
-                if let Ok(pathname) = window.location().pathname() {
-                    mark_active_nav(&pathname);
-                }
-            }
-        }
-    });
-    view! { <span class="workspace-nav-active-marker" aria-hidden="true"></span> }
-}
 
-/// Desktop sidebar modes: full ↔ mini (rail toggle) and show ↔ hide (⌘/Ctrl+B).
-#[island]
-fn WorkspaceSidebarControls() -> impl IntoView {
-    Effect::new(move |_| {
-        #[cfg(feature = "hydrate")]
-        {
-            init_workspace_sidebar();
-        }
-    });
-    view! { <span class="workspace-sidebar-controls" aria-hidden="true"></span> }
-}
 
-/// Top-bar workspace switcher: select org, jump to vault, create workspace.
-#[island]
-fn WorkspaceOrgSwitcher() -> impl IntoView {
-    let orgs = browser_load(list_organizations);
-    let session = browser_load(get_current_session);
-    let select_action = ServerAction::<SelectOrganization>::new();
-    let select_pending = select_action.pending();
 
-    Effect::new(move |_| {
-        if matches!(select_action.value().get(), Some(Ok(_))) {
-            #[cfg(feature = "hydrate")]
-            {
-                if let Some(window) = window() {
-                    let _ = window.location().reload();
-                }
-            }
-        }
-    });
 
-    view! {
-        <div class="org-switcher">
-            {move || {
-                let session = session.get();
-                let orgs = orgs.get();
-                match (session, orgs) {
-                    (Some(Ok(sess)), Some(Ok(list))) if sess.authenticated => {
-                        let active_id = sess.tenant_id.clone().filter(|s| !s.trim().is_empty());
-                        let active = active_id.as_ref().and_then(|id| {
-                            list.organizations.iter().find(|o| o.organization_id == *id).cloned()
-                        });
-                        let label = active
-                            .as_ref()
-                            .map(|o| o.name.clone())
-                            .unwrap_or_else(|| {
-                                if list.organizations.is_empty() {
-                                    "No workspace".into()
-                                } else {
-                                    "Select workspace".into()
-                                }
-                            });
-                        let monogram = active
-                            .as_ref()
-                            .map(|o| org_monogram(&o.name))
-                            .unwrap_or_else(|| "W".into());
-                        let vault_href = active
-                            .as_ref()
-                            .map(|o| {
-                                if o.slug.is_empty() {
-                                    "/account/vault".into()
-                                } else {
-                                    format!("/org/{}/vault", o.slug)
-                                }
-                            })
-                            .unwrap_or_else(|| "/organizations".into());
-                        let orgs_for_list = list.organizations.clone();
 
-                        view! {
-                            <details class="org-switcher-details">
-                                <summary class="org-switcher-trigger" aria-label="Switch workspace">
-                                    <span class="org-switcher-avatar" aria-hidden="true">{monogram}</span>
-                                    <span class="org-switcher-meta">
-                                        <span class="org-switcher-label">{label}</span>
-                                        <span class="org-switcher-hint">"Workspace"</span>
-                                    </span>
-                                    <span class="org-switcher-caret" aria-hidden="true"></span>
-                                </summary>
-                                <div class="org-switcher-panel" role="menu">
-                                    <p class="org-switcher-panel-label">"Workspaces"</p>
-                                    <ul class="org-switcher-list">
-                                        {orgs_for_list.into_iter().map(|org| {
-                                            let id = org.organization_id.clone();
-                                            let id_select = id.clone();
-                                            let is_active = active_id.as_ref().is_some_and(|a| a == &id);
-                                            let name = org.name.clone();
-                                            let slug_line = if org.slug.is_empty() {
-                                                String::new()
-                                            } else {
-                                                format!("/org/{}", org.slug)
-                                            };
-                                            view! {
-                                                <li>
-                                                    <button
-                                                        type="button"
-                                                        class="org-switcher-item"
-                                                        class:is-active=is_active
-                                                        role="menuitem"
-                                                        disabled=move || select_pending.get() || is_active
-                                                        on:click=move |_| {
-                                                            if is_active { return; }
-                                                            select_action.dispatch(SelectOrganization {
-                                                                organization_id: id_select.clone(),
-                                                            });
-                                                        }
-                                                    >
-                                                        <span class="org-switcher-item-name">{name}</span>
-                                                        <span class="org-switcher-item-meta">
-                                                            {if is_active { "Active".into() } else { slug_line }}
-                                                        </span>
-                                                    </button>
-                                                </li>
-                                            }
-                                        }).collect_view()}
-                                    </ul>
-                                    <div class="org-switcher-divider" aria-hidden="true"></div>
-                                    <a class="org-switcher-link" href=vault_href role="menuitem">"Secret vault"</a>
-                                    <a class="org-switcher-link" href="/organizations" role="menuitem">"Manage workspaces"</a>
-                                    <a class="org-switcher-link" href="/onboarding/workspace?new=1" role="menuitem">"Create workspace"</a>
-                                </div>
-                            </details>
-                        }.into_any()
-                    }
-                    (Some(Ok(_)), _) | (None, _) => view! {
-                        <span class="org-switcher-fallback">"…"</span>
-                    }.into_any(),
-                    _ => view! {
-                        <a class="org-switcher-fallback-link" href="/organizations">"Workspaces"</a>
-                    }.into_any(),
-                }
-            }}
-        </div>
-    }
-}
 
-#[island(lazy)]
-fn WorkspaceSystemNav() -> impl IntoView {
-    let session = browser_load(get_current_session);
 
-    view! {
-        <div class="workspace-system-nav">
-            {move || match session.get() {
-                Some(Ok(session)) if session.authenticated && can_view_system_navigation(&session) => {
-                    view! {
-                        <p class="workspace-nav-label workspace-nav-label-secondary">"System"</p>
-                        <a class="workspace-nav-link" href="/admin/health" data-nav="system" title="Health">
-                            <span class="workspace-nav-icon" aria-hidden="true" data-icon="system"></span>
-                            <span class="workspace-nav-text">"Health"</span>
-                        </a>
-                    }.into_any()
-                }
-                _ => view! {}.into_any(),
-            }}
-        </div>
-    }
-}
 
-/// ChatGPT-style account flyout: avatar + email open a menu of settings + sign out.
-/// Lives in the left rail foot so the main top bar stays clean.
-/// Click-away / Escape dismiss is bound in `bindUserMenuDismiss` (workspace sidebar init).
-#[island]
-fn WorkspaceUserMenu() -> impl IntoView {
-    let session = browser_load(get_current_session);
 
-    #[cfg(feature = "hydrate")]
-    Effect::new(move |_| {
-        bind_user_menu_dismiss();
-    });
 
-    view! {
-        <div class="user-menu">
-            {move || match session.get() {
-                Some(Ok(session)) if session.authenticated => {
-                    let email = session
-                        .primary_email
-                        .clone()
-                        .or_else(|| session.user_id.clone())
-                        .unwrap_or_else(|| "Signed in".to_string());
-                    let initial = email
-                        .chars()
-                        .next()
-                        .map(|ch| ch.to_ascii_uppercase())
-                        .unwrap_or('U');
-                    view! {
-                        <details class="user-menu-details">
-                            <summary class="user-menu-trigger" aria-label="Account menu">
-                                <span class="user-menu-avatar" aria-hidden="true">{initial.to_string()}</span>
-                                <span class="user-menu-meta">
-                                    <span class="user-menu-email">{email.clone()}</span>
-                                    <span class="user-menu-hint">"Account"</span>
-                                </span>
-                                <span class="user-menu-caret" aria-hidden="true"></span>
-                            </summary>
-                            <div class="user-menu-panel" role="menu">
-                                <p class="user-menu-panel-label">"Account"</p>
-                                <a class="user-menu-item" href="/account/profile" role="menuitem">"Profile"</a>
-                                <a class="user-menu-item" href="/account/password" role="menuitem">"Password"</a>
-                                <a class="user-menu-item" href="/account/mfa" role="menuitem">"Authenticator (MFA)"</a>
-                                <a class="user-menu-item" href="/account/passkeys" role="menuitem">"Passkeys"</a>
-                                <a class="user-menu-item" href="/account/sessions" role="menuitem">"Sessions"</a>
-                                <a class="user-menu-item" href="/account/providers" role="menuitem">"Providers"</a>
-                                <div class="user-menu-divider" aria-hidden="true"></div>
-                                <div class="user-menu-logout">
-                                    <LogoutButton />
-                                </div>
-                            </div>
-                        </details>
-                    }.into_any()
-                }
-                Some(Ok(_)) => view! {
-                    <a class="user-menu-signin" href="/login">"Sign in"</a>
-                }.into_any(),
-                Some(Err(_)) => view! {
-                    <span class="user-menu-fallback">"Session unavailable"</span>
-                }.into_any(),
-                None => view! {
-                    <span class="user-menu-fallback">"Loading…"</span>
-                }.into_any(),
-            }}
-        </div>
-    }
-}
 
-#[cfg(feature = "hydrate")]
-fn mark_active_nav(pathname: &str) {
-    let Some(document) = window().and_then(|window| window.document()) else {
-        return;
-    };
 
-    let states = [
-        (
-            "[data-nav='overview']",
-            pathname == "/dashboard",
-        ),
-        (
-            "[data-nav='organizations']",
-            pathname == "/organizations" || pathname.starts_with("/organizations/"),
-        ),
-        (
-            "[data-nav='system']",
-            pathname == "/admin" || pathname.starts_with("/admin/"),
-        ),
-    ];
 
-    for (selector, active) in states {
-        if let Ok(Some(element)) = document.query_selector(selector) {
-            let _ = element.class_list().toggle_with_force("is-active", active);
-        }
-    }
-}
 
-fn can_view_system_navigation(session: &SessionView) -> bool {
-    session.system_administrator && session.assurance == "aal2"
-        || session
-            .permissions
-            .iter()
-            .any(|permission| permission.starts_with("system.") || permission.starts_with("auth:"))
-}
-
-fn has_permission(session: &SessionView, permission: &str) -> bool {
-    session.permissions.iter().any(|value| value == permission)
-}
-
-fn selected_auth_error(
-    register_mode: bool,
-    login_result: Option<Result<LoginCompletionResponse, ServerFnError>>,
-    register_result: Option<Result<LoginCompletionResponse, ServerFnError>>,
-) -> Option<String> {
-    let selected = if register_mode {
-        register_result
-    } else {
-        login_result
-    };
-    match selected {
-        Some(Err(error)) => Some(server_error_text(error)),
-        _ => None,
-    }
-}
-
-fn selected_action_error<T>(result: Option<Result<T, ServerFnError>>) -> Option<String> {
-    match result {
-        Some(Err(error)) => Some(server_error_text(error)),
-        _ => None,
-    }
-}
-
-fn validate_email_only(email: &str) -> Result<(), String> {
-    if email.trim().is_empty() {
-        return Err("Email is required.".to_string());
-    }
-    if !email.contains('@') || !email.contains('.') {
-        return Err("Enter a valid email address.".to_string());
-    }
-    Ok(())
-}
-
-fn validate_login_form(email: &str, password: &str, register_mode: bool) -> Result<(), String> {
-    validate_email_only(email)?;
-    if password.is_empty() {
-        return Err("Password is required.".to_string());
-    }
-    if register_mode && !(15..=128).contains(&password.chars().count()) {
-        return Err("Password must contain 15 to 128 characters.".to_string());
-    }
-    Ok(())
-}
-
-fn server_error_text(error: ServerFnError) -> String {
-    let text = error.to_string();
-    text.strip_prefix("error running server function: ")
-        .unwrap_or(&text)
-        .to_string()
-}
-
-fn action_result_text<T>(result: Option<Result<T, ServerFnError>>) -> String {
-    match result {
-        Some(Ok(_)) => "Request accepted".to_string(),
-        Some(Err(error)) => server_error_text(error),
-        None => String::new(),
-    }
-}
-
-fn optional_text(value: String) -> Option<String> {
-    let value = value.trim().to_string();
-    if value.is_empty() { None } else { Some(value) }
-}
-
-fn browser_load<T, Fut, F>(load: F) -> ReadSignal<Option<T>>
+pub(crate) fn browser_load<T, Fut, F>(load: F) -> ReadSignal<Option<T>>
 where
     T: Send + Sync + 'static,
     Fut: std::future::Future<Output = T> + 'static,
@@ -6059,217 +5185,17 @@ where
     value
 }
 
-#[cfg(feature = "hydrate")]
-fn passkey_js_string(value: JsValue) -> Result<String, String> {
-    value
-        .as_string()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "Passkey response was not readable.".to_string())
-}
 
-#[cfg(feature = "hydrate")]
-fn passkey_js_error(error: JsValue) -> String {
-    // Prefer plain string throws from the JS layer. Fall back to Debug only
-    // for unexpected DOMException / Error objects, then sanitize noise.
-    let raw = error
-        .as_string()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| format!("{error:?}"));
-    sanitize_passkey_client_error(&raw)
-}
 
-/// Strip wasm-bindgen / browser stack noise so the UI never shows
-/// `JsValue(Error: … at createPasskeyCredential …)`.
-fn sanitize_passkey_client_error(raw: &str) -> String {
-    let mut message = raw.trim().to_owned();
-    if message.is_empty() || message == "JsValue(undefined)" {
-        return "Passkey prompt was cancelled or unavailable.".to_owned();
-    }
 
-    if let Some(inner) = message
-        .strip_prefix("JsValue(")
-        .and_then(|value| value.strip_suffix(')'))
-    {
-        message = inner.trim().to_owned();
-    }
-    if let Some(rest) = message.strip_prefix("Error: ") {
-        message = rest.trim().to_owned();
-    }
-    // Drop trailing stack frames injected by wasm-bindgen Debug formatting.
-    for marker in [
-        " at createPasskeyCredential",
-        " at getPasskeyCredential",
-        "\n    at ",
-    ] {
-        if let Some(index) = message.find(marker) {
-            message = message[..index].trim().to_owned();
-        }
-    }
-    // Deduplicate doubled "Error: … Error: …" payloads.
-    if let Some((first, _)) = message.split_once(" Error: ") {
-        message = first.trim().to_owned();
-    }
 
-    let lower = message.to_ascii_lowercase();
-    if lower.contains("notallowederror")
-        || lower.contains("aborterror")
-        || lower.contains("cancelled")
-        || lower.contains("canceled")
-        || lower.contains("timed out")
-        || lower.contains("the operation either timed out")
-        || message == "PASSKEY_CANCELLED"
-    {
-        return "Passkey prompt was cancelled.".to_owned();
-    }
-    if message.starts_with("JsValue(") {
-        return "Passkey prompt was cancelled or unavailable.".to_owned();
-    }
-    message
-}
 
-fn is_passkey_cancel_message(message: &str) -> bool {
-    let lower = message.to_ascii_lowercase();
-    lower.contains("cancelled")
-        || lower.contains("canceled")
-        || lower.contains("passkey_cancelled")
-        || lower.contains("passkey_conditional_idle")
-}
 
-fn next_url() -> String {
-    #[cfg(feature = "hydrate")]
-    {
-        if let Some(window) = window()
-            && let Ok(search) = window.location().search()
-        {
-            let query = search.trim_start_matches('?');
-            if let Some(encoded) = query
-                .split('&')
-                .find_map(|part| part.strip_prefix("next="))
-            {
-                let value = percent_decode_component(encoded);
-                if value.starts_with('/')
-                    && !value.starts_with("//")
-                    && !value.starts_with("/login")
-                {
-                    return value;
-                }
-            }
-        }
-    }
-    "/dashboard".to_string()
-}
 
-fn first_http_url_in_text(text: &str) -> Option<String> {
-    for line in text.lines() {
-        if let Some(url) = line
-            .split_whitespace()
-            .find(|part| part.starts_with("http://") || part.starts_with("https://"))
-        {
-            return Some(url.to_owned());
-        }
-    }
-    None
-}
 
-fn percent_encode_component(value: &str) -> String {
-    let mut out = String::with_capacity(value.len() * 3);
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(byte as char);
-            }
-            _ => {
-                use std::fmt::Write as _;
-                let _ = write!(out, "%{byte:02X}");
-            }
-        }
-    }
-    out
-}
 
-// Used from hydrate-only branches of next_url; keep available on SSR builds.
-#[cfg_attr(not(feature = "hydrate"), allow(dead_code))]
-fn percent_decode_component(value: &str) -> String {
-    let bytes = value.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'%' if index + 2 < bytes.len() => {
-                if let (Some(high), Some(low)) = (
-                    hex_nibble(bytes[index + 1]),
-                    hex_nibble(bytes[index + 2]),
-                ) {
-                    out.push((high << 4) | low);
-                    index += 3;
-                    continue;
-                }
-                out.push(bytes[index]);
-                index += 1;
-            }
-            b'+' => {
-                out.push(b' ');
-                index += 1;
-            }
-            byte => {
-                out.push(byte);
-                index += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
 
-#[cfg_attr(not(feature = "hydrate"), allow(dead_code))]
-fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
-}
 
-fn one_time_token_from_url() -> Option<String> {
-    #[cfg(feature = "hydrate")]
-    {
-        if let Some(window) = window()
-            && let Ok(search) = window.location().search()
-        {
-            return search
-                .trim_start_matches('?')
-                .split('&')
-                .find_map(|part| part.strip_prefix("token="))
-                .map(ToOwned::to_owned)
-                .filter(|value| !value.trim().is_empty());
-        }
-    }
-    None
-}
-
-fn redirect_browser(url: &str) {
-    #[cfg(feature = "hydrate")]
-    {
-        if let Some(window) = window() {
-            let location = window.location();
-            if location.replace(url).is_err() {
-                let _ = location.set_href(url);
-            }
-        }
-    }
-    let _ = url;
-}
-
-#[cfg_attr(feature = "hydrate", allow(dead_code))]
-fn set_page_status(status: http::StatusCode) {
-    #[cfg(feature = "ssr")]
-    {
-        if let Some(resp) = use_context::<leptos_wasi::response::ResponseOptions>() {
-            resp.set_status(status);
-        }
-    }
-    let _ = status;
-}
 
 #[cfg(feature = "ssr")]
 fn server_fn_error(error: crate::error::AuthStackError) -> ServerFnError {

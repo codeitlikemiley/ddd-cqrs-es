@@ -1199,7 +1199,7 @@ fn default_dashboard_layout() -> crate::contracts::DashboardLayout {
     }
 }
 
-pub use crate::dashboard_bind::json_path_get;
+pub use crate::app::dashboard::bind::json_path_get;
 
 /// SSRF: reject private / link-local / metadata hosts unless allow_private.
 pub fn validate_http_url(url: &str, allow_private: bool) -> AuthStackResult<()> {
@@ -2631,7 +2631,7 @@ pub fn apply_transform_pipeline(
     steps: &[crate::contracts::TransformStep],
 ) -> Value {
     use crate::contracts::TransformStep;
-    use crate::dashboard_bind::json_path_get;
+    use crate::app::dashboard::bind::json_path_get;
     let mut current = value;
     for step in steps {
         current = match step {

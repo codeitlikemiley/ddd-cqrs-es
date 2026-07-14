@@ -8,8 +8,6 @@ mod app;
 #[cfg(any(feature = "ssr", feature = "hydrate"))]
 mod contracts;
 #[cfg(any(feature = "ssr", feature = "hydrate"))]
-mod dashboard_bind;
-#[cfg(any(feature = "ssr", feature = "hydrate"))]
 mod ui;
 
 #[cfg(all(target_arch = "wasm32", target_env = "p3"))]

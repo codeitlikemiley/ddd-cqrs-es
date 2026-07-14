@@ -7,8 +7,7 @@ use crate::contracts::{
 };
 use leptos::prelude::*;
 
-// Parent is `app_dashboard_board`; grandparent is `app` (server fns live there).
-use super::super::{
+use crate::app::{
     DeleteDashboardQuery, DeleteDashboardResource, RunDashboardQuery, SeedDashboardDemos,
     UpsertDashboardQuery, UpsertDashboardResource,
 };

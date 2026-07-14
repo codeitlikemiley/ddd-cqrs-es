@@ -1,7 +1,6 @@
 //! Extensible dashboard board (layout v2, containers, HTTP sources).
 
-#[path = "app_dashboard_resources.rs"]
-mod dashboard_resources;
+use super::resources as dashboard_resources;
 
 use crate::contracts::{
     BoardContainerKind, BoardNode, DashboardLayout, DashboardNotification, DashboardSnapshot,
@@ -13,9 +12,10 @@ use leptos::task::spawn_local;
 #[cfg(feature = "hydrate")]
 use wasm_bindgen::JsCast;
 
-use super::{
-    browser_load, get_dashboard_snapshot, server_error_text, DismissDashboardNotification,
-    SaveDashboardLayout, UpdateDashboardNote,
+use crate::app::helpers::server_error_text;
+use crate::app::{
+    browser_load, get_dashboard_snapshot, DismissDashboardNotification, SaveDashboardLayout,
+    UpdateDashboardNote,
 };
 
 #[component]
@@ -1364,7 +1364,7 @@ fn render_bound_widget(
 
     match http_mode {
         HttpDisplayMode::Metric => {
-            let (value, label, meta) = crate::dashboard_bind::project_bound_metric(&data_json, &bind);
+            let (value, label, meta) = crate::app::dashboard::bind::project_bound_metric(&data_json, &bind);
             view! {
                 <div class="board-metric">
                     <strong class="board-metric-value board-metric-number">{value}</strong>
@@ -1374,7 +1374,7 @@ fn render_bound_widget(
             .into_any()
         }
         HttpDisplayMode::List => {
-            let items = crate::dashboard_bind::project_bound_list(&data_json, &bind, 12);
+            let items = crate::app::dashboard::bind::project_bound_list(&data_json, &bind, 12);
             if items.is_empty() {
                 return view! { <div class="board-empty-tile"><p>"No rows"</p></div> }.into_any();
             }
@@ -1402,7 +1402,7 @@ fn render_bound_widget(
             .into_any()
         }
         HttpDisplayMode::Table => {
-            let (headers, rows) = crate::dashboard_bind::project_bound_table(&data_json, &bind, 20);
+            let (headers, rows) = crate::app::dashboard::bind::project_bound_table(&data_json, &bind, 20);
             if headers.is_empty() {
                 return view! { <div class="board-empty-tile"><p>"No columns"</p></div> }.into_any();
             }
