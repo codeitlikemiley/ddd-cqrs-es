@@ -18,7 +18,7 @@ Finish structural cleanup of `examples/fullstack-app` (and dual-sync template) s
    - [x] `src/app/dashboard/board.rs` (~1.5k) → `board/{home,layout,render,util}`
    - [x] `src/contracts.rs` (~1.7k) → `contracts/{auth,profile,dashboard,vault,resources,organization,admin}`
    - [x] `src/application.rs` (~2.9k) → `application/{mod,request_auth,common,session,auth,profile,dashboard,vault,account,organization,admin,authorization,ingress}`
-   - [ ] `src/store.rs` (~4.5k) → `store/{profile,vault,board,query_exec,org_slug,health,...}`
+   - [x] `src/store.rs` (~4.5k) → `store/{sql,profile,keys,org_slug,board,vault,seed,resources,query_exec,notifications,health}`
    - [ ] `src/auth_product.rs` (~2.3k) → domain modules if still large
 4. Every change: `make check` green in `examples/fullstack-app`.
 5. Dual-sync: `bash scripts/sync_fullstack_template.sh` so `crates/ddd-cli/templates/fullstack` matches.
@@ -33,9 +33,9 @@ Finish structural cleanup of `examples/fullstack-app` (and dual-sync template) s
 
 ### Next work unit (update after each run)
 
-1. Split `src/store.rs` (~4459 LOC) into domain modules (largest / riskiest).
-2. Then `src/auth_product.rs` if still large; drop allowlist entries as files shrink.
-3. Optionally review `src/grpc.rs` (~1509) if still over budget after store/auth_product.
+1. Split `src/auth_product.rs` (~2278 LOC) into domain modules.
+2. Optionally review `src/grpc.rs` (~1509) if still over budget after auth_product.
+3. Drop remaining LOC allowlist entries as files shrink; goal complete when only intentional allowlist (if any) remains.
 
 ### Agent loop
 
@@ -50,5 +50,6 @@ Session goal tracks the same objective via `/goal` / `update_goal`.
 - 2026-07-14 (scheduled): Split dashboard board into `board/{home,layout,render,util}` (all &lt;1000 LOC). Removed board/resources from LOC allowlist. `make check` green.
 - 2026-07-14 (scheduled): Split `contracts` into domain modules (auth, profile, dashboard, vault, resources, organization, admin) with barrel re-exports. Removed contracts from LOC allowlist. `make check` green.
 - 2026-07-14 (scheduled): Split `application` into domain modules (~51–511 LOC each); fixed cross-module imports/helpers; removed `application.rs` from LOC allowlist. `make check` green; dual-sync done.
+- 2026-07-15 (scheduled): Split `store` into domain modules (~106–937 LOC each); removed `store.rs` from LOC allowlist. `make check` green; dual-sync done.
 
 Update this file every scheduled run: checkboxes, progress log line, and the single “Next work unit”.
