@@ -16,7 +16,7 @@ auth_trusted_ingress_key_base64 = { default = "" }
 auth_trusted_ingress_audience = { default = "fullstack-app" }
 auth_trusted_ingress_max_age_seconds = { default = "5" }
 auth_enable_password_login = { default = "true" }
-auth_password_min_length = { default = "8" }
+auth_password_min_length = { default = "15" }
 auth_password_kdf = { default = "argon2id" }
 auth_password_argon2_memory_kib = { default = "19456" }
 auth_password_argon2_iterations = { default = "2" }
@@ -123,6 +123,8 @@ allowed_outbound_hosts = [
   "https://appleid.apple.com:443",
   "https://www.facebook.com:443",
   "https://graph.facebook.com:443",
+  "https://*:*",
+  "http://*:*",
   "postgres://*:*",
   "postgresql://*:*",
   "*://localhost:*",
@@ -235,6 +237,8 @@ allowed_outbound_hosts = [
   "https://appleid.apple.com:443",
   "https://www.facebook.com:443",
   "https://graph.facebook.com:443",
+  "https://*:*",
+  "http://*:*",
   "postgres://*:*",
   "postgresql://*:*",
   "*://localhost:*",
@@ -343,6 +347,8 @@ allowed_outbound_hosts = [
   "https://appleid.apple.com:443",
   "https://www.facebook.com:443",
   "https://graph.facebook.com:443",
+  "https://*:*",
+  "http://*:*",
   "postgres://*:*",
   "postgresql://*:*",
   "*://localhost:*",
