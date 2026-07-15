@@ -13,14 +13,71 @@ This project is a Spin fullstack authentication and authorization service with L
 
 ## Quick start
 
+You can run targets from the **example directory** or from the **monorepo root**
+with `make -C examples/fullstack-app …` (same variables and defaults either way).
+
+### From the monorepo root
+
 ```bash
-cp .env.example .env   # optional; prefer Make-derived origin when possible
-make db-up
-make dev               # Spin + wasi-auth-outbox-worker
+# optional once: copy env into the example dir
+cp examples/fullstack-app/.env.example examples/fullstack-app/.env
+
+make -C examples/fullstack-app db-up
+make -C examples/fullstack-app dev transport=both
 # open the printed public origin (default http://127.0.0.1:3008)
 ```
 
-`make help` prints targets and the resolved public origin.
+App only (no outbox worker in the same Make process — useful when you want
+independent logs, or when mail is not needed):
+
+```bash
+make -C examples/fullstack-app spin transport=both
+```
+
+### From this directory
+
+```bash
+cd examples/fullstack-app   # if you are still at the monorepo root
+
+cp .env.example .env        # optional; prefer Make-derived origin when possible
+make db-up
+make dev transport=both     # Spin + wasi-auth-outbox-worker
+# open the printed public origin (default http://127.0.0.1:3008)
+
+# app only
+make spin transport=both
+```
+
+### Common targets
+
+| Target | What it does |
+|--------|----------------|
+| `db-up` | Start local PostgreSQL |
+| `db-migrate` | Apply wasi-auth migrations |
+| `dev transport=both` | Spin HTTP + gRPC **and** outbox/mail worker |
+| `spin transport=both` | Spin only (build + run on `127.0.0.1:3008`) |
+| `outbox-worker` | Worker alone (second terminal next to `spin`) |
+| `smoke` | REST/web smoke against `BASE_URL` |
+| `browser-smoke` | Playwright page + middleware checks |
+| `fresh` | Erase Postgres data and re-migrate |
+| `help` | Full target list + resolved public origin |
+
+Examples:
+
+```bash
+# monorepo root
+make -C examples/fullstack-app help
+make -C examples/fullstack-app spin transport=both listen=127.0.0.1:3000
+make -C examples/fullstack-app smoke
+
+# example directory
+make help
+make spin transport=both listen=127.0.0.1:3000
+make smoke
+```
+
+`transport=both` is the default for this app (HTTP/Leptos + gRPC). Passing it
+explicitly matches shell history and docs that pin the dual-transport profile.
 
 ## Operator guide
 

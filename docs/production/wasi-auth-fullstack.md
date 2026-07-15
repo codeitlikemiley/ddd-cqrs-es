@@ -42,8 +42,17 @@ The generated application uses PostgreSQL with capture mail during local
 development:
 
 ```bash
+# from monorepo root (recommended when working in this repository)
 make -C examples/fullstack-app db-up
 make -C examples/fullstack-app dev transport=both
+
+# app only (no worker in the same Make process)
+make -C examples/fullstack-app spin transport=both
+
+# equivalent after: cd examples/fullstack-app
+make db-up
+make dev transport=both
+make spin transport=both
 ```
 
 `make dev` installs the exact `wasi-auth-outbox-worker` release into the
@@ -52,7 +61,8 @@ requests commit durable mail intents; the worker marks them delivered. The
 default `capture` transport never sends internet email. The registration and
 resend pages provide an **Open captured verification link** action after local
 delivery. Run `make outbox-worker` and `make spin` separately only when you need
-independent process logs.
+independent process logs. Full target list: `make -C examples/fullstack-app help`
+or the example [README](../../examples/fullstack-app/README.md).
 
 For real local or production delivery through Resend, use a verified sender:
 
@@ -95,7 +105,12 @@ For local development, `make dev` owns both processes. Use this only when you
 need separate logs:
 
 ```bash
-make spin
+# monorepo root
+make -C examples/fullstack-app spin transport=both
+make -C examples/fullstack-app outbox-worker
+
+# or from examples/fullstack-app
+make spin transport=both
 make outbox-worker
 ```
 

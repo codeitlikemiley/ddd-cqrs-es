@@ -106,6 +106,17 @@ islands + REST + Spin gRPC application. The committed
 `examples/counter-app` demonstrates unary, server-streaming, client-streaming,
 and bidirectional-streaming gRPC with optional `wasi-auth` authorization.
 
+Run the committed example from the monorepo root:
+
+```bash
+make -C examples/fullstack-app db-up
+make -C examples/fullstack-app dev transport=both
+# or app only: make -C examples/fullstack-app spin transport=both
+```
+
+See [examples/fullstack-app/README.md](./examples/fullstack-app/README.md) for
+in-directory targets, origin/`listen` overrides, and smoke checks.
+
 ## Learn More
 
 - Live docs: [https://ddd-cqrs-es.mintlify.site/](https://ddd-cqrs-es.mintlify.site/)
