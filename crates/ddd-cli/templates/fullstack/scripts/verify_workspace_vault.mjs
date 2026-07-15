@@ -62,6 +62,13 @@ async function main() {
     // Onboarding or dashboard
     const path = new URL(page.url()).pathname;
     if (path.includes("onboarding") || (await page.locator("text=Create your workspace").count())) {
+      if (await page.locator(".workspace-shell").count()) {
+        throw new Error("first-workspace onboarding must not render workspace navigation");
+      }
+      await page.goto(url("/dashboard"), { waitUntil: "domcontentloaded" });
+      if (new URL(page.url()).pathname !== "/onboarding/workspace") {
+        throw new Error(`dashboard escaped first-workspace onboarding: ${page.url()}`);
+      }
       const name = page.locator('input[placeholder*="Acme"], input').first();
       await name.fill("Smoke Vault Org");
       await page.waitForTimeout(200);

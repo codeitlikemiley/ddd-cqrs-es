@@ -141,8 +141,7 @@ pub fn WorkspaceShell(children: Children) -> impl IntoView {
     }
 }
 
-/// If the user has zero organizations, force Linear-style first-workspace onboarding
-/// (except account security + onboarding itself).
+/// If the user has zero organizations, force focused first-workspace onboarding.
 ///
 /// Island must not call `use_location()` — islands hydrate outside the Router context.
 #[island]
@@ -152,7 +151,6 @@ pub fn WorkspaceOnboardingGate() -> impl IntoView {
         let path = current_browser_pathname();
         let path = path.trim_end_matches('/');
         let allow = path.starts_with("/onboarding")
-            || path.starts_with("/account")
             || path.starts_with("/auth")
             || path.starts_with("/invitations")
             || path.starts_with("/login")

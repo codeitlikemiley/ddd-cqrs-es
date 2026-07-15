@@ -79,7 +79,7 @@ Home is a **per-user board** (Spin KV), not a link farm:
 | Bind | Edit tile → pick query + field paths |
 | Vault | **`/org/{slug}/vault`** — workspace-scoped secrets (AES-GCM); create/delete modals; eye reveal |
 | Board | Layout, resources, queries, and secrets key off the **selected organization** |
-| Onboarding | **`/onboarding/workspace`** — first workspace (name + URL slug) when you have no orgs |
+| Onboarding | **`/onboarding/workspace`** — focused, navigation-free first workspace setup; other protected pages stay gated until an org exists |
 | Permissions | `vault.view` (all members), `vault.manage` / `vault.reveal` (owner + admin) |
 | Slug | Stored in Postgres (`auth_organizations.slug`) + dual-written to Spin KV for resolve |
 

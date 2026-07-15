@@ -2,15 +2,30 @@
 
 pub(crate) fn is_workspace_path(path: &str) -> bool {
     let path = path.trim_end_matches('/');
+    if path.starts_with("/onboarding") {
+        return false;
+    }
     path == "/dashboard"
         || path.starts_with("/dashboard/")
         || path.starts_with("/account")
         || path.starts_with("/organizations")
         || path.starts_with("/org/")
-        || path.starts_with("/onboarding")
         || path.starts_with("/admin")
         || path.starts_with("/invitations")
         || path.starts_with("/auth/callback")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_workspace_path;
+
+    #[test]
+    fn onboarding_uses_the_focused_layout() {
+        assert!(!is_workspace_path("/onboarding/workspace"));
+        assert!(!is_workspace_path("/onboarding/workspace/"));
+        assert!(is_workspace_path("/dashboard"));
+        assert!(is_workspace_path("/organizations"));
+    }
 }
 
 pub(crate) fn workspace_topbar_title(path: &str) -> &'static str {

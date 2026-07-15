@@ -312,9 +312,39 @@ async fn protected_ui_redirect(
 
     let next = encode_next_target(path, query);
 
+    let session = match crate::application::get_current_session_for(session_id.clone()).await {
+        Ok(session) if session.authenticated => session,
+        _ => return Some(format!("/auth/required?next={next}")),
+    };
+
+    // Organization setup is a product gate, not an optional page. Until the
+    // first workspace exists, protected workspace/account/admin routes all
+    // lead back to the focused onboarding screen. Invitation acceptance stays
+    // reachable because accepting one can establish the first membership.
+    if path != "/invitations/accept" {
+        let Some(user_id) = session.user_id.as_deref() else {
+            return Some(format!("/auth/required?next={next}"));
+        };
+        match crate::auth_product::list_organizations(user_id).await {
+            Ok(organizations) => {
+                if let Some(location) = workspace_setup_redirect(path, query, &organizations) {
+                    return Some(location);
+                }
+            }
+            Err(error) => {
+                tracing::error!(
+                    error = %error,
+                    error_code = error.public_code(),
+                    path,
+                    "failed to evaluate workspace onboarding gate"
+                );
+                return Some(format!("/auth/session-expired?next={next}"));
+            }
+        }
+    }
+
     let Some(permission) = ui_route_permission(path) else {
-        return (!authenticated_session(session_id).await)
-            .then(|| format!("/auth/required?next={next}"));
+        return None;
     };
 
     match crate::application::require_authorized_route_for(permission, session_id).await {
@@ -338,6 +368,42 @@ async fn protected_ui_redirect(
             Some(format!("/auth/session-expired?next={next}"))
         }
     }
+}
+
+fn workspace_setup_redirect(
+    path: &str,
+    query: Option<&str>,
+    organizations: &crate::contracts::OrganizationListResponse,
+) -> Option<String> {
+    if organizations.organizations.is_empty() {
+        return (path != "/onboarding/workspace").then(|| "/onboarding/workspace".to_owned());
+    }
+
+    if path != "/onboarding/workspace" || has_new_workspace_intent(query) {
+        return None;
+    }
+
+    organizations
+        .organizations
+        .iter()
+        .find(|organization| !organization.slug.trim().is_empty())
+        .map(|organization| format!("/org/{}/vault", organization.slug))
+        .or_else(|| Some("/dashboard".to_owned()))
+}
+
+fn has_new_workspace_intent(query: Option<&str>) -> bool {
+    query.is_some_and(|query| {
+        query.split('&').any(|pair| {
+            let mut parts = pair.splitn(2, '=');
+            let key = parts.next().unwrap_or_default();
+            let value = parts.next().unwrap_or("1");
+            key == "new"
+                && matches!(
+                    value.to_ascii_lowercase().as_str(),
+                    "" | "1" | "true" | "yes" | "on"
+                )
+        })
+    })
 }
 
 fn encode_next_target(path: &str, query: Option<&str>) -> String {
@@ -413,8 +479,10 @@ fn public_authentication_route(path: &str) -> bool {
 
 fn protected_ui_route(path: &str) -> bool {
     path == "/dashboard"
+        || path == "/onboarding/workspace"
         || path == "/invitations/accept"
         || path.starts_with("/account/")
+        || path.starts_with("/org/")
         || path.starts_with("/organizations")
         || path.starts_with("/admin/")
 }
