@@ -38,15 +38,42 @@ bearer tokens. No request accepts `admin_token` or raw authorization tuples.
 
 ## Development and production profiles
 
+### Spin is not the mail sender
+
+`spin.toml` defines the **request-facing** product only (Leptos UI, REST, gRPC).
+Transactional email is **not** a Spin component. Registration encrypts a mail
+intent into PostgreSQL and returns success without calling Resend. Delivery is
+owned by the native `wasi-auth-outbox-worker` process.
+
+```text
+Browser / API  ->  Spin (spin.toml)  ->  Postgres outbox (pending)
+                                              |
+                                              v
+                                   wasi-auth-outbox-worker
+                                   (capture or Resend)
+```
+
+| Command | Serves app | Delivers mail |
+|---------|------------|---------------|
+| `make spin` | yes | **no** — intents stay `pending` |
+| `make outbox-worker` | no | yes |
+| `make dev` | yes | yes (both processes) |
+
+`AUTH_MAIL_TRANSPORT=resend` (or `capture`) in `.env` configures the **worker**.
+It does not make Spin send mail. Resend keys never appear in Spin variables.
+
+### Local run
+
 The generated application uses PostgreSQL with capture mail during local
 development:
 
 ```bash
 # from monorepo root (recommended when working in this repository)
 make -C examples/fullstack-app db-up
+# preferred: Spin + worker so register/verify email works
 make -C examples/fullstack-app dev transport=both
 
-# app only (no worker in the same Make process)
+# app only — no mail delivery
 make -C examples/fullstack-app spin transport=both
 
 # equivalent after: cd examples/fullstack-app
@@ -62,7 +89,8 @@ default `capture` transport never sends internet email. The registration and
 resend pages provide an **Open captured verification link** action after local
 delivery. Run `make outbox-worker` and `make spin` separately only when you need
 independent process logs. Full target list: `make -C examples/fullstack-app help`
-or the example [README](../../examples/fullstack-app/README.md).
+or the example [README](../../examples/fullstack-app/README.md)
+([Spin vs outbox worker](../../examples/fullstack-app/README.md#spin-vs-outbox-worker-why-two-processes)).
 
 For real local or production delivery through Resend, use a verified sender:
 
@@ -78,19 +106,22 @@ correlation ID as the provider idempotency key, so worker retries do not send a
 second message during the provider's idempotency window.
 
 For local testing, put those values in `examples/fullstack-app/.env` and run
-`make -C examples/fullstack-app dev`. For production, inject them only into
-the worker service or its secret manager, not into the Spin component.
+`make -C examples/fullstack-app dev` (worker required). For production, inject
+them only into the worker service or its secret manager, not into the Spin
+component.
 
 ### What the outbox worker is
 
 The outbox worker is not an SMTP server, mail server, or replacement for
-Resend. It is a native background delivery process:
+Resend. It is a native background delivery process — deliberately **outside**
+`spin.toml` so provider secrets stay off the WASM guest and delivery can retry
+after the HTTP response:
 
 ```text
 request -> PostgreSQL transaction
            user state + encrypted mail intent
         -> HTTP response
-worker  -> leases pending intent -> calls Resend -> records delivery ID
+worker  -> leases pending intent -> capture or Resend -> records delivery ID
 ```
 
 The application commits the account change and mail intent together. The
@@ -114,9 +145,9 @@ make spin transport=both
 make outbox-worker
 ```
 
-Running only `make spin` does not send mail. Running only the worker cannot
-serve pages or API requests. The worker owns Resend and SpiceDB write
-credentials; the Spin guest receives neither.
+Running only `make spin` does not send mail (capture or Resend). Running only
+the worker cannot serve pages or API requests. The worker owns Resend and
+SpiceDB write credentials; the Spin guest receives neither.
 
 The stale Spin SQLite migration-only feature was removed before the first RC.
 It did not implement the product workflows and had already diverged from the

@@ -110,12 +110,17 @@ Run the committed example from the monorepo root:
 
 ```bash
 make -C examples/fullstack-app db-up
+# Spin + outbox worker (required for verification / reset / invite mail)
 make -C examples/fullstack-app dev transport=both
-# or app only: make -C examples/fullstack-app spin transport=both
+# app only (no mail): make -C examples/fullstack-app spin transport=both
 ```
 
-See [examples/fullstack-app/README.md](./examples/fullstack-app/README.md) for
-in-directory targets, origin/`listen` overrides, and smoke checks.
+Mail is **not** a Spin component: `spin.toml` serves the app; a native
+`wasi-auth-outbox-worker` delivers capture or Resend mail. Prefer `make dev`
+over `make spin` when testing registration. See
+[examples/fullstack-app/README.md](./examples/fullstack-app/README.md)
+([Spin vs outbox worker](./examples/fullstack-app/README.md#spin-vs-outbox-worker-why-two-processes))
+and [docs/production/wasi-auth-fullstack.md](./docs/production/wasi-auth-fullstack.md).
 
 ## Learn More
 

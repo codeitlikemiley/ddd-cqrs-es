@@ -16,6 +16,14 @@ This project is a Spin fullstack authentication and authorization service with L
 You can run targets from the **example directory** or from the **monorepo root**
 with `make -C examples/fullstack-app …` (same variables and defaults either way).
 
+> **Mail requires two processes.** `spin.toml` is only the Spin/WASM app
+> (UI + APIs). Verification, password-reset, and invitation mail are delivered
+> by a **native** `wasi-auth-outbox-worker`, not by a Spin component.
+> `AUTH_MAIL_TRANSPORT=resend` in `.env` does **not** make `make spin` send
+> email — Spin only enqueues encrypted intents in Postgres. Use
+> `make dev` (Spin + worker) or run `make outbox-worker` beside `make spin`.
+> See [Spin vs outbox worker](#spin-vs-outbox-worker-why-two-processes).
+
 ### From the monorepo root
 
 ```bash
@@ -23,15 +31,17 @@ with `make -C examples/fullstack-app …` (same variables and defaults either wa
 cp examples/fullstack-app/.env.example examples/fullstack-app/.env
 
 make -C examples/fullstack-app db-up
+# preferred: Spin + mail/SpiceDB worker (needed for register/verify email)
 make -C examples/fullstack-app dev transport=both
 # open the printed public origin (default http://127.0.0.1:3008)
 ```
 
-App only (no outbox worker in the same Make process — useful when you want
-independent logs, or when mail is not needed):
+App only (no mail delivery — verification emails stay `pending`):
 
 ```bash
 make -C examples/fullstack-app spin transport=both
+# if you need email with spin alone, start the worker in another terminal:
+make -C examples/fullstack-app outbox-worker
 ```
 
 ### From this directory
@@ -41,10 +51,10 @@ cd examples/fullstack-app   # if you are still at the monorepo root
 
 cp .env.example .env        # optional; prefer Make-derived origin when possible
 make db-up
-make dev transport=both     # Spin + wasi-auth-outbox-worker
+make dev transport=both     # Spin + wasi-auth-outbox-worker (mail works)
 # open the printed public origin (default http://127.0.0.1:3008)
 
-# app only
+# app only — does NOT send/capture mail until outbox-worker runs
 make spin transport=both
 ```
 
@@ -54,8 +64,8 @@ make spin transport=both
 |--------|----------------|
 | `db-up` | Start local PostgreSQL |
 | `db-migrate` | Apply wasi-auth migrations |
-| `dev transport=both` | Spin HTTP + gRPC **and** outbox/mail worker |
-| `spin transport=both` | Spin only (build + run on `127.0.0.1:3008`) |
+| `dev transport=both` | **Spin + outbox worker** (use this for register/verify mail) |
+| `spin transport=both` | Spin only — **no mail delivery** |
 | `outbox-worker` | Worker alone (second terminal next to `spin`) |
 | `smoke` | REST/web smoke against `BASE_URL` |
 | `browser-smoke` | Playwright page + middleware checks |
@@ -67,11 +77,13 @@ Examples:
 ```bash
 # monorepo root
 make -C examples/fullstack-app help
+make -C examples/fullstack-app dev transport=both          # mail works
 make -C examples/fullstack-app spin transport=both listen=127.0.0.1:3000
 make -C examples/fullstack-app smoke
 
 # example directory
 make help
+make dev transport=both
 make spin transport=both listen=127.0.0.1:3000
 make smoke
 ```
@@ -175,6 +187,50 @@ Vault values are encrypted at rest with `AUTH_VAULT_KEY_BASE64` (same family as 
 
 Layout is versioned: old flat `widgets[]` boards migrate to `nodes[]` (v2) on load.
 
+### Spin vs outbox worker (why two processes)
+
+This is one **product**, but **two OS processes**. Only the request path lives in
+`spin.toml`.
+
+```text
+Browser / REST / gRPC
+        │
+        ▼
+┌───────────────────────────────────┐
+│  Spin (spin.toml / WASM guest)    │
+│  UI, REST, gRPC, session, board   │
+│  Encrypts mail intent → Postgres  │
+│  Returns 200 without calling      │
+│  Resend / SMTP                    │
+│  Never receives AUTH_RESEND_*     │
+└─────────────────┬─────────────────┘
+                  │ pending outbox rows
+                  ▼
+┌───────────────────────────────────┐
+│  wasi-auth-outbox-worker (native) │
+│  Polls/leases intents             │
+│  capture: store for local UI      │
+│  resend: AUTH_RESEND_API_KEY      │
+│  Marks delivered / retry / DLQ    │
+└───────────────────────────────────┘
+```
+
+| Expectation | Reality |
+|-------------|---------|
+| “It’s all in one Spin project” | **App** is Spin; **mail delivery** is a native side-car |
+| `AUTH_MAIL_TRANSPORT=resend` in `.env` | Tells the **worker** which transport to use; Spin still only enqueues |
+| `make spin` alone | Serves pages/APIs; mail stays `pending` forever |
+| `make dev` | Starts **both** processes (still two runtimes under one Make target) |
+| Put the worker in `spin.toml`? | No — secrets + durable poller stay native by design |
+
+Why not embed delivery in Spin?
+
+1. **Secrets** — browser-facing WASM must not hold Resend / SpiceDB write keys.
+2. **Outbox reliability** — register succeeds even if the provider is down; the
+   worker retries later.
+3. **Process model** — Spin components are request-driven; delivery is a
+   long-lived poller with leases and dead-letter handling.
+
 ### Transactional email
 
 Outbox delivery uses productized **plain text + HTML** for:
@@ -187,10 +243,23 @@ Each message includes a greeting, primary CTA button, plain URL fallback, and ig
 
 | Mode | Config | Use |
 |------|--------|-----|
-| Capture (default) | `AUTH_MAIL_TRANSPORT=capture` | Local demos; UI uses capture `action_url` |
-| Resend | `AUTH_MAIL_TRANSPORT=resend` + worker secrets | Real delivery |
+| Capture (default) | `AUTH_MAIL_TRANSPORT=capture` + **worker** | Local demos; UI uses capture `action_url` |
+| Resend | `AUTH_MAIL_TRANSPORT=resend` + **worker** + API key | Real delivery |
 
-Provider secrets (`AUTH_RESEND_API_KEY`, `AUTH_RESEND_FROM`) belong on the **outbox worker only**, not in the Spin guest.
+Provider secrets (`AUTH_RESEND_API_KEY`, `AUTH_RESEND_FROM`) belong on the **outbox worker only**, not in the Spin guest. The Makefile passes them into `outbox-worker` / `dev`, never into `spin up` variables.
+
+```bash
+# works for capture or resend (worker required either way)
+make -C examples/fullstack-app dev transport=both
+
+# or two terminals
+make -C examples/fullstack-app spin transport=both
+make -C examples/fullstack-app outbox-worker
+```
+
+If you only run `make spin` with `AUTH_MAIL_TRANSPORT=resend`, account creation
+still succeeds and an encrypted intent is stored — but **nothing calls Resend**
+until a worker is running against the same Postgres and `AUTH_OUTBOX_KEY_*`.
 
 Do **not** expect clean Gmail reputation for loopback `http://127.0.0.1` From addresses. Use capture mode locally; production needs a verified domain + SPF/DKIM/DMARC.
 
@@ -294,9 +363,23 @@ make trusted-ingress
 
 ## What the outbox worker does
 
-`wasi-auth-outbox-worker` is not an email server and it does not replace Resend. It is a native background process that leases encrypted mail and optional SpiceDB jobs from PostgreSQL, calls the selected provider, and records delivery or retry status. The application commits the user change and mail intent together, then returns without waiting for the provider.
+`wasi-auth-outbox-worker` is not an email server and it does not replace Resend.
+It is a native background process that leases encrypted mail and optional
+SpiceDB jobs from PostgreSQL, calls the selected provider, and records delivery
+or retry status. The Spin application commits the user change and mail intent
+together, then returns without waiting for the provider.
 
-If the worker is stopped, requests can still commit but mail remains `pending` until a worker starts again. `make dev` starts Spin and the worker together. Use `make spin` and `make outbox-worker` separately only when you need independent logs. Production runs the worker beside Spin, sharing PostgreSQL and the outbox key; provider credentials stay only in the worker environment.
+It is **not** declared in `spin.toml`. Spin only encrypts and inserts outbox
+rows. Without a worker process, intents stay `pending` whether transport is
+`capture` or `resend`.
+
+If the worker is stopped, requests can still commit but mail remains `pending`
+until a worker starts again. `make dev` starts Spin and the worker together.
+Use `make spin` and `make outbox-worker` separately only when you need
+independent logs. Production runs the worker beside Spin, sharing PostgreSQL
+and the outbox key; provider credentials stay only in the worker environment.
+
+See [Spin vs outbox worker](#spin-vs-outbox-worker-why-two-processes) above.
 
 The toolchain gate requires Rust 1.93.0+, `cargo-leptos >= 0.3.7`, `wasm32-wasip2`, and `wasm-tools`. The distributed P2 Rust target supplies `std`; the generated component is inspected to prove it exports `wasi:http/handler@0.3.0` and has no Preview 1 imports. The unstable `wasm32-wasip3` Rust target remains a canary.
 
