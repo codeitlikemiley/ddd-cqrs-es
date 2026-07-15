@@ -399,10 +399,10 @@ pub fn OrganizationsHome() -> impl IntoView {
                                     </label>
                                     <label class="auth-field">
                                         <span>"Workspace URL"</span>
-                                        <div class="onboarding-slug-row">
-                                            <span class="onboarding-slug-prefix">"/org/"</span>
+                                        <div class="slug-input-group" role="group" aria-label="Workspace URL">
+                                            <span class="slug-input-prefix" aria-hidden="true">"/org/"</span>
                                             <input
-                                                class="auth-input mono-value"
+                                                class="auth-input slug-input-field mono-value"
                                                 type="text"
                                                 maxlength="48"
                                                 autocomplete="off"

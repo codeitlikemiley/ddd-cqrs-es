@@ -5,8 +5,8 @@
 #[cfg(feature = "hydrate")]
 use crate::app::helpers::mark_active_nav;
 use crate::app::helpers::{
-    can_view_system_navigation, current_browser_pathname, current_browser_search_has_new,
-    org_monogram, redirect_browser, server_error_text,
+    can_view_system_navigation, current_browser_pathname, org_monogram, redirect_browser,
+    server_error_text,
 };
 use crate::app::path::{is_workspace_path, workspace_topbar_title};
 use crate::app::{
@@ -196,15 +196,9 @@ pub fn WorkspaceOnboardingPanel() -> impl IntoView {
     let slug_touched = RwSignal::new(false);
     let client_error = RwSignal::new(None::<String>);
 
-    // Force-create intent: /onboarding/workspace?new=1 (from workspace switcher).
-    // Without new=1, users who already have orgs leave onboarding to the home board.
-    let force_new = current_browser_search_has_new();
-
+    // First-workspace only. Additional workspaces are created from /organizations.
     let existing = browser_load(list_organizations);
     Effect::new(move |_| {
-        if force_new {
-            return;
-        }
         if let Some(Ok(list)) = existing.get() {
             if list.organizations.is_empty() {
                 return;
@@ -265,10 +259,10 @@ pub fn WorkspaceOnboardingPanel() -> impl IntoView {
                 </label>
                 <label class="auth-field">
                     <span>"Workspace URL"</span>
-                    <div class="onboarding-slug-row">
-                        <span class="onboarding-slug-prefix">"/org/"</span>
+                    <div class="slug-input-group" role="group" aria-label="Workspace URL">
+                        <span class="slug-input-prefix" aria-hidden="true">"/org/"</span>
                         <input
-                            class="auth-input mono-value"
+                            class="auth-input slug-input-field mono-value"
                             type="text"
                             maxlength="48"
                             placeholder="acme"
@@ -459,9 +453,8 @@ pub fn WorkspaceOrgSwitcher() -> impl IntoView {
                                         }).collect_view()}
                                     </ul>
                                     <div class="org-switcher-divider" aria-hidden="true"></div>
-                                    <a class="org-switcher-link" href=vault_href role="menuitem">"Secret vault"</a>
                                     <a class="org-switcher-link" href="/organizations" role="menuitem">"Manage workspaces"</a>
-                                    <a class="org-switcher-link" href="/onboarding/workspace?new=1" role="menuitem">"Create workspace"</a>
+                                    <a class="org-switcher-link" href=vault_href role="menuitem">"Secret vault"</a>
                                 </div>
                             </details>
                         }.into_any()

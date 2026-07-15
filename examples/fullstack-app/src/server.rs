@@ -327,7 +327,7 @@ async fn protected_ui_redirect(
         };
         match crate::auth_product::list_organizations(user_id).await {
             Ok(organizations) => {
-                if let Some(location) = workspace_setup_redirect(path, query, &organizations) {
+                if let Some(location) = workspace_setup_redirect(path, &organizations) {
                     return Some(location);
                 }
             }
@@ -372,34 +372,19 @@ async fn protected_ui_redirect(
 
 fn workspace_setup_redirect(
     path: &str,
-    query: Option<&str>,
     organizations: &crate::contracts::OrganizationListResponse,
 ) -> Option<String> {
     if organizations.organizations.is_empty() {
         return (path != "/onboarding/workspace").then(|| "/onboarding/workspace".to_owned());
     }
 
-    if path != "/onboarding/workspace" || has_new_workspace_intent(query) {
-        return None;
+    // Additional workspaces are created from /organizations (modal), not
+    // /onboarding/workspace?new=…. Once an org exists, leave focused onboarding.
+    if path == "/onboarding/workspace" {
+        return Some("/dashboard".to_owned());
     }
 
-    // Already has a workspace: leave focused onboarding for the home board.
-    Some("/dashboard".to_owned())
-}
-
-fn has_new_workspace_intent(query: Option<&str>) -> bool {
-    query.is_some_and(|query| {
-        query.split('&').any(|pair| {
-            let mut parts = pair.splitn(2, '=');
-            let key = parts.next().unwrap_or_default();
-            let value = parts.next().unwrap_or("1");
-            key == "new"
-                && matches!(
-                    value.to_ascii_lowercase().as_str(),
-                    "" | "1" | "true" | "yes" | "on"
-                )
-        })
-    })
+    None
 }
 
 fn encode_next_target(path: &str, query: Option<&str>) -> String {

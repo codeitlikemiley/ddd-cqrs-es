@@ -2760,6 +2760,9 @@ html.board-modal-open body {
 
 .orgs-create-modal {
   max-width: 600px;
+  /* Let focus rings paint inside modal padding without being clipped by the
+     shared .board-modal overflow:hidden + body overflow:auto scrollport. */
+  overflow: visible;
   width: min(600px, 100%);
 }
 
@@ -2770,6 +2773,11 @@ html.board-modal-open body {
 .orgs-create-body {
   display: grid;
   min-height: 0;
+  overflow: visible;
+}
+
+.orgs-create-modal > .board-modal-body {
+  overflow: visible;
 }
 
 .orgs-create-form {
@@ -2780,6 +2788,8 @@ html.board-modal-open body {
 .orgs-create-fields {
   display: grid;
   gap: 18px;
+  /* Room for 3px focus rings at the edges of the form column. */
+  padding: 4px;
 }
 
 .orgs-create-actions {
@@ -4782,27 +4792,59 @@ html.board-modal-open body {
   gap: 14px;
 }
 
+/* Prefixed URL control: single border shell so /org/ matches input height and
+   focus ring wraps the whole group (not a short prefix + tall input). */
+.slug-input-group,
 .onboarding-slug-row {
-  align-items: center;
+  align-items: stretch;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
   display: flex;
-  gap: 0;
+  min-height: 44px;
+  overflow: hidden;
+  width: 100%;
 }
 
+.slug-input-group:focus-within,
+.onboarding-slug-row:focus-within {
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus-ring) 18%, transparent);
+}
+
+.slug-input-prefix,
 .onboarding-slug-prefix {
+  align-items: center;
   background: var(--bg-muted, #f4f4f5);
-  border: 1px solid var(--border-subtle);
-  border-radius: 10px 0 0 10px;
-  border-right: 0;
+  border: 0;
+  border-right: 1px solid var(--border-subtle);
   color: var(--text-secondary);
+  display: inline-flex;
+  flex: 0 0 auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 13px;
   line-height: 1;
-  padding: 12px 10px;
+  padding: 0 12px;
   white-space: nowrap;
 }
 
+.slug-input-group .slug-input-field,
+.slug-input-group .auth-input,
 .onboarding-slug-row .auth-input {
-  border-radius: 0 10px 10px 0;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  width: auto;
+}
+
+.slug-input-group .slug-input-field:focus,
+.slug-input-group .auth-input:focus,
+.onboarding-slug-row .auth-input:focus {
+  border: 0 !important;
+  box-shadow: none !important;
 }
 
 /* ── Secret vault ─────────────────────────────────────────────────────────── */
