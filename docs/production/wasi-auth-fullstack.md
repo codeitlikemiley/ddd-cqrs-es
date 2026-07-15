@@ -149,6 +149,37 @@ Running only `make spin` does not send mail (capture or Resend). Running only
 the worker cannot serve pages or API requests. The worker owns Resend and
 SpiceDB write credentials; the Spin guest receives neither.
 
+### Email verification: register vs resend
+
+Registering the **same email again never sends another verification mail**. A
+second signup is an email conflict (`normalized_email` insert-once), not
+“resend verification.” That is intentional (no duplicate accounts).
+
+| Action | Result |
+|--------|--------|
+| 1st register | User + outbox mail; worker delivers |
+| 2nd register (same email) | Conflict → no new mail |
+| Resend (`/verify-email/resend`) | New token + mail while still `pending_verification` |
+
+To get another link while pending:
+
+1. Open `/verify-email/resend` (or the link on `/verify-email/pending`).
+2. Keep the outbox worker running (`make dev` or `outbox-worker`).
+
+| Limit | Value |
+|-------|--------|
+| Resends per email | 5 / hour (over cap: accepted-looking response, no mail) |
+| Register attempts per email | 5 / hour (still no re-mail on existing user) |
+| Token lifetime | 24 hours from issue; one-time; hash at rest |
+| Already `active` | Resend silent no-op; log in instead |
+
+Checklist: same user needs another verify email → **resend**, not register
+again → worker up → still pending → under 5 resends/hour.
+
+Full operator detail (UI paths, token invalidation on resend, errors for spent
+links):
+[Email verification: register vs resend](../../examples/fullstack-app/README.md#email-verification-register-vs-resend).
+
 The stale Spin SQLite migration-only feature was removed before the first RC.
 It did not implement the product workflows and had already diverged from the
 relational kernel. The generated identity product now has one authoritative

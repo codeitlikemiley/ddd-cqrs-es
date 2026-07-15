@@ -129,6 +129,10 @@ Loopback host aliases (`localhost` ↔ `127.0.0.1`) match for same-scheme same-p
 
 If a user is already signed in and opens a reset email, they must still see **Choose a new password**. Completing reset rotates sessions in the kernel.
 
+Verification links are **one-time** and expire after **24 hours**. Registering
+the same email again does **not** send a new mail — use `/verify-email/resend`.
+See [Email verification: register vs resend](#email-verification-register-vs-resend).
+
 ### Account settings
 
 Authenticated shell: left sidebar + topbar. Account destinations live in the account flyout:
@@ -262,6 +266,74 @@ still succeeds and an encrypted intent is stored — but **nothing calls Resend*
 until a worker is running against the same Postgres and `AUTH_OUTBOX_KEY_*`.
 
 Do **not** expect clean Gmail reputation for loopback `http://127.0.0.1` From addresses. Use capture mode locally; production needs a verified domain + SPF/DKIM/DMARC.
+
+### Email verification: register vs resend
+
+**Short answer:** registering the same email again **never** sends another
+verification mail. Use **resend**, not “create account” again.
+
+| Action | Result |
+|--------|--------|
+| **1st register** (`you@…`) | Creates user + outbox mail → worker delivers |
+| **2nd register** (same email) | Account already exists → **no** new outbox row → **no** new email |
+
+Registration is insert-once on `normalized_email` (`ON CONFLICT … DO NOTHING`).
+A second signup is an **email conflict**, not “send verification again.” That is
+intentional (no duplicate accounts + harder email enumeration).
+
+#### When you can get a new verification email
+
+Use **resend verification**, not register again:
+
+1. Open **`/verify-email/resend`** (default local:
+   http://127.0.0.1:3008/verify-email/resend), or **Send another verification
+   link** on the pending page (`/verify-email/pending`).
+2. Enter the **same email**.
+3. Keep the **outbox worker** running (`make dev` or `make outbox-worker`
+   beside `make spin`).
+
+That path:
+
+- only queues mail if status is still `pending_verification` (not already active)
+- rotates the one-time token and invalidates the previous link
+- worker delivers via capture or Resend
+
+#### Limits and token lifetime
+
+| Limit | Value |
+|-------|--------|
+| Resends per email | **5 per hour** |
+| After resend cap | API may still look “accepted”, but **no mail** is queued (by design) |
+| Resend window reset | **~1 hour** after the rate-limit bucket expires |
+| Register attempts per email | **5 per hour** (second register still does not re-mail an existing user) |
+| Token lifetime | **24 hours** from issue (register or resend) |
+| Token use | **One-time**; hash stored at rest; raw token only in the message |
+
+#### Already verified
+
+If the account is already `active`:
+
+- **Resend** is a silent no-op (no new mail; response stays generic).
+- **Reusing a spent verify link** fails with *verification token is invalid or
+  expired*.
+- Use **login**, or a different email for a new account.
+
+#### Practical checklist
+
+```text
+Same user, want another verify email?
+  → /verify-email/resend   (not /register again)
+  → outbox worker running
+  → still pending_verification
+  → under 5 resends in the last hour
+
+Hit the resend cap?  wait up to ~1 hour, or use another email.
+Token expired/used?  /verify-email/resend for a fresh 24h link.
+Already active?      /login
+```
+
+**Bottom line:** first mail = register once; later mails = **resend** while
+pending, not re-create. Links expire after 24 hours and work once.
 
 ### Template mirror rule
 
