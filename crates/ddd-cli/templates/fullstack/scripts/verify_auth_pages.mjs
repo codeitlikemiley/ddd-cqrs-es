@@ -517,6 +517,22 @@ try {
     if (viewport.width > 520) {
       await assertVisibleText(page, session.email);
     }
+    await assertPage(page, "/organizations", "Organizations");
+    await assertVisibleText(page, "Your workspaces");
+    await page.getByRole("button", { name: "New organization", exact: true }).click();
+    const createOrganizationDialog = page.getByRole("dialog", {
+      name: "Create organization",
+      exact: true,
+    });
+    await createOrganizationDialog.waitFor({ state: "visible" });
+    const organizationName = createOrganizationDialog.getByLabel("Organization name");
+    await organizationName.fill("Modal Workspace");
+    const workspaceUrl = createOrganizationDialog.getByLabel("Workspace URL");
+    if ((await workspaceUrl.inputValue()) !== "modal-workspace") {
+      throw new Error("Expected organization modal to derive the workspace URL slug");
+    }
+    await organizationName.press("Escape");
+    await createOrganizationDialog.waitFor({ state: "hidden" });
     await assertPage(
       page,
       "/invitations/accept?token=browser-smoke-invite",

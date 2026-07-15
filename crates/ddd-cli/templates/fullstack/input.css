@@ -2754,27 +2754,41 @@ html.board-modal-open body {
   max-width: 52ch;
 }
 
-.orgs-create {
-  gap: 16px;
+.orgs-create-backdrop {
+  z-index: 90;
 }
 
-.orgs-create-head h3 {
-  font-size: 16px;
-  font-weight: 650;
-  margin: 0 0 4px;
+.orgs-create-modal {
+  max-width: 600px;
+  width: min(600px, 100%);
 }
 
-.orgs-create-head p {
-  color: var(--text-secondary);
-  font-size: 13px;
-  margin: 0;
+.orgs-create-modal .dash-eyebrow {
+  margin-bottom: 7px;
+}
+
+.orgs-create-body {
+  display: grid;
+  min-height: 0;
 }
 
 .orgs-create-form {
-  align-items: end;
   display: grid;
-  gap: 12px;
-  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 20px;
+}
+
+.orgs-create-fields {
+  display: grid;
+  gap: 18px;
+}
+
+.orgs-create-actions {
+  align-items: center;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  padding-top: 18px;
 }
 
 .orgs-context-nav {
@@ -3000,8 +3014,7 @@ html.board-modal-open body {
 @media (max-width: 720px) {
   .dash-hero,
   .orgs-toolbar,
-  .dash-callout,
-  .orgs-create-form {
+  .dash-callout {
     grid-template-columns: 1fr;
   }
 
@@ -3031,6 +3044,16 @@ html.board-modal-open body {
 
   .orgs-row-actions {
     grid-column: 1 / -1;
+  }
+
+  .orgs-create-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .orgs-create-actions .primary-button,
+  .orgs-create-actions .secondary-button {
+    width: 100%;
   }
 
   .orgs-row-actions .secondary-button,
