@@ -101,7 +101,7 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
         if let Some(Ok(list)) = secrets_res.get() {
             secrets.set(list);
         } else if let Some(Err(e)) = secrets_res.get() {
-            form_error.set(Some(e.to_string()));
+            form_error.set(Some(server_error_text(e)));
         }
     });
 
@@ -123,7 +123,7 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
         }
         Some(Err(e)) => {
             form_ok.set(None);
-            form_error.set(Some(e.to_string()));
+            form_error.set(Some(server_error_text(e)));
         }
         None => {}
     });
@@ -142,7 +142,7 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
         }
         Some(Err(e)) => {
             form_ok.set(None);
-            form_error.set(Some(e.to_string()));
+            form_error.set(Some(server_error_text(e)));
         }
         None => {}
     });
@@ -169,7 +169,7 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
         }
         Some(Err(e)) => {
             reveal_pending.set(None);
-            let msg = e.to_string();
+            let msg = server_error_text(e);
             if msg.to_ascii_lowercase().contains("forbidden")
                 || msg.to_ascii_lowercase().contains("step")
             {

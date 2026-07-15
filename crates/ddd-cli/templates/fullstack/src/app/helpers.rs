@@ -171,11 +171,53 @@ pub(crate) fn validate_login_form(
     Ok(())
 }
 
+/// Public text for UI banners. Prefer the product message over Leptos
+/// `ServerFnError` Display wrappers like `error running server function: …`.
 pub(crate) fn server_error_text(error: ServerFnError) -> String {
+    // Product/server-fn mapping uses `ServerFnError::new` → `ServerError(msg)`.
+    // Matching that variant returns the bare public message. Other variants fall
+    // back to Display with known prefixes stripped.
+    if let ServerFnError::ServerError(message) = error {
+        return message;
+    }
+
     let text = error.to_string();
-    text.strip_prefix("error running server function: ")
-        .unwrap_or(&text)
-        .to_string()
+    const PREFIXES: &[&str] = &[
+        "error running server function: ",
+        "error reaching server to call server function: ",
+        "error generating HTTP response: ",
+        "error deserializing server function results: ",
+        "error serializing server function arguments: ",
+        "error deserializing server function arguments: ",
+        "error while trying to register the server function: ",
+        "error running middleware: ",
+        "missing argument ",
+    ];
+    for prefix in PREFIXES {
+        if let Some(rest) = text.strip_prefix(prefix) {
+            return rest.to_owned();
+        }
+    }
+    text
+}
+
+#[cfg(test)]
+mod server_error_text_tests {
+    use super::server_error_text;
+    use server_fn::ServerFnError;
+
+    #[test]
+    fn returns_bare_product_message() {
+        let error = ServerFnError::new(r#"workspace URL “goldcoders-corp” is already taken"#);
+        assert_eq!(
+            error.to_string(),
+            r#"error running server function: workspace URL “goldcoders-corp” is already taken"#
+        );
+        assert_eq!(
+            server_error_text(error),
+            r#"workspace URL “goldcoders-corp” is already taken"#
+        );
+    }
 }
 
 pub(crate) fn action_result_text<T>(result: Option<Result<T, ServerFnError>>) -> String {

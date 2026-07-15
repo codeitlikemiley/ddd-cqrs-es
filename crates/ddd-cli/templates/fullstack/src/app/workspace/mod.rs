@@ -226,7 +226,7 @@ pub fn WorkspaceOnboardingPanel() -> impl IntoView {
             };
             redirect_browser(&dest);
         }
-        Some(Err(e)) => client_error.set(Some(e.to_string())),
+        Some(Err(e)) => client_error.set(Some(server_error_text(e))),
         None => {}
     });
 

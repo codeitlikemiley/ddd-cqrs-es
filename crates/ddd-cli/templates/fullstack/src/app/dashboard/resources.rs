@@ -7,6 +7,7 @@ use crate::contracts::{
 };
 use leptos::prelude::*;
 
+use crate::app::helpers::server_error_text;
 use crate::app::{
     DeleteDashboardQuery, DeleteDashboardResource, RunDashboardQuery, SeedDashboardDemos,
     UpsertDashboardQuery, UpsertDashboardResource,
@@ -127,7 +128,7 @@ pub fn resources_queries_modal(
             form_error.set(None);
             tab.set("query".to_owned());
         }
-        Some(Err(e)) => form_error.set(Some(e.to_string())),
+        Some(Err(e)) => form_error.set(Some(server_error_text(e))),
         None => {}
     });
 
@@ -142,7 +143,7 @@ pub fn resources_queries_modal(
             });
             form_error.set(None);
         }
-        Some(Err(e)) => form_error.set(Some(e.to_string())),
+        Some(Err(e)) => form_error.set(Some(server_error_text(e))),
         None => {}
     });
 
@@ -151,7 +152,7 @@ pub fn resources_queries_modal(
             test_result.set(Some(result));
             form_error.set(None);
         }
-        Some(Err(e)) => form_error.set(Some(e.to_string())),
+        Some(Err(e)) => form_error.set(Some(server_error_text(e))),
         None => {}
     });
 

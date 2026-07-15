@@ -1145,7 +1145,7 @@ pub fn SessionSummary() -> impl IntoView {
                 {move || match session.get() {
                     None => "Loading session details".to_string(),
                     Some(Ok(_)) => "No active session".to_string(),
-                    Some(Err(error)) => error.to_string(),
+                    Some(Err(error)) => server_error_text(error),
                 }}
             </p>
         </section>

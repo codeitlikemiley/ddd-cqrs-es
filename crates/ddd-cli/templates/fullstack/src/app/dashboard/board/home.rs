@@ -67,7 +67,7 @@ pub fn DashboardHome() -> impl IntoView {
             layout.set(next);
             set_save_error.set(None);
         }
-        Some(Err(error)) => set_save_error.set(Some(error.to_string())),
+        Some(Err(error)) => set_save_error.set(Some(server_error_text(error))),
         None => {}
     });
 
