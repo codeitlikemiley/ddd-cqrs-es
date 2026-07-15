@@ -296,14 +296,18 @@ export function initWorkspaceSidebar() {
   bindUserMenuDismiss();
 }
 
+// Click-away + Escape for sidebar/topbar <details> flyouts (account + workspace).
 export function bindUserMenuDismiss() {
   if (window.__userMenuDismissBound) {
     return;
   }
   window.__userMenuDismissBound = true;
 
+  // Keep in sync with WorkspaceUserMenu / WorkspaceOrgSwitcher markup.
+  const FLYOUT_SELECTOR = ".user-menu-details, .org-switcher-details";
+
   function closeOpenMenus(except) {
-    document.querySelectorAll(".user-menu-details[open]").forEach((details) => {
+    document.querySelectorAll(FLYOUT_SELECTOR + "[open]").forEach((details) => {
       if (except && details === except) {
         return;
       }
@@ -318,14 +322,15 @@ export function bindUserMenuDismiss() {
       if (!target || !target.closest) {
         return;
       }
-      const open = document.querySelector(".user-menu-details[open]");
-      if (!open) {
+      const openMenus = document.querySelectorAll(FLYOUT_SELECTOR + "[open]");
+      if (!openMenus.length) {
         return;
       }
-      if (open.contains(target)) {
-        return;
-      }
-      closeOpenMenus(null);
+      openMenus.forEach((open) => {
+        if (!open.contains(target)) {
+          open.removeAttribute("open");
+        }
+      });
     },
     true
   );

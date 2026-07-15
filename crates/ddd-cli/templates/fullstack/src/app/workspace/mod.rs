@@ -347,13 +347,21 @@ pub fn WorkspaceSidebarControls() -> impl IntoView {
     view! { <span class="workspace-sidebar-controls" aria-hidden="true"></span> }
 }
 
-/// Top-bar workspace switcher: select org, jump to vault, create workspace.
+/// Top-bar / sidebar workspace switcher: select org, jump to vault, create workspace.
+///
+/// Click-away / Escape dismiss is shared with the account flyout via
+/// `bindUserMenuDismiss` (also installed from workspace sidebar init).
 #[island]
 pub fn WorkspaceOrgSwitcher() -> impl IntoView {
     let orgs = browser_load(list_organizations);
     let session = browser_load(get_current_session);
     let select_action = ServerAction::<SelectOrganization>::new();
     let select_pending = select_action.pending();
+
+    #[cfg(feature = "hydrate")]
+    Effect::new(move |_| {
+        bind_user_menu_dismiss();
+    });
 
     Effect::new(move |_| {
         if matches!(select_action.value().get(), Some(Ok(_))) {
@@ -494,7 +502,8 @@ pub fn WorkspaceSystemNav() -> impl IntoView {
 
 /// ChatGPT-style account flyout: avatar + email open a menu of settings + sign out.
 /// Lives in the left rail foot so the main top bar stays clean.
-/// Click-away / Escape dismiss is bound in `bindUserMenuDismiss` (workspace sidebar init).
+/// Click-away / Escape dismiss is bound in `bindUserMenuDismiss` (also covers
+/// the workspace switcher flyout).
 #[island]
 pub fn WorkspaceUserMenu() -> impl IntoView {
     let session = browser_load(get_current_session);
