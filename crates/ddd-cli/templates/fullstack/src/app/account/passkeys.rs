@@ -2,25 +2,24 @@
 #![allow(clippy::unused_unit)]
 #![allow(clippy::unit_arg)]
 
-
 use crate::app::helpers::{
     action_result_text, is_passkey_cancel_message, redirect_browser, server_error_text,
 };
 #[cfg(feature = "hydrate")]
 use crate::app::helpers::{passkey_js_error, passkey_js_string};
 use crate::app::{
-    browser_load, get_auth_capabilities, get_current_session, start_passkey_registration,
-    verify_passkey_registration, GetAuthCapabilities, StartPasskeyRegistration,
-    VerifyPasskeyRegistration,
+    GetAuthCapabilities, StartPasskeyRegistration, VerifyPasskeyRegistration, browser_load,
+    get_auth_capabilities, get_current_session, start_passkey_registration,
+    verify_passkey_registration,
 };
+#[cfg(feature = "hydrate")]
+use crate::app::{create_passkey_credential, passkey_supported};
 use crate::contracts::{AuthCapabilities, SessionView};
 use crate::ui::account_page_shell;
 use leptos::prelude::*;
-use server_fn::ServerFnError;
 #[cfg(feature = "hydrate")]
 use leptos::task::spawn_local;
-#[cfg(feature = "hydrate")]
-use crate::app::{create_passkey_credential, passkey_supported};
+use server_fn::ServerFnError;
 
 #[component]
 pub fn AccountPasskeysPage() -> impl IntoView {
@@ -379,4 +378,3 @@ pub fn PasskeyManager() -> impl IntoView {
         </div>
     }
 }
-

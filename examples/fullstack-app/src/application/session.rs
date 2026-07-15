@@ -3,9 +3,8 @@
 
 use std::sync::OnceLock;
 
-
-use wasi_auth::authentication::jwt::JwksDocument;
 use wasi_auth::authentication::Clock;
+use wasi_auth::authentication::jwt::JwksDocument;
 use wasi_auth::authorization::{
     AccessRequest, ActionName, Authorizer, MAX_BATCH_CHECKS, Resource, ResourceType,
 };
@@ -24,7 +23,6 @@ use wasi_auth::http::{
 use super::*;
 use crate::contracts::*;
 use crate::error::{AuthStackError, AuthStackResult};
-
 
 pub async fn get_current_session_for(session_id: Option<String>) -> AuthStackResult<SessionView> {
     let Some(session_id) = session_id

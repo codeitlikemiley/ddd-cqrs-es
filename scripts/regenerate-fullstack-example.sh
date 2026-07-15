@@ -3,9 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EXAMPLE_DIR="$ROOT_DIR/examples/fullstack-app"
-MODE="${1:-write}"
+MODE="${1:---check}"
 
-if [[ "$MODE" != "write" && "$MODE" != "--check" ]]; then
+if [[ "$MODE" != "--check" ]]; then
   echo "Usage: $0 [--check]" >&2
   exit 2
 fi
@@ -31,19 +31,5 @@ DIFF_EXCLUDES=(
   --exclude=target
 )
 
-if [[ "$MODE" == "--check" ]]; then
-  diff -ru "${DIFF_EXCLUDES[@]}" "$GENERATED_DIR" "$EXAMPLE_DIR"
-  echo "fullstack example matches the embedded CLI template"
-  exit 0
-fi
-
-mkdir -p "$EXAMPLE_DIR"
-rsync -a --delete \
-  --exclude=.DS_Store \
-  --exclude=.env \
-  --exclude=.spin \
-  --exclude=Cargo.lock \
-  --exclude=node_modules \
-  --exclude=target \
-  "$GENERATED_DIR/" "$EXAMPLE_DIR/"
-echo "regenerated $EXAMPLE_DIR"
+diff -ru "${DIFF_EXCLUDES[@]}" "$GENERATED_DIR" "$EXAMPLE_DIR"
+echo "fullstack example matches the embedded CLI template"

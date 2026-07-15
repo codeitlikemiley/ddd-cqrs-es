@@ -20,6 +20,4 @@ pub use button::{LinkButton, PrimaryButton, SecondaryButton};
 pub use field::{Field, FieldGroup, TextInput};
 pub use kicker::SectionLabel;
 pub use panel::{CompactPanel, Panel};
-pub use shells::{
-    account_page_shell, error_page_shell, page_shell, public_page_shell,
-};
+pub use shells::{account_page_shell, error_page_shell, page_shell, public_page_shell};

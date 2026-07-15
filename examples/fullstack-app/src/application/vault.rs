@@ -3,9 +3,8 @@
 
 use std::sync::OnceLock;
 
-
-use wasi_auth::authentication::jwt::JwksDocument;
 use wasi_auth::authentication::Clock;
+use wasi_auth::authentication::jwt::JwksDocument;
 use wasi_auth::authorization::{
     AccessRequest, ActionName, Authorizer, MAX_BATCH_CHECKS, Resource, ResourceType,
 };
@@ -25,13 +24,13 @@ use super::*;
 use crate::contracts::*;
 use crate::error::{AuthStackError, AuthStackResult};
 
-
 /// Resolve org id from slug or explicit id and assert membership + vault permission.
 pub(crate) async fn require_vault_org(
     context: &VerifiedAuthContext,
     organization_id: Option<&str>,
     org_slug: Option<&str>,
     required_permission: &str,
+    assurance: AssuranceRequirement,
 ) -> AuthStackResult<String> {
     let org_id = if let Some(slug) = org_slug.map(str::trim).filter(|s| !s.is_empty()) {
         crate::store::resolve_org_id_for_slug(slug).await?
@@ -49,35 +48,10 @@ pub(crate) async fn require_vault_org(
             .tenant_id
             .filter(|s| !s.trim().is_empty())
             .ok_or_else(|| {
-                AuthStackError::validation(
-                    "create a workspace before using the secret vault",
-                )
+                AuthStackError::validation("create a workspace before using the secret vault")
             })?
     };
-    // Membership + role permission (vault.view | vault.manage | vault.reveal).
-    let org = crate::auth_product::organization_for_session(
-        context.session_id().as_str(),
-        &org_id,
-    )
-    .await?;
-    if !org
-        .permissions
-        .iter()
-        .any(|p| p == required_permission)
-    {
-        // Soft-compat: if migration 0012 not applied yet, allow owner/admin by role.
-        let legacy_ok = matches!(
-            (required_permission, org.current_user_role.as_str()),
-            ("vault.view", _)
-                | ("vault.manage", "owner" | "admin")
-                | ("vault.reveal", "owner" | "admin")
-        ) && org.permissions.iter().all(|p| !p.starts_with("vault."));
-        if !legacy_ok {
-            return Err(AuthStackError::Forbidden);
-        }
-    }
-    let user_id = context.principal().user_id().as_str();
-    let _ = crate::store::migrate_legacy_user_secrets_to_org(user_id, &org_id).await;
+    require_organization_permission(context, &org_id, required_permission, assurance).await?;
     Ok(org_id)
 }
 
@@ -92,6 +66,7 @@ pub async fn list_dashboard_secrets(
         organization_id.as_deref(),
         org_slug.as_deref(),
         "vault.view",
+        AssuranceRequirement::Aal1,
     )
     .await?;
     crate::store::list_secret_summaries(&org_id).await
@@ -103,12 +78,13 @@ pub async fn create_dashboard_secret(
     request: SecretCreateRequest,
     auth: RequestAuth,
 ) -> AuthStackResult<SecretSummary> {
-    let (context, _) = verified_context_and_permissions(auth, false).await?;
+    let (context, _) = verified_context_and_permissions(auth, true).await?;
     let org_id = require_vault_org(
         &context,
         organization_id.as_deref(),
         org_slug.as_deref(),
         "vault.manage",
+        AssuranceRequirement::Aal2,
     )
     .await?;
     crate::store::create_secret(&org_id, &request).await
@@ -120,12 +96,13 @@ pub async fn delete_dashboard_secret(
     secret_id: String,
     auth: RequestAuth,
 ) -> AuthStackResult<AcceptedResponse> {
-    let (context, _) = verified_context_and_permissions(auth, false).await?;
+    let (context, _) = verified_context_and_permissions(auth, true).await?;
     let org_id = require_vault_org(
         &context,
         organization_id.as_deref(),
         org_slug.as_deref(),
         "vault.manage",
+        AssuranceRequirement::Aal2,
     )
     .await?;
     crate::store::delete_secret(&org_id, secret_id.trim()).await?;
@@ -161,24 +138,29 @@ pub async fn reveal_dashboard_secret(
     secret_id: String,
     auth: RequestAuth,
 ) -> AuthStackResult<crate::contracts::SecretRevealResponse> {
-    let (context, _) = verified_context_and_permissions(auth, false).await?;
-    if vault_reveal_require_step_up().await
-        && context.assurance() != AuthenticationAssurance::Aal2
-    {
-        return Err(AuthStackError::Forbidden);
-    }
+    let (context, _) = verified_context_and_permissions(auth, true).await?;
     let org_id = require_vault_org(
         &context,
         organization_id.as_deref(),
         org_slug.as_deref(),
         "vault.reveal",
+        AssuranceRequirement::Aal2,
     )
     .await?;
     crate::store::reveal_secret(&org_id, secret_id.trim()).await
 }
 
 pub async fn seed_dashboard_demos(auth: RequestAuth) -> AuthStackResult<AcceptedResponse> {
-    let (_user_id, org_id) = require_workspace_board(auth).await?;
+    let authorization =
+        require_workspace_permission(auth, "resource.manage", AssuranceRequirement::Aal2).await?;
+    require_organization_permission(
+        &authorization.context,
+        &authorization.organization_id,
+        "query.manage",
+        AssuranceRequirement::Aal2,
+    )
+    .await?;
+    let org_id = authorization.organization_id;
     let _seeded = crate::store::seed_dashboard_demos(&org_id).await?;
     Ok(AcceptedResponse { accepted: true })
 }
@@ -187,7 +169,8 @@ pub async fn migrate_workspace_legacy_data(
     request: crate::contracts::WorkspaceLegacyMigrateRequest,
     auth: RequestAuth,
 ) -> AuthStackResult<crate::contracts::WorkspaceLegacyMigrateReport> {
-    let (context, _) = verified_context_and_permissions(auth, false).await?;
+    let step_up = !request.dry_run;
+    let (context, _) = verified_context_and_permissions(auth, step_up).await?;
     let org_id = request.organization_id.trim().to_owned();
     if org_id.is_empty() {
         return Err(AuthStackError::validation("organization_id is required"));
@@ -198,6 +181,11 @@ pub async fn migrate_workspace_legacy_data(
         Some(&org_id),
         None,
         "vault.manage",
+        if step_up {
+            AssuranceRequirement::Aal2
+        } else {
+            AssuranceRequirement::Aal1
+        },
     )
     .await?;
     let user_id = context.principal().user_id().as_str().to_owned();
@@ -211,12 +199,8 @@ pub async fn migrate_workspace_legacy_data(
     };
 
     let (secrets_copied, secret_rows, skipped, reenter) =
-        crate::store::migrate_legacy_user_secrets_to_org_detailed(
-            &user_id,
-            &org_id,
-            dry_run,
-        )
-        .await?;
+        crate::store::migrate_legacy_user_secrets_to_org_detailed(&user_id, &org_id, dry_run)
+            .await?;
 
     tracing::info!(
         user_id = %user_id,
@@ -257,7 +241,9 @@ pub async fn migrate_workspace_legacy_data(
 pub async fn resolve_workspace_vault_target(
     auth: RequestAuth,
 ) -> AuthStackResult<crate::contracts::OrganizationSummary> {
-    let (context, _) = verified_context_and_permissions(auth, false).await?;
+    let authorization =
+        require_workspace_permission(auth, "dashboard.view", AssuranceRequirement::Aal1).await?;
+    let context = authorization.context;
     let user_id = context.principal().user_id().as_str();
     let orgs = crate::auth_product::list_organizations(user_id)
         .await?
@@ -265,11 +251,9 @@ pub async fn resolve_workspace_vault_target(
     if orgs.is_empty() {
         return Err(AuthStackError::not_found("no workspace yet"));
     }
-    let session = crate::auth_product::ensure_default_organization(
-        context.session_id().as_str(),
-        user_id,
-    )
-    .await?;
+    let session =
+        crate::auth_product::ensure_default_organization(context.session_id().as_str(), user_id)
+            .await?;
     if let Some(tid) = session
         .tenant_id
         .as_deref()

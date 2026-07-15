@@ -153,6 +153,7 @@ pub async fn validate_runtime_security_config() -> AuthStackResult<()> {
 
 pub(crate) async fn validate_runtime_security_config_uncached() -> AuthStackResult<()> {
     validate_spicedb_runtime_config().await?;
+    crate::auth_product::transactional_mail_config().await?;
     if !config_bool(AUTH_PRODUCTION_MODE, false).await {
         return Ok(());
     }
@@ -239,6 +240,7 @@ pub(crate) async fn validate_runtime_security_config_uncached() -> AuthStackResu
             "production requires a bounded non-development AUTH_VAULT_KEY_VERSION",
         ));
     }
+    let _ = dashboard_vault_key_ring().await?;
     let recovery_pepper = store_config_value(MFA_RECOVERY_PEPPER)
         .await
         .and_then(|value| STANDARD.decode(value.trim()).ok())
@@ -391,4 +393,3 @@ pub async fn health_status() -> AuthStackResult<HealthStatusResponse> {
         production_mode: config_bool(AUTH_PRODUCTION_MODE, false).await,
     })
 }
-

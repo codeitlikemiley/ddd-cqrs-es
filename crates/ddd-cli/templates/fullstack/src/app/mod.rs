@@ -7,30 +7,30 @@ use crate::contracts::{
     AuditEventListResponse, AuthCapabilities, AuthProviderSummary,
     AuthorizationCapabilitiesResponse, CapturedMailResponse, DashboardLayout,
     DashboardNotification, DashboardSnapshot, DataSourceUpsert, EmailPasswordLoginRequest,
-    EmailPasswordRegisterRequest, EmailVerificationCompleteRequest,
-    EmailVerificationResendRequest, HealthStatusResponse, InvitationAcceptRequest,
-    InvitationCreateRequest, InvitationListResponse, LoginCompletionResponse, LogoutResponse,
-    MembershipListResponse, MfaCodeRequest, MfaEnrollConfirmResponse, MfaEnrollStartResponse,
-    MfaStatusResponse, OAuthCallbackRequest, OAuthStartResponse, OrganizationCreateRequest,
-    OrganizationListResponse, OrganizationSummary, PasskeyStartRequest, PasskeyStartResponse,
-    PasskeyVerifyRequest, PasswordChangeRequest, PasswordResetCompleteRequest,
-    PasswordResetStartRequest, PasswordResetStartResponse, PolicyPublishRequest,
-    PolicyVersionListResponse, ProfileUpdateRequest, ProfileView, PublicProfileView,
-    RoleListResponse, RoleUpsertRequest, SecretCreateRequest, SessionRevokeRequest, SessionView,
-    SigningKeyListResponse, SigningKeyRotateRequest, SigningKeyRotateResponse,
+    EmailPasswordRegisterRequest, EmailVerificationCompleteRequest, EmailVerificationResendRequest,
+    HealthStatusResponse, InvitationAcceptRequest, InvitationCreateRequest, InvitationListResponse,
+    LoginCompletionResponse, LogoutResponse, MembershipListResponse, MfaCodeRequest,
+    MfaEnrollConfirmResponse, MfaEnrollStartResponse, MfaStatusResponse, OAuthCallbackRequest,
+    OAuthStartResponse, OrganizationCreateRequest, OrganizationListResponse, OrganizationSummary,
+    PasskeyStartRequest, PasskeyStartResponse, PasskeyVerifyRequest, PasswordChangeRequest,
+    PasswordResetCompleteRequest, PasswordResetStartRequest, PasswordResetStartResponse,
+    PolicyPublishRequest, PolicyVersionListResponse, ProfileUpdateRequest, ProfileView,
+    PublicProfileView, RoleListResponse, RoleUpsertRequest, SecretCreateRequest,
+    SessionRevokeRequest, SessionView, SigningKeyListResponse, SigningKeyRotateRequest,
+    SigningKeyRotateResponse,
 };
 use crate::ui::{
-    account_page_shell, error_page_shell, page_shell, public_page_shell, AuthBrand, ErrorBanner,
-    Field, FieldGroup, Panel, PrimaryButton, SectionLabel, SuccessBanner, TextInput,
+    AuthBrand, ErrorBanner, Field, FieldGroup, Panel, PrimaryButton, SectionLabel, SuccessBanner,
+    TextInput, account_page_shell, error_page_shell, page_shell, public_page_shell,
 };
 use leptos::prelude::*;
 use leptos_meta::*;
-use server_fn::codec::Json;
 use leptos_router::{
     components::*,
     hooks::{use_location, use_params_map},
     path,
 };
+use server_fn::codec::Json;
 
 #[cfg(feature = "hydrate")]
 use leptos::task::spawn_local;
@@ -574,7 +574,8 @@ extern "C" {
     pub(crate) async fn copy_text(value: String) -> Result<JsValue, JsValue>;
 
     #[wasm_bindgen(catch, js_name = createPasskeyCredential)]
-    pub(crate) async fn create_passkey_credential(options_json: String) -> Result<JsValue, JsValue>;
+    pub(crate) async fn create_passkey_credential(options_json: String)
+    -> Result<JsValue, JsValue>;
 
     #[wasm_bindgen(catch, js_name = getPasskeyCredential)]
     pub(crate) async fn get_passkey_credential(
@@ -601,11 +602,11 @@ pub use dashboard::{DashboardHome, DashboardPage};
 pub use helpers::*;
 pub use organizations::*;
 pub use path::*;
-pub use router::{shell, App};
+pub use router::App;
+#[cfg(feature = "ssr")]
+pub use router::shell;
 pub use server_fns::*;
-pub use workspace::{
-    AppLayout, WorkspaceOnboardingGate, WorkspaceOnboardingPage, WorkspaceShell,
-};
+pub use workspace::{AppLayout, WorkspaceOnboardingGate, WorkspaceOnboardingPage, WorkspaceShell};
 
 use crate::app::helpers::{
     action_result_text, current_browser_pathname, has_permission, next_url, optional_text,
@@ -613,7 +614,6 @@ use crate::app::helpers::{
     server_error_text, short_id_label, validate_email_only, validate_login_form,
 };
 use crate::app::path::{is_workspace_path, workspace_topbar_title};
-
 
 #[component]
 pub fn HomePage() -> impl IntoView {
@@ -654,27 +654,15 @@ pub fn HomePage() -> impl IntoView {
     )
 }
 
-
-
-
-
-
-
-
-
-
-
 /// Best-effort async sleep for hydrate (vault reveal auto-mask).
 #[cfg(feature = "hydrate")]
 async fn gloo_timers_sleep_ms(ms: u64) {
-    use wasm_bindgen_futures::JsFuture;
     use js_sys::Promise;
+    use wasm_bindgen_futures::JsFuture;
     let promise = Promise::new(&mut |resolve, _reject| {
         if let Some(window) = web_sys::window() {
-            let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
-                &resolve,
-                ms as i32,
-            );
+            let _ =
+                window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms as i32);
         } else {
             let _ = resolve.call0(&wasm_bindgen::JsValue::NULL);
         }
@@ -685,30 +673,6 @@ async fn gloo_timers_sleep_ms(ms: u64) {
 #[cfg(not(feature = "hydrate"))]
 async fn gloo_timers_sleep_ms(_ms: u64) {}
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #[component]
 pub fn NotFoundPage() -> impl IntoView {
     set_page_status(http::StatusCode::NOT_FOUND);
@@ -718,13 +682,6 @@ pub fn NotFoundPage() -> impl IntoView {
         view! { <ReturnToLoginLink /> },
     )
 }
-
-
-
-
-
-
-
 
 pub(crate) fn browser_load<T, Fut, F>(load: F) -> ReadSignal<Option<T>>
 where
@@ -752,5 +709,3 @@ where
 
     value
 }
-
-

@@ -7,9 +7,9 @@ use crate::contracts::{LoginCompletionResponse, SessionView};
 use leptos::prelude::*;
 use server_fn::ServerFnError;
 #[cfg(feature = "hydrate")]
-use wasm_bindgen::prelude::*;
-#[cfg(feature = "hydrate")]
 use wasm_bindgen::JsValue;
+#[cfg(feature = "hydrate")]
+use wasm_bindgen::prelude::*;
 #[cfg(feature = "hydrate")]
 use web_sys::window;
 
@@ -31,24 +31,19 @@ pub(crate) fn short_id_label(id: &str) -> String {
 }
 
 pub(crate) fn org_monogram(name: &str) -> String {
-    let cleaned: String = name
-        .chars()
-        .filter(|c| c.is_alphanumeric())
-        .collect();
+    let cleaned: String = name.chars().filter(|c| c.is_alphanumeric()).collect();
     let mut chars = cleaned.chars();
     match (chars.next(), chars.next()) {
-        (Some(a), Some(b)) => format!(
-            "{}{}",
-            a.to_ascii_uppercase(),
-            b.to_ascii_uppercase()
-        ),
+        (Some(a), Some(b)) => format!("{}{}", a.to_ascii_uppercase(), b.to_ascii_uppercase()),
         (Some(a), None) => a.to_ascii_uppercase().to_string(),
         _ => "?".to_owned(),
     }
 }
 
 pub(crate) fn org_tone_index(name: &str) -> u8 {
-    let hash = name.bytes().fold(0u32, |acc, b| acc.wrapping_mul(33).wrapping_add(b as u32));
+    let hash = name
+        .bytes()
+        .fold(0u32, |acc, b| acc.wrapping_mul(33).wrapping_add(b as u32));
     (hash % 6) as u8
 }
 
@@ -98,10 +93,7 @@ pub(crate) fn mark_active_nav(pathname: &str) {
     };
 
     let states = [
-        (
-            "[data-nav='overview']",
-            pathname == "/dashboard",
-        ),
+        ("[data-nav='overview']", pathname == "/dashboard"),
         (
             "[data-nav='organizations']",
             pathname == "/organizations" || pathname.starts_with("/organizations/"),
@@ -164,7 +156,11 @@ pub(crate) fn validate_email_only(email: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn validate_login_form(email: &str, password: &str, register_mode: bool) -> Result<(), String> {
+pub(crate) fn validate_login_form(
+    email: &str,
+    password: &str,
+    register_mode: bool,
+) -> Result<(), String> {
     validate_email_only(email)?;
     if password.is_empty() {
         return Err("Password is required.".to_string());
@@ -278,10 +274,7 @@ pub(crate) fn next_url() -> String {
             && let Ok(search) = window.location().search()
         {
             let query = search.trim_start_matches('?');
-            if let Some(encoded) = query
-                .split('&')
-                .find_map(|part| part.strip_prefix("next="))
-            {
+            if let Some(encoded) = query.split('&').find_map(|part| part.strip_prefix("next=")) {
                 let value = percent_decode_component(encoded);
                 if value.starts_with('/')
                     && !value.starts_with("//")
@@ -332,10 +325,9 @@ pub(crate) fn percent_decode_component(value: &str) -> String {
     while index < bytes.len() {
         match bytes[index] {
             b'%' if index + 2 < bytes.len() => {
-                if let (Some(high), Some(low)) = (
-                    hex_nibble(bytes[index + 1]),
-                    hex_nibble(bytes[index + 2]),
-                ) {
+                if let (Some(high), Some(low)) =
+                    (hex_nibble(bytes[index + 1]), hex_nibble(bytes[index + 2]))
+                {
                     out.push((high << 4) | low);
                     index += 3;
                     continue;
@@ -406,4 +398,3 @@ pub(crate) fn set_page_status(status: http::StatusCode) {
     }
     let _ = status;
 }
-

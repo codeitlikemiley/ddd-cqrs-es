@@ -5,8 +5,8 @@ use wasip3::http::types::{ErrorCode, Request, Response};
 
 use crate::app::{
     AcceptOrganizationInvitation, App, ChangePassword, CompleteEmailVerification,
-    CompleteOauthCallback, CompletePasswordReset, ConfirmTotpEnrollment, CreateOrganization,
-    CreateDashboardSecret, DeleteDashboardQuery, DeleteDashboardResource, DeleteDashboardSecret,
+    CompleteOauthCallback, CompletePasswordReset, ConfirmTotpEnrollment, CreateDashboardSecret,
+    CreateOrganization, DeleteDashboardQuery, DeleteDashboardResource, DeleteDashboardSecret,
     DeleteDashboardSource, DevelopmentMailCaptureEnabled, DismissDashboardNotification,
     GetAccountProfile, GetAdminHealth, GetAuthCapabilities, GetAuthorizationCapabilities,
     GetCurrentSession, GetDashboardSnapshot, GetMfaStatus, GetPublicProfile,
@@ -14,16 +14,15 @@ use crate::app::{
     ListAuthProviders, ListCurrentOrganizationAudit, ListCurrentOrganizationInvitations,
     ListCurrentOrganizationMembers, ListCurrentOrganizationRoles, ListDashboardSecrets,
     ListOrganizations, ListPolicyVersions, ListSigningKeys, LoginEmailPassword,
-    LogoutCurrentSession, PublishPolicyVersion, RegisterEmailPassword, RequireAuthenticatedRoute,
-    MigrateWorkspaceLegacyData, RequireAuthorizedRoute, ResendEmailVerification,
+    LogoutCurrentSession, MigrateWorkspaceLegacyData, PublishPolicyVersion, RegisterEmailPassword,
+    RequireAuthenticatedRoute, RequireAuthorizedRoute, ResendEmailVerification,
     ResolveWorkspaceVaultTarget, RevealDashboardSecret, RevokeAccountSession, RotateSigningKey,
     RunDashboardQuery, SaveAuthProvider, SaveDashboardLayout, SaveRedirectAllowlist,
-    SeedDashboardDemos, SelectOrganization, StartOauthLogin,
-    StartPasskeyLogin, StartPasskeyRegistration, StartPasswordReset, StartTotpEnrollment,
-    TestDashboardHttpSource, UpdateAccountProfile, UpdateDashboardNote,
-    UpsertCurrentOrganizationRole, UpsertDashboardQuery, UpsertDashboardResource,
-    UpsertDashboardSource, VerifyPasskeyLogin, VerifyPasskeyRegistration, VerifyRecoveryCode,
-    VerifyTotpStepUp, shell,
+    SeedDashboardDemos, SelectOrganization, StartOauthLogin, StartPasskeyLogin,
+    StartPasskeyRegistration, StartPasswordReset, StartTotpEnrollment, TestDashboardHttpSource,
+    UpdateAccountProfile, UpdateDashboardNote, UpsertCurrentOrganizationRole, UpsertDashboardQuery,
+    UpsertDashboardResource, UpsertDashboardSource, VerifyPasskeyLogin, VerifyPasskeyRegistration,
+    VerifyRecoveryCode, VerifyTotpStepUp, shell,
 };
 
 struct FullstackServer;
@@ -345,9 +344,7 @@ fn encode_next_target(path: &str, query: Option<&str>) -> String {
     match query {
         // Preserve path-only next= values unencoded for stable smoke URLs.
         // Encode when a query is present so tokens survive auth redirects.
-        Some(query) if !query.is_empty() => {
-            percent_encode_component(&format!("{path}?{query}"))
-        }
+        Some(query) if !query.is_empty() => percent_encode_component(&format!("{path}?{query}")),
         _ => path.to_owned(),
     }
 }
@@ -392,11 +389,7 @@ fn tokenized_public_ui_route(path: &str, query: Option<&str>) -> bool {
         part.strip_prefix("token=")
             .is_some_and(|value| !value.is_empty())
     });
-    has_token
-        && matches!(
-            path,
-            "/reset-password" | "/verify-email"
-        )
+    has_token && matches!(path, "/reset-password" | "/verify-email")
 }
 
 fn public_authentication_route(path: &str) -> bool {

@@ -12,10 +12,17 @@ if [[ ! -d "$SRC" || ! -d "$DST" ]]; then
 fi
 
 SYNC_PATHS=(
+  Cargo.toml
+  build.rs
+  compose.yaml
   src
+  migrations
+  proto
   input.css
   package.json
+  package-lock.json
   spin.toml
+  spin.production.toml.example
   Makefile
   README.md
   .env.example
@@ -32,17 +39,23 @@ fi
 changed=0
 for path in "${SYNC_PATHS[@]}"; do
   if [[ ! -e "$SRC/$path" ]]; then
-    echo "warn: missing source $path" >&2
-    continue
+    echo "error: missing canonical source $SRC/$path" >&2
+    exit 1
   fi
   if [[ -d "$SRC/$path" ]]; then
     out="$(rsync "${rsync_flags[@]}" \
       --exclude 'target/' \
       --exclude 'node_modules/' \
       --exclude '.DS_Store' \
-      "$SRC/$path/" "$DST/$path/" 2>&1 || true)"
+      "$SRC/$path/" "$DST/$path/" 2>&1)"
+  elif [[ "$MODE" == "check" ]]; then
+    if [[ -f "$DST/$path" ]] && cmp -s "$SRC/$path" "$DST/$path"; then
+      out=""
+    else
+      out="changed file: $path"
+    fi
   else
-    out="$(rsync "${rsync_flags[@]}" "$SRC/$path" "$DST/$path" 2>&1 || true)"
+    out="$(rsync "${rsync_flags[@]}" "$SRC/$path" "$DST/$path" 2>&1)"
   fi
   if [[ -n "$out" ]]; then
     echo "$out"

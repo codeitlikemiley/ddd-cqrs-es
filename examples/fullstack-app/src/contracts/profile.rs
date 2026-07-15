@@ -39,4 +39,3 @@ pub struct PublicProfileView {
     pub last_name: String,
     pub avatar_data_url: Option<String>,
 }
-

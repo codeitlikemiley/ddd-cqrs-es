@@ -3,9 +3,8 @@
 
 use std::sync::OnceLock;
 
-
-use wasi_auth::authentication::jwt::JwksDocument;
 use wasi_auth::authentication::Clock;
+use wasi_auth::authentication::jwt::JwksDocument;
 use wasi_auth::authorization::{
     AccessRequest, ActionName, Authorizer, MAX_BATCH_CHECKS, Resource, ResourceType,
 };
@@ -24,7 +23,6 @@ use wasi_auth::http::{
 use super::*;
 use crate::contracts::*;
 use crate::error::{AuthStackError, AuthStackResult};
-
 
 pub async fn list_signing_keys(auth: RequestAuth) -> AuthStackResult<SigningKeyListResponse> {
     require_step_up_permission_for("system.signing-key.manage", auth).await?;
@@ -69,7 +67,10 @@ pub async fn verify_storage_atomic_rollback() -> AuthStackResult<serde_json::Val
 pub async fn list_admin_users(auth: RequestAuth) -> AuthStackResult<AdminUserListResponse> {
     let session = require_step_up_permission_for("system.user.manage", auth).await?;
     crate::auth_product::list_admin_users(
-        session.session_id.as_deref().ok_or(AuthStackError::AuthRequired)?,
+        session
+            .session_id
+            .as_deref()
+            .ok_or(AuthStackError::AuthRequired)?,
     )
     .await
 }
@@ -81,7 +82,10 @@ pub async fn set_admin_user_status(
     validate_identifier("user_id", &request.user_id)?;
     let actor = require_step_up_permission_for("system.user.manage", auth).await?;
     crate::auth_product::set_user_disabled(
-        actor.session_id.as_deref().ok_or(AuthStackError::AuthRequired)?,
+        actor
+            .session_id
+            .as_deref()
+            .ok_or(AuthStackError::AuthRequired)?,
         &request.user_id,
         request.disabled,
     )

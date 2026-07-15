@@ -98,7 +98,8 @@ pub async fn register_email_password(
         RuntimeRandom,
         argon2_policy().await?,
         outbox_key().await?,
-    );
+    )
+    .with_transactional_mail_config(transactional_mail_config().await?);
     service
         .register(PasswordRegistrationRequest::new(
             format!("register:{email_key}"),
@@ -220,9 +221,8 @@ pub async fn login_email_password(
         .await
         .map_err(map_login_error)?;
     let session_id = receipt.session_id;
-    let session_id_str = session_id.as_str().to_owned();
-    let (access_token, refresh_token, expires_in_seconds) = issue_tokens(&session_id).await?;
-    bind_default_organization_for_session(&session_id_str).await;
+    let (access_token, refresh_token, expires_in_seconds) =
+        finalize_new_session(&session_id).await?;
     Ok(LoginCompletionResponse {
         authenticated: true,
         redirect_url: receipt.redirect_uri,
@@ -251,9 +251,8 @@ pub async fn complete_email_verification(
         .await
         .map_err(map_verification_error)?;
     let session_id = receipt.session_id;
-    let session_id_str = session_id.as_str().to_owned();
-    let (access_token, refresh_token, expires_in_seconds) = issue_tokens(&session_id).await?;
-    bind_default_organization_for_session(&session_id_str).await;
+    let (access_token, refresh_token, expires_in_seconds) =
+        finalize_new_session(&session_id).await?;
     Ok(LoginCompletionResponse {
         authenticated: true,
         redirect_url: receipt.redirect_uri,
@@ -272,6 +271,7 @@ pub async fn resend_email_verification(email: &str, redirect_uri: &str) -> AuthS
         argon2_policy().await?,
         outbox_key().await?,
     )
+    .with_transactional_mail_config(transactional_mail_config().await?)
     .resend_verification(ProductEmailVerificationResendRequest::new(
         email,
         request_id("verification-resend")?,
@@ -293,6 +293,7 @@ pub async fn start_password_reset(
         argon2_policy().await?,
         outbox_key().await?,
     )
+    .with_transactional_mail_config(transactional_mail_config().await?)
     .with_session_ttl_seconds(session_ttl_seconds().await?)
     .map_err(map_password_reset_error)?;
     let receipt = service
@@ -320,6 +321,7 @@ pub async fn complete_password_reset(
         argon2_policy().await?,
         outbox_key().await?,
     )
+    .with_transactional_mail_config(transactional_mail_config().await?)
     .with_session_ttl_seconds(session_ttl_seconds().await?)
     .map_err(map_password_reset_error)?;
     let receipt = service
@@ -332,9 +334,8 @@ pub async fn complete_password_reset(
         .await
         .map_err(map_password_reset_error)?;
     let session_id = receipt.session_id;
-    let session_id_str = session_id.as_str().to_owned();
-    let (access_token, refresh_token, expires_in_seconds) = issue_tokens(&session_id).await?;
-    bind_default_organization_for_session(&session_id_str).await;
+    let (access_token, refresh_token, expires_in_seconds) =
+        finalize_new_session(&session_id).await?;
     Ok(LoginCompletionResponse {
         authenticated: true,
         redirect_url: receipt.redirect_uri,
@@ -399,4 +400,3 @@ pub async fn verify_access_token(token: &str) -> AuthStackResult<TokenVerifyResp
 pub async fn get_jwks() -> AuthStackResult<JwksDocument> {
     Ok(token_service().await?.jwks())
 }
-

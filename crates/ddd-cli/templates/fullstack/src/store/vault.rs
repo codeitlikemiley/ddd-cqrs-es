@@ -150,6 +150,42 @@ pub(crate) async fn dashboard_vault_key_material() -> AuthStackResult<(String, [
     Ok((key_version, key))
 }
 
+pub(crate) async fn dashboard_vault_key_ring()
+-> AuthStackResult<(String, std::collections::BTreeMap<String, [u8; 32]>)> {
+    let (active_version, active_key) = dashboard_vault_key_material().await?;
+    let mut ring = std::collections::BTreeMap::new();
+    if let Some(raw) = store_config_value("AUTH_VAULT_KEY_RING_JSON")
+        .await
+        .filter(|value| !value.trim().is_empty())
+    {
+        let configured: std::collections::BTreeMap<String, String> = serde_json::from_str(&raw)
+            .map_err(|_| {
+                AuthStackError::configuration(
+                    "AUTH_VAULT_KEY_RING_JSON must be a JSON object of version to base64 key",
+                )
+            })?;
+        for (version, encoded) in configured {
+            if version.trim().is_empty() || version.len() > 128 {
+                return Err(AuthStackError::configuration(
+                    "AUTH_VAULT_KEY_RING_JSON contains an invalid key version",
+                ));
+            }
+            let key: [u8; 32] = STANDARD
+                .decode(encoded.trim())
+                .ok()
+                .and_then(|bytes| bytes.try_into().ok())
+                .ok_or_else(|| {
+                    AuthStackError::configuration(
+                        "every AUTH_VAULT_KEY_RING_JSON key must decode to 32 bytes",
+                    )
+                })?;
+            ring.insert(version, key);
+        }
+    }
+    ring.insert(active_version.clone(), active_key);
+    Ok((active_version, ring))
+}
+
 pub(crate) fn encrypt_vault_value(
     org_id: &str,
     plaintext: &str,
@@ -267,7 +303,10 @@ pub(crate) async fn load_secrets_resolved(org_id: &str) -> AuthStackResult<Vec<S
     if secrets.is_empty() {
         return Ok(secrets);
     }
-    let (key_version, key) = dashboard_vault_key_material().await?;
+    let (key_version, key_ring) = dashboard_vault_key_ring().await?;
+    let key = key_ring
+        .get(&key_version)
+        .ok_or_else(|| AuthStackError::configuration("active vault key is unavailable"))?;
     let mut dirty = false;
     let now = dashboard_now_ms();
     for secret in &mut secrets {
@@ -305,8 +344,7 @@ pub(crate) async fn load_secrets_resolved(org_id: &str) -> AuthStackResult<Vec<S
         }
 
         if !secret.value.is_empty() && secret.ciphertext_b64.is_empty() {
-            let (nonce_b64, ciphertext_b64) =
-                encrypt_vault_value(org_id, &secret.value, &key)?;
+            let (nonce_b64, ciphertext_b64) = encrypt_vault_value(org_id, &secret.value, key)?;
             secret.nonce_b64 = nonce_b64;
             secret.ciphertext_b64 = ciphertext_b64;
             secret.key_version = key_version.clone();
@@ -330,7 +368,17 @@ pub(crate) async fn load_secrets_resolved(org_id: &str) -> AuthStackResult<Vec<S
     for secret in &mut secrets {
         if secret.value.is_empty() && !secret.ciphertext_b64.is_empty() {
             // Try org AAD first; fall back to re-encrypt if decrypt fails (legacy user AAD).
-            match decrypt_vault_value(org_id, secret, &key) {
+            let stored_version = if secret.key_version.is_empty() {
+                key_version.as_str()
+            } else {
+                secret.key_version.as_str()
+            };
+            let decrypt_key = key_ring.get(stored_version).ok_or_else(|| {
+                AuthStackError::configuration(format!(
+                    "vault key version {stored_version} is unavailable"
+                ))
+            })?;
+            match decrypt_vault_value(org_id, secret, decrypt_key) {
                 Ok(plain) => secret.value = plain,
                 Err(_) if !secret.value.is_empty() => {}
                 Err(_) => {
@@ -345,7 +393,9 @@ pub(crate) async fn load_secrets_resolved(org_id: &str) -> AuthStackResult<Vec<S
     Ok(secrets)
 }
 
-pub async fn load_data_sources(user_id: &str) -> AuthStackResult<Vec<crate::contracts::DataSource>> {
+pub async fn load_data_sources(
+    user_id: &str,
+) -> AuthStackResult<Vec<crate::contracts::DataSource>> {
     #[cfg(all(feature = "postgres", runtime_spin))]
     {
         let store = profile_kv().await?;
@@ -396,15 +446,36 @@ pub async fn save_data_sources(
 pub(crate) async fn load_secrets_raw(org_id: &str) -> AuthStackResult<Vec<StoredSecret>> {
     #[cfg(all(feature = "postgres", runtime_spin))]
     {
-        let store = profile_kv().await?;
-        let Some(bytes) = store
-            .get(dashboard_secrets_key(org_id))
-            .await
-            .map_err(|e| AuthStackError::store(format!("secrets read failed: {e}")))?
-        else {
-            return Ok(Vec::new());
-        };
-        Ok(serde_json::from_slice(&bytes).unwrap_or_default())
+        let rows = execute_postgres(
+            "SELECT secret_id, secret_key, label, description, scope, \
+                    encode(ciphertext, 'base64') AS ciphertext_b64, \
+                    encode(nonce, 'base64') AS nonce_b64, key_version, \
+                    (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_at_ms, \
+                    (EXTRACT(EPOCH FROM updated_at) * 1000)::bigint AS updated_at_ms \
+             FROM fullstack_app.vault_secrets \
+             WHERE organization_id = ?1::text::uuid ORDER BY secret_key, secret_id",
+            vec![Value::String(org_id.to_owned())],
+        )
+        .await?;
+        rows.iter()
+            .map(|row| {
+                Ok(StoredSecret {
+                    id: required_string(row, "secret_id")?,
+                    key: required_string(row, "secret_key")?,
+                    label: required_string(row, "label")?,
+                    name: String::new(),
+                    description: required_string(row, "description")?,
+                    scope: required_string(row, "scope")?,
+                    value: String::new(),
+                    ciphertext_b64: required_string(row, "ciphertext_b64")?.replace('\n', ""),
+                    nonce_b64: required_string(row, "nonce_b64")?.replace('\n', ""),
+                    mac_b64: String::new(),
+                    key_version: required_string(row, "key_version")?,
+                    created_at_ms: row_i64(row, "created_at_ms").unwrap_or_default().max(0) as u64,
+                    updated_at_ms: row_i64(row, "updated_at_ms").unwrap_or_default().max(0) as u64,
+                })
+            })
+            .collect()
     }
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
@@ -413,16 +484,49 @@ pub(crate) async fn load_secrets_raw(org_id: &str) -> AuthStackResult<Vec<Stored
     }
 }
 
-pub(crate) async fn save_secrets_raw(org_id: &str, secrets: &[StoredSecret]) -> AuthStackResult<()> {
+pub(crate) async fn save_secrets_raw(
+    org_id: &str,
+    secrets: &[StoredSecret],
+) -> AuthStackResult<()> {
     #[cfg(all(feature = "postgres", runtime_spin))]
     {
-        let store = profile_kv().await?;
-        let bytes = serde_json::to_vec(secrets)
-            .map_err(|e| AuthStackError::serialization(e.to_string()))?;
-        store
-            .set(dashboard_secrets_key(org_id), bytes)
-            .await
-            .map_err(|e| AuthStackError::store(format!("secrets write failed: {e}")))
+        if secrets.iter().any(|secret| !secret.value.is_empty()) {
+            return Err(AuthStackError::store(
+                "refusing to persist plaintext vault secret",
+            ));
+        }
+        let payload = serde_json::to_value(secrets)
+            .map_err(|error| AuthStackError::serialization(error.to_string()))?;
+        execute_postgres(
+            "WITH incoming AS ( \
+                 SELECT item->>'id' AS secret_id, item->>'key' AS secret_key, \
+                        item->>'label' AS label, item->>'description' AS description, \
+                        item->>'scope' AS scope, decode(item->>'ciphertext_b64', 'base64') AS ciphertext, \
+                        decode(item->>'nonce_b64', 'base64') AS nonce, item->>'key_version' AS key_version, \
+                        COALESCE((item->>'created_at_ms')::bigint, 0) AS created_at_ms, \
+                        COALESCE((item->>'updated_at_ms')::bigint, 0) AS updated_at_ms \
+                 FROM jsonb_array_elements(?1::text::jsonb) AS item \
+             ), deleted AS ( \
+                 DELETE FROM fullstack_app.vault_secrets existing \
+                 WHERE existing.organization_id = ?2::text::uuid \
+                   AND NOT EXISTS (SELECT 1 FROM incoming WHERE incoming.secret_id = existing.secret_id) \
+             ) \
+             INSERT INTO fullstack_app.vault_secrets \
+                 (organization_id, secret_id, secret_key, label, description, scope, ciphertext, nonce, key_version, created_at, updated_at) \
+             SELECT ?2::text::uuid, secret_id, secret_key, label, description, scope, ciphertext, nonce, key_version, \
+                    to_timestamp(created_at_ms / 1000.0), to_timestamp(updated_at_ms / 1000.0) \
+             FROM incoming \
+             ON CONFLICT (organization_id, secret_id) DO UPDATE SET \
+                 secret_key = EXCLUDED.secret_key, label = EXCLUDED.label, \
+                 description = EXCLUDED.description, scope = EXCLUDED.scope, \
+                 ciphertext = EXCLUDED.ciphertext, nonce = EXCLUDED.nonce, \
+                 key_version = EXCLUDED.key_version, \
+                 revision = fullstack_app.vault_secrets.revision + 1, \
+                 updated_at = EXCLUDED.updated_at",
+            vec![payload, Value::String(org_id.to_owned())],
+        )
+        .await
+        .map(|_| ())
     }
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
@@ -481,14 +585,11 @@ pub async fn migrate_legacy_user_secrets_to_org_detailed(
         }
         if !dry_run {
             save_secrets_raw(org_id, &migrated).await?;
-            let _ = store.delete(dashboard_secrets_legacy_user_key(user_id)).await;
+            let _ = store
+                .delete(dashboard_secrets_legacy_user_key(user_id))
+                .await;
         }
-        Ok((
-            true,
-            migrated.len() as u32,
-            reenter.len() as u32,
-            reenter,
-        ))
+        Ok((true, migrated.len() as u32, reenter.len() as u32, reenter))
     }
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
@@ -649,4 +750,3 @@ pub async fn reveal_secret(
         reveal_ttl_seconds: VAULT_REVEAL_TTL_SECONDS,
     })
 }
-

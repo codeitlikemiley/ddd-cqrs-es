@@ -39,7 +39,7 @@ use crate::error::{AuthStackError, AuthStackResult};
 
 use super::*;
 
-/// Idempotent demo pack: REST + @app Postgres resources/queries + bound widgets.
+/// Idempotent demo pack: REST resources/queries + bound widgets.
 /// Writes into the **workspace** board + vault (`org_id`).
 /// Returns `true` when something new was seeded.
 pub async fn seed_dashboard_demos(org_id: &str) -> AuthStackResult<bool> {
@@ -50,14 +50,11 @@ pub async fn seed_dashboard_demos(org_id: &str) -> AuthStackResult<bool> {
     };
 
     const DEMO_REST_RES: &str = "demo-res-jsonplaceholder";
-    const DEMO_PG_RES: &str = "demo-res-app-postgres";
     const DEMO_Q_LIST: &str = "demo-q-todos";
     const DEMO_Q_METRIC: &str = "demo-q-todo-count";
-    const DEMO_Q_TABLE: &str = "demo-q-pg-info";
     const DEMO_ROW: &str = "demo-row-connectors";
     const DEMO_W_LIST: &str = "demo-w-list";
     const DEMO_W_METRIC: &str = "demo-w-metric";
-    const DEMO_W_TABLE: &str = "demo-w-table";
 
     let mut resources = load_resources(org_id).await.unwrap_or_default();
     let mut queries = load_queries(org_id).await.unwrap_or_default();
@@ -102,34 +99,12 @@ pub async fn seed_dashboard_demos(org_id: &str) -> AuthStackResult<bool> {
         changed = true;
     }
 
-    if !resources.iter().any(|r| r.id == DEMO_PG_RES) {
-        resources.push(DashboardResource {
-            id: DEMO_PG_RES.to_owned(),
-            name: "Demo · App Postgres".to_owned(),
-            kind: ResourceKind::Postgres,
-            auth: ResourceAuth::None,
-            default_headers: Vec::new(),
-            config: ResourceConfig::Postgres {
-                host: "@app".to_owned(),
-                port: 5432,
-                database: String::new(),
-                user: String::new(),
-                password_secret_id: String::new(),
-                ssl_mode: crate::contracts::PostgresSslMode::Prefer,
-            },
-        });
-        changed = true;
-    }
-
     if !queries.iter().any(|q| q.id == DEMO_Q_LIST) {
         queries.push(DashboardQuery {
             id: DEMO_Q_LIST.to_owned(),
             name: "Demo todos".to_owned(),
             resource_id: DEMO_REST_RES.to_owned(),
-            transform: vec![
-                TransformStep::AsArray,
-                TransformStep::Limit { n: 5 },
-            ],
+            transform: vec![TransformStep::AsArray, TransformStep::Limit { n: 5 }],
             config: QueryConfig::Rest {
                 method: HttpMethod::Get,
                 path: "/todos".to_owned(),
@@ -153,20 +128,6 @@ pub async fn seed_dashboard_demos(org_id: &str) -> AuthStackResult<bool> {
                 query_params: Vec::new(),
                 headers: Vec::new(),
                 body: None,
-            },
-        });
-        changed = true;
-    }
-
-    if !queries.iter().any(|q| q.id == DEMO_Q_TABLE) {
-        queries.push(DashboardQuery {
-            id: DEMO_Q_TABLE.to_owned(),
-            name: "Demo pg info".to_owned(),
-            resource_id: DEMO_PG_RES.to_owned(),
-            transform: Vec::new(),
-            config: QueryConfig::Postgres {
-                sql: "SELECT current_user AS user_name, current_database() AS db, now()::text AS ts"
-                    .to_owned(),
             },
         });
         changed = true;
@@ -213,15 +174,6 @@ pub async fn seed_dashboard_demos(org_id: &str) -> AuthStackResult<bool> {
                         },
                         http_mode: HttpDisplayMode::Metric,
                     },
-                    BoardNode::Widget {
-                        id: DEMO_W_TABLE.to_owned(),
-                        kind: DashboardWidgetKind::BoundTable,
-                        col_span: 3,
-                        note_text: None,
-                        source_id: Some(DEMO_Q_TABLE.to_owned()),
-                        bind: WidgetBind::default(),
-                        http_mode: HttpDisplayMode::Table,
-                    },
                 ],
             },
         );
@@ -233,4 +185,3 @@ pub async fn seed_dashboard_demos(org_id: &str) -> AuthStackResult<bool> {
 }
 
 // ─── Resources / Queries (Retool model) ──────────────────────────────────────
-

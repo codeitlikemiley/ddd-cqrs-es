@@ -6,7 +6,6 @@ use crate::app::SaveDashboardLayout;
 use crate::contracts::{BoardNode, DashboardLayout};
 use leptos::prelude::*;
 
-
 pub(crate) fn collect_placed_kinds(layout: &DashboardLayout) -> std::collections::HashSet<String> {
     let mut set = std::collections::HashSet::new();
     fn walk(nodes: &[BoardNode], set: &mut std::collections::HashSet<String>) {
@@ -133,7 +132,11 @@ pub(crate) fn find_node<'a>(nodes: &'a [BoardNode], id: &str) -> Option<&'a Boar
     None
 }
 
-pub(crate) fn commit_layout(layout: RwSignal<DashboardLayout>, save_layout: ServerAction<SaveDashboardLayout>, next: DashboardLayout) {
+pub(crate) fn commit_layout(
+    layout: RwSignal<DashboardLayout>,
+    save_layout: ServerAction<SaveDashboardLayout>,
+    next: DashboardLayout,
+) {
     // Write signal first so fine-grained attrs (data-span / chip active) update immediately.
     layout.set(next.clone());
     save_layout.dispatch(SaveDashboardLayout { layout: next });

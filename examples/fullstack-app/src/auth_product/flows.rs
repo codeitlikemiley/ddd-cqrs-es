@@ -124,10 +124,8 @@ pub async fn complete_oauth_identity(
         .complete(pending, identity, &request_id("oauth-complete")?)
         .await
         .map_err(map_oauth_error)?;
-    let session_id_str = completion.session_id.as_str().to_owned();
     let (access_token, refresh_token, expires_in_seconds) =
-        issue_tokens(&completion.session_id).await?;
-    bind_default_organization_for_session(&session_id_str).await;
+        finalize_new_session(&completion.session_id).await?;
     Ok(LoginCompletionResponse {
         authenticated: true,
         redirect_url: completion.redirect_path,
@@ -216,10 +214,8 @@ pub async fn finish_passkey_registration(
 pub(crate) async fn passkey_login_response(
     completion: wasi_auth::postgres::passkeys::PasskeyCompletion,
 ) -> AuthStackResult<LoginCompletionResponse> {
-    let session_id_str = completion.session_id.as_str().to_owned();
     let (access_token, refresh_token, expires_in_seconds) =
-        issue_tokens(&completion.session_id).await?;
-    bind_default_organization_for_session(&session_id_str).await;
+        finalize_new_session(&completion.session_id).await?;
     Ok(LoginCompletionResponse {
         authenticated: true,
         redirect_url: completion.redirect_path,
@@ -229,4 +225,3 @@ pub(crate) async fn passkey_login_response(
         expires_in_seconds,
     })
 }
-

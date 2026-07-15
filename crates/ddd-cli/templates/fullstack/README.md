@@ -89,7 +89,7 @@ Home is a **per-user board** (Spin KV), not a link farm:
 Opportunistic migrate runs on first board/vault access. Owners/admins can also call server fn `migrate_workspace_legacy_data` (`dry_run` supported). Ciphertext-only legacy secrets cannot be re-keyed automatically — re-enter them in the org vault.
 
 Template dual-sync: `scripts/sync_fullstack_template.sh` (or `… check` for drift).
-| Demos | **Load demo connectors** seeds REST + `@app` Postgres queries and bound widgets |
+| Demos | **Load demo connectors** seeds REST queries and bound widgets |
 | Notes | Personal sticky note (multi-instance) |
 
 **Resources & queries (Retool-style, server-proxied)**
@@ -110,7 +110,7 @@ Vault values are encrypted at rest with `AUTH_VAULT_KEY_BASE64` (same family as 
 | `AUTH_DASHBOARD_GRPC_ENABLED` | off | Reserved for native Spin HTTP/2 gRPC client |
 | `AUTH_VAULT_REVEAL_REQUIRE_STEP_UP` | production=on | Gate vault reveal behind AAL2 |
 
-**PostgreSQL:** host/port/db/user + password secret, or **App database** (`@app` → app `DATABASE_URL`). Only `SELECT` / `WITH … SELECT`. Rows capped (~500). Requires `postgres://*:*` (or tighter hosts) in `spin.toml` outbound.
+**PostgreSQL:** host/port/db/user + password secret. The application/auth database is reserved for internal storage and cannot be selected as a dashboard connector. Only `SELECT` / `WITH … SELECT`. Rows capped (~500). Requires `postgres://*:*` (or tighter hosts) in `spin.toml` outbound.
 
 **gRPC:** preferred path is a **JSON HTTP gateway** (`gateway_base_url`) — unary POST to `{gateway}/{service}/{method}`. Native wasi-grpc needs Spin HTTP/2 outbound; without a gateway the runtime returns a clear error (no fake success).
 

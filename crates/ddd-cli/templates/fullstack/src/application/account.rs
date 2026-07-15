@@ -3,9 +3,8 @@
 
 use std::sync::OnceLock;
 
-
-use wasi_auth::authentication::jwt::JwksDocument;
 use wasi_auth::authentication::Clock;
+use wasi_auth::authentication::jwt::JwksDocument;
 use wasi_auth::authorization::{
     AccessRequest, ActionName, Authorizer, MAX_BATCH_CHECKS, Resource, ResourceType,
 };
@@ -24,7 +23,6 @@ use wasi_auth::http::{
 use super::*;
 use crate::contracts::*;
 use crate::error::{AuthStackError, AuthStackResult};
-
 
 pub async fn change_password(
     request: PasswordChangeRequest,
@@ -76,7 +74,10 @@ pub async fn revoke_account_session(
 pub async fn mfa_status(auth: RequestAuth) -> AuthStackResult<MfaStatusResponse> {
     let session = authenticated_session_view(auth).await?;
     crate::auth_product::mfa_status(
-        session.session_id.as_deref().ok_or(AuthStackError::AuthRequired)?,
+        session
+            .session_id
+            .as_deref()
+            .ok_or(AuthStackError::AuthRequired)?,
     )
     .await
 }
@@ -84,7 +85,10 @@ pub async fn mfa_status(auth: RequestAuth) -> AuthStackResult<MfaStatusResponse>
 pub async fn start_totp_enrollment(auth: RequestAuth) -> AuthStackResult<MfaEnrollStartResponse> {
     let session = authenticated_session_view(auth).await?;
     crate::auth_product::start_totp_enrollment(
-        session.session_id.as_deref().ok_or(AuthStackError::AuthRequired)?,
+        session
+            .session_id
+            .as_deref()
+            .ok_or(AuthStackError::AuthRequired)?,
     )
     .await
 }

@@ -62,4 +62,3 @@ impl AuthorizationService for AuthorizationGrpcService {
         Ok(Response::new(response.into()))
     }
 }
-

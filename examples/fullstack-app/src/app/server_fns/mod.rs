@@ -1,11 +1,11 @@
 //! Leptos server functions (`/api/ui/*`) — thin adapters over application services.
 
-mod common;
-mod auth;
 mod account;
+mod admin;
+mod auth;
+mod common;
 mod dashboard;
 mod organizations;
-mod admin;
 
 pub use account::*;
 pub use admin::*;

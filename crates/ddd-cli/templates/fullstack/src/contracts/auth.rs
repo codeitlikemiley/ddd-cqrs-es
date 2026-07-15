@@ -47,7 +47,6 @@ pub struct SessionView {
     pub expires_at_unix_seconds: Option<u64>,
 }
 
-
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CsrfTokenResponse {
     pub token: String,
@@ -283,15 +282,25 @@ impl std::fmt::Debug for MfaEnrollConfirmResponse {
     }
 }
 
-
-
 redacted_debug!(OAuthStartResponse, visible [provider_id], secret [authorization_url, state]);
 redacted_debug!(OAuthCallbackRequest, visible [provider_id, redirect_url], secret [code, state]);
 redacted_debug!(LoginCompletionResponse, visible [authenticated, redirect_url, expires_in_seconds], secret [session_id, access_token, refresh_token]);
-redacted_debug!(PasswordResetStartRequest, visible [redirect_url], secret [email]);
+redacted_debug!(
+    PasswordResetStartRequest,
+    visible[redirect_url],
+    secret[email]
+);
 redacted_debug!(CapturedMailResponse, visible [message_kind, subject], secret [recipient, body_text, body_html, action_url]);
-redacted_debug!(EmailVerificationCompleteRequest, visible [redirect_url], secret [token]);
-redacted_debug!(EmailVerificationResendRequest, visible [redirect_url], secret [email]);
+redacted_debug!(
+    EmailVerificationCompleteRequest,
+    visible[redirect_url],
+    secret[token]
+);
+redacted_debug!(
+    EmailVerificationResendRequest,
+    visible[redirect_url],
+    secret[email]
+);
 redacted_debug!(PasswordResetCompleteRequest, visible [redirect_url], secret [token, password]);
 redacted_debug!(EmailPasswordLoginRequest, visible [redirect_url], secret [email, password]);
 redacted_debug!(EmailPasswordRegisterRequest, visible [redirect_url], secret [email, password]);
@@ -301,7 +310,6 @@ redacted_debug!(TokenRefreshResponse, visible [expires_in_seconds], secret [acce
 redacted_debug!(TokenRefreshRequest, visible [], secret [refresh_token]);
 redacted_debug!(TokenVerifyRequest, visible [], secret [access_token]);
 redacted_debug!(PasswordChangeRequest, visible [], secret [current_password, new_password]);
-
 
 #[cfg(test)]
 mod tests {

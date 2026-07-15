@@ -42,7 +42,6 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
     }
 }
 
-
 #[component]
 pub fn App() -> impl IntoView {
     provide_meta_context();
@@ -111,4 +110,3 @@ pub fn App() -> impl IntoView {
         </Router>
     }
 }
-

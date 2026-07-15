@@ -2,19 +2,18 @@
 #![allow(clippy::unused_unit)]
 #![allow(clippy::unit_arg)]
 
-
 use crate::app::helpers::{action_result_text, optional_text, server_error_text};
 use crate::app::{
-    browser_load, get_account_profile, get_public_profile, update_account_profile,
-    GetAccountProfile, GetPublicProfile, UpdateAccountProfile,
+    GetAccountProfile, GetPublicProfile, UpdateAccountProfile, browser_load, get_account_profile,
+    get_public_profile, update_account_profile,
 };
 use crate::contracts::{ProfileUpdateRequest, ProfileView, PublicProfileView};
-use crate::ui::{account_page_shell, public_page_shell, ErrorBanner, PrimaryButton};
+use crate::ui::{ErrorBanner, PrimaryButton, account_page_shell, public_page_shell};
 use leptos::prelude::*;
-use leptos_router::hooks::use_params_map;
-use server_fn::ServerFnError;
 #[cfg(feature = "hydrate")]
 use leptos::task::spawn_local;
+use leptos_router::hooks::use_params_map;
+use server_fn::ServerFnError;
 #[cfg(feature = "hydrate")]
 use wasm_bindgen::prelude::*;
 #[cfg(feature = "hydrate")]
@@ -516,11 +515,7 @@ pub fn profile_initials(display_name: &str, first: &str, last: &str, email: &str
         if parts.len() >= 2 {
             let a = parts[0].chars().next().unwrap_or('?');
             let b = parts[1].chars().next().unwrap_or('?');
-            return format!(
-                "{}{}",
-                a.to_ascii_uppercase(),
-                b.to_ascii_uppercase()
-            );
+            return format!("{}{}", a.to_ascii_uppercase(), b.to_ascii_uppercase());
         }
         return display
             .chars()
@@ -627,4 +622,3 @@ pub fn PublicProfileCard(handle: String) -> impl IntoView {
         </section>
     }
 }
-

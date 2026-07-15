@@ -13,14 +13,15 @@ use crate::app::helpers::{
 #[cfg(feature = "hydrate")]
 use crate::app::helpers::{passkey_js_error, passkey_js_string};
 use crate::app::{
-    browser_load, complete_email_verification, complete_oauth_callback, complete_password_reset,
-    development_mail_capture_enabled, get_auth_capabilities, get_current_session,
-    latest_development_mail, list_auth_providers, login_email_password, logout_current_session,
-    register_email_password, resend_email_verification, start_oauth_login, start_passkey_login,
-    start_password_reset, verify_passkey_login, AcceptOrganizationInvitation,
-    CompleteEmailVerification, CompleteOauthCallback, CompletePasswordReset, LatestDevelopmentMail,
-    LoginEmailPassword, LogoutCurrentSession, RegisterEmailPassword, ResendEmailVerification,
-    StartOauthLogin, StartPasskeyLogin, StartPasswordReset, VerifyPasskeyLogin,
+    AcceptOrganizationInvitation, CompleteEmailVerification, CompleteOauthCallback,
+    CompletePasswordReset, LatestDevelopmentMail, LoginEmailPassword, LogoutCurrentSession,
+    RegisterEmailPassword, ResendEmailVerification, StartOauthLogin, StartPasskeyLogin,
+    StartPasswordReset, VerifyPasskeyLogin, browser_load, complete_email_verification,
+    complete_oauth_callback, complete_password_reset, development_mail_capture_enabled,
+    get_auth_capabilities, get_current_session, latest_development_mail, list_auth_providers,
+    login_email_password, logout_current_session, register_email_password,
+    resend_email_verification, start_oauth_login, start_passkey_login, start_password_reset,
+    verify_passkey_login,
 };
 use crate::contracts::{
     AuthCapabilities, AuthProviderSummary, CapturedMailResponse, LoginCompletionResponse,
@@ -28,10 +29,10 @@ use crate::contracts::{
 };
 use crate::ui::error_page_shell;
 use leptos::prelude::*;
-use leptos_meta::*;
-use leptos_router::hooks::use_params_map;
 #[cfg(feature = "hydrate")]
 use leptos::task::spawn_local;
+use leptos_meta::*;
+use leptos_router::hooks::use_params_map;
 #[cfg(feature = "hydrate")]
 use wasm_bindgen::prelude::*;
 #[cfg(feature = "hydrate")]
@@ -42,7 +43,6 @@ use crate::app::{
     create_passkey_credential, get_passkey_credential, is_conditional_mediation_available,
     passkey_supported,
 };
-
 
 #[island]
 pub fn EmailPasswordAuthForm(register_default: bool) -> impl IntoView {
@@ -858,6 +858,14 @@ pub fn InvitationAcceptForm() -> impl IntoView {
     let value = action.value();
     let (client_error, set_client_error) = signal(None::<String>);
     let (accepted_org, set_accepted_org) = signal(None::<OrganizationSummary>);
+    // Keep the first hydrated render identical to the server render. Reading
+    // window.location directly from the view made the token-present branch
+    // differ between SSR (no window) and the browser during hydration.
+    let (invitation_token, set_invitation_token) = signal(None::<String>);
+
+    Effect::new(move |_| {
+        set_invitation_token.set(one_time_token_from_url());
+    });
 
     Effect::new(move |_| {
         if let Some(Ok(organization)) = value.get() {
@@ -866,7 +874,7 @@ pub fn InvitationAcceptForm() -> impl IntoView {
     });
 
     let submit = move || {
-        let Some(token) = one_time_token_from_url() else {
+        let Some(token) = invitation_token.get_untracked() else {
             set_client_error.set(Some(
                 "Invitation token is missing. Open the one-time link from your email.".to_string(),
             ));
@@ -901,7 +909,7 @@ pub fn InvitationAcceptForm() -> impl IntoView {
                         >
                             {move || selected_action_error(value.get()).unwrap_or_default()}
                         </p>
-                        <Show when=move || one_time_token_from_url().is_none()>
+                        <Show when=move || invitation_token.get().is_none()>
                             <p class="auth-error">
                                 "Open this page from the invitation email so the one-time token is present."
                             </p>
@@ -909,7 +917,7 @@ pub fn InvitationAcceptForm() -> impl IntoView {
                         <button
                             type="button"
                             class="auth-submit"
-                            disabled=move || pending.get() || one_time_token_from_url().is_none()
+                            disabled=move || pending.get() || invitation_token.get().is_none()
                             aria-busy=move || if pending.get() { "true" } else { "false" }
                             on:click=move |_| submit()
                         >

@@ -6,7 +6,6 @@ use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
 use wasm_bindgen::JsCast;
 
-
 pub(crate) fn event_target_value_board(event: &leptos::ev::Event) -> String {
     #[cfg(feature = "hydrate")]
     {

@@ -6,11 +6,11 @@
 
 use crate::app::helpers::{action_result_text, server_error_text};
 use crate::app::{
-    browser_load, get_admin_health, get_authorization_capabilities, list_admin_users, list_policy_versions,
-    list_signing_keys, publish_policy_version, rotate_signing_key, save_auth_provider,
-    save_redirect_allowlist, GetAdminHealth, GetAuthorizationCapabilities, ListAdminUsers,
-    ListPolicyVersions, ListSigningKeys, PublishPolicyVersion, RotateSigningKey, SaveAuthProvider,
-    SaveRedirectAllowlist,
+    GetAdminHealth, GetAuthorizationCapabilities, ListAdminUsers, ListPolicyVersions,
+    ListSigningKeys, PublishPolicyVersion, RotateSigningKey, SaveAuthProvider,
+    SaveRedirectAllowlist, browser_load, get_admin_health, get_authorization_capabilities,
+    list_admin_users, list_policy_versions, list_signing_keys, publish_policy_version,
+    rotate_signing_key, save_auth_provider, save_redirect_allowlist,
 };
 use crate::contracts::{
     AdminUserListResponse, AuthorizationCapabilitiesResponse, HealthStatusResponse,
@@ -29,7 +29,6 @@ pub fn AuthProviderAdminPage() -> impl IntoView {
     )
 }
 
-
 #[component]
 pub fn SigningKeyAdminPage() -> impl IntoView {
     page_shell(
@@ -39,7 +38,6 @@ pub fn SigningKeyAdminPage() -> impl IntoView {
     )
 }
 
-
 #[component]
 pub fn RedirectAllowlistPage() -> impl IntoView {
     page_shell(
@@ -48,7 +46,6 @@ pub fn RedirectAllowlistPage() -> impl IntoView {
         view! { <RedirectAllowlistForm /> },
     )
 }
-
 
 #[island(lazy)]
 pub fn AuthorizationPolicyPage() -> impl IntoView {
@@ -79,7 +76,6 @@ pub fn AuthorizationPolicyPage() -> impl IntoView {
     )
 }
 
-
 #[island(lazy)]
 pub fn AdminUsersPage() -> impl IntoView {
     let users = browser_load(list_admin_users);
@@ -97,7 +93,6 @@ pub fn AdminUsersPage() -> impl IntoView {
         </div></section> },
     )
 }
-
 
 #[island(lazy)]
 pub fn AdminHealthPage() -> impl IntoView {
@@ -119,7 +114,6 @@ pub fn AdminHealthPage() -> impl IntoView {
         </div></section> },
     )
 }
-
 
 #[island(lazy)]
 pub fn AdminPoliciesPage() -> impl IntoView {
@@ -154,7 +148,6 @@ pub fn AdminPoliciesPage() -> impl IntoView {
         },
     )
 }
-
 
 #[island(lazy)]
 pub fn ProviderConfigForm() -> impl IntoView {
@@ -199,7 +192,6 @@ pub fn ProviderConfigForm() -> impl IntoView {
         </section>
     }
 }
-
 
 #[island(lazy)]
 pub fn SigningKeyRotationForm() -> impl IntoView {
@@ -270,7 +262,6 @@ pub fn SigningKeyRotationForm() -> impl IntoView {
     }
 }
 
-
 #[island(lazy)]
 pub fn RedirectAllowlistForm() -> impl IntoView {
     let action = ServerAction::<SaveRedirectAllowlist>::new();
@@ -301,4 +292,3 @@ pub fn RedirectAllowlistForm() -> impl IntoView {
         </section>
     }
 }
-

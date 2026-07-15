@@ -84,15 +84,8 @@ pub async fn execute_dashboard_query(
             .await
         }
         (ResourceConfig::Postgres { .. }, QueryConfig::Postgres { sql }) => {
-            execute_postgres_dashboard_query(
-                org_id,
-                &resource,
-                &query,
-                sql,
-                started,
-                vault_org_id,
-            )
-            .await
+            execute_postgres_dashboard_query(org_id, &resource, &query, sql, started, vault_org_id)
+                .await
         }
         (ResourceConfig::Grpc { .. }, QueryConfig::Grpc { .. }) => {
             execute_grpc_dashboard_query(org_id, &resource, &query, allow_private, started).await
@@ -188,12 +181,6 @@ pub(crate) fn build_postgres_connection_url(
             "postgres host, database, and user are required",
         ));
     }
-    // Special host @app uses the app's configured DATABASE_URL / POSTGRES_URL.
-    if host.trim() == "@app" {
-        return Err(AuthStackError::validation(
-            "resolve @app via execute path, not build_postgres_connection_url",
-        ));
-    }
     let ssl = match ssl_mode {
         PostgresSslMode::Disable => "disable",
         PostgresSslMode::Prefer => "prefer",
@@ -224,9 +211,6 @@ pub(crate) async fn resolve_postgres_url(
     else {
         return Err(AuthStackError::validation("not a postgres resource"));
     };
-    if host.trim() == "@app" {
-        return database_url("postgres").await;
-    }
     let secrets = match vault_org_id.filter(|s| !s.trim().is_empty()) {
         Some(org) => load_secrets_resolved(org).await?,
         None => {
@@ -517,10 +501,7 @@ pub(crate) async fn execute_rest_query(
         if name.is_empty() {
             continue;
         }
-        resolved_params.push((
-            name.to_owned(),
-            resolve_header_value(&p.value, &secrets)?,
-        ));
+        resolved_params.push((name.to_owned(), resolve_header_value(&p.value, &secrets)?));
     }
 
     // OAuth2 client credentials: fetch token then inject as Bearer if no Authorization yet.
@@ -561,7 +542,13 @@ pub(crate) async fn execute_rest_query(
     if !resolved_params.is_empty() {
         let qs = resolved_params
             .iter()
-            .map(|(k, v)| format!("{}={}", form_urlencoded_encode(k), form_urlencoded_encode(v)))
+            .map(|(k, v)| {
+                format!(
+                    "{}={}",
+                    form_urlencoded_encode(k),
+                    form_urlencoded_encode(v)
+                )
+            })
             .collect::<Vec<_>>()
             .join("&");
         if url.contains('?') {
@@ -576,7 +563,7 @@ pub(crate) async fn execute_rest_query(
     #[cfg(all(feature = "postgres", runtime_spin))]
     {
         use http_body_util::BodyExt;
-        use spin_sdk::http::{send, FullBody};
+        use spin_sdk::http::{FullBody, send};
 
         let method_http = match method {
             HttpMethod::Get => http::Method::GET,
@@ -643,14 +630,12 @@ pub(crate) async fn execute_rest_query(
                 },
             });
         }
-        let parsed: Value = serde_json::from_slice(slice).unwrap_or_else(|_| {
-            Value::String(String::from_utf8_lossy(slice).into_owned())
-        });
+        let parsed: Value = serde_json::from_slice(slice)
+            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(slice).into_owned()));
         let raw_json = serde_json::to_string(&parsed).unwrap_or_else(|_| "null".to_owned());
         let transformed = apply_transform_pipeline(parsed, &query.transform);
         let row_count = transformed.as_array().map(|a| a.len() as u32);
-        let data_json =
-            serde_json::to_string(&transformed).unwrap_or_else(|_| "null".to_owned());
+        let data_json = serde_json::to_string(&transformed).unwrap_or_else(|_| "null".to_owned());
         let ok = status.is_success();
         Ok(QueryResult {
             query_id: query.id.clone(),
@@ -756,14 +741,20 @@ pub(crate) async fn fetch_oauth2_client_credentials(
     }
     let body = form
         .iter()
-        .map(|(k, v)| format!("{}={}", form_urlencoded_encode(k), form_urlencoded_encode(v)))
+        .map(|(k, v)| {
+            format!(
+                "{}={}",
+                form_urlencoded_encode(k),
+                form_urlencoded_encode(v)
+            )
+        })
         .collect::<Vec<_>>()
         .join("&");
 
     #[cfg(all(feature = "postgres", runtime_spin))]
     {
         use http_body_util::BodyExt;
-        use spin_sdk::http::{send, FullBody};
+        use spin_sdk::http::{FullBody, send};
         let request = http::Request::builder()
             .method(http::Method::POST)
             .uri(token_url)
@@ -846,7 +837,9 @@ pub(crate) async fn execute_legacy_http_source(
                 .iter()
                 .find(|s| s.id == *secret_id)
                 .map(|s| s.value.clone())
-                .ok_or_else(|| AuthStackError::validation(format!("missing secret for header {name}")))?
+                .ok_or_else(|| {
+                    AuthStackError::validation(format!("missing secret for header {name}"))
+                })?
         } else {
             header.value.clone()
         };
@@ -911,9 +904,8 @@ pub(crate) async fn execute_legacy_http_source(
                 display_mode: crate::contracts::HttpDisplayMode::List,
             });
         }
-        let parsed: Value = serde_json::from_slice(&bytes).unwrap_or_else(|_| {
-            Value::String(String::from_utf8_lossy(&bytes).into_owned())
-        });
+        let parsed: Value = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()));
         let extracted = json_path_get(&parsed, &source.json_path).unwrap_or(parsed);
         let data_json = serde_json::to_string(&extracted).unwrap_or_else(|_| "null".to_owned());
         Ok(crate::contracts::HttpQueryResult {
@@ -936,4 +928,3 @@ pub(crate) async fn execute_legacy_http_source(
         ))
     }
 }
-

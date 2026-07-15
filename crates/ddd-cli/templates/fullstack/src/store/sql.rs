@@ -180,9 +180,24 @@ pub async fn initialize_schema_async() -> AuthStackResult<()> {
                 .join(", ")
         )));
     }
+    let app_migration = execute_postgres(
+        "SELECT version FROM fullstack_app.schema_migrations WHERE version = ?1",
+        vec![Value::String("0001_app_storage".to_owned())],
+    )
+    .await
+    .map_err(|_| {
+        AuthStackError::configuration(
+            "fullstack app schema is unavailable; run `make db-migrate` before startup",
+        )
+    })?;
+    if app_migration.is_empty() {
+        return Err(AuthStackError::configuration(
+            "fullstack app schema has pending migration: 0001_app_storage",
+        ));
+    }
 
     SCHEMA_INITIALIZED.store(true, Ordering::Release);
-    tracing::info!("wasi-auth PostgreSQL schema verified");
+    tracing::info!("wasi-auth and fullstack app PostgreSQL schemas verified");
 
     Ok(())
 }
@@ -513,4 +528,3 @@ pub(crate) fn postgres_placeholders(sql: &str) -> String {
 }
 
 // ── App-owned profile store (Spin key-value; not wasi-auth schema) ──────────
-

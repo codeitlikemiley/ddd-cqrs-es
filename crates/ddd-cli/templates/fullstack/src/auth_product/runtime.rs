@@ -87,7 +87,8 @@ use crate::{
 
 use super::*;
 
-pub(crate) type RuntimeTokenService = TokenService<SpinPostgresTransport, RuntimeClock, RuntimeRandom>;
+pub(crate) type RuntimeTokenService =
+    TokenService<SpinPostgresTransport, RuntimeClock, RuntimeRandom>;
 pub(crate) type RuntimeTokenVerifier = AccessTokenVerifier<SpinPostgresTransport, RuntimeClock>;
 
 pub(crate) const DEVELOPMENT_OUTBOX_KEY: &[u8] = b"fullstack-development-outbox-key";
@@ -145,4 +146,3 @@ impl RandomSource for RuntimeRandom {
         }
     }
 }
-

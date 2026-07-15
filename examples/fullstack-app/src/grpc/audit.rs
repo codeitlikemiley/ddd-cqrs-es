@@ -132,4 +132,3 @@ pub(crate) struct AuditWatchState {
     started_at: u64,
     terminated: bool,
 }
-

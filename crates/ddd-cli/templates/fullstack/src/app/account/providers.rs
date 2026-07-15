@@ -2,9 +2,8 @@
 #![allow(clippy::unused_unit)]
 #![allow(clippy::unit_arg)]
 
-
 use crate::app::helpers::server_error_text;
-use crate::app::{browser_load, list_auth_providers, ListAuthProviders};
+use crate::app::{ListAuthProviders, browser_load, list_auth_providers};
 use crate::contracts::AuthProviderSummary;
 use crate::ui::account_page_shell;
 use leptos::prelude::*;
@@ -135,4 +134,3 @@ pub fn provider_logo_svg(provider_id: &str) -> String {
         _ => r#"<svg viewBox="0 0 24 24" width="28" height="28" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="9"/></svg>"#.to_owned(),
     }
 }
-

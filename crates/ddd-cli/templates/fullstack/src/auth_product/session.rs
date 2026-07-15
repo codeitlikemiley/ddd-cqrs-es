@@ -240,4 +240,3 @@ pub async fn get_session(session_id: Option<&str>) -> AuthStackResult<SessionVie
         expires_at_unix_seconds: Some(context.auth().expires_at_unix_seconds()),
     })
 }
-

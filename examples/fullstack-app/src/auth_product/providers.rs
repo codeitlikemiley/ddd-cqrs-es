@@ -287,4 +287,3 @@ pub(crate) fn policy_version_summary(record: PolicyBundleRecord) -> PolicyVersio
         created_at_ms: record.created_at_ms,
     }
 }
-

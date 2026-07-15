@@ -512,9 +512,15 @@ if [[ "$CHECK_PASSKEYS" == "1" ]]; then
 fi
 
 assert_error 503 configuration GET "$BASE_URL/api/auth/oauth/google/start"
-assert_error 503 configuration POST "$BASE_URL/api/auth/passkeys/login/options" \
-  -H 'content-type: application/json' \
-  --data '{"email":"nobody@example.test","redirect_url":"/dashboard"}'
+if jq -e '.passkeys_enabled == true' /tmp/fullstack-app-capabilities.json >/dev/null; then
+  assert_error 401 invalid_credentials POST "$BASE_URL/api/auth/passkeys/login/options" \
+    -H 'content-type: application/json' \
+    --data '{"email":"nobody@example.test","redirect_url":"/dashboard"}'
+else
+  assert_error 503 configuration POST "$BASE_URL/api/auth/passkeys/login/options" \
+    -H 'content-type: application/json' \
+    --data '{"email":"nobody@example.test","redirect_url":"/dashboard"}'
+fi
 
 assert_redirect "$BASE_URL/dashboard" "/auth/required?next=/dashboard"
 assert_redirect "$BASE_URL/account/profile" "/auth/required?next=/account/profile"

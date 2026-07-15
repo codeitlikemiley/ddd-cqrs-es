@@ -3,9 +3,8 @@
 
 use std::sync::OnceLock;
 
-
-use wasi_auth::authentication::jwt::JwksDocument;
 use wasi_auth::authentication::Clock;
+use wasi_auth::authentication::jwt::JwksDocument;
 use wasi_auth::authorization::{
     AccessRequest, ActionName, Authorizer, MAX_BATCH_CHECKS, Resource, ResourceType,
 };
@@ -25,13 +24,12 @@ use super::*;
 use crate::contracts::*;
 use crate::error::{AuthStackError, AuthStackResult};
 
-
 pub async fn get_dashboard_snapshot(auth: RequestAuth) -> AuthStackResult<DashboardSnapshot> {
-    let (context, _) = verified_context_and_permissions(auth.clone(), false).await?;
-    let user_id = context.principal().user_id().as_str().to_owned();
+    let authorization =
+        require_workspace_permission(auth, "dashboard.view", AssuranceRequirement::Aal1).await?;
+    let context = authorization.context;
     let session_id = context.session_id().as_str().to_owned();
-    // Always restore a default workspace (first membership) when none is selected.
-    let session = crate::auth_product::ensure_default_organization(&session_id, &user_id).await?;
+    let session = crate::auth_product::get_session(Some(&session_id)).await?;
     let email = session.primary_email.clone();
     let greeting_name = email
         .as_deref()
@@ -52,33 +50,34 @@ pub async fn get_dashboard_snapshot(auth: RequestAuth) -> AuthStackResult<Dashbo
     .map(|response| response.sessions)
     .unwrap_or_default();
 
-    let organizations = crate::auth_product::list_organizations(context.principal().user_id().as_str())
-        .await
-        .map(|response| response.organizations)
-        .unwrap_or_default();
+    let organizations =
+        crate::auth_product::list_organizations(context.principal().user_id().as_str())
+            .await
+            .map(|response| response.organizations)
+            .unwrap_or_default();
 
     // Prefer human workspace name (+ slug) over raw UUID for UI labels.
-    let tenant_label = session
-        .tenant_id
-        .as_ref()
-        .and_then(|tid| {
-            organizations
-                .iter()
-                .find(|o| o.organization_id == *tid)
-                .map(|o| {
-                    if o.slug.is_empty() {
-                        o.name.clone()
-                    } else {
-                        format!("{} · /org/{}", o.name, o.slug)
-                    }
-                })
-                .or_else(|| Some(tid.clone()))
-        });
+    let tenant_label = session.tenant_id.as_ref().and_then(|tid| {
+        organizations
+            .iter()
+            .find(|o| o.organization_id == *tid)
+            .map(|o| {
+                if o.slug.is_empty() {
+                    o.name.clone()
+                } else {
+                    format!("{} · /org/{}", o.name, o.slug)
+                }
+            })
+            .or_else(|| Some(tid.clone()))
+    });
 
     let mfa = crate::auth_product::mfa_status(context.session_id().as_str())
         .await
         .ok();
-    let totp_enrolled = mfa.as_ref().map(|status| status.totp_enrolled).unwrap_or(false);
+    let totp_enrolled = mfa
+        .as_ref()
+        .map(|status| status.totp_enrolled)
+        .unwrap_or(false);
     let recovery_codes_remaining = mfa
         .as_ref()
         .map(|status| status.recovery_codes_remaining)
@@ -98,26 +97,41 @@ pub async fn get_dashboard_snapshot(auth: RequestAuth) -> AuthStackResult<Dashbo
         Vec::new()
     };
 
-    let notifications = crate::store::load_dashboard_notifications(&user_id).await?;
-    let sources = crate::store::load_data_sources(&user_id).await?;
-    let vault_org_id = session
-        .tenant_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(ToOwned::to_owned);
-    if let Some(org) = vault_org_id.as_deref() {
-        let _ = crate::store::migrate_legacy_user_board_to_org(&user_id, org).await;
-        let _ = crate::store::migrate_legacy_user_secrets_to_org(&user_id, org).await;
-    }
+    let notifications =
+        crate::store::load_dashboard_notifications(&authorization.organization_id).await?;
+    let sources = Vec::new();
+    let vault_org_id = Some(authorization.organization_id);
+    let organization = crate::auth_product::organization_for_session(
+        context.session_id().as_str(),
+        vault_org_id.as_deref().unwrap_or_default(),
+    )
+    .await?;
+    let can_view_resources = organization
+        .permissions
+        .iter()
+        .any(|permission| permission == "resource.view");
+    let can_view_queries = organization
+        .permissions
+        .iter()
+        .any(|permission| permission == "query.view");
+    let can_execute_queries = organization
+        .permissions
+        .iter()
+        .any(|permission| permission == "query.execute");
+    let can_view_vault = organization
+        .permissions
+        .iter()
+        .any(|permission| permission == "vault.view");
     // Workspace-scoped board: layout/resources/queries/secrets require selected tenant.
     let layout = match vault_org_id.as_deref() {
         Some(org) => crate::store::load_dashboard_layout(org).await?,
         None => crate::store::default_dashboard_layout_public(),
     };
     let secrets = match vault_org_id.as_deref() {
-        Some(org) => crate::store::list_secret_summaries(org).await.unwrap_or_default(),
-        None => Vec::new(),
+        Some(org) if can_view_vault => crate::store::list_secret_summaries(org)
+            .await
+            .unwrap_or_default(),
+        _ => Vec::new(),
     };
     let http_enabled = dashboard_http_enabled().await;
     let allow_private = dashboard_http_allow_private().await;
@@ -170,12 +184,14 @@ pub async fn get_dashboard_snapshot(auth: RequestAuth) -> AuthStackResult<Dashbo
         .collect();
 
     let resources = match vault_org_id.as_deref() {
-        Some(org) => crate::store::load_resources(org).await.unwrap_or_default(),
-        None => Vec::new(),
+        Some(org) if can_view_resources => {
+            crate::store::load_resources(org).await.unwrap_or_default()
+        }
+        _ => Vec::new(),
     };
     let queries = match vault_org_id.as_deref() {
-        Some(org) => crate::store::load_queries(org).await.unwrap_or_default(),
-        None => Vec::new(),
+        Some(org) if can_view_queries => crate::store::load_queries(org).await.unwrap_or_default(),
+        _ => Vec::new(),
     };
     let resource_summaries: Vec<crate::contracts::ResourceSummary> = resources
         .iter()
@@ -215,6 +231,14 @@ pub async fn get_dashboard_snapshot(auth: RequestAuth) -> AuthStackResult<Dashbo
             let Some(org) = vault_org_id.as_deref() else {
                 continue;
             };
+            let Some(query) = queries.iter().find(|query| query.id == source_id) else {
+                continue;
+            };
+            if !can_execute_queries
+                || query.config.execution_class() != crate::contracts::QueryExecutionClass::Read
+            {
+                continue;
+            }
             match crate::store::execute_dashboard_query(org, &source_id, allow_private).await {
                 Ok(result) => {
                     http_results.push(HttpQueryResult {
@@ -313,31 +337,22 @@ pub(crate) async fn dashboard_http_allow_private() -> bool {
     )
 }
 
-/// Require a selected workspace; migrate legacy user board once; return `(user_id, org_id)`.
-pub(crate) async fn require_workspace_board(auth: RequestAuth) -> AuthStackResult<(String, String)> {
-    let (context, _) = verified_context_and_permissions(auth, false).await?;
-    let user_id = context.principal().user_id().as_str().to_owned();
-    let session_id = context.session_id().as_str().to_owned();
-    let session = crate::auth_product::ensure_default_organization(&session_id, &user_id).await?;
-    let org_id = session
-        .tenant_id
-        .filter(|s| !s.trim().is_empty())
-        .ok_or_else(|| {
-            AuthStackError::validation(
-                "create a workspace first (sidebar → Create workspace)",
-            )
-        })?;
-    enforce_organization_scope(&context, &org_id).await?;
-    let _ = crate::store::migrate_legacy_user_board_to_org(&user_id, &org_id).await;
-    let _ = crate::store::migrate_legacy_user_secrets_to_org(&user_id, &org_id).await;
-    Ok((user_id, org_id))
+/// Require one live workspace permission and return `(user_id, org_id)`.
+pub(crate) async fn require_workspace_board(
+    auth: RequestAuth,
+    permission: &str,
+    assurance: AssuranceRequirement,
+) -> AuthStackResult<(String, String)> {
+    let authorization = require_workspace_permission(auth, permission, assurance).await?;
+    Ok((authorization.user_id, authorization.organization_id))
 }
 
 pub async fn save_dashboard_layout(
     request: DashboardLayoutUpdate,
     auth: RequestAuth,
 ) -> AuthStackResult<DashboardLayout> {
-    let (_user_id, org_id) = require_workspace_board(auth).await?;
+    let (_user_id, org_id) =
+        require_workspace_board(auth, "dashboard.manage", AssuranceRequirement::Aal1).await?;
     let mut layout = request.layout;
     layout.migrate_if_needed();
     crate::store::save_dashboard_layout(&org_id, &layout).await?;
@@ -351,9 +366,13 @@ pub async fn dismiss_dashboard_notification(
     if notification_id.trim().is_empty() {
         return Err(AuthStackError::validation("notification_id is required"));
     }
-    let (context, _) = verified_context_and_permissions(auth, false).await?;
-    let user_id = context.principal().user_id().as_str().to_owned();
-    crate::store::dismiss_dashboard_notification(&user_id, notification_id.trim()).await
+    let authorization =
+        require_workspace_permission(auth, "dashboard.view", AssuranceRequirement::Aal1).await?;
+    crate::store::dismiss_dashboard_notification(
+        &authorization.organization_id,
+        notification_id.trim(),
+    )
+    .await
 }
 
 pub async fn update_dashboard_note(
@@ -366,7 +385,8 @@ pub async fn update_dashboard_note(
     if request.text.chars().count() > 2_000 {
         return Err(AuthStackError::validation("note is too long"));
     }
-    let (_user_id, org_id) = require_workspace_board(auth).await?;
+    let (_user_id, org_id) =
+        require_workspace_board(auth, "dashboard.manage", AssuranceRequirement::Aal1).await?;
     let mut layout = crate::store::load_dashboard_layout(&org_id).await?;
     let Some(node) = layout.find_widget_mut(request.widget_id.trim()) else {
         return Err(AuthStackError::not_found("widget not found"));
@@ -386,13 +406,8 @@ pub async fn update_dashboard_note(
 }
 
 pub async fn list_dashboard_sources(auth: RequestAuth) -> AuthStackResult<Vec<DataSourceSummary>> {
-    let (context, _) = verified_context_and_permissions(auth, false).await?;
-    let user_id = context.principal().user_id().as_str().to_owned();
-    Ok(crate::store::load_data_sources(&user_id)
-        .await?
-        .iter()
-        .map(crate::store::data_source_to_summary)
-        .collect())
+    require_workspace_permission(auth, "resource.view", AssuranceRequirement::Aal1).await?;
+    Ok(Vec::new())
 }
 
 pub async fn upsert_dashboard_source(
@@ -404,19 +419,22 @@ pub async fn upsert_dashboard_source(
             "HTTP dashboard sources are disabled",
         ));
     }
-    let (context, _) = verified_context_and_permissions(auth, false).await?;
-    let user_id = context.principal().user_id().as_str().to_owned();
-    crate::store::upsert_http_source(&user_id, request, dashboard_http_allow_private().await).await
+    let _ = request;
+    require_workspace_permission(auth, "resource.manage", AssuranceRequirement::Aal2).await?;
+    Err(AuthStackError::not_found(
+        "legacy data-source API was removed; use workspace resources",
+    ))
 }
 
 pub async fn delete_dashboard_source(
     source_id: String,
     auth: RequestAuth,
 ) -> AuthStackResult<AcceptedResponse> {
-    let (context, _) = verified_context_and_permissions(auth, false).await?;
-    let user_id = context.principal().user_id().as_str().to_owned();
-    crate::store::delete_data_source(&user_id, source_id.trim()).await?;
-    Ok(AcceptedResponse { accepted: true })
+    let _ = source_id;
+    require_workspace_permission(auth, "resource.manage", AssuranceRequirement::Aal2).await?;
+    Err(AuthStackError::not_found(
+        "legacy data-source API was removed; use workspace resources",
+    ))
 }
 
 pub async fn test_dashboard_http_source(
@@ -428,13 +446,7 @@ pub async fn test_dashboard_http_source(
             "HTTP dashboard sources are disabled",
         ));
     }
-    let (_user_id, org_id) = require_workspace_board(auth).await?;
-    let result = crate::store::execute_dashboard_query(
-        &org_id,
-        source_id.trim(),
-        dashboard_http_allow_private().await,
-    )
-    .await?;
+    let result = run_dashboard_query(source_id, auth).await?;
     Ok(HttpQueryResult {
         source_id: result.query_id,
         ok: result.ok,
@@ -462,20 +474,17 @@ pub async fn upsert_dashboard_resource(
             "gRPC dashboard resources are disabled (set AUTH_DASHBOARD_GRPC_ENABLED=true)",
         ));
     }
-    let (_user_id, org_id) = require_workspace_board(auth).await?;
-    crate::store::upsert_resource(
-        &org_id,
-        request,
-        dashboard_http_allow_private().await,
-    )
-    .await
+    let (_user_id, org_id) =
+        require_workspace_board(auth, "resource.manage", AssuranceRequirement::Aal2).await?;
+    crate::store::upsert_resource(&org_id, request, dashboard_http_allow_private().await).await
 }
 
 pub async fn upsert_dashboard_query(
     request: crate::contracts::QueryUpsert,
     auth: RequestAuth,
 ) -> AuthStackResult<crate::contracts::QuerySummary> {
-    let (_user_id, org_id) = require_workspace_board(auth).await?;
+    let (_user_id, org_id) =
+        require_workspace_board(auth, "query.manage", AssuranceRequirement::Aal2).await?;
     crate::store::upsert_query(&org_id, request).await
 }
 
@@ -483,7 +492,8 @@ pub async fn delete_dashboard_resource(
     resource_id: String,
     auth: RequestAuth,
 ) -> AuthStackResult<AcceptedResponse> {
-    let (_user_id, org_id) = require_workspace_board(auth).await?;
+    let (_user_id, org_id) =
+        require_workspace_board(auth, "resource.manage", AssuranceRequirement::Aal2).await?;
     crate::store::delete_resource(&org_id, resource_id.trim()).await?;
     Ok(AcceptedResponse { accepted: true })
 }
@@ -492,7 +502,8 @@ pub async fn delete_dashboard_query(
     query_id: String,
     auth: RequestAuth,
 ) -> AuthStackResult<AcceptedResponse> {
-    let (_user_id, org_id) = require_workspace_board(auth).await?;
+    let (_user_id, org_id) =
+        require_workspace_board(auth, "query.manage", AssuranceRequirement::Aal2).await?;
     crate::store::delete_query(&org_id, query_id.trim()).await?;
     Ok(AcceptedResponse { accepted: true })
 }
@@ -501,7 +512,23 @@ pub async fn run_dashboard_query(
     query_id: String,
     auth: RequestAuth,
 ) -> AuthStackResult<crate::contracts::QueryResult> {
-    let (_user_id, org_id) = require_workspace_board(auth).await?;
+    let authorization =
+        require_workspace_permission(auth, "dashboard.view", AssuranceRequirement::Aal1).await?;
+    let org_id = authorization.organization_id.clone();
+    let queries = crate::store::load_queries(&org_id).await?;
+    let query = queries
+        .iter()
+        .find(|query| query.id == query_id.trim())
+        .ok_or_else(|| AuthStackError::not_found("query not found"))?;
+    let (permission, assurance) = match query.config.execution_class() {
+        crate::contracts::QueryExecutionClass::Read => {
+            ("query.execute", AssuranceRequirement::Aal1)
+        }
+        crate::contracts::QueryExecutionClass::Mutation => {
+            ("query.execute_mutation", AssuranceRequirement::Aal2)
+        }
+    };
+    require_organization_permission(&authorization.context, &org_id, permission, assurance).await?;
     crate::store::execute_dashboard_query(
         &org_id,
         query_id.trim(),

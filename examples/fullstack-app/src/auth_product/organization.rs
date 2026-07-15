@@ -110,9 +110,8 @@ pub async fn create_organization(
     let session_id =
         SessionId::new(session_id.to_owned()).map_err(|_| AuthStackError::AuthRequired)?;
     let slug = slug.trim().to_ascii_lowercase();
-    let name_key = URL_SAFE_NO_PAD.encode(Sha256::digest(
-        format!("{}:{slug}", name.trim()).as_bytes(),
-    ));
+    let name_key =
+        URL_SAFE_NO_PAD.encode(Sha256::digest(format!("{}:{slug}", name.trim()).as_bytes()));
     let organization = OrganizationService::new(store().await?, RuntimeClock, RuntimeRandom)
         .create(CreateOrganizationRequest {
             idempotency_key: format!("create-organization:{}:{name_key}", session_id.as_str()),
@@ -149,7 +148,6 @@ pub async fn select_organization(
 /// If the session has no selected workspace, select the first membership
 /// (oldest by `created_at` — the product default until the user switches).
 ///
-/// Best-effort: failures leave the session unselected rather than failing login.
 pub async fn ensure_default_organization(
     session_id: &str,
     user_id: &str,
@@ -166,21 +164,18 @@ pub async fn ensure_default_organization(
     let Some(default_org) = organizations.into_iter().next() else {
         return Ok(session);
     };
-    match select_organization(session_id, &default_org.organization_id).await {
-        Ok(selected) => Ok(selected),
-        Err(_) => Ok(session),
-    }
+    select_organization(session_id, &default_org.organization_id).await
 }
 
-/// After issuing a new session cookie, bind the default workspace when possible.
-pub async fn bind_default_organization_for_session(session_id: &str) {
-    let Ok(view) = get_session(Some(session_id)).await else {
-        return;
-    };
-    let Some(user_id) = view.user_id.as_deref() else {
-        return;
-    };
-    let _ = ensure_default_organization(session_id, user_id).await;
+/// Binds the oldest active membership before issuing tokens for a new session.
+pub async fn bind_default_organization_for_session(session_id: &str) -> AuthStackResult<()> {
+    let view = get_session(Some(session_id)).await?;
+    let user_id = view
+        .user_id
+        .as_deref()
+        .ok_or(AuthStackError::AuthRequired)?;
+    ensure_default_organization(session_id, user_id).await?;
+    Ok(())
 }
 
 pub async fn organization_for_session(
@@ -243,6 +238,7 @@ pub async fn create_invitation(
         RuntimeRandom,
         outbox_key().await?,
     )
+    .with_transactional_mail_config(transactional_mail_config().await?)
     .create(
         &session_id,
         organization_id,
@@ -370,4 +366,3 @@ pub fn organization_permission_catalog() -> Vec<String> {
         .map(|permission| (*permission).to_owned())
         .collect()
 }
-

@@ -195,7 +195,10 @@ pub(crate) fn default_notifications() -> Vec<crate::contracts::DashboardNotifica
     ]
 }
 
-pub(crate) fn validate_board_nodes(nodes: &[crate::contracts::BoardNode], depth: u8) -> AuthStackResult<()> {
+pub(crate) fn validate_board_nodes(
+    nodes: &[crate::contracts::BoardNode],
+    depth: u8,
+) -> AuthStackResult<()> {
     use crate::contracts::BoardNode;
     if depth > 4 {
         return Err(AuthStackError::validation(
@@ -221,18 +224,20 @@ pub async fn load_dashboard_layout(
 ) -> AuthStackResult<crate::contracts::DashboardLayout> {
     #[cfg(all(feature = "postgres", runtime_spin))]
     {
-        let store = profile_kv().await?;
-        let key = dashboard_layout_key(org_id);
-        let Some(bytes) = store
-            .get(&key)
-            .await
-            .map_err(|error| AuthStackError::store(format!("dashboard layout read failed: {error}")))?
-        else {
+        let rows = execute_postgres(
+            "SELECT payload FROM fullstack_app.dashboard_layouts \
+             WHERE organization_id = ?1::text::uuid",
+            vec![Value::String(org_id.to_owned())],
+        )
+        .await?;
+        let Some(row) = rows.first() else {
             let layout = default_dashboard_layout();
             save_dashboard_layout(org_id, &layout).await?;
             return Ok(layout);
         };
-        match serde_json::from_slice::<crate::contracts::DashboardLayout>(&bytes) {
+        match serde_json::from_str::<crate::contracts::DashboardLayout>(&required_string(
+            row, "payload",
+        )?) {
             Ok(mut layout) => {
                 layout.migrate_if_needed();
                 if layout.nodes.is_empty() {
@@ -276,19 +281,27 @@ pub async fn save_dashboard_layout(
         )));
     }
     if layout.nodes.is_empty() {
-        return Err(AuthStackError::validation("dashboard must have at least one node"));
+        return Err(AuthStackError::validation(
+            "dashboard must have at least one node",
+        ));
     }
     validate_board_nodes(&layout.nodes, 0)?;
 
     #[cfg(all(feature = "postgres", runtime_spin))]
     {
-        let store = profile_kv().await?;
-        let bytes = serde_json::to_vec(&layout)
+        let payload = serde_json::to_value(&layout)
             .map_err(|error| AuthStackError::serialization(error.to_string()))?;
-        store
-            .set(dashboard_layout_key(org_id), bytes)
-            .await
-            .map_err(|error| AuthStackError::store(format!("dashboard layout write failed: {error}")))
+        execute_postgres(
+            "INSERT INTO fullstack_app.dashboard_layouts (organization_id, payload) \
+             VALUES (?1::text::uuid, ?2::text::jsonb) \
+             ON CONFLICT (organization_id) DO UPDATE SET \
+                 payload = EXCLUDED.payload, \
+                 revision = fullstack_app.dashboard_layouts.revision + 1, \
+                 updated_at = CURRENT_TIMESTAMP",
+            vec![Value::String(org_id.to_owned()), payload],
+        )
+        .await
+        .map(|_| ())
     }
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
@@ -322,10 +335,9 @@ pub async fn migrate_legacy_user_board_to_org(
                 .await
                 .map_err(|e| AuthStackError::store(format!("legacy layout read failed: {e}")))?
             {
-                store
-                    .set(&org_layout_key, bytes)
-                    .await
-                    .map_err(|e| AuthStackError::store(format!("layout migrate write failed: {e}")))?;
+                store.set(&org_layout_key, bytes).await.map_err(|e| {
+                    AuthStackError::store(format!("layout migrate write failed: {e}"))
+                })?;
                 changed = true;
             }
         }
@@ -343,12 +355,9 @@ pub async fn migrate_legacy_user_board_to_org(
                 .await
                 .map_err(|e| AuthStackError::store(format!("legacy resources read failed: {e}")))?
             {
-                store
-                    .set(&org_res_key, bytes)
-                    .await
-                    .map_err(|e| {
-                        AuthStackError::store(format!("resources migrate write failed: {e}"))
-                    })?;
+                store.set(&org_res_key, bytes).await.map_err(|e| {
+                    AuthStackError::store(format!("resources migrate write failed: {e}"))
+                })?;
                 changed = true;
             }
         }
@@ -366,10 +375,9 @@ pub async fn migrate_legacy_user_board_to_org(
                 .await
                 .map_err(|e| AuthStackError::store(format!("legacy queries read failed: {e}")))?
             {
-                store
-                    .set(&org_q_key, bytes)
-                    .await
-                    .map_err(|e| AuthStackError::store(format!("queries migrate write failed: {e}")))?;
+                store.set(&org_q_key, bytes).await.map_err(|e| {
+                    AuthStackError::store(format!("queries migrate write failed: {e}"))
+                })?;
                 changed = true;
             }
         }
@@ -382,4 +390,3 @@ pub async fn migrate_legacy_user_board_to_org(
         Ok(false)
     }
 }
-

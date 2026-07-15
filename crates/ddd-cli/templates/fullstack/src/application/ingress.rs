@@ -1,9 +1,8 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
 
-
-use wasi_auth::authentication::jwt::JwksDocument;
 use wasi_auth::authentication::Clock;
+use wasi_auth::authentication::jwt::JwksDocument;
 use wasi_auth::authorization::{
     AccessRequest, ActionName, Authorizer, MAX_BATCH_CHECKS, Resource, ResourceType,
 };
@@ -20,7 +19,7 @@ use wasi_auth::http::{
 };
 
 use crate::application::common::{
-    config_value, ApplicationClock, ApplicationCredentialAuthenticator,
+    ApplicationClock, ApplicationCredentialAuthenticator, config_value,
 };
 use crate::error::{AuthStackError, AuthStackResult};
 

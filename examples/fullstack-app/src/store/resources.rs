@@ -44,16 +44,18 @@ pub async fn load_resources(
 ) -> AuthStackResult<Vec<crate::contracts::DashboardResource>> {
     #[cfg(all(feature = "postgres", runtime_spin))]
     {
-        let store = profile_kv().await?;
-        let Some(bytes) = store
-            .get(dashboard_resources_key(org_id))
-            .await
-            .map_err(|e| AuthStackError::store(format!("resources read failed: {e}")))?
-        else {
-            // One-time migrate from legacy HTTP sources into this org board.
-            return migrate_legacy_sources_to_resources(org_id).await;
-        };
-        Ok(serde_json::from_slice(&bytes).unwrap_or_default())
+        let rows = execute_postgres(
+            "SELECT payload FROM fullstack_app.resources \
+             WHERE organization_id = ?1::text::uuid ORDER BY resource_id",
+            vec![Value::String(org_id.to_owned())],
+        )
+        .await?;
+        rows.iter()
+            .map(|row| {
+                serde_json::from_str(&required_string(row, "payload")?)
+                    .map_err(|error| AuthStackError::serialization(error.to_string()))
+            })
+            .collect()
     }
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
@@ -73,13 +75,28 @@ pub async fn save_resources(
     }
     #[cfg(all(feature = "postgres", runtime_spin))]
     {
-        let store = profile_kv().await?;
-        let bytes = serde_json::to_vec(resources)
-            .map_err(|e| AuthStackError::serialization(e.to_string()))?;
-        store
-            .set(dashboard_resources_key(org_id), bytes)
-            .await
-            .map_err(|e| AuthStackError::store(format!("resources write failed: {e}")))
+        let payload = serde_json::to_value(resources)
+            .map_err(|error| AuthStackError::serialization(error.to_string()))?;
+        execute_postgres(
+            "WITH incoming AS ( \
+                 SELECT item->>'id' AS resource_id, item AS payload \
+                 FROM jsonb_array_elements(?1::text::jsonb) AS item \
+             ), deleted AS ( \
+                 DELETE FROM fullstack_app.resources existing \
+                 WHERE existing.organization_id = ?2::text::uuid \
+                   AND NOT EXISTS (SELECT 1 FROM incoming WHERE incoming.resource_id = existing.resource_id) \
+             ) \
+             INSERT INTO fullstack_app.resources \
+                 (organization_id, resource_id, payload) \
+             SELECT ?2::text::uuid, resource_id, payload FROM incoming \
+             ON CONFLICT (organization_id, resource_id) DO UPDATE SET \
+                 payload = EXCLUDED.payload, \
+                 revision = fullstack_app.resources.revision + 1, \
+                 updated_at = CURRENT_TIMESTAMP",
+            vec![payload, Value::String(org_id.to_owned())],
+        )
+        .await
+        .map(|_| ())
     }
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
@@ -93,15 +110,18 @@ pub async fn save_resources(
 pub async fn load_queries(org_id: &str) -> AuthStackResult<Vec<crate::contracts::DashboardQuery>> {
     #[cfg(all(feature = "postgres", runtime_spin))]
     {
-        let store = profile_kv().await?;
-        let Some(bytes) = store
-            .get(dashboard_queries_key(org_id))
-            .await
-            .map_err(|e| AuthStackError::store(format!("queries read failed: {e}")))?
-        else {
-            return Ok(Vec::new());
-        };
-        Ok(serde_json::from_slice(&bytes).unwrap_or_default())
+        let rows = execute_postgres(
+            "SELECT payload FROM fullstack_app.queries \
+             WHERE organization_id = ?1::text::uuid ORDER BY query_id",
+            vec![Value::String(org_id.to_owned())],
+        )
+        .await?;
+        rows.iter()
+            .map(|row| {
+                serde_json::from_str(&required_string(row, "payload")?)
+                    .map_err(|error| AuthStackError::serialization(error.to_string()))
+            })
+            .collect()
     }
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
@@ -121,13 +141,29 @@ pub async fn save_queries(
     }
     #[cfg(all(feature = "postgres", runtime_spin))]
     {
-        let store = profile_kv().await?;
-        let bytes =
-            serde_json::to_vec(queries).map_err(|e| AuthStackError::serialization(e.to_string()))?;
-        store
-            .set(dashboard_queries_key(org_id), bytes)
-            .await
-            .map_err(|e| AuthStackError::store(format!("queries write failed: {e}")))
+        let payload = serde_json::to_value(queries)
+            .map_err(|error| AuthStackError::serialization(error.to_string()))?;
+        execute_postgres(
+            "WITH incoming AS ( \
+                 SELECT item->>'id' AS query_id, item->>'resource_id' AS resource_id, item AS payload \
+                 FROM jsonb_array_elements(?1::text::jsonb) AS item \
+             ), deleted AS ( \
+                 DELETE FROM fullstack_app.queries existing \
+                 WHERE existing.organization_id = ?2::text::uuid \
+                   AND NOT EXISTS (SELECT 1 FROM incoming WHERE incoming.query_id = existing.query_id) \
+             ) \
+             INSERT INTO fullstack_app.queries \
+                 (organization_id, query_id, resource_id, payload) \
+             SELECT ?2::text::uuid, query_id, resource_id, payload FROM incoming \
+             ON CONFLICT (organization_id, query_id) DO UPDATE SET \
+                 resource_id = EXCLUDED.resource_id, \
+                 payload = EXCLUDED.payload, \
+                 revision = fullstack_app.queries.revision + 1, \
+                 updated_at = CURRENT_TIMESTAMP",
+            vec![payload, Value::String(org_id.to_owned())],
+        )
+        .await
+        .map(|_| ())
     }
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
@@ -187,7 +223,10 @@ pub fn resource_to_summary(
         ResourceConfig::Builtin => "Built-in app data".to_owned(),
         ResourceConfig::Rest { base_url, .. } => base_url.clone(),
         ResourceConfig::Postgres {
-            host, port, database, ..
+            host,
+            port,
+            database,
+            ..
         } => format!("{host}:{port}/{database}"),
         ResourceConfig::Grpc {
             host,
@@ -203,12 +242,10 @@ pub fn resource_to_summary(
         }
     };
     let has_secrets = !matches!(resource.auth, ResourceAuth::None)
-        || resource.default_headers.iter().any(|h| {
-            matches!(
-                h.value,
-                crate::contracts::HeaderValue::Secret { .. }
-            )
-        })
+        || resource
+            .default_headers
+            .iter()
+            .any(|h| matches!(h.value, crate::contracts::HeaderValue::Secret { .. }))
         || matches!(
             &resource.config,
             ResourceConfig::Postgres {
@@ -382,12 +419,9 @@ pub(crate) fn base64_encode(input: &str) -> String {
 }
 
 /// Declarative transform pipeline (json_path → as_array → map_fields → limit → pick_scalar).
-pub fn apply_transform_pipeline(
-    value: Value,
-    steps: &[crate::contracts::TransformStep],
-) -> Value {
-    use crate::contracts::TransformStep;
+pub fn apply_transform_pipeline(value: Value, steps: &[crate::contracts::TransformStep]) -> Value {
     use crate::app::dashboard::bind::json_path_get;
+    use crate::contracts::TransformStep;
     let mut current = value;
     for step in steps {
         current = match step {
@@ -438,7 +472,9 @@ pub fn apply_transform_pipeline(
     current
 }
 
-pub fn data_source_to_summary(source: &crate::contracts::DataSource) -> crate::contracts::DataSourceSummary {
+pub fn data_source_to_summary(
+    source: &crate::contracts::DataSource,
+) -> crate::contracts::DataSourceSummary {
     crate::contracts::DataSourceSummary {
         id: source.id.clone(),
         name: source.name.clone(),
@@ -525,15 +561,20 @@ pub async fn upsert_resource(
             ..
         } => {
             if host.trim() == "@app" {
-                // App database — no extra host validation.
-            } else if host.trim().is_empty() || *port == 0 || database.trim().is_empty() || user.trim().is_empty()
+                return Err(AuthStackError::validation(
+                    "the app database is reserved for internal storage and cannot be used as a dashboard connector",
+                ));
+            } else if host.trim().is_empty()
+                || *port == 0
+                || database.trim().is_empty()
+                || user.trim().is_empty()
             {
                 return Err(AuthStackError::validation(
                     "postgres host, port, database, and user are required",
                 ));
             } else if password_secret_id.trim().is_empty() {
                 return Err(AuthStackError::validation(
-                    "postgres password secret is required (or use host @app for the app database)",
+                    "postgres password secret is required",
                 ));
             }
         }
@@ -668,4 +709,3 @@ pub async fn delete_data_source(user_id: &str, source_id: &str) -> AuthStackResu
     save_data_sources(user_id, &sources).await?;
     Ok(())
 }
-

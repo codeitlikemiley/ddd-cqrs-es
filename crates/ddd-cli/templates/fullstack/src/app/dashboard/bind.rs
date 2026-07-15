@@ -65,12 +65,16 @@ fn bind_root_owned(data: &Value, bind: &WidgetBind) -> Value {
 pub fn project_bound_metric(data_json: &str, bind: &WidgetBind) -> (String, String, String) {
     let parsed: Value = serde_json::from_str(data_json).unwrap_or(Value::Null);
     let root = bind_root_owned(&parsed, bind);
-    let value =
-        if let Some(path) = bind.value_path.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
-            json_path_get(&root, path).unwrap_or(root.clone())
-        } else {
-            root.clone()
-        };
+    let value = if let Some(path) = bind
+        .value_path
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        json_path_get(&root, path).unwrap_or(root.clone())
+    } else {
+        root.clone()
+    };
     let label = bind
         .label_path
         .as_ref()

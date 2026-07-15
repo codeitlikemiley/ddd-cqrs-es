@@ -129,4 +129,3 @@ mod tests {
         assert!(embedded_cedar_provider().is_ok());
     }
 }
-

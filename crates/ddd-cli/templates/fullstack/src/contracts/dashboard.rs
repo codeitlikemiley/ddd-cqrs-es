@@ -523,7 +523,6 @@ pub struct DataSourceUpsert {
     pub cache_ttl_seconds: u32,
 }
 
-
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HttpQueryResult {
     pub source_id: String,
@@ -602,4 +601,3 @@ pub struct DashboardNoteUpdate {
 pub struct HttpSourceTestRequest {
     pub source_id: String,
 }
-

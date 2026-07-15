@@ -1,5 +1,5 @@
-use leptos::prelude::*;
 use leptos::ev::MouseEvent;
+use leptos::prelude::*;
 
 /// Primary action button (existing `.primary-button` styles).
 #[component]
@@ -7,12 +7,9 @@ pub fn PrimaryButton(
     /// Extra classes appended after `primary-button` (e.g. modifiers).
     #[prop(optional, into)]
     class: Option<String>,
-    #[prop(optional, into)]
-    disabled: Signal<bool>,
-    #[prop(optional)]
-    button_type: Option<&'static str>,
-    #[prop(optional)]
-    on_click: Option<Callback<MouseEvent>>,
+    #[prop(optional, into)] disabled: Signal<bool>,
+    #[prop(optional)] button_type: Option<&'static str>,
+    #[prop(optional)] on_click: Option<Callback<MouseEvent>>,
     children: Children,
 ) -> impl IntoView {
     let class_name = move || match class.clone() {
@@ -39,14 +36,10 @@ pub fn PrimaryButton(
 /// Secondary action button (existing `.secondary-button` styles).
 #[component]
 pub fn SecondaryButton(
-    #[prop(optional, into)]
-    class: Option<String>,
-    #[prop(optional, into)]
-    disabled: Signal<bool>,
-    #[prop(optional)]
-    button_type: Option<&'static str>,
-    #[prop(optional)]
-    on_click: Option<Callback<MouseEvent>>,
+    #[prop(optional, into)] class: Option<String>,
+    #[prop(optional, into)] disabled: Signal<bool>,
+    #[prop(optional)] button_type: Option<&'static str>,
+    #[prop(optional)] on_click: Option<Callback<MouseEvent>>,
     children: Children,
 ) -> impl IntoView {
     let class_name = move || match class.clone() {
@@ -74,8 +67,7 @@ pub fn SecondaryButton(
 #[component]
 pub fn LinkButton(
     href: &'static str,
-    #[prop(optional, into)]
-    class: Option<String>,
+    #[prop(optional, into)] class: Option<String>,
     children: Children,
 ) -> impl IntoView {
     let class_name = match class {

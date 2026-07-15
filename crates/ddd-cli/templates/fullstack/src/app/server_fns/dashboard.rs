@@ -73,7 +73,16 @@ pub async fn upsert_dashboard_source(
     }
     #[cfg(not(feature = "ssr"))]
     {
-        let _ = (id, name, method, url, json_path, shape, cache_ttl_seconds, body_template);
+        let _ = (
+            id,
+            name,
+            method,
+            url,
+            json_path,
+            shape,
+            cache_ttl_seconds,
+            body_template,
+        );
         unreachable!()
     }
 }
@@ -168,13 +177,9 @@ pub async fn list_dashboard_secrets(
 ) -> Result<Vec<crate::contracts::SecretSummary>, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
-        crate::application::list_dashboard_secrets(
-            None,
-            Some(org_slug),
-            server_fn_request_auth(),
-        )
-        .await
-        .map_err(server_fn_error)
+        crate::application::list_dashboard_secrets(None, Some(org_slug), server_fn_request_auth())
+            .await
+            .map_err(server_fn_error)
     }
     #[cfg(not(feature = "ssr"))]
     {
@@ -184,8 +189,8 @@ pub async fn list_dashboard_secrets(
 }
 
 #[server(prefix = "/api/ui")]
-pub async fn resolve_workspace_vault_target(
-) -> Result<crate::contracts::OrganizationSummary, ServerFnError> {
+pub async fn resolve_workspace_vault_target()
+-> Result<crate::contracts::OrganizationSummary, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
         crate::application::resolve_workspace_vault_target(server_fn_request_auth())

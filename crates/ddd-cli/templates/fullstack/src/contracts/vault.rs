@@ -63,4 +63,3 @@ pub struct SecretRevealResponse {
     /// UI should remask after this many seconds.
     pub reveal_ttl_seconds: u32,
 }
-

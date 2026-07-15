@@ -15,6 +15,7 @@ reset_postgres() {
   echo "Erasing fullstack-app PostgreSQL data..."
   psql "$DATABASE_URL" <<'SQL'
 BEGIN;
+DROP SCHEMA IF EXISTS fullstack_app CASCADE;
 DROP TABLE IF EXISTS
     auth_application_redirects,
     auth_flows,
@@ -67,6 +68,8 @@ DROP TABLE IF EXISTS
 CASCADE;
 DROP FUNCTION IF EXISTS
     auth_adjust_owner_count(),
+    auth_default_organization_slug(TEXT, UUID),
+    auth_fill_organization_slug(),
     auth_notify_context_invalidation(),
     auth_track_membership_authorization(),
     auth_validate_owner_count()

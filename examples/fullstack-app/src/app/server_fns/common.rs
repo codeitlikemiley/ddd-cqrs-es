@@ -3,7 +3,6 @@
 #![allow(unused_imports)]
 
 use crate::contracts::LoginCompletionResponse;
-use crate::error::AuthStackError;
 use leptos::prelude::*;
 use server_fn::ServerFnError;
 
@@ -92,7 +91,9 @@ pub(crate) async fn clear_session_cookie() {
 }
 
 #[cfg(any(feature = "ssr", test))]
-pub(crate) fn browser_login_response(mut response: LoginCompletionResponse) -> LoginCompletionResponse {
+pub(crate) fn browser_login_response(
+    mut response: LoginCompletionResponse,
+) -> LoginCompletionResponse {
     response.session_id = None;
     response.access_token = None;
     response.refresh_token = None;

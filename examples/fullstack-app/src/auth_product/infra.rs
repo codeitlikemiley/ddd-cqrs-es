@@ -99,7 +99,9 @@ pub(crate) fn organization_summary(record: OrganizationRecord) -> OrganizationSu
     }
 }
 
-pub(crate) async fn organization_summary_with_slug(record: OrganizationRecord) -> OrganizationSummary {
+pub(crate) async fn organization_summary_with_slug(
+    record: OrganizationRecord,
+) -> OrganizationSummary {
     let mut summary = organization_summary(record);
     // Prefer DB slug; fill KV cache and backfill empty DB slugs via ensure.
     if summary.slug.trim().is_empty() {
@@ -183,7 +185,9 @@ pub(crate) fn bounded_session_id(session_id: &str) -> AuthStackResult<SessionId>
     SessionId::new(session_id.to_owned()).map_err(|_| AuthStackError::AuthRequired)
 }
 
-pub(crate) async fn load_session(session_id: &str) -> AuthStackResult<wasi_auth::postgres::VerifiedSession> {
+pub(crate) async fn load_session(
+    session_id: &str,
+) -> AuthStackResult<wasi_auth::postgres::VerifiedSession> {
     let session_id =
         SessionId::new(session_id.to_owned()).map_err(|_| AuthStackError::AuthRequired)?;
     store()
@@ -425,6 +429,21 @@ pub(crate) async fn vault_key_material() -> AuthStackResult<(String, [u8; 32])> 
     Ok((key_version, key))
 }
 
+pub(crate) async fn transactional_mail_config()
+-> AuthStackResult<wasi_auth::mail::TransactionalMailConfig> {
+    let product_name = runtime_config_value("AUTH_MAIL_PRODUCT_NAME")
+        .await
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "Goldcoders".to_owned());
+    let product_name = wasi_auth::mail::MailProductName::new(product_name)
+        .map_err(|_| AuthStackError::configuration("AUTH_MAIL_PRODUCT_NAME is invalid"))?;
+    let public_base_url = runtime_config_value("AUTH_PUBLIC_BASE_URL")
+        .await
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| AuthStackError::configuration("AUTH_PUBLIC_BASE_URL is required"))?;
+    wasi_auth::mail::TransactionalMailConfig::new(product_name, public_base_url)
+        .map_err(|_| AuthStackError::configuration("transactional mail configuration is invalid"))
+}
 
 pub(crate) async fn token_service() -> AuthStackResult<RuntimeTokenService> {
     let mut key_ring = configured_jwt_key_ring().await?;
@@ -535,7 +554,9 @@ pub(crate) fn remove_cached_verified_token(token: &str) {
     }
 }
 
-pub(crate) async fn configured_token_service(key_ring: JwtKeyRing) -> AuthStackResult<RuntimeTokenService> {
+pub(crate) async fn configured_token_service(
+    key_ring: JwtKeyRing,
+) -> AuthStackResult<RuntimeTokenService> {
     let (version, key) = vault_key_material().await?;
     let sealing_key = RefreshSealingKey::new(format!("refresh:{version}"), key)
         .map_err(|_| AuthStackError::configuration("refresh sealing key is invalid"))?;
@@ -661,6 +682,20 @@ pub(crate) async fn issue_tokens(session_id: &SessionId) -> AuthStackResult<(Str
         .map_err(map_token_error)
 }
 
+pub(crate) async fn finalize_new_session(
+    session_id: &SessionId,
+) -> AuthStackResult<(String, String, u64)> {
+    let result = async {
+        bind_default_organization_for_session(session_id.as_str()).await?;
+        issue_tokens(session_id).await
+    }
+    .await;
+    if result.is_err() {
+        let _ = revoke_user_session(session_id.as_str(), session_id.as_str()).await;
+    }
+    result
+}
+
 pub(crate) async fn argon2_policy() -> AuthStackResult<Argon2Policy> {
     let memory = config_u32("AUTH_PASSWORD_ARGON2_MEMORY_KIB", 19_456).await?;
     let iterations = config_u32("AUTH_PASSWORD_ARGON2_ITERATIONS", 2).await?;
@@ -679,4 +714,3 @@ pub(crate) async fn session_ttl_seconds() -> AuthStackResult<u64> {
         })
     })
 }
-

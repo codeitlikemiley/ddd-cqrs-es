@@ -1,12 +1,15 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
 
-use wasi_auth::authentication::jwt;
 use tonic::{Request, Status};
+use wasi_auth::authentication::jwt;
 
 use super::*;
 
-pub(crate) fn status_from_app_error(operation: &'static str, error: crate::error::AuthStackError) -> Status {
+pub(crate) fn status_from_app_error(
+    operation: &'static str,
+    error: crate::error::AuthStackError,
+) -> Status {
     if error.is_client_error() {
         tracing::warn!(
             operation,

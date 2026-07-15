@@ -2,11 +2,10 @@
 #![allow(clippy::unused_unit)]
 #![allow(clippy::unit_arg)]
 
-
 use crate::app::helpers::{redirect_browser, server_error_text};
 use crate::app::{
-    browser_load, list_account_sessions, revoke_account_session, ListAccountSessions,
-    RevokeAccountSession,
+    ListAccountSessions, RevokeAccountSession, browser_load, list_account_sessions,
+    revoke_account_session,
 };
 use crate::contracts::AccountSessionSummary;
 use crate::ui::account_page_shell;
@@ -182,4 +181,3 @@ pub fn AccountSessionManager() -> impl IntoView {
         </section>
     }
 }
-

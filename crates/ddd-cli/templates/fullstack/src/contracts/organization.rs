@@ -143,4 +143,3 @@ pub struct RoleUpsertRequest {
 pub struct PermissionCatalogResponse {
     pub permissions: Vec<String>,
 }
-

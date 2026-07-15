@@ -55,6 +55,7 @@ AUTH_BOOTSTRAP_ADMIN_EMAILS ?=
 AUTH_CSRF_SECRET ?=
 AUTH_VAULT_KEY_BASE64 ?=
 AUTH_VAULT_KEY_VERSION ?= development-v1
+AUTH_VAULT_KEY_RING_JSON ?=
 AUTH_OUTBOX_KEY_BASE64 ?= 3FbbdAQKHq2YhqzKKU1GuAAdRq7nZmDU/iX3ZmGX02o=
 AUTH_OUTBOX_KEY_VERSION ?= development-v1
 AUTH_OUTBOX_POSTGRES_POOL_SIZE ?= 4
@@ -177,6 +178,7 @@ SPIN_VARIABLE_ARGS = \
 	--variable auth_csrf_secret='$(AUTH_CSRF_SECRET)' \
 	--variable auth_vault_key_base64='$(AUTH_VAULT_KEY_BASE64)' \
 	--variable auth_vault_key_version='$(AUTH_VAULT_KEY_VERSION)' \
+	--variable auth_vault_key_ring_json='$(AUTH_VAULT_KEY_RING_JSON)' \
 	--variable auth_outbox_key_base64='$(AUTH_OUTBOX_KEY_BASE64)' \
 	--variable auth_outbox_key_version='$(AUTH_OUTBOX_KEY_VERSION)' \
 	--variable auth_recovery_code_pepper_base64='$(AUTH_RECOVERY_CODE_PEPPER_BASE64)' \

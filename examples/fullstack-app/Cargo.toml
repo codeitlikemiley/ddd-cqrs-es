@@ -47,6 +47,7 @@ prost = { version = "0.13", optional = true }
 sha2 = { version = "0.10", optional = true }
 tonic = { version = "0.12", default-features = false, features = ["codegen", "prost"], optional = true }
 tokio = { version = "1.52", features = ["macros", "rt"], optional = true }
+tokio-postgres = { version = "0.7", optional = true }
 wasi-auth = { version = "=0.1.0-rc.2", default-features = false, optional = true }
 ddd_cqrs_es = { version = "=0.3.0-rc.2", default-features = false, features = ["json", "serde", "async", "tracing", "json-file"], optional = true }
 qrcode = { version = "0.14", default-features = false, features = ["svg"], optional = true }
@@ -70,7 +71,7 @@ default = []
 mail-capture = ["wasi-auth/mail-capture"]
 mail-http = ["wasi-auth/mail-http"]
 spicedb = ["wasi-auth/spicedb"]
-migrate = ["dep:serde_json", "dep:tokio", "dep:wasi-auth", "wasi-auth/postgres-native"]
+migrate = ["dep:serde_json", "dep:tokio", "dep:tokio-postgres", "dep:wasi-auth", "wasi-auth/postgres-native"]
 hydrate = [
   "leptos/hydrate",
   "leptos/islands",

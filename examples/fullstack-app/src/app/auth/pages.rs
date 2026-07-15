@@ -9,14 +9,11 @@ use super::forms::{
     LogoutForm, OAuthCallbackStatus, OAuthProviderList, OptionalPasskeyRegistration,
     ResendVerificationForm, ResetPasswordForm,
 };
-use crate::app::helpers::{
-    next_url, percent_encode_component, redirect_browser, set_page_status,
-};
+use crate::app::helpers::{next_url, percent_encode_component, redirect_browser, set_page_status};
 use crate::app::{browser_load, get_current_session};
-use crate::ui::{error_page_shell, page_shell, AuthBrand};
+use crate::ui::{AuthBrand, error_page_shell, page_shell};
 use leptos::prelude::*;
 use leptos_meta::*;
-
 
 #[component]
 pub fn LoginPage() -> impl IntoView {

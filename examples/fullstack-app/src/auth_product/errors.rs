@@ -87,7 +87,9 @@ use crate::{
 
 use super::*;
 
-pub(crate) fn map_registration_error(error: PasswordRegistrationError<SpinPostgresError>) -> AuthStackError {
+pub(crate) fn map_registration_error(
+    error: PasswordRegistrationError<SpinPostgresError>,
+) -> AuthStackError {
     match error {
         PasswordRegistrationError::InvalidRequest => {
             AuthStackError::validation("registration request is invalid")
@@ -128,7 +130,9 @@ pub(crate) fn map_login_error(error: PasswordLoginError<SpinPostgresError>) -> A
     }
 }
 
-pub(crate) fn map_verification_error(error: EmailVerificationError<SpinPostgresError>) -> AuthStackError {
+pub(crate) fn map_verification_error(
+    error: EmailVerificationError<SpinPostgresError>,
+) -> AuthStackError {
     match error {
         EmailVerificationError::InvalidRequest => {
             AuthStackError::validation("verification request is invalid")
@@ -147,14 +151,18 @@ pub(crate) fn map_verification_error(error: EmailVerificationError<SpinPostgresE
     }
 }
 
-pub(crate) fn map_session_store_error(error: PostgresStoreError<SpinPostgresError>) -> AuthStackError {
+pub(crate) fn map_session_store_error(
+    error: PostgresStoreError<SpinPostgresError>,
+) -> AuthStackError {
     match error {
         PostgresStoreError::Unauthenticated => AuthStackError::AuthRequired,
         _ => AuthStackError::store("session verification failed"),
     }
 }
 
-pub(crate) fn map_organization_error(error: OrganizationError<SpinPostgresError>) -> AuthStackError {
+pub(crate) fn map_organization_error(
+    error: OrganizationError<SpinPostgresError>,
+) -> AuthStackError {
     match error {
         OrganizationError::InvalidRequest => {
             AuthStackError::validation("organization request is invalid")
@@ -174,7 +182,9 @@ pub(crate) fn map_organization_error(error: OrganizationError<SpinPostgresError>
     }
 }
 
-pub(crate) fn map_password_reset_error(error: PasswordResetError<SpinPostgresError>) -> AuthStackError {
+pub(crate) fn map_password_reset_error(
+    error: PasswordResetError<SpinPostgresError>,
+) -> AuthStackError {
     match error {
         PasswordResetError::InvalidRequest => {
             AuthStackError::validation("password reset request is invalid")
@@ -194,7 +204,9 @@ pub(crate) fn map_password_reset_error(error: PasswordResetError<SpinPostgresErr
     }
 }
 
-pub(crate) fn map_session_service_error(error: SessionServiceError<SpinPostgresError>) -> AuthStackError {
+pub(crate) fn map_session_service_error(
+    error: SessionServiceError<SpinPostgresError>,
+) -> AuthStackError {
     match error {
         SessionServiceError::NotAuthorized => AuthStackError::Forbidden,
         SessionServiceError::RandomnessUnavailable
@@ -289,7 +301,9 @@ pub(crate) fn map_oauth_error(error: OAuthServiceError<SpinPostgresError>) -> Au
     }
 }
 
-pub(crate) fn map_oauth_provider_error(error: OAuthProviderServiceError<SpinPostgresError>) -> AuthStackError {
+pub(crate) fn map_oauth_provider_error(
+    error: OAuthProviderServiceError<SpinPostgresError>,
+) -> AuthStackError {
     match error {
         OAuthProviderServiceError::InvalidInput => {
             AuthStackError::validation("OAuth provider input is invalid")
@@ -326,7 +340,9 @@ pub(crate) fn map_passkey_error(error: PasskeyServiceError<SpinPostgresError>) -
     }
 }
 
-pub(crate) fn map_policy_error(error: PolicyBundleServiceError<SpinPostgresError>) -> AuthStackError {
+pub(crate) fn map_policy_error(
+    error: PolicyBundleServiceError<SpinPostgresError>,
+) -> AuthStackError {
     match error {
         PolicyBundleServiceError::InvalidInput => {
             AuthStackError::validation("policy bundle is invalid")
@@ -342,12 +358,16 @@ pub(crate) fn map_policy_error(error: PolicyBundleServiceError<SpinPostgresError
     }
 }
 
-pub(crate) fn map_policy_load_error(error: PolicyBundleLoadError<SpinPostgresError>) -> AuthStackError {
+pub(crate) fn map_policy_load_error(
+    error: PolicyBundleLoadError<SpinPostgresError>,
+) -> AuthStackError {
     tracing::error!(error = %error, "active Cedar policy load failed closed");
     AuthStackError::store("active policy load failed")
 }
 
-pub(crate) fn map_signing_key_error(error: SigningKeyServiceError<SpinPostgresError>) -> AuthStackError {
+pub(crate) fn map_signing_key_error(
+    error: SigningKeyServiceError<SpinPostgresError>,
+) -> AuthStackError {
     match error {
         SigningKeyServiceError::InvalidInput => {
             AuthStackError::validation("signing-key input is invalid")

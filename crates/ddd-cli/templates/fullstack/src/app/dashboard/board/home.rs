@@ -9,8 +9,8 @@ use super::render::render_node_list;
 use crate::app::dashboard::resources as dashboard_resources;
 use crate::app::helpers::server_error_text;
 use crate::app::{
-    browser_load, get_dashboard_snapshot, DismissDashboardNotification, SaveDashboardLayout,
-    UpdateDashboardNote,
+    DismissDashboardNotification, SaveDashboardLayout, UpdateDashboardNote, browser_load,
+    get_dashboard_snapshot,
 };
 use crate::contracts::{
     BoardContainerKind, BoardNode, DashboardLayout, DashboardNotification, DashboardSnapshot,
@@ -21,7 +21,6 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 #[cfg(feature = "hydrate")]
 use wasm_bindgen::JsCast;
-
 
 #[component]
 pub fn DashboardPage() -> impl IntoView {

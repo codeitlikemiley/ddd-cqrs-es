@@ -2,21 +2,20 @@
 #![allow(clippy::unused_unit)]
 #![allow(clippy::unit_arg)]
 
-
 use crate::app::helpers::{redirect_browser, server_error_text, short_id_label};
 use crate::app::{
-    browser_load, create_dashboard_secret, delete_dashboard_secret, list_dashboard_secrets,
-    resolve_workspace_vault_target, reveal_dashboard_secret, seed_dashboard_demos,
     CreateDashboardSecret, DeleteDashboardSecret, ListDashboardSecrets,
-    ResolveWorkspaceVaultTarget, RevealDashboardSecret, SeedDashboardDemos,
+    ResolveWorkspaceVaultTarget, RevealDashboardSecret, SeedDashboardDemos, browser_load,
+    create_dashboard_secret, delete_dashboard_secret, list_dashboard_secrets,
+    resolve_workspace_vault_target, reveal_dashboard_secret, seed_dashboard_demos,
 };
 use crate::contracts::{SecretCreateRequest, SecretSummary};
 use crate::ui::{account_page_shell, page_shell};
 use leptos::prelude::*;
-use leptos_router::hooks::use_params_map;
-use server_fn::ServerFnError;
 #[cfg(feature = "hydrate")]
 use leptos::task::spawn_local;
+use leptos_router::hooks::use_params_map;
+use server_fn::ServerFnError;
 #[cfg(feature = "hydrate")]
 use wasm_bindgen::prelude::*;
 #[cfg(feature = "hydrate")]
@@ -521,14 +520,12 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
 /// Best-effort async sleep for hydrate (vault reveal auto-mask).
 #[cfg(feature = "hydrate")]
 async fn gloo_timers_sleep_ms(ms: u64) {
-    use wasm_bindgen_futures::JsFuture;
     use js_sys::Promise;
+    use wasm_bindgen_futures::JsFuture;
     let promise = Promise::new(&mut |resolve, _reject| {
         if let Some(window) = web_sys::window() {
-            let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
-                &resolve,
-                ms as i32,
-            );
+            let _ =
+                window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms as i32);
         } else {
             let _ = resolve.call0(&wasm_bindgen::JsValue::NULL);
         }
@@ -538,4 +535,3 @@ async fn gloo_timers_sleep_ms(ms: u64) {
 
 #[cfg(not(feature = "hydrate"))]
 async fn gloo_timers_sleep_ms(_ms: u64) {}
-

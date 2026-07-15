@@ -159,4 +159,3 @@ pub(crate) fn request_id(prefix: &str) -> AuthStackResult<RequestId> {
     RequestId::new(format!("{prefix}-{}", URL_SAFE_NO_PAD.encode(bytes)))
         .map_err(|_| AuthStackError::store("failed to construct request identifier"))
 }
-

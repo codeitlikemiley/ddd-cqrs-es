@@ -3,9 +3,8 @@
 
 use std::sync::OnceLock;
 
-
-use wasi_auth::authentication::jwt::JwksDocument;
 use wasi_auth::authentication::Clock;
+use wasi_auth::authentication::jwt::JwksDocument;
 use wasi_auth::authorization::{
     AccessRequest, ActionName, Authorizer, MAX_BATCH_CHECKS, Resource, ResourceType,
 };
@@ -24,7 +23,6 @@ use wasi_auth::http::{
 use super::*;
 use crate::contracts::*;
 use crate::error::{AuthStackError, AuthStackResult};
-
 
 pub async fn list_organizations(auth: RequestAuth) -> AuthStackResult<OrganizationListResponse> {
     let (context, _) = verified_context_and_permissions(auth, false).await?;
@@ -147,7 +145,8 @@ pub async fn accept_invitation(
         return Err(AuthStackError::validation("invitation token is required"));
     }
     let (context, _) = verified_context_and_permissions(auth, false).await?;
-    crate::auth_product::accept_invitation(context.session_id().as_str(), request.token.trim()).await
+    crate::auth_product::accept_invitation(context.session_id().as_str(), request.token.trim())
+        .await
 }
 
 pub async fn assign_role(

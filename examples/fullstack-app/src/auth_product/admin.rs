@@ -182,4 +182,3 @@ pub async fn logout_session(session_id: Option<&str>) -> AuthStackResult<LogoutR
         redirect_url: "/".to_owned(),
     })
 }
-

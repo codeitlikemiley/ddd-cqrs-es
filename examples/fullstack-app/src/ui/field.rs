@@ -14,8 +14,7 @@ pub fn FieldGroup(children: Children) -> impl IntoView {
 #[component]
 pub fn Field(
     label: &'static str,
-    #[prop(optional)]
-    hint: Option<&'static str>,
+    #[prop(optional)] hint: Option<&'static str>,
     children: Children,
 ) -> impl IntoView {
     view! {
@@ -30,18 +29,12 @@ pub fn Field(
 /// Text input with `.auth-input` (value + on_input provided by caller via props).
 #[component]
 pub fn TextInput(
-    #[prop(optional)]
-    input_type: Option<&'static str>,
-    #[prop(optional)]
-    autocomplete: Option<&'static str>,
-    #[prop(optional)]
-    maxlength: Option<u32>,
-    #[prop(optional)]
-    placeholder: Option<&'static str>,
-    #[prop(optional, into)]
-    value: Signal<String>,
-    #[prop(optional)]
-    class: Option<&'static str>,
+    #[prop(optional)] input_type: Option<&'static str>,
+    #[prop(optional)] autocomplete: Option<&'static str>,
+    #[prop(optional)] maxlength: Option<u32>,
+    #[prop(optional)] placeholder: Option<&'static str>,
+    #[prop(optional, into)] value: Signal<String>,
+    #[prop(optional)] class: Option<&'static str>,
     /// Called with the input element's string value on each input event.
     #[prop(into)]
     on_input: Callback<String>,

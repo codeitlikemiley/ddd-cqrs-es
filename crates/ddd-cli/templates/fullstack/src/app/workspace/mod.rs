@@ -2,16 +2,16 @@
 
 #![allow(unused_imports)]
 
+#[cfg(feature = "hydrate")]
+use crate::app::helpers::mark_active_nav;
 use crate::app::helpers::{
     can_view_system_navigation, current_browser_pathname, current_browser_search_has_new,
     org_monogram, redirect_browser, server_error_text,
 };
-#[cfg(feature = "hydrate")]
-use crate::app::helpers::mark_active_nav;
 use crate::app::path::{is_workspace_path, workspace_topbar_title};
 use crate::app::{
-    browser_load, get_current_session, list_organizations, CreateOrganization, LogoutButton,
-    SelectOrganization,
+    CreateOrganization, LogoutButton, SelectOrganization, browser_load, get_current_session,
+    list_organizations,
 };
 use leptos::prelude::*;
 use leptos_router::components::Outlet;
@@ -141,7 +141,6 @@ pub fn WorkspaceShell(children: Children) -> impl IntoView {
     }
 }
 
-
 /// If the user has zero organizations, force Linear-style first-workspace onboarding
 /// (except account security + onboarding itself).
 ///
@@ -170,7 +169,6 @@ pub fn WorkspaceOnboardingGate() -> impl IntoView {
     view! { <></> }
 }
 
-
 #[component]
 pub fn WorkspaceOnboardingPage() -> impl IntoView {
     // Minimal chrome — Linear-style focused create.
@@ -189,7 +187,6 @@ pub fn WorkspaceOnboardingPage() -> impl IntoView {
         </div>
     }
 }
-
 
 #[island]
 pub fn WorkspaceOnboardingPanel() -> impl IntoView {
@@ -318,15 +315,14 @@ pub fn WorkspaceOnboardingPanel() -> impl IntoView {
     }
 }
 
-
 /// Marks active nav links. Island so it runs on the client and follows SPA navigations.
 #[island]
 pub fn WorkspaceNavActive() -> impl IntoView {
     Effect::new(move |_| {
         #[cfg(feature = "hydrate")]
         {
-            use wasm_bindgen::closure::Closure;
             use wasm_bindgen::JsCast;
+            use wasm_bindgen::closure::Closure;
 
             let on_mark = Closure::wrap(Box::new(move |_event: web_sys::Event| {
                 if let Some(window) = window() {
@@ -351,7 +347,6 @@ pub fn WorkspaceNavActive() -> impl IntoView {
     view! { <span class="workspace-nav-active-marker" aria-hidden="true"></span> }
 }
 
-
 /// Desktop sidebar modes: full ↔ mini (rail toggle) and show ↔ hide (⌘/Ctrl+B).
 #[island]
 pub fn WorkspaceSidebarControls() -> impl IntoView {
@@ -363,7 +358,6 @@ pub fn WorkspaceSidebarControls() -> impl IntoView {
     });
     view! { <span class="workspace-sidebar-controls" aria-hidden="true"></span> }
 }
-
 
 /// Top-bar workspace switcher: select org, jump to vault, create workspace.
 #[island]
@@ -488,7 +482,6 @@ pub fn WorkspaceOrgSwitcher() -> impl IntoView {
     }
 }
 
-
 #[island(lazy)]
 pub fn WorkspaceSystemNav() -> impl IntoView {
     let session = browser_load(get_current_session);
@@ -510,7 +503,6 @@ pub fn WorkspaceSystemNav() -> impl IntoView {
         </div>
     }
 }
-
 
 /// ChatGPT-style account flyout: avatar + email open a menu of settings + sign out.
 /// Lives in the left rail foot so the main top bar stays clean.
@@ -578,15 +570,12 @@ pub fn WorkspaceUserMenu() -> impl IntoView {
     }
 }
 
-
-
 /// Root layout: keep the workspace shell mounted across workspace navigations.
 #[component]
 pub fn AppLayout() -> impl IntoView {
     let location = use_location();
     // Memo only flips when entering/leaving the workspace chrome — not on every path.
-    let workspace_mode =
-        Memo::new(move |_| is_workspace_path(&location.pathname.get()));
+    let workspace_mode = Memo::new(move |_| is_workspace_path(&location.pathname.get()));
 
     view! {
         {move || {
@@ -608,4 +597,3 @@ pub fn AppLayout() -> impl IntoView {
         }}
     }
 }
-

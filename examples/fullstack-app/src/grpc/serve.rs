@@ -1,13 +1,13 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
 
-use tonic::Request;
 use super::admin_proto::admin_service_server::AdminServiceServer;
 use super::audit_proto::audit_service_server::AuditServiceServer;
 use super::auth_proto::auth_service_server::AuthServiceServer;
 use super::authorization_proto::authorization_service_server::AuthorizationServiceServer;
 use super::organization_proto::organization_service_server::OrganizationServiceServer;
 use super::*;
+use tonic::Request;
 
 pub(crate) struct AuthGrpcService;
 pub(crate) struct AuthorizationGrpcService;
@@ -97,4 +97,3 @@ pub async fn serve(
     );
     wasi_auth::spin_grpc::into_final_wasi_response(response)
 }
-

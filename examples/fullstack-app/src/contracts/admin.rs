@@ -73,7 +73,6 @@ pub struct AuthorizationCapabilitiesResponse {
     pub max_batch_checks: u32,
 }
 
-
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AdminUserSummary {
     pub user_id: String,

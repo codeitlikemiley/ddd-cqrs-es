@@ -259,7 +259,15 @@ pub async fn update_profile_for_user(
 
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
-        let _ = (user_id, email, first_name, last_name, display_name, username, request);
+        let _ = (
+            user_id,
+            email,
+            first_name,
+            last_name,
+            display_name,
+            username,
+            request,
+        );
         return Err(AuthStackError::configuration(
             "profile storage requires Spin key-value",
         ));
@@ -349,4 +357,3 @@ pub async fn get_public_profile_by_username(
 // ── Dashboard board (Spin KV) ─────────────────────────────────────────────
 // Layout / resources / queries / secrets are **workspace (org) scoped**.
 // Notifications + legacy HTTP sources remain per-user.
-

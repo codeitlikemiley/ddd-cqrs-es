@@ -106,4 +106,3 @@ pub(crate) fn org_slug_key(slug: &str) -> String {
 pub(crate) fn org_id_slug_key(org_id: &str) -> String {
     format!("{ORG_ID_SLUG_PREFIX}{org_id}:slug")
 }
-

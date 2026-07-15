@@ -85,7 +85,6 @@ pub fn resources_queries_modal(
     let pg_database = RwSignal::new(String::new());
     let pg_user = RwSignal::new(String::new());
     let pg_ssl = RwSignal::new("prefer".to_owned());
-    let pg_use_app_db = RwSignal::new(false);
     // gRPC
     let grpc_host = RwSignal::new("127.0.0.1".to_owned());
     let grpc_port = RwSignal::new("50051".to_owned());
@@ -242,7 +241,7 @@ pub fn resources_queries_modal(
                                     </article>
                                     <article class="board-rq-card" class:is-disabled=move || !postgres_enabled>
                                         <strong>"PostgreSQL"</strong>
-                                        <p>"Host, database, user, password secret, SSL — or App database (@app). SELECT-only SQL."</p>
+                                        <p>"Host, database, user, password secret, and SSL settings. SELECT-only SQL."</p>
                                         <button type="button" class="primary-button" disabled=move || !postgres_enabled
                                             on:click=move |_| {
                                                 res_kind.set("postgres".into());
@@ -531,23 +530,6 @@ pub fn resources_queries_modal(
                                     </Show>
 
                                     <Show when=move || res_kind.get() == "postgres">
-                                        <label class="board-rq-check">
-                                            <input type="checkbox" prop:checked=move || pg_use_app_db.get()
-                                                on:change=move |e| {
-                                                    #[cfg(feature = "hydrate")]
-                                                    {
-                                                        use wasm_bindgen::JsCast;
-                                                        if let Some(el) = e.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) {
-                                                            pg_use_app_db.set(el.checked());
-                                                        }
-                                                    }
-                                                    #[cfg(not(feature = "hydrate"))]
-                                                    { let _ = e; }
-                                                }
-                                            />
-                                            <span>"Use app database (@app) — same Postgres as auth"</span>
-                                        </label>
-                                        <Show when=move || !pg_use_app_db.get()>
                                             <div class="board-rq-row">
                                                 <label class="auth-field"><span>"Host"</span>
                                                     <input class="auth-input" prop:value=move || pg_host.get()
@@ -585,7 +567,6 @@ pub fn resources_queries_modal(
                                                     <option value="require">"require"</option>
                                                 </select>
                                             </label>
-                                        </Show>
                                         <p class="board-muted">"SQL is SELECT-only. Spin must allow outbound postgres://host:port (see spin.toml)."</p>
                                     </Show>
 
@@ -703,24 +684,15 @@ pub fn resources_queries_modal(
                                         };
                                         let (kind, auth, config) = match kind_str.as_str() {
                                             "postgres" => {
-                                                let use_app = pg_use_app_db.get_untracked();
-                                                let (host, port, database, user, password_secret_id) = if use_app {
-                                                    ("@app".to_owned(), 5432u16, String::new(), String::new(), String::new())
-                                                } else {
-                                                    let port = pg_port.get_untracked().parse::<u16>().unwrap_or(5432);
-                                                    let sid = res_secret_id.get_untracked();
-                                                    if sid.is_empty() {
-                                                        form_error.set(Some("Password secret required".into()));
-                                                        return;
-                                                    }
-                                                    (
-                                                        pg_host.get_untracked().trim().to_owned(),
-                                                        port,
-                                                        pg_database.get_untracked().trim().to_owned(),
-                                                        pg_user.get_untracked().trim().to_owned(),
-                                                        sid,
-                                                    )
-                                                };
+                                                let port = pg_port.get_untracked().parse::<u16>().unwrap_or(5432);
+                                                let password_secret_id = res_secret_id.get_untracked();
+                                                if password_secret_id.is_empty() {
+                                                    form_error.set(Some("Password secret required".into()));
+                                                    return;
+                                                }
+                                                let host = pg_host.get_untracked().trim().to_owned();
+                                                let database = pg_database.get_untracked().trim().to_owned();
+                                                let user = pg_user.get_untracked().trim().to_owned();
                                                 let ssl_mode = match pg_ssl.get_untracked().as_str() {
                                                     "disable" => PostgresSslMode::Disable,
                                                     "require" => PostgresSslMode::Require,

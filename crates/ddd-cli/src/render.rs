@@ -275,9 +275,28 @@ fn render_leptos_wasi(input: &InitRenderInput, names: &NameParts) -> Vec<FileOpe
 }
 
 fn render_fullstack(input: &InitRenderInput) -> Vec<FileOperation> {
+    let cargo_template = TEMPLATE_DIR
+        .get_file("fullstack/Cargo.toml")
+        .expect("fullstack Cargo.toml must be embedded")
+        .contents_utf8()
+        .expect("fullstack Cargo.toml must be UTF-8");
+    let cargo = cargo_template
+        .replacen(
+            "name = \"fullstack-app\"",
+            &format!("name = \"{}\"", input.package_name),
+            1,
+        )
+        .replace(
+            "ddd_cqrs_es = { version = \"=0.3.0-rc.2\"",
+            &format!("ddd_cqrs_es = {{ version = \"={}\"", framework_version()),
+        )
+        .replace(
+            "# Local wasi-auth for HTML mail templates until the next published rc.\nwasi-auth = { path = \"../../../wasi-auth/crates/wasi-auth\" }\n",
+            "",
+        );
     let mut operations = vec![write_operation(
         "Cargo.toml",
-        render_fullstack_cargo(input),
+        cargo,
         false,
         "fullstack Cargo manifest",
     )];

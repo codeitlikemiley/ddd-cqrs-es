@@ -2371,7 +2371,8 @@ html.board-modal-open body {
 }
 
 @media (max-width: 960px) {
-  .board-grid {
+  .board-grid,
+  .board-grid-12 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -2407,7 +2408,8 @@ html.board-modal-open body {
     flex: 1 1 auto;
   }
 
-  .board-grid {
+  .board-grid,
+  .board-grid-12 {
     grid-template-columns: 1fr;
   }
 
@@ -2416,6 +2418,13 @@ html.board-modal-open body {
   .board-tile[data-span="3"],
   .board-tile[data-span="4"] {
     grid-column: span 1;
+  }
+
+  .board-grid .board-tile,
+  .board-grid .board-container,
+  .board-grid-12 .board-tile,
+  .board-grid-12 .board-container {
+    grid-column: 1 / -1 !important;
   }
 
   .board-skeleton-grid {
@@ -4551,7 +4560,7 @@ html.board-modal-open body {
   line-height: 1.5;
 }
 
-.panel input,
+.panel input:not([type="file"]):not([type="checkbox"]):not([type="radio"]),
 .panel textarea,
 .panel select {
   background: var(--bg-surface);
@@ -4567,7 +4576,7 @@ html.board-modal-open body {
   resize: vertical;
 }
 
-.panel input:focus,
+.panel input:not([type="file"]):not([type="checkbox"]):not([type="radio"]):focus,
 .panel textarea:focus,
 .panel select:focus {
   border-color: var(--focus-ring);

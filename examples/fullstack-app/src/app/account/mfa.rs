@@ -2,23 +2,22 @@
 #![allow(clippy::unused_unit)]
 #![allow(clippy::unit_arg)]
 
-
+#[cfg(feature = "hydrate")]
+use crate::app::copy_text;
 use crate::app::helpers::{action_result_text, server_error_text};
 use crate::app::{
+    ConfirmTotpEnrollment, GetMfaStatus, StartTotpEnrollment, VerifyRecoveryCode, VerifyTotpStepUp,
     browser_load, confirm_totp_enrollment, get_mfa_status, start_totp_enrollment,
-    verify_recovery_code, verify_totp_step_up, ConfirmTotpEnrollment, GetMfaStatus,
-    StartTotpEnrollment, VerifyRecoveryCode, VerifyTotpStepUp,
+    verify_recovery_code, verify_totp_step_up,
 };
 use crate::contracts::{
     MfaEnrollConfirmResponse, MfaEnrollStartResponse, MfaStatusResponse, SessionView,
 };
 use crate::ui::account_page_shell;
 use leptos::prelude::*;
-use server_fn::ServerFnError;
 #[cfg(feature = "hydrate")]
 use leptos::task::spawn_local;
-#[cfg(feature = "hydrate")]
-use crate::app::copy_text;
+use server_fn::ServerFnError;
 
 #[component]
 pub fn AccountMfaPage() -> impl IntoView {
@@ -440,8 +439,8 @@ pub fn MfaManager() -> impl IntoView {
 pub fn otpauth_qr_svg(uri: &str) -> String {
     #[cfg(feature = "hydrate")]
     {
-        use qrcode::render::svg;
         use qrcode::QrCode;
+        use qrcode::render::svg;
         match QrCode::new(uri.as_bytes()) {
             Ok(code) => code
                 .render::<svg::Color>()
@@ -459,4 +458,3 @@ pub fn otpauth_qr_svg(uri: &str) -> String {
         String::new()
     }
 }
-

@@ -211,15 +211,21 @@ pub struct ResourceSummary {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TransformStep {
-    JsonPath { path: String },
+    JsonPath {
+        path: String,
+    },
     AsArray,
     MapFields {
         /// target_field → source_path
         #[serde(default)]
         fields: Vec<(String, String)>,
     },
-    Limit { n: u32 },
-    PickScalar { path: String },
+    Limit {
+        n: u32,
+    },
+    PickScalar {
+        path: String,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -290,6 +296,32 @@ pub enum QueryConfig {
     },
 }
 
+/// Security class derived by the server from the saved query definition.
+/// Clients never choose this value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueryExecutionClass {
+    Read,
+    Mutation,
+}
+
+impl QueryConfig {
+    /// Classifies execution conservatively. PostgreSQL remains mutation-class
+    /// until an AST-based read-only validator is available; a lexical prefix
+    /// check is not a sufficient authorization boundary.
+    pub fn execution_class(&self) -> QueryExecutionClass {
+        match self {
+            Self::Rest {
+                method: HttpMethod::Get,
+                ..
+            }
+            | Self::Builtin { .. } => QueryExecutionClass::Read,
+            Self::Rest { .. } | Self::Postgres { .. } | Self::Grpc { .. } => {
+                QueryExecutionClass::Mutation
+            }
+        }
+    }
+}
+
 /// Executable query against a resource (Retool "Resource query").
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DashboardQuery {
@@ -341,7 +373,11 @@ pub struct QueryResult {
 }
 
 impl QueryResult {
-    pub fn err(query_id: impl Into<String>, kind: ResourceKind, message: impl Into<String>) -> Self {
+    pub fn err(
+        query_id: impl Into<String>,
+        kind: ResourceKind,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
             query_id: query_id.into(),
             ok: false,
@@ -381,4 +417,3 @@ pub struct QueryUpsert {
     pub transform: Vec<TransformStep>,
     pub config: QueryConfig,
 }
-

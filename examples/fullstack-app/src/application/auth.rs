@@ -3,9 +3,8 @@
 
 use std::sync::OnceLock;
 
-
-use wasi_auth::authentication::jwt::JwksDocument;
 use wasi_auth::authentication::Clock;
+use wasi_auth::authentication::jwt::JwksDocument;
 use wasi_auth::authorization::{
     AccessRequest, ActionName, Authorizer, MAX_BATCH_CHECKS, Resource, ResourceType,
 };
@@ -24,7 +23,6 @@ use wasi_auth::http::{
 use super::*;
 use crate::contracts::*;
 use crate::error::{AuthStackError, AuthStackResult};
-
 
 pub async fn auth_capabilities() -> AuthStackResult<AuthCapabilities> {
     let password_enabled = feature_enabled("AUTH_ENABLE_PASSWORD_LOGIN", true).await;
@@ -60,13 +58,8 @@ pub async fn register_email_password(
         ));
     }
     validate_email_password_register(&request, password_min_length().await)?;
-    crate::auth_product::enforce_account_rate_limit(
-        "password-register",
-        &request.email,
-        5,
-        3_600,
-    )
-    .await?;
+    crate::auth_product::enforce_account_rate_limit("password-register", &request.email, 5, 3_600)
+        .await?;
     let redirect_url = safe_redirect_or_default(request.redirect_url.clone());
     crate::auth_product::register_email_password(&request, &redirect_url).await
 }
@@ -80,13 +73,8 @@ pub async fn login_email_password(
         ));
     }
     validate_email_password_login(&request)?;
-    crate::auth_product::enforce_account_rate_limit(
-        "password-login",
-        &request.email,
-        5,
-        15 * 60,
-    )
-    .await?;
+    crate::auth_product::enforce_account_rate_limit("password-login", &request.email, 5, 15 * 60)
+        .await?;
     let redirect_url = safe_redirect_or_default(request.redirect_url.clone());
     crate::auth_product::login_email_password(&request, &redirect_url).await
 }
@@ -249,13 +237,8 @@ pub async fn start_passkey_login(
     }
     if let Some(email) = request.email.as_deref() {
         validate_optional_email(email)?;
-        crate::auth_product::enforce_account_rate_limit(
-            "passkey-login-start",
-            email,
-            5,
-            3_600,
-        )
-        .await?;
+        crate::auth_product::enforce_account_rate_limit("passkey-login-start", email, 5, 3_600)
+            .await?;
     }
     let redirect_url = safe_redirect_or_default(request.redirect_url);
     let email = request
@@ -305,11 +288,9 @@ pub async fn verify_passkey_login(
         ));
     }
     validate_passkey_verify_request(&request)?;
-    let response = crate::auth_product::finish_passkey_login(
-        &request.challenge_id,
-        &request.credential_json,
-    )
-    .await?;
+    let response =
+        crate::auth_product::finish_passkey_login(&request.challenge_id, &request.credential_json)
+            .await?;
     Ok(response)
 }
 
@@ -379,7 +360,8 @@ pub async fn latest_captured_mail(
     crate::auth_product::latest_captured_mail(&recipient, &message_kind).await
 }
 
-pub(crate) async fn list_credentialed_auth_providers() -> AuthStackResult<Vec<AuthProviderSummary>> {
+pub(crate) async fn list_credentialed_auth_providers() -> AuthStackResult<Vec<AuthProviderSummary>>
+{
     let providers = crate::auth_product::list_oauth_providers().await?;
     let mut credentialed = Vec::new();
     for mut provider in providers {
@@ -393,7 +375,9 @@ pub(crate) async fn list_credentialed_auth_providers() -> AuthStackResult<Vec<Au
     Ok(credentialed)
 }
 
-pub(crate) async fn ensure_oauth_provider_ready(provider_id: &str) -> AuthStackResult<AuthProviderSummary> {
+pub(crate) async fn ensure_oauth_provider_ready(
+    provider_id: &str,
+) -> AuthStackResult<AuthProviderSummary> {
     let Some(mut provider) = crate::auth_product::find_oauth_provider(provider_id).await? else {
         return Err(AuthStackError::not_found(format!(
             "OAuth provider '{provider_id}' is not configured"
@@ -466,7 +450,11 @@ pub(crate) async fn all_config_values_present(names: &[&str]) -> bool {
     true
 }
 
-pub(crate) fn development_oauth_callback_url(provider_id: &str, state: &str, redirect_url: &str) -> String {
+pub(crate) fn development_oauth_callback_url(
+    provider_id: &str,
+    state: &str,
+    redirect_url: &str,
+) -> String {
     format!(
         "/api/auth/oauth/{provider_id}/callback?code=development-oauth-code&state={}&next={}",
         url_query_component(state),

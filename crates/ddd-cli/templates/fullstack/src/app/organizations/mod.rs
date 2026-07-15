@@ -4,26 +4,26 @@
 #![allow(clippy::unused_unit)]
 #![allow(clippy::unit_arg)]
 
+use crate::app::auth::SessionSummary;
 use crate::app::helpers::{
     action_result_text, has_permission, org_monogram, org_tone_index, redirect_browser,
     server_error_text, short_id_label,
 };
-use crate::app::auth::SessionSummary;
 use crate::app::{
-    browser_load, create_organization, get_current_session, invite_current_organization_member,
-    list_current_organization_audit, list_current_organization_invitations,
-    list_current_organization_members, list_current_organization_roles, list_organizations,
-    select_organization, upsert_current_organization_role, CreateOrganization,
-    InviteCurrentOrganizationMember, ListCurrentOrganizationAudit,
+    CreateOrganization, InviteCurrentOrganizationMember, ListCurrentOrganizationAudit,
     ListCurrentOrganizationInvitations, ListCurrentOrganizationMembers,
     ListCurrentOrganizationRoles, ListOrganizations, SelectOrganization,
-    UpsertCurrentOrganizationRole,
+    UpsertCurrentOrganizationRole, browser_load, create_organization, get_current_session,
+    invite_current_organization_member, list_current_organization_audit,
+    list_current_organization_invitations, list_current_organization_members,
+    list_current_organization_roles, list_organizations, select_organization,
+    upsert_current_organization_role,
 };
 use crate::contracts::{
     AuditEventListResponse, InvitationListResponse, MembershipListResponse,
     OrganizationListResponse, OrganizationSummary, RoleListResponse, SessionView,
 };
-use crate::ui::{page_shell, Panel, PrimaryButton, SectionLabel};
+use crate::ui::{Panel, PrimaryButton, SectionLabel, page_shell};
 use leptos::prelude::*;
 use server_fn::ServerFnError;
 
@@ -35,7 +35,6 @@ pub fn OrganizationsPage() -> impl IntoView {
         view! { <OrganizationsHome /> },
     )
 }
-
 
 #[island]
 pub fn OrganizationsHome() -> impl IntoView {
@@ -77,7 +76,7 @@ pub fn OrganizationsHome() -> impl IntoView {
             #[cfg(feature = "hydrate")]
             {
                 // Refresh the list after a successful create.
-                if let Some(window) = window() {
+                if let Some(window) = web_sys::window() {
                     let _ = window.location().reload();
                 }
             }
@@ -88,7 +87,7 @@ pub fn OrganizationsHome() -> impl IntoView {
         if matches!(select_value.get(), Some(Ok(_))) {
             #[cfg(feature = "hydrate")]
             {
-                if let Some(window) = window() {
+                if let Some(window) = web_sys::window() {
                     let _ = window.location().reload();
                 }
             }
@@ -371,7 +370,6 @@ pub fn OrganizationsHome() -> impl IntoView {
     }
 }
 
-
 #[component]
 pub fn OrganizationSettingsPage() -> impl IntoView {
     page_shell(
@@ -380,7 +378,6 @@ pub fn OrganizationSettingsPage() -> impl IntoView {
         view! { <SessionSummary /> <OrganizationLinks /> },
     )
 }
-
 
 #[island(lazy)]
 pub fn OrganizationMembersPage() -> impl IntoView {
@@ -414,7 +411,6 @@ pub fn OrganizationMembersPage() -> impl IntoView {
         },
     )
 }
-
 
 #[island(lazy)]
 pub fn OrganizationInvitationsPage() -> impl IntoView {
@@ -458,7 +454,6 @@ pub fn OrganizationInvitationsPage() -> impl IntoView {
     )
 }
 
-
 #[island(lazy)]
 pub fn OrganizationRolesPage() -> impl IntoView {
     let roles = browser_load(list_current_organization_roles);
@@ -500,7 +495,6 @@ pub fn OrganizationRolesPage() -> impl IntoView {
     )
 }
 
-
 #[island(lazy)]
 pub fn OrganizationPermissionsPage() -> impl IntoView {
     let roles = browser_load(list_current_organization_roles);
@@ -523,7 +517,6 @@ pub fn OrganizationPermissionsPage() -> impl IntoView {
     )
 }
 
-
 #[island(lazy)]
 pub fn OrganizationAuditPage() -> impl IntoView {
     let audit = browser_load(list_current_organization_audit);
@@ -544,7 +537,6 @@ pub fn OrganizationAuditPage() -> impl IntoView {
     )
 }
 
-
 #[component]
 pub fn OrganizationLinks() -> impl IntoView {
     view! {
@@ -553,4 +545,3 @@ pub fn OrganizationLinks() -> impl IntoView {
         </section>
     }
 }
-

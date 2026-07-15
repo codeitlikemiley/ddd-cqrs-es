@@ -2,11 +2,7 @@ use leptos::prelude::*;
 
 /// Standard surface card (`.panel`).
 #[component]
-pub fn Panel(
-    #[prop(optional, into)]
-    class: Option<String>,
-    children: Children,
-) -> impl IntoView {
+pub fn Panel(#[prop(optional, into)] class: Option<String>, children: Children) -> impl IntoView {
     let class_name = match class {
         Some(extra) if !extra.trim().is_empty() => format!("panel {extra}"),
         _ => "panel".to_owned(),
@@ -21,8 +17,7 @@ pub fn Panel(
 /// Nested / compact card (`.compact-panel`).
 #[component]
 pub fn CompactPanel(
-    #[prop(optional, into)]
-    class: Option<String>,
+    #[prop(optional, into)] class: Option<String>,
     children: Children,
 ) -> impl IntoView {
     let class_name = match class {

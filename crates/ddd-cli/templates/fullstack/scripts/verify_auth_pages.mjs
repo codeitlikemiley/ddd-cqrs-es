@@ -40,6 +40,17 @@ async function assertPage(page, path, expectedTitle) {
     overflowX:
       document.documentElement.scrollWidth >
       document.documentElement.clientWidth + 1,
+    overflowElements: [...document.querySelectorAll("body *")]
+      .filter((element) => element.getBoundingClientRect().right > document.documentElement.clientWidth + 1)
+      .slice(0, 8)
+      .map((element) => ({
+        tag: element.tagName,
+        className: element.className,
+        type: element.getAttribute("type"),
+        html: element.outerHTML.slice(0, 240),
+        right: Math.round(element.getBoundingClientRect().right),
+        width: Math.round(element.getBoundingClientRect().width),
+      })),
     submitText:
       document.querySelector('button[type="submit"]')?.textContent?.trim() ||
       "",
@@ -50,7 +61,9 @@ async function assertPage(page, path, expectedTitle) {
     );
   }
   if (state.overflowX) {
-    throw new Error(`${path} has horizontal overflow at current viewport`);
+    throw new Error(
+      `${path} has horizontal overflow at current viewport: ${JSON.stringify(state.overflowElements)}`,
+    );
   }
   await waitForPageWasm(page);
   return state;
@@ -218,7 +231,12 @@ async function createSessionCookie() {
     throw new Error(`Register response did not create a pending account`);
   }
   const mail = await capturedMail(email, "email-verification");
-  const verificationUrl = new URL(mail.body_text, baseUrl);
+  const actionUrl =
+    mail.action_url || mail.body_text.match(/https?:\/\/[^\s]+/)?.[0];
+  if (!actionUrl) {
+    throw new Error("Verification mail did not contain an action URL");
+  }
+  const verificationUrl = new URL(actionUrl, baseUrl);
   const token = verificationUrl.searchParams.get("token");
   if (!token) {
     throw new Error("Verification mail did not contain a one-time token");
@@ -383,11 +401,13 @@ try {
         return;
       }
       unexpectedBrowserErrors.push(
-        `browser console ${message.type()}: ${message.text()}`,
+        `browser console ${message.type()} at ${page.url()} (${viewport.width}px): ${message.text()}`,
       );
     });
     page.on("pageerror", (error) => {
-      unexpectedBrowserErrors.push(`browser page error: ${error.message}`);
+      unexpectedBrowserErrors.push(
+        `browser page error at ${page.url()} (${viewport.width}px): ${error.message}`,
+      );
     });
     page.on("requestfailed", (request) => {
       const requestUrl = new URL(request.url());
@@ -404,11 +424,11 @@ try {
     await assertPage(page, "/", "Production fullstack Rust");
     await assertIslandComponents(page, []);
     await assertPage(page, "/login", "Welcome back");
-    await assertIslandComponents(page, [
+    const loginIslands = [
       "ExistingSessionRedirect_",
       "EmailPasswordAuthForm_",
-      "OptionalLoginMethods_",
-    ]);
+    ];
+    await assertIslandComponents(page, loginIslands);
     const register = await assertServerFunction(
       page,
       "/register",
@@ -472,7 +492,28 @@ try {
 
     const session = await createSessionCookie();
     await context.addCookies([session.cookie]);
-    await assertPage(page, "/dashboard", "Dashboard");
+    const csrfResponse = await page.request.get(url("/api/auth/csrf"));
+    if (!csrfResponse.ok()) {
+      throw new Error(`CSRF token request failed with ${csrfResponse.status()}`);
+    }
+    const { token: csrfToken } = await csrfResponse.json();
+    const organizationResponse = await page.request.post(url("/api/organizations"), {
+      data: {
+        name: `Browser Smoke ${Date.now()}`,
+        slug: `browser-smoke-${Date.now()}-${sessionEmailIndex}`,
+      },
+      headers: { origin: baseUrl, "x-csrf-token": csrfToken },
+    });
+    if (!organizationResponse.ok()) {
+      throw new Error(
+        `Organization creation failed with ${organizationResponse.status()}: ${await organizationResponse.text()}`,
+      );
+    }
+    await assertPage(
+      page,
+      "/dashboard",
+      `Good to see you, ${session.email.split("@")[0]}`,
+    );
     if (viewport.width > 520) {
       await assertVisibleText(page, session.email);
     }
@@ -483,7 +524,7 @@ try {
     );
     await assertPage(page, "/account/profile", "Profile");
     await assertPage(page, "/account/password", "Password");
-    await assertPage(page, "/account/mfa", "Multi-factor authentication");
+    await assertPage(page, "/account/mfa", "Authenticator app");
     await verifyMfaFlow(session.sessionId);
     assertSplitRequestState(
       requestedWasm,
@@ -533,7 +574,15 @@ try {
     // Without a token, guest-only behavior still applies.
     await assertRedirect(page, "/reset-password", "/dashboard");
 
-    await assertPage(page, "/dashboard", "Dashboard");
+    await assertPage(
+      page,
+      "/dashboard",
+      `Good to see you, ${session.email.split("@")[0]}`,
+    );
+    if (viewport.width <= 960) {
+      await page.getByLabel("Open navigation", { exact: true }).click();
+    }
+    await page.getByLabel("Account menu", { exact: true }).click();
     const signOut = page.getByRole("button", { name: "Sign out", exact: true });
     const signOutCount = await signOut.count();
     if (signOutCount !== 1) {

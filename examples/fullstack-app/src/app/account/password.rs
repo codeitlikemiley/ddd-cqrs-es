@@ -2,12 +2,11 @@
 #![allow(clippy::unused_unit)]
 #![allow(clippy::unit_arg)]
 
-
 use crate::app::helpers::action_result_text;
-use crate::app::{change_password, ChangePassword};
+use crate::app::{ChangePassword, change_password};
 use crate::ui::{
-    account_page_shell, ErrorBanner, Field, FieldGroup, Panel, PrimaryButton, SectionLabel,
-    SuccessBanner, TextInput,
+    ErrorBanner, Field, FieldGroup, Panel, PrimaryButton, SectionLabel, SuccessBanner, TextInput,
+    account_page_shell,
 };
 use leptos::prelude::*;
 use server_fn::ServerFnError;
@@ -136,4 +135,3 @@ pub fn ChangePasswordForm() -> impl IntoView {
         </Panel>
     }
 }
-

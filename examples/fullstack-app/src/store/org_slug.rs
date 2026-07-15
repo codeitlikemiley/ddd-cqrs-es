@@ -81,7 +81,12 @@ pub fn suggest_org_slug(name: &str) -> String {
     if trimmed.is_empty() {
         "workspace".to_owned()
     } else if trimmed.len() > 48 {
-        trimmed.chars().take(48).collect::<String>().trim_end_matches('-').to_owned()
+        trimmed
+            .chars()
+            .take(48)
+            .collect::<String>()
+            .trim_end_matches('-')
+            .to_owned()
     } else {
         trimmed
     }
@@ -192,7 +197,9 @@ pub async fn slug_for_organization(org_id: &str) -> AuthStackResult<Option<Strin
         else {
             return Ok(None);
         };
-        Ok(String::from_utf8(bytes).ok().filter(|s| !s.trim().is_empty()))
+        Ok(String::from_utf8(bytes)
+            .ok()
+            .filter(|s| !s.trim().is_empty()))
     }
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
@@ -284,4 +291,3 @@ pub async fn ensure_org_slug(org_id: &str, name: &str) -> AuthStackResult<String
         "could not allocate a unique workspace URL",
     ))
 }
-

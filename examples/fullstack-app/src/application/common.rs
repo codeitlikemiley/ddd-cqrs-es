@@ -3,9 +3,8 @@
 
 use std::sync::OnceLock;
 
-
-use wasi_auth::authentication::jwt::JwksDocument;
 use wasi_auth::authentication::Clock;
+use wasi_auth::authentication::jwt::JwksDocument;
 use wasi_auth::authorization::{
     AccessRequest, ActionName, Authorizer, MAX_BATCH_CHECKS, Resource, ResourceType,
 };
@@ -104,14 +103,79 @@ pub(crate) async fn enforce_organization_scope(
     context: &VerifiedAuthContext,
     organization_id: &str,
 ) -> AuthStackResult<()> {
-    if context.principal().is_system_administrator()
-        && context.assurance() == AuthenticationAssurance::Aal2
-    {
-        return Ok(());
-    }
     crate::auth_product::organization_for_session(context.session_id().as_str(), organization_id)
         .await
         .map(|_| ())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AssuranceRequirement {
+    Aal1,
+    Aal2,
+}
+
+pub(crate) struct WorkspaceAuthorization {
+    pub(crate) context: VerifiedAuthContext,
+    pub(crate) user_id: String,
+    pub(crate) organization_id: String,
+}
+
+pub(crate) fn assurance_satisfies(
+    assurance: AuthenticationAssurance,
+    requirement: AssuranceRequirement,
+) -> bool {
+    match requirement {
+        AssuranceRequirement::Aal1 => true,
+        AssuranceRequirement::Aal2 => assurance.satisfies(AuthenticationAssurance::Aal2),
+    }
+}
+
+pub(crate) async fn require_organization_permission(
+    context: &VerifiedAuthContext,
+    organization_id: &str,
+    permission: &str,
+    assurance: AssuranceRequirement,
+) -> AuthStackResult<()> {
+    if !assurance_satisfies(context.assurance(), assurance) {
+        return Err(AuthStackError::AuthRequired);
+    }
+    let organization = crate::auth_product::organization_for_session(
+        context.session_id().as_str(),
+        organization_id,
+    )
+    .await?;
+    if organization
+        .permissions
+        .iter()
+        .any(|candidate| candidate == permission)
+    {
+        Ok(())
+    } else {
+        Err(AuthStackError::Forbidden)
+    }
+}
+
+pub(crate) async fn require_workspace_permission(
+    auth: RequestAuth,
+    permission: &str,
+    assurance: AssuranceRequirement,
+) -> AuthStackResult<WorkspaceAuthorization> {
+    let (context, _) =
+        verified_context_and_permissions(auth, assurance == AssuranceRequirement::Aal2).await?;
+    let user_id = context.principal().user_id().as_str().to_owned();
+    let session =
+        crate::auth_product::ensure_default_organization(context.session_id().as_str(), &user_id)
+            .await?;
+    let organization_id = session
+        .tenant_id
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| AuthStackError::validation("create a workspace first"))?;
+    require_organization_permission(&context, &organization_id, permission, assurance).await?;
+    Ok(WorkspaceAuthorization {
+        context,
+        user_id,
+        organization_id,
+    })
 }
 
 pub(crate) fn validate_identifier(label: &str, value: &str) -> AuthStackResult<()> {
@@ -135,7 +199,11 @@ pub(crate) fn validate_mfa_code(code: &str) -> AuthStackResult<()> {
     Ok(())
 }
 
-pub(crate) fn validate_display_name(label: &str, value: &str, max_length: usize) -> AuthStackResult<()> {
+pub(crate) fn validate_display_name(
+    label: &str,
+    value: &str,
+    max_length: usize,
+) -> AuthStackResult<()> {
     if value.trim().is_empty()
         || value.trim() != value
         || value.len() > max_length
@@ -152,7 +220,12 @@ pub(crate) async fn verified_context_and_permissions(
     step_up: bool,
 ) -> AuthStackResult<(VerifiedAuthContext, Vec<String>)> {
     if let Some(verified) = auth.verified {
-        if step_up && verified.auth().assurance() != AuthenticationAssurance::Aal2 {
+        if step_up
+            && !verified
+                .auth()
+                .assurance()
+                .satisfies(AuthenticationAssurance::Aal2)
+        {
             return Err(AuthStackError::AuthRequired);
         }
         let permissions = verified
@@ -233,7 +306,9 @@ pub(crate) async fn authenticated_session_from_cookie(
     crate::auth_product::authenticated_session_from_cookie(session_id).await
 }
 
-pub(crate) async fn authenticated_session_from_token(token: &str) -> AuthStackResult<AuthenticatedSession> {
+pub(crate) async fn authenticated_session_from_token(
+    token: &str,
+) -> AuthStackResult<AuthenticatedSession> {
     let verified = crate::application::auth::verify_access_token(TokenVerifyRequest {
         access_token: token.to_string(),
     })
@@ -268,7 +343,7 @@ pub(crate) async fn authenticated_session(
         .transpose()
         .map_err(|_| AuthStackError::configuration("authenticated organization is invalid"))?;
     let session_id = SessionId::new(session_id_value.to_owned())
-    .map_err(|_| AuthStackError::configuration("authenticated session id is invalid"))?;
+        .map_err(|_| AuthStackError::configuration("authenticated session id is invalid"))?;
     let assurance = if parts.assurance == "aal2" {
         AuthenticationAssurance::Aal2
     } else {
@@ -289,7 +364,7 @@ pub(crate) async fn authenticated_session(
             .policy_revision
             .unwrap_or_else(|| DEFAULT_APPLICATION_POLICY_REVISION.to_owned()),
     )
-        .map_err(|_| AuthStackError::configuration("policy revision is invalid"))?;
+    .map_err(|_| AuthStackError::configuration("policy revision is invalid"))?;
     let authorization = AuthorizationSnapshot::new(
         parts.permissions,
         role_ids,
@@ -310,7 +385,9 @@ pub(crate) async fn authenticated_session(
     })
 }
 
-pub(crate) fn validate_email_password_login(request: &EmailPasswordLoginRequest) -> AuthStackResult<()> {
+pub(crate) fn validate_email_password_login(
+    request: &EmailPasswordLoginRequest,
+) -> AuthStackResult<()> {
     validate_required_email(&request.email)?;
     if request.password.is_empty() {
         return Err(AuthStackError::validation("password is required"));
@@ -329,7 +406,9 @@ pub(crate) fn validate_email_password_register(
     Ok(())
 }
 
-pub(crate) fn validate_password_reset_start(request: &PasswordResetStartRequest) -> AuthStackResult<()> {
+pub(crate) fn validate_password_reset_start(
+    request: &PasswordResetStartRequest,
+) -> AuthStackResult<()> {
     validate_required_email(&request.email)?;
     validate_safe_redirect_option(request.redirect_url.as_deref())?;
     Ok(())
@@ -391,7 +470,9 @@ pub(crate) fn validate_password_policy(password: &str, min_length: usize) -> Aut
     Ok(())
 }
 
-pub(crate) fn validate_passkey_verify_request(request: &PasskeyVerifyRequest) -> AuthStackResult<()> {
+pub(crate) fn validate_passkey_verify_request(
+    request: &PasskeyVerifyRequest,
+) -> AuthStackResult<()> {
     if request.challenge_id.trim().is_empty() {
         return Err(AuthStackError::validation("challenge_id is required"));
     }

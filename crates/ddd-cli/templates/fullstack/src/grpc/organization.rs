@@ -225,4 +225,3 @@ impl OrganizationService for OrganizationGrpcService {
         }))
     }
 }
-

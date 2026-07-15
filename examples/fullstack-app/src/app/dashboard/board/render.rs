@@ -15,7 +15,6 @@ use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
 use wasm_bindgen::JsCast;
 
-
 pub(crate) fn render_node_list(
     nodes: Vec<BoardNode>,
     snap: Option<DashboardSnapshot>,
@@ -874,7 +873,8 @@ pub(crate) fn render_bound_widget(
 
     match http_mode {
         HttpDisplayMode::Metric => {
-            let (value, label, meta) = crate::app::dashboard::bind::project_bound_metric(&data_json, &bind);
+            let (value, label, meta) =
+                crate::app::dashboard::bind::project_bound_metric(&data_json, &bind);
             view! {
                 <div class="board-metric">
                     <strong class="board-metric-value board-metric-number">{value}</strong>
@@ -912,9 +912,11 @@ pub(crate) fn render_bound_widget(
             .into_any()
         }
         HttpDisplayMode::Table => {
-            let (headers, rows) = crate::app::dashboard::bind::project_bound_table(&data_json, &bind, 20);
+            let (headers, rows) =
+                crate::app::dashboard::bind::project_bound_table(&data_json, &bind, 20);
             if headers.is_empty() {
-                return view! { <div class="board-empty-tile"><p>"No columns"</p></div> }.into_any();
+                return view! { <div class="board-empty-tile"><p>"No columns"</p></div> }
+                    .into_any();
             }
             view! {
                 <div class="board-table-wrap">
