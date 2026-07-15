@@ -126,7 +126,11 @@ select:focus-visible {
 }
 
 .auth-shell {
+  box-sizing: border-box;
+  display: block;
   min-height: 100dvh;
+  min-height: 100svh;
+  width: 100%;
 }
 
 /* ------------------------------------------------------------------ */
@@ -5187,13 +5191,32 @@ html.board-modal-open body {
 
 /* Authentication surfaces */
 .auth-page {
+  /* Flex (not multi-row grid): login/register mount an island sibling
+     (ExistingSessionRedirect). Grid auto-rows pack from the top and leave the
+     card visually low; flex + out-of-flow non-card children centers the card. */
   align-items: center;
   background: var(--bg-canvas);
+  box-sizing: border-box;
   color: var(--text-primary);
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
   min-height: 100dvh;
+  min-height: 100svh;
   padding: 32px 16px;
-  place-items: center;
+  position: relative;
+  width: 100%;
+}
+
+/* Session probe / other non-card islands must not consume flex space. */
+.auth-page > :not(.auth-card) {
+  height: 0;
+  left: 0;
+  overflow: hidden;
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  width: 0;
 }
 
 .auth-card {
@@ -5201,6 +5224,7 @@ html.board-modal-open body {
   border: 1px solid var(--border-subtle);
   border-radius: 14px;
   box-shadow: var(--shadow-soft);
+  flex: 0 0 auto;
   max-width: 456px;
   padding: 32px;
   width: 100%;
