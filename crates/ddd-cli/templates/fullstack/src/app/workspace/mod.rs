@@ -197,7 +197,7 @@ pub fn WorkspaceOnboardingPanel() -> impl IntoView {
     let client_error = RwSignal::new(None::<String>);
 
     // Force-create intent: /onboarding/workspace?new=1 (from workspace switcher).
-    // Without new=1, users who already have orgs are sent to their workspace (first-time gate only).
+    // Without new=1, users who already have orgs leave onboarding to the home board.
     let force_new = current_browser_search_has_new();
 
     let existing = browser_load(list_organizations);
@@ -209,23 +209,13 @@ pub fn WorkspaceOnboardingPanel() -> impl IntoView {
             if list.organizations.is_empty() {
                 return;
             }
-            if let Some(org) = list.organizations.iter().find(|o| !o.slug.is_empty()) {
-                redirect_browser(&format!("/org/{}/vault", org.slug));
-            } else {
-                redirect_browser("/organizations");
-            }
+            redirect_browser("/dashboard");
         }
     });
 
     Effect::new(move |_| match value.get() {
-        Some(Ok(org)) => {
-            let dest = if org.slug.is_empty() {
-                "/dashboard".to_owned()
-            } else {
-                format!("/org/{}/vault", org.slug)
-            };
-            redirect_browser(&dest);
-        }
+        // Product home after first workspace is the board, not the vault.
+        Some(Ok(_org)) => redirect_browser("/dashboard"),
         Some(Err(e)) => client_error.set(Some(server_error_text(e))),
         None => {}
     });

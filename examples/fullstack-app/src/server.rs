@@ -383,12 +383,8 @@ fn workspace_setup_redirect(
         return None;
     }
 
-    organizations
-        .organizations
-        .iter()
-        .find(|organization| !organization.slug.trim().is_empty())
-        .map(|organization| format!("/org/{}/vault", organization.slug))
-        .or_else(|| Some("/dashboard".to_owned()))
+    // Already has a workspace: leave focused onboarding for the home board.
+    Some("/dashboard".to_owned())
 }
 
 fn has_new_workspace_intent(query: Option<&str>) -> bool {
