@@ -1,10 +1,10 @@
-# Fullstack app handover — review before Tailwind rewrite
+# Fullstack app handover — modularization + Tailwind closeout
 
 **Audience:** external reviewer (e.g. ChatGPT) and human owner.  
-**Purpose:** verify modularization + product polish is sound **before** starting a Tailwind utility rewrite.  
-**Date:** 2026-07-15  
+**Purpose:** verify modularization + product polish + pure Tailwind UI rewrite.  
+**Date:** 2026-07-16  
 **Repo:** `/Users/uriah/Code/ddd`  
-**Branch:** `codex/fullstack-verification-flow` (local commits only; **do not push/PR** unless the human asks)
+**Branch:** `execute-plan/710bca15-pr-6-residual-css-purge-and-closeout` (local commits only; **do not push/PR** unless the human asks)
 
 ---
 
@@ -60,9 +60,9 @@ Work on this branch did two things, in order:
 2. **Structural modularization** of `examples/fullstack-app` (and dual-synced CLI template) so large Rust monoliths are split into domain modules under a **1200 LOC** budget.
 
 **Modularization goal is complete** (see `REFACTOR_GOAL.md`).  
-**Tailwind rewrite has not started** and must not start until this review is accepted.
+**Tailwind rewrite is complete** (see `TAILWIND_MIGRATION.md`) — pure utilities via `src/ui/classes.rs`; residual semantic CSS purged.
 
-**What this is not:** a full product redesign, API redesign, or CSS framework migration. Most modularization commits claim *mechanical* moves (split files, re-exports, import fixes) with **no intentional behavior change**.
+**What this is not:** a full product redesign or API redesign. Modularization commits claim *mechanical* moves (split files, re-exports, import fixes) with **no intentional behavior change**. Tailwind commits are UI-only class/CSS rewrites.
 
 ---
 
@@ -74,10 +74,11 @@ Confirm the review stays on:
 
 | In scope | Out of scope (for now) |
 |----------|-------------------------|
-| File splits, module boundaries, re-exports | Full Tailwind utility rewrite |
-| Compile / LOC guards | Pushing or opening PRs |
-| Dual-sync example ↔ template | New product features |
-| Product polish already landed (layout, org, vault UX) | Rewriting wasi-auth / ddd_cqrs_es crates |
+| File splits, module boundaries, re-exports | Pushing or opening PRs |
+| Compile / LOC guards | New product features |
+| Dual-sync example ↔ template | Rewriting wasi-auth / ddd_cqrs_es crates |
+| Product polish already landed (layout, org, vault UX) | Non-UI backend redesign |
+| Pure Tailwind UI rewrite (complete — see tracker) | |
 
 ### 2.2 Commands the human can re-run
 
@@ -113,7 +114,7 @@ Dual-sync destination: `crates/ddd-cli/templates/fullstack` (must mirror example
 
 ### 2.4 Known non-goals / deferred
 
-- **Tailwind:** cargo-leptos CSS pipeline may already involve Tailwind tooling, but UI still uses **semantic class names** and `src/ui/*` wrappers. Full utility rewrite is **explicitly deferred**.
+- **Tailwind:** **complete** — see `TAILWIND_MIGRATION.md`. Markup uses Tailwind utilities via `src/ui/classes.rs`; `input.css` has no residual semantic CSS.
 - **Scheduler:** durable 30m modularization loop was **cancelled** after goal completion (`019f615b2152`).
 - **Remote:** branch is **ahead of origin by many commits**; nothing was force-pushed by this workstream’s rules.
 
@@ -262,29 +263,28 @@ git show a5c8871 --stat
 | `scripts/check_loc.sh` | OK (`allowlist: mod.rs`) |
 | Dual-sync | Run after each split unit |
 | Push / PR | **Not done** (by design) |
-| Tailwind rewrite | **Not started** |
+| Tailwind rewrite | **Complete** (see `TAILWIND_MIGRATION.md`) |
 
 **Not claimed:** full browser E2E suite re-run on every modularization commit. Product smoke scripts exist under `scripts/` (`verify_fullstack.sh`, Playwright helpers, vault smoke, etc.) — human should re-run smoke if security-sensitive paths are in doubt.
 
 ---
 
-## 8. Tailwind rewrite readiness (guidance for next phase)
+## 8. Tailwind rewrite status
 
-**Do not start until review signs off.**
+**Status: complete** (Phase 5 closeout). Tracker: `TAILWIND_MIGRATION.md`.
 
-When starting Tailwind:
+What landed:
 
-1. Keep **module boundaries**; rewrite styles, not re-merge monoliths.
-2. Prefer expanding **`src/ui/*`** primitives first, then page-level class swaps.
-3. Preserve islands / server_fn registration patterns.
-4. Continue dual-sync after UI changes if template should stay identical.
-5. Keep semantic meaning (a11y labels, structure) even if class strings change.
-6. Re-run `make check` and relevant browser smokes after large CSS passes.
+1. Design tokens in `@theme inline` + CSS vars (`:root` / dark).
+2. Shared utilities in `src/ui/classes.rs`; primitives (`button`, `panel`, shells) emit utilities.
+3. Domain markup converted (auth, account, board, settings, orgs, admin, workspace shell, settings shell, home).
+4. Residual semantic CSS purged from `input.css` (tiny non-semantic residuals only: drawer/modal scroll locks + `board-pulse` keyframes).
+5. Playwright smokes prefer `data-testid` over class names.
 
-Optional pre-Tailwind cleanups (nice-to-have, not blocking if review is happy):
+Post-Tailwind hygiene (optional, not blockers):
 
-- Split `app/auth/forms.rs` further (~1175).
-- Split `app/dashboard/resources.rs` (~1001).
+- Split `app/auth/forms.rs` further if it grows.
+- Split `app/dashboard/resources.rs` further if it grows.
 - Optionally modularize `oauth.rs` / `rest.rs` if they grow.
 
 ---
@@ -300,17 +300,17 @@ These areas deserve **behavior-level** scrutiny (not just file layout):
 5. **gRPC auth** — `request_auth` metadata → `RequestAuth` mapping in `grpc/convert` / services.
 6. **Session cookies** — secure flag, Host-session naming via application session helpers.
 
-If any of the above look diluted by a “refactor” commit, flag as **blocker** before Tailwind.
+If any of the above look diluted by a “refactor” or UI commit, flag as **blocker**.
 
 ---
 
 ## 10. Open questions for the human / ChatGPT
 
-1. Accept modularization as **done** for Tailwind gate?
+1. Accept modularization + Tailwind closeout as **done** for product UI gate?
 2. Require re-run of full smoke/browser suite on this branch tip first?
-3. Thin `forms.rs` / `resources.rs` now or during Tailwind?
-4. Push branch / open PR for CI, or keep local until Tailwind lands?
-5. Should CLI template dual-sync remain strict 1:1 during Tailwind, or diverge temporarily?
+3. Thin `forms.rs` / `resources.rs` now or later?
+4. Push branch / open PR for CI?
+5. Keep CLI template dual-sync strict 1:1 going forward?
 
 ---
 
@@ -323,7 +323,9 @@ If any of the above look diluted by a “refactor” commit, flag as **blocker**
 | `examples/fullstack-app/scripts/check_loc.sh` | LOC budget guard |
 | `examples/fullstack-app/scripts/sync_fullstack_template.sh` | Dual-sync to CLI template |
 | `examples/fullstack-app/Makefile` | `check`, `grpc-check`, spin targets |
-| `examples/fullstack-app/src/ui/` | Pre-Tailwind UI primitives |
+| `examples/fullstack-app/src/ui/` | Tailwind utility constants + UI primitives |
+| `examples/fullstack-app/TAILWIND_MIGRATION.md` | Tailwind rewrite tracker (complete) |
+| `examples/fullstack-app/input.css` | Pure Tailwind v4 entry (tokens + base) |
 | `examples/fullstack-app/src/app/` | Routes, islands, server_fns |
 | `examples/fullstack-app/src/application/` | App service layer |
 | `examples/fullstack-app/src/store/` | Persistence |
@@ -363,9 +365,8 @@ Be skeptical of “mechanical only” claims—spot-check likely risky diffs.
 |------|--------|
 | Modularization goal | **Complete** |
 | LOC budget | **OK** |
-| Tailwind rewrite | **Not started — awaiting review** |
+| Tailwind rewrite | **Complete** (see `TAILWIND_MIGRATION.md`) |
 | Durable agent loop | **Cancelled** |
 | Push/PR | **Not done** |
-| Working tree at handover write | Expect clean on tip `ee2ab3c` (+ this file if uncommitted) |
 
-**Owner next step:** feed this file (+ `REFACTOR_GOAL.md` + key diffs) to ChatGPT (or another reviewer), get **go/no-go**, then either fix blockers or proceed to Tailwind under the rules in §8.
+**Owner next step:** re-run smoke suite if desired; push/PR only when explicitly authorized.

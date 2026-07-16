@@ -12,7 +12,7 @@ use super::forms::{
 use crate::app::helpers::{next_url, percent_encode_component, redirect_browser, set_page_status};
 use crate::app::{browser_load, get_current_session};
 use crate::ui::classes::{
-    AUTH_CARD, AUTH_PAGE, BANNER_SUCCESS, BTN_SECONDARY, BUTTON_ROW, SECTION_LABEL,
+    AUTH_CARD, AUTH_PAGE, BANNER_SUCCESS, BTN_SECONDARY, BUTTON_ROW, CLIENT_DATA_SLOT, SECTION_LABEL,
 };
 use crate::ui::{AuthBrand, error_page_shell, page_shell};
 use leptos::prelude::*;
@@ -138,7 +138,7 @@ pub fn ExistingSessionRedirect() -> impl IntoView {
     let session = browser_load(get_current_session);
 
     view! {
-        <div class="client-data-slot">
+        <div class=CLIENT_DATA_SLOT>
             {move || {
                 if let Some(Ok(session)) = session.get()
                     && session.authenticated

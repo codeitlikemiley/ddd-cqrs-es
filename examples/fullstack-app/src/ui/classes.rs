@@ -1048,17 +1048,37 @@ pub const USER_MENU_DIVIDER: &str = "mx-1.5 my-1 h-px bg-border-subtle";
 pub const USER_MENU_LOGOUT: &str = "p-0.5";
 pub const USER_MENU_FALLBACK: &str = "block p-2.5 text-[13px] text-secondary no-underline";
 
-/// Onboarding page brand (was shared with residual `.page-brand*`).
+/// Onboarding / public page brand row.
 pub const PAGE_BRAND: &str = "mx-auto flex min-h-11 max-w-[1120px] items-center justify-between";
 pub const PAGE_BRAND_LINK: &str =
     "inline-flex min-w-0 items-center gap-2.5 no-underline [&_strong]:block [&_strong]:text-[13px] [&_strong]:font-semibold [&_strong]:leading-tight [&_strong]:tracking-[-0.01em] [&_small]:mt-0.5 [&_small]:block [&_small]:text-[11px] [&_small]:leading-snug [&_small]:text-tertiary";
 pub const PAGE_BRAND_MARK: &str =
     "inline-flex h-8 w-8 flex-none items-center justify-center rounded-[10px] bg-inverse text-sm font-bold text-on-inverse";
 
+// ── Marketing home (public landing) ────────────────────────────────────────
+
+pub const HOME_INTRO: &str = "min-w-0 border-t-2 border-primary py-7 pr-2 pl-0";
+pub const HOME_KICKER: &str =
+    "m-0 text-xs font-semibold uppercase tracking-[0.08em] text-tertiary";
+pub const HOME_TITLE: &str =
+    "my-[18px] max-w-[11ch] text-[clamp(28px,4.2vw,44px)] font-semibold leading-[1.04] tracking-[-0.05em]";
+pub const HOME_COPY: &str = "m-0 max-w-[54ch] text-base leading-[1.65] text-secondary";
+pub const HOME_ACTIONS: &str = "mt-8 flex flex-wrap items-center gap-2";
+pub const HOME_STEPS: &str = "min-w-0 rounded-[14px] border border-border-subtle p-6";
+pub const HOME_STEPS_LIST: &str = "m-0 mt-5 grid list-none gap-0 p-0";
+pub const HOME_STEP: &str =
+    "grid grid-cols-[36px_minmax(0,1fr)] gap-3.5 border-t border-border-subtle py-[18px] last:border-b last:border-border-subtle";
+pub const HOME_STEP_INDEX: &str =
+    "pt-0.5 font-mono text-xs text-tertiary";
+pub const HOME_STEP_STRONG: &str = "block text-sm font-semibold";
+pub const HOME_STEP_P: &str = "mt-[5px] mb-0 text-[13px] leading-[1.55] text-secondary";
+pub const HOME_NOTE: &str = "mt-5 mb-0 text-[13px] leading-[1.55] text-tertiary";
+
 // ── Workspace onboarding (focused first-workspace create) ──────────────────
 
-/// Compose with residual `.page` shell if present, or use alone.
-pub const ONBOARDING_PAGE: &str = "mx-auto max-w-[520px] px-5 pb-20 pt-12";
+/// Full onboarding page shell (includes former residual `.page` chrome).
+pub const ONBOARDING_PAGE: &str =
+    "box-border mx-auto min-h-dvh w-full max-w-[520px] bg-canvas px-5 pb-20 pt-12";
 /// Complete panel chrome with onboarding gap (do not compose with `PANEL` — gap clash).
 pub const ONBOARDING_CARD: &str =
     "grid min-w-0 gap-2 rounded-[14px] border border-border-subtle bg-surface p-6";
@@ -1066,3 +1086,85 @@ pub const ONBOARDING_TITLE: &str = "m-0 text-[1.6rem] font-[650] tracking-tight"
 pub const ONBOARDING_LEDE: &str =
     "m-0 mb-4 max-w-[42ch] text-sm leading-[1.55] text-secondary";
 pub const ONBOARDING_FORM: &str = "grid gap-3.5";
+
+// ── Workspace settings shell (slug-scoped; exclusive of global rail) ───────
+//
+// Mobile drawer band: max-width 900px (checkbox peer; no custom shell-* variant).
+
+/// Root grid: sticky 260px rail + main. Collapses to single column ≤900px.
+pub const WSS_SHELL: &str =
+    "grid min-h-dvh w-full grid-cols-[260px_minmax(0,1fr)] bg-canvas text-primary max-[900px]:grid-cols-1";
+
+/// Checkbox peer for pure-CSS mobile settings drawer.
+pub const WSS_NAV_TOGGLE: &str =
+    "peer absolute m-[-1px] h-px w-px overflow-hidden whitespace-nowrap border-0 p-0 [clip:rect(0,0,0,0)]";
+
+/// Full-viewport scrim behind the mobile drawer.
+pub const WSS_NAV_BACKDROP: &str =
+    "fixed inset-0 z-30 m-0 hidden appearance-none border-0 bg-black/45 p-0 opacity-0 pointer-events-none transition-opacity duration-[160ms] ease-in-out max-[900px]:block max-[900px]:peer-checked:pointer-events-auto max-[900px]:peer-checked:opacity-100";
+
+/// Settings sidebar — sticky desktop column; fixed off-canvas drawer on mobile.
+pub const WSS_SIDEBAR: &str =
+    "sticky top-0 flex min-h-dvh flex-col gap-2 border-r border-border-subtle bg-sidebar px-3 py-[18px] pt-4 max-[900px]:fixed max-[900px]:inset-y-0 max-[900px]:left-0 max-[900px]:z-40 max-[900px]:w-[min(320px,88vw)] max-[900px]:max-w-[min(320px,88vw)] max-[900px]:-translate-x-[105%] max-[900px]:transform max-[900px]:transition-transform max-[900px]:duration-[180ms] max-[900px]:ease-in-out max-[900px]:peer-checked:translate-x-0 max-[900px]:peer-checked:shadow-[16px_0_40px_rgba(0,0,0,0.28)]";
+
+pub const WSS_SIDEBAR_TOP: &str =
+    "flex items-start justify-between gap-2 px-1 pb-3 pt-1";
+
+pub const WSS_IDENTITY: &str = "flex min-w-0 items-center gap-2.5";
+
+pub const WSS_AVATAR: &str =
+    "inline-flex h-9 w-9 flex-none items-center justify-center rounded-[10px] text-xs font-bold tracking-wide text-white";
+
+pub const WSS_IDENTITY_COPY: &str = "grid min-w-0 gap-0.5 [&_strong]:overflow-hidden [&_strong]:text-ellipsis [&_strong]:whitespace-nowrap [&_strong]:text-sm [&_strong]:font-[650] [&_strong]:leading-snug [&_small]:overflow-hidden [&_small]:text-ellipsis [&_small]:whitespace-nowrap [&_small]:text-xs [&_small]:text-tertiary";
+
+pub const WSS_SKELETON_BLOCK: &str =
+    "h-9 w-9 flex-none animate-pulse rounded-lg bg-surface-subtle";
+pub const WSS_SKELETON_LINE: &str =
+    "block h-3 w-[120px] animate-pulse rounded-lg bg-surface-subtle";
+pub const WSS_SKELETON_LINE_SM: &str =
+    "mt-1.5 block h-2.5 w-[88px] animate-pulse rounded-lg bg-surface-subtle";
+
+/// Mobile drawer close control (label for checkbox). Hidden on desktop.
+pub const WSS_SIDEBAR_CLOSE: &str =
+    "hidden cursor-pointer select-none appearance-none items-center rounded-lg border border-border-subtle bg-surface px-2.5 py-1.5 text-xs font-semibold text-secondary max-[900px]:inline-flex";
+
+pub const WSS_NAV: &str =
+    "grid min-h-0 flex-[1_1_auto] auto-rows-min content-start gap-0.5 overflow-y-auto";
+
+/// Section nav link. Active/disabled via Leptos `class:is-active` / `class:is-disabled`.
+pub const WSS_NAV_LINK: &str = "block rounded-lg px-2.5 py-[7px] text-[13px] font-medium leading-snug text-secondary no-underline transition-[background-color,color] duration-[140ms] ease-in-out hover:bg-surface-hover hover:text-primary [&.is-active]:bg-surface-active [&.is-active]:font-semibold [&.is-active]:text-primary [&.is-disabled]:pointer-events-none [&.is-disabled]:cursor-not-allowed [&.is-disabled]:opacity-45";
+
+pub const WSS_SIDEBAR_FOOT: &str =
+    "mt-auto grid gap-1 border-t border-border-subtle pt-3";
+
+pub const WSS_FOOT_LINK: &str =
+    "rounded-[10px] px-3 py-2 text-[13px] font-medium text-secondary no-underline hover:bg-surface-hover hover:text-primary";
+
+pub const WSS_MAIN: &str = "flex min-w-0 flex-col";
+
+pub const WSS_TOPBAR: &str =
+    "sticky top-0 z-[2] flex items-center gap-3 border-b border-border-subtle bg-[color-mix(in_srgb,var(--bg-canvas)_88%,transparent)] px-5 py-3 backdrop-blur-[10px]";
+
+/// Hamburger label — hidden desktop, shown ≤900px.
+pub const WSS_MENU_BUTTON: &str =
+    "m-0 hidden h-9 w-9 cursor-pointer select-none appearance-none items-center justify-center rounded-[10px] border border-border-subtle bg-surface p-0 max-[900px]:inline-flex";
+
+pub const WSS_TOPBAR_TITLE: &str =
+    "grid gap-0.5 [&_strong]:text-[15px] [&_strong]:font-[650]";
+
+/// Main content column. Audit (and dense tables) widen via `data-settings-wide`.
+pub const WSS_CONTENT: &str =
+    "mx-auto w-full max-w-[820px] px-6 pb-16 pt-7 has-[[data-settings-wide]]:max-w-[min(1120px,100%)] max-[900px]:px-4 max-[900px]:pb-14 max-[900px]:pt-5";
+
+/// Settings avatar with deterministic tone background (0–5).
+pub fn settings_avatar_class(tone: u8) -> String {
+    let bg = match tone % 6 {
+        0 => "bg-[#0f7b58]",
+        1 => "bg-[#2563eb]",
+        2 => "bg-[#a05a00]",
+        3 => "bg-[#0d9488]",
+        4 => "bg-[#b45309]",
+        _ => "bg-[#475569]",
+    };
+    with_extra(WSS_AVATAR, Some(bg))
+}

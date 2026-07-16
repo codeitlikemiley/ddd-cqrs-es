@@ -628,7 +628,9 @@ use crate::app::helpers::{
 use crate::app::path::{is_workspace_path, workspace_topbar_title};
 use crate::ui::classes::{
     AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
-    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+    BUTTON_ROW, CLIENT_DATA_SLOT, FIELD, FIELD_GROUP, HOME_ACTIONS, HOME_COPY, HOME_INTRO,
+    HOME_KICKER, HOME_NOTE, HOME_STEP, HOME_STEP_INDEX, HOME_STEP_P, HOME_STEP_STRONG, HOME_STEPS,
+    HOME_STEPS_LIST, HOME_TITLE, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
 };
 
 #[component]
@@ -637,34 +639,43 @@ pub fn HomePage() -> impl IntoView {
         "Production fullstack Rust",
         "Leptos islands, trusted authentication, embedded Cedar, DDD persistence, REST, and Spin gRPC in one component.",
         view! {
-            <section class="home-intro">
-                <p class="home-kicker">"A calm starting point for a serious system"</p>
-                <h2>"One verified session for every surface."</h2>
-                <p class="home-copy">
+            <section class=HOME_INTRO>
+                <p class=HOME_KICKER>"A calm starting point for a serious system"</p>
+                <h2 class=HOME_TITLE>"One verified session for every surface."</h2>
+                <p class=HOME_COPY>
                     "Create an account, verify your email, then move between the Leptos UI, REST endpoints, and authenticated gRPC services without changing the application boundary."
                 </p>
-                <div class=BUTTON_ROW>
-                    <a class="link-button link-button-primary" href="/register">"Create account"</a>
+                <div class=HOME_ACTIONS>
+                    <a class=BTN_PRIMARY href="/register">"Create account"</a>
                     <a class=BTN_SECONDARY href="/login">"Sign in"</a>
                 </div>
             </section>
-            <section class="home-steps">
+            <section class=HOME_STEPS>
                 <p class=SECTION_LABEL>"Start here"</p>
-                <ol class="steps-list">
-                    <li>
-                        <span class="step-index">"01"</span>
-                        <div><strong>"Register"</strong><p>"Create a global account with a password or an enabled provider."</p></div>
+                <ol class=HOME_STEPS_LIST>
+                    <li class=HOME_STEP>
+                        <span class=HOME_STEP_INDEX>"01"</span>
+                        <div>
+                            <strong class=HOME_STEP_STRONG>"Register"</strong>
+                            <p class=HOME_STEP_P>"Create a global account with a password or an enabled provider."</p>
+                        </div>
                     </li>
-                    <li>
-                        <span class="step-index">"02"</span>
-                        <div><strong>"Verify"</strong><p>"Use the one-time link delivered by the configured mail transport."</p></div>
+                    <li class=HOME_STEP>
+                        <span class=HOME_STEP_INDEX>"02"</span>
+                        <div>
+                            <strong class=HOME_STEP_STRONG>"Verify"</strong>
+                            <p class=HOME_STEP_P>"Use the one-time link delivered by the configured mail transport."</p>
+                        </div>
                     </li>
-                    <li>
-                        <span class="step-index">"03"</span>
-                        <div><strong>"Organize"</strong><p>"Create or join a tenant, then manage access from the protected workspace."</p></div>
+                    <li class=HOME_STEP>
+                        <span class=HOME_STEP_INDEX>"03"</span>
+                        <div>
+                            <strong class=HOME_STEP_STRONG>"Organize"</strong>
+                            <p class=HOME_STEP_P>"Create or join a tenant, then manage access from the protected workspace."</p>
+                        </div>
                     </li>
                 </ol>
-                <p class="home-note">"The browser shell stays server-rendered. Only interactive forms and protected controls hydrate."</p>
+                <p class=HOME_NOTE>"The browser shell stays server-rendered. Only interactive forms and protected controls hydrate."</p>
             </section>
         },
     )
@@ -704,7 +715,7 @@ pub fn NotFoundPage() -> impl IntoView {
 pub fn NotFoundRecoveryLink() -> impl IntoView {
     let session = browser_load(get_current_session);
     view! {
-        <div class="client-data-slot">
+        <div class=CLIENT_DATA_SLOT>
             {move || match session.get() {
                 Some(Ok(view)) if view.authenticated => view! {
                     <a class=BTN_SECONDARY href="/dashboard">"Go to dashboard"</a>

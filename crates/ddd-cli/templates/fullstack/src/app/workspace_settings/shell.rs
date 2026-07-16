@@ -11,7 +11,10 @@ use crate::app::helpers::{
 use crate::app::{browser_load, get_workspace_settings_context, list_organizations};
 use crate::ui::classes::{
     BANNER_ERROR, MONO_VALUE, ORG_KICKER, PANEL, RESULT_LINE, WS_MENU_BAR, WS_MENU_BARS, WS_REDIRECT,
-    with_extra,
+    WSS_CONTENT, WSS_FOOT_LINK, WSS_IDENTITY, WSS_IDENTITY_COPY, WSS_MAIN, WSS_MENU_BUTTON, WSS_NAV,
+    WSS_NAV_BACKDROP, WSS_NAV_LINK, WSS_NAV_TOGGLE, WSS_SHELL, WSS_SIDEBAR, WSS_SIDEBAR_CLOSE,
+    WSS_SIDEBAR_FOOT, WSS_SIDEBAR_TOP, WSS_SKELETON_BLOCK, WSS_SKELETON_LINE, WSS_SKELETON_LINE_SM,
+    WSS_TOPBAR, WSS_TOPBAR_TITLE, settings_avatar_class, with_extra,
 };
 use leptos::prelude::*;
 use leptos_router::components::Outlet;
@@ -53,25 +56,25 @@ pub fn WorkspaceSettingsShell() -> impl IntoView {
     });
 
     view! {
-        <div class="workspace-settings-shell" id="workspace-settings-shell" data-testid="workspace-settings-shell">
+        <div class=WSS_SHELL id="workspace-settings-shell" data-testid="workspace-settings-shell">
             <input
                 type="checkbox"
                 id="workspace-settings-nav-toggle"
-                class="workspace-settings-nav-toggle"
+                class=WSS_NAV_TOGGLE
                 aria-controls="workspace-settings-sidebar"
             />
             <label
-                class="workspace-settings-nav-backdrop"
+                class=WSS_NAV_BACKDROP
                 for="workspace-settings-nav-toggle"
                 aria-label="Close settings navigation"
             ></label>
 
             <WorkspaceSettingsSidebar slug=slug active=active />
 
-            <div class="workspace-settings-main">
-                <header class="workspace-settings-topbar">
+            <div class=WSS_MAIN>
+                <header class=WSS_TOPBAR>
                     <label
-                        class="workspace-settings-menu-button"
+                        class=WSS_MENU_BUTTON
                         for="workspace-settings-nav-toggle"
                         aria-label="Open settings navigation"
                         aria-controls="workspace-settings-sidebar"
@@ -82,13 +85,13 @@ pub fn WorkspaceSettingsShell() -> impl IntoView {
                             <span class=WS_MENU_BAR></span>
                         </span>
                     </label>
-                    <div class="workspace-settings-topbar-title">
+                    <div class=WSS_TOPBAR_TITLE>
                         <span class=ORG_KICKER>"Workspace"</span>
                         <strong>"Settings"</strong>
                     </div>
                 </header>
 
-                <div class="workspace-settings-content">
+                <div class=WSS_CONTENT>
                     <Outlet />
                 </div>
             </div>
@@ -180,19 +183,19 @@ pub fn WorkspaceSettingsSidebar(
 
     view! {
         <aside
-            class="workspace-settings-sidebar"
+            class=WSS_SIDEBAR
             id="workspace-settings-sidebar"
             aria-label="Workspace settings"
         >
-            <div class="workspace-settings-sidebar-top">
+            <div class=WSS_SIDEBAR_TOP>
                 {move || {
                     if loading.get() && identity.get().is_none() {
                         return view! {
-                            <div class="workspace-settings-identity is-skeleton" aria-busy="true">
-                                <div class="workspace-settings-avatar skeleton-block"></div>
-                                <div class="workspace-settings-identity-copy">
-                                    <span class="skeleton-line"></span>
-                                    <span class="skeleton-line skeleton-line-sm"></span>
+                            <div class=WSS_IDENTITY aria-busy="true">
+                                <div class=WSS_SKELETON_BLOCK></div>
+                                <div class=WSS_IDENTITY_COPY>
+                                    <span class=WSS_SKELETON_LINE></span>
+                                    <span class=WSS_SKELETON_LINE_SM></span>
                                 </div>
                             </div>
                         }
@@ -202,16 +205,17 @@ pub fn WorkspaceSettingsSidebar(
                         Some((name, slug_val)) => {
                             let monogram = org_monogram(&name);
                             let tone = org_tone_index(&name);
+                            let avatar_class = settings_avatar_class(tone);
                             view! {
-                                <div class="workspace-settings-identity">
+                                <div class=WSS_IDENTITY>
                                     <div
-                                        class="workspace-settings-avatar"
+                                        class=avatar_class
                                         data-tone=tone.to_string()
                                         aria-hidden="true"
                                     >
                                         {monogram}
                                     </div>
-                                    <div class="workspace-settings-identity-copy">
+                                    <div class=WSS_IDENTITY_COPY>
                                         <strong>{name}</strong>
                                         <small class=MONO_VALUE>{format!("/org/{slug_val}")}</small>
                                     </div>
@@ -220,11 +224,11 @@ pub fn WorkspaceSettingsSidebar(
                             .into_any()
                         }
                         None => view! {
-                            <div class="workspace-settings-identity">
-                                <div class="workspace-settings-avatar" data-tone="0" aria-hidden="true">
+                            <div class=WSS_IDENTITY>
+                                <div class=settings_avatar_class(0) data-tone="0" aria-hidden="true">
                                     "W"
                                 </div>
-                                <div class="workspace-settings-identity-copy">
+                                <div class=WSS_IDENTITY_COPY>
                                     <strong>"Workspace"</strong>
                                     <small class=MONO_VALUE>
                                         {move || {
@@ -243,7 +247,7 @@ pub fn WorkspaceSettingsSidebar(
                     }
                 }}
                 <label
-                    class="workspace-settings-sidebar-close"
+                    class=WSS_SIDEBAR_CLOSE
                     for="workspace-settings-nav-toggle"
                     aria-label="Close navigation"
                 >
@@ -257,7 +261,7 @@ pub fn WorkspaceSettingsSidebar(
                 </p>
             </Show>
 
-            <nav class="workspace-settings-nav" aria-label="Settings sections">
+            <nav class=WSS_NAV aria-label="Settings sections">
                 {move || {
                     let slug_now = slug.get();
                     let current = active.get();
@@ -271,7 +275,7 @@ pub fn WorkspaceSettingsSidebar(
                             let disabled = slug_now.is_empty();
                             view! {
                                 <a
-                                    class="workspace-settings-nav-link"
+                                    class=WSS_NAV_LINK
                                     class:is-active=is_active
                                     class:is-disabled=disabled
                                     href=href
@@ -285,11 +289,11 @@ pub fn WorkspaceSettingsSidebar(
                 }}
             </nav>
 
-            <div class="workspace-settings-sidebar-foot">
-                <a class="workspace-settings-foot-link" href=move || open_workspace_href.get()>
+            <div class=WSS_SIDEBAR_FOOT>
+                <a class=WSS_FOOT_LINK href=move || open_workspace_href.get()>
                     "Open workspace"
                 </a>
-                <a class="workspace-settings-foot-link" href="/organizations">
+                <a class=WSS_FOOT_LINK href="/organizations">
                     "Back to workspaces"
                 </a>
             </div>

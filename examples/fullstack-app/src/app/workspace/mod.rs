@@ -248,7 +248,7 @@ pub fn WorkspaceOnboardingGate() -> impl IntoView {
 pub fn WorkspaceOnboardingPage() -> impl IntoView {
     // Minimal chrome — Linear-style focused create.
     view! {
-        <div class=format!("page {ONBOARDING_PAGE}")>
+        <div class=ONBOARDING_PAGE>
             <header class=PAGE_BRAND>
                 <a class=PAGE_BRAND_LINK href="/" aria-label="wasi-auth home">
                     <span class=PAGE_BRAND_MARK aria-hidden="true">"d"</span>
