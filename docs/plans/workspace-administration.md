@@ -9,8 +9,8 @@
 | Field | Value |
 |-------|--------|
 | Run ID | `07aef382` |
-| Current PR | PR4e |
-| Phase | done (code; awaiting orchestrator advance) |
+| Current PR | PR5 |
+| Phase | done (pragmatic slice; authz matrix deferred) |
 | Branch base | `codex/fullstack-verification-flow` |
 
 ## Locked defaults
@@ -29,7 +29,7 @@
 - [x] **M3** Read models & transport (PR3)
 - [x] **M4** Settings areas (PR4a–e)
 - [x] **M5** Lifecycle SQL (ships with PR4b/c/e)
-- [ ] **M6** Verification & isolation (PR5)
+- [x] **M6** Verification & isolation (PR5) — pragmatic slice (smoke + isolation docs; authz matrix deferred)
 
 ## PR stack
 
@@ -44,7 +44,7 @@
 | PR4c | Roles UI + delete custom role | PR3 + wasi-auth | done (code; awaiting orchestrator advance) |
 | PR4d | Audit humanization | PR3 | done (code; awaiting orchestrator advance) |
 | PR4e | Ownership transfer + Danger zone | PR3 + wasi-auth | done (code; awaiting orchestrator advance) |
-| PR5 | Isolation harness + authz matrix + browser suite | PR4* | pending |
+| PR5 | Isolation harness + authz matrix + browser suite | PR4* | done (pragmatic slice; authz matrix deferred) |
 
 Default order: `PR0 → PR1 → PR2 → PR3 → PR4a → PR4b → PR4c → PR4d → PR4e → PR5`
 
@@ -169,11 +169,37 @@ Default order: `PR0 → PR1 → PR2 → PR3 → PR4a → PR4b → PR4c → PR4d 
 
 ### PR5 — Verification
 
-- [ ] Isolated mutating test DB (or documented `make fresh` interim)
-- [ ] Authz matrix (roles × AAL)
-- [ ] Browser suite for settings
-- [ ] Template parity green
+- [x] Isolated mutating test DB (or documented `make fresh` interim) — **interim docs only** (no per-run Postgres yet)
+- [ ] Authz matrix (roles × AAL) — **deferred** (out of pragmatic slice)
+- [x] Browser suite for settings — `scripts/verify_workspace_settings.mjs` + `make workspace-settings-smoke`
+- [x] Template parity green
 - Evidence:
+  - Path helper unit tests: `src/app/path.rs` covers `is_workspace_settings_path` for all settings areas + topbar titles  
+    - `cargo test --lib --features ssr,postgres -- app::path::tests` → **3 passed**  
+    - also fixed pre-existing lib-test imports in `server_fns/mod.rs` + `application/mod.rs` so `cargo test --lib` compiles
+  - Browser smoke: `examples/fullstack-app/scripts/verify_workspace_settings.mjs` + `make workspace-settings-smoke` / `npm run workspace-settings-smoke`
+    - login/register (BROWSER_SMOKE_EMAILS or mail-capture register)
+    - create org via `POST /api/organizations` with unique slug
+    - visits general/members/invitations/roles/audit/danger — expects settings shell + page titles
+    - optional rename when `ALLOW_MUTATING_SMOKE=1` (AAL2 step-up accepted, not hard fail)
+    - skips cleanly if server down or session cannot be obtained
+  - Smoke runs this PR:
+    - `BASE_URL=http://127.0.0.1:9 npm run workspace-settings-smoke` → **skip** (server not reachable) ✓
+    - `BASE_URL=http://127.0.0.1:3008 npm run workspace-settings-smoke` against local server → **skip** (mail capture 503 configuration; no `BROWSER_SMOKE_EMAILS`) — script skip path OK; full authenticated UI path not exercised in this environment
+  - Makefile: `workspace-settings-smoke` documented in help; needs running `make dev` + optional `ALLOW_MUTATING_SMOKE=1`
+  - Isolation notes (this section + script header): shared DB pollution risk; prefer `make fresh db=postgres` before mutating smokes; per-run Postgres **not implemented**
+  - `bash scripts/sync_fullstack_template.sh` + `… check` → template in sync
+  - `cd examples/fullstack-app && make check` → green; `bash scripts/check_loc.sh` → OK
+
+## Isolation notes (PR5)
+
+Mutating fullstack smokes share the same local Postgres as interactive `make dev`. That means:
+
+1. **Pollution risk** — each settings smoke creates a workspace (`ws-settings-*` slug). Rename / invite / role mutations leave rows and audit events.
+2. **Before mutating smokes** (or when the DB is dirty):  
+   `make -C examples/fullstack-app fresh db=postgres` then `make dev`.
+3. **Optional mutation flag**: `ALLOW_MUTATING_SMOKE=1` enables UI rename in workspace-settings smoke; omit it for page-load-only checks (still creates one org).
+4. **Not implemented yet**: ephemeral per-run Postgres (container/schema) for true isolation. Documented interim is `make fresh` + unique slugs/emails.
 
 ## Gate commands (cheat sheet)
 
@@ -192,6 +218,10 @@ make -C examples/fullstack-app fresh db=postgres
 make -C examples/fullstack-app dev transport=both
 make -C examples/fullstack-app smoke
 make -C examples/fullstack-app browser-smoke
+
+# Workspace settings browser smoke (server must already be up)
+make -C examples/fullstack-app workspace-settings-smoke
+ALLOW_MUTATING_SMOKE=1 make -C examples/fullstack-app workspace-settings-smoke
 ```
 
 ## Decisions log

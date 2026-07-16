@@ -240,7 +240,7 @@ SPIN_VARIABLE_ARGS = \
 	--variable auth_apple_scopes='$(AUTH_APPLE_SCOPES)' \
 	--variable auth_apple_redirect_uri=$(AUTH_APPLE_REDIRECT_URI)
 
-.PHONY: help validate-toolchain validate-mail db-up db-down migration-preflight db-migrate db-verify check grpc-check dev spin spin-backend spin-backend-prebuilt trusted-ingress install-outbox-worker outbox-worker fresh smoke oauth-credentials oauth-preflight oauth-evidence oauth-callback oauth-browser-smoke oauth-dev-browser-smoke browser-smoke passkey-browser-smoke
+.PHONY: help validate-toolchain validate-mail db-up db-down migration-preflight db-migrate db-verify check grpc-check dev spin spin-backend spin-backend-prebuilt trusted-ingress install-outbox-worker outbox-worker fresh smoke oauth-credentials oauth-preflight oauth-evidence oauth-callback oauth-browser-smoke oauth-dev-browser-smoke browser-smoke passkey-browser-smoke workspace-settings-smoke
 
 help:
 	@echo "Fullstack targets:"
@@ -269,6 +269,8 @@ help:
 	@echo "  make oauth-dev-browser-smoke Verify OAuth UI with development callback bypass"
 	@echo "  make browser-smoke         Run Playwright page and middleware checks"
 	@echo "  make passkey-browser-smoke Run Playwright WebAuthn virtual authenticator checks"
+	@echo "  make workspace-settings-smoke  Playwright workspace settings pages (needs make dev)"
+	@echo "                                 optional ALLOW_MUTATING_SMOKE=1 for rename; prefer make fresh first"
 	@echo ""
 	@echo "Public origin (derived from listen unless overridden):"
 	@echo "  listen=$(listen)"
@@ -439,3 +441,11 @@ passkey-browser-smoke:
 	npm install
 	npm exec -- playwright install chromium
 	$(PUBLIC_ORIGIN_ENV) npm run passkey-smoke
+
+# Optional Playwright smoke for /org/{slug}/settings/* (creates a workspace).
+# Requires a running server (make dev). Skips cleanly if server/session unavailable.
+# Prefer `make fresh db=postgres` before ALLOW_MUTATING_SMOKE=1 on a shared DB.
+workspace-settings-smoke:
+	npm install
+	npm exec -- playwright install chromium
+	$(PUBLIC_ORIGIN_ENV) npm run workspace-settings-smoke

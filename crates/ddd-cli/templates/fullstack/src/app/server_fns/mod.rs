@@ -16,7 +16,8 @@ pub use organizations::*;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::common::browser_login_response;
+    use crate::contracts::LoginCompletionResponse;
 
     #[test]
     fn browser_login_response_removes_browser_visible_tokens() {

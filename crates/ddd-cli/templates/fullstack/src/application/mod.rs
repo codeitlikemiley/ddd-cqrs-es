@@ -33,6 +33,9 @@ pub(crate) use vault::*;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wasi_auth::cedar::{
+        CedarProvider, DEFAULT_APPLICATION_POLICY, DEFAULT_APPLICATION_POLICY_REVISION,
+    };
 
     #[test]
     fn unsafe_redirect_falls_back_to_dashboard() {

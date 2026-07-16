@@ -36,7 +36,7 @@ pub(crate) fn is_workspace_path(path: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_workspace_path, is_workspace_settings_path};
+    use super::{is_workspace_path, is_workspace_settings_path, workspace_topbar_title};
 
     #[test]
     fn onboarding_uses_the_focused_layout() {
@@ -52,14 +52,39 @@ mod tests {
         assert!(is_workspace_settings_path("/org/acme/settings/"));
         assert!(is_workspace_settings_path("/org/acme/settings/general"));
         assert!(is_workspace_settings_path("/org/acme/settings/members"));
+        assert!(is_workspace_settings_path("/org/acme/settings/invitations"));
+        assert!(is_workspace_settings_path("/org/acme/settings/roles"));
+        assert!(is_workspace_settings_path("/org/acme/settings/audit"));
         assert!(is_workspace_settings_path("/org/acme/settings/danger"));
         assert!(!is_workspace_settings_path("/org/acme/vault"));
         assert!(!is_workspace_settings_path("/organizations/settings"));
         assert!(!is_workspace_settings_path("/settings"));
+        assert!(!is_workspace_settings_path("/org/settings"));
+        assert!(!is_workspace_settings_path("/org/acme/settings-extra"));
 
         assert!(!is_workspace_path("/org/acme/settings"));
         assert!(!is_workspace_path("/org/acme/settings/general"));
+        assert!(!is_workspace_path("/org/acme/settings/invitations"));
         assert!(is_workspace_path("/org/acme/vault"));
+    }
+
+    #[test]
+    fn settings_topbar_titles_match_areas() {
+        assert_eq!(
+            workspace_topbar_title("/org/acme/settings/general"),
+            "Workspace settings"
+        );
+        assert_eq!(workspace_topbar_title("/org/acme/settings/members"), "Members");
+        assert_eq!(
+            workspace_topbar_title("/org/acme/settings/invitations"),
+            "Invitations"
+        );
+        assert_eq!(workspace_topbar_title("/org/acme/settings/roles"), "Roles");
+        assert_eq!(workspace_topbar_title("/org/acme/settings/audit"), "Audit");
+        assert_eq!(
+            workspace_topbar_title("/org/acme/settings/danger"),
+            "Danger zone"
+        );
     }
 }
 
