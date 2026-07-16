@@ -5,10 +5,11 @@
 #![allow(clippy::unit_arg)]
 
 use super::shared::{
-    format_relative_time_ms, format_settings_datetime_ms, settings_page_stub,
-    slug_from_settings_pathname,
+    format_relative_time_ms, format_settings_datetime_ms, resolve_settings_island_slug,
+    settings_page_stub,
 };
-use crate::app::helpers::{current_browser_pathname, server_error_text};
+use super::shell::settings_slug_signal;
+use crate::app::helpers::server_error_text;
 use crate::app::{
     browser_load, get_workspace_settings_context, list_workspace_audit, list_workspace_members,
     list_workspace_roles,
@@ -38,40 +39,47 @@ const PAGE_LIMIT: u32 = 50;
 
 #[component]
 pub fn WorkspaceSettingsAuditPage() -> impl IntoView {
+    let slug = settings_slug_signal();
     settings_page_stub(
         "Audit log",
         "Security and administration activity for this workspace.",
         "Requires audit.view. Cursor pages load newest sequences after the last row.",
-        view! { <WorkspaceSettingsAuditBody /> },
+        view! {
+            {move || {
+                let s = slug.get();
+                view! { <WorkspaceSettingsAuditBody slug=s /> }.into_any()
+            }}
+        },
     )
 }
 
 /// Island: humanized audit table with client filters, load-more, and details drawer.
 #[island]
-pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
-    let slug = Memo::new(move |_| slug_from_settings_pathname(&current_browser_pathname()));
+pub fn WorkspaceSettingsAuditBody(slug: String) -> impl IntoView {
+    let prop_slug = StoredValue::new(slug);
+    let slug = Memo::new(move |_| resolve_settings_island_slug(&prop_slug.get_value()));
 
     let initial = browser_load({
         move || {
-            let slug = slug_from_settings_pathname(&current_browser_pathname());
+            let slug = resolve_settings_island_slug(&prop_slug.get_value());
             list_workspace_audit(slug, None, Some(PAGE_LIMIT))
         }
     });
     let members = browser_load({
         move || {
-            let slug = slug_from_settings_pathname(&current_browser_pathname());
+            let slug = resolve_settings_island_slug(&prop_slug.get_value());
             list_workspace_members(slug)
         }
     });
     let context = browser_load({
         move || {
-            let slug = slug_from_settings_pathname(&current_browser_pathname());
+            let slug = resolve_settings_island_slug(&prop_slug.get_value());
             get_workspace_settings_context(slug)
         }
     });
     let roles = browser_load({
         move || {
-            let slug = slug_from_settings_pathname(&current_browser_pathname());
+            let slug = resolve_settings_island_slug(&prop_slug.get_value());
             list_workspace_roles(slug)
         }
     });

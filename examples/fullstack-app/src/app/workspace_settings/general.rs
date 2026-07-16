@@ -5,9 +5,10 @@
 #![allow(clippy::unit_arg)]
 
 use super::shared::{
-    format_settings_timestamp_ms, settings_page_stub, slug_from_settings_pathname,
+    format_settings_timestamp_ms, resolve_settings_island_slug, settings_page_stub,
 };
-use crate::app::helpers::{current_browser_pathname, server_error_text};
+use super::shell::settings_slug_signal;
+use crate::app::helpers::server_error_text;
 use crate::app::{
     UpdateWorkspaceName, browser_load, get_workspace_settings_context, update_workspace_name,
 };
@@ -20,22 +21,31 @@ use leptos::prelude::*;
 
 #[component]
 pub fn WorkspaceSettingsGeneralPage() -> impl IntoView {
+    let slug = settings_slug_signal();
     settings_page_stub(
         "General",
         "Workspace name and URL. The slug is fixed after create.",
         "Requires organization.view. Mutations require organization.update and step-up (AAL2).",
-        view! { <WorkspaceSettingsGeneralBody /> },
+        view! {
+            {move || {
+                let s = slug.get();
+                view! { <WorkspaceSettingsGeneralBody slug=s /> }.into_any()
+            }}
+        },
     )
 }
 
 /// Island: load settings context by slug; edit display name; slug read-only.
+///
+/// `slug` is passed from the route (SSR `data-props`) so soft-nav never loads with slug="".
 #[island]
-pub fn WorkspaceSettingsGeneralBody() -> impl IntoView {
-    let slug = Memo::new(move |_| slug_from_settings_pathname(&current_browser_pathname()));
+pub fn WorkspaceSettingsGeneralBody(slug: String) -> impl IntoView {
+    let prop_slug = StoredValue::new(slug);
+    let slug = Memo::new(move |_| resolve_settings_island_slug(&prop_slug.get_value()));
 
     let context = browser_load({
         move || {
-            let slug = slug_from_settings_pathname(&current_browser_pathname());
+            let slug = resolve_settings_island_slug(&prop_slug.get_value());
             get_workspace_settings_context(slug)
         }
     });

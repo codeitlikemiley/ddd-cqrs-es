@@ -5,10 +5,11 @@
 #![allow(clippy::unit_arg)]
 
 use super::shared::{
-    display_role_name, format_settings_timestamp_ms, role_label_from_options, settings_page_stub,
-    slug_from_settings_pathname,
+    display_role_name, format_settings_timestamp_ms, resolve_settings_island_slug,
+    role_label_from_options, settings_page_stub,
 };
-use crate::app::helpers::{current_browser_pathname, server_error_text};
+use super::shell::settings_slug_signal;
+use crate::app::helpers::server_error_text;
 use crate::app::{
     AssignWorkspaceMemberRole, RemoveWorkspaceMember, TransferWorkspaceOwnership,
     assign_workspace_member_role, browser_load, get_current_session,
@@ -31,28 +32,35 @@ use leptos::task::spawn_local;
 
 #[component]
 pub fn WorkspaceSettingsMembersPage() -> impl IntoView {
+    let slug = settings_slug_signal();
     settings_page_stub(
         "Members",
         "People who belong to this workspace and their roles.",
         "Requires member.view. Role changes and removals need step-up (AAL2).",
-        view! { <WorkspaceSettingsMembersBody /> },
+        view! {
+            {move || {
+                let s = slug.get();
+                view! { <WorkspaceSettingsMembersBody slug=s /> }.into_any()
+            }}
+        },
     )
 }
 
 /// Island: list members; assign roles from server options; remove with confirm.
 #[island]
-pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
-    let slug = Memo::new(move |_| slug_from_settings_pathname(&current_browser_pathname()));
+pub fn WorkspaceSettingsMembersBody(slug: String) -> impl IntoView {
+    let prop_slug = StoredValue::new(slug);
+    let slug = Memo::new(move |_| resolve_settings_island_slug(&prop_slug.get_value()));
 
     let members = browser_load({
         move || {
-            let slug = slug_from_settings_pathname(&current_browser_pathname());
+            let slug = resolve_settings_island_slug(&prop_slug.get_value());
             list_workspace_members(slug)
         }
     });
     let context = browser_load({
         move || {
-            let slug = slug_from_settings_pathname(&current_browser_pathname());
+            let slug = resolve_settings_island_slug(&prop_slug.get_value());
             get_workspace_settings_context(slug)
         }
     });

@@ -181,6 +181,16 @@ export function initWorkspaceChromePersist() {
       return;
     }
 
+    // Commit the URL *before* hydrating islands. Settings islands that read
+    // location.pathname (or race after after_island_hydration) must not see the
+    // previous route — that produced slug="" and 500 "workspace URL must be 2–48 characters".
+    const finalUrl = resp.redirected ? resp.url : url;
+    if (replace) {
+      window.history.replaceState(undefined, "", finalUrl);
+    } else {
+      window.history.pushState(undefined, "", finalUrl);
+    }
+
     const apply = () => {
       // Never touch chrome-foot / theme / account / org switcher islands.
       swapRegionById(doc, "workspace-content");
@@ -206,12 +216,6 @@ export function initWorkspaceChromePersist() {
       return;
     }
 
-    const finalUrl = resp.redirected ? resp.url : url;
-    if (replace) {
-      window.history.replaceState(undefined, "", finalUrl);
-    } else {
-      window.history.pushState(undefined, "", finalUrl);
-    }
     markWorkspaceNavActive();
   }
 

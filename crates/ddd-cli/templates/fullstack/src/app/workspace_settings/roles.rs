@@ -4,8 +4,9 @@
 #![allow(clippy::unused_unit)]
 #![allow(clippy::unit_arg)]
 
-use super::shared::{settings_page_stub, slug_from_settings_pathname};
-use crate::app::helpers::{current_browser_pathname, server_error_text};
+use super::shared::{resolve_settings_island_slug, settings_page_stub};
+use super::shell::settings_slug_signal;
+use crate::app::helpers::server_error_text;
 use crate::app::{
     DeleteWorkspaceRole, UpsertWorkspaceRole, browser_load, get_workspace_settings_context,
     list_workspace_members, list_workspace_permissions, list_workspace_roles,
@@ -29,40 +30,47 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[component]
 pub fn WorkspaceSettingsRolesPage() -> impl IntoView {
+    let slug = settings_slug_signal();
     settings_page_stub(
         "Roles",
         "Built-in and custom roles for this workspace.",
         "Requires role.view. Create, edit, and delete need role.manage and step-up (AAL2).",
-        view! { <WorkspaceSettingsRolesBody /> },
+        view! {
+            {move || {
+                let s = slug.get();
+                view! { <WorkspaceSettingsRolesBody slug=s /> }.into_any()
+            }}
+        },
     )
 }
 
 /// Island: role catalog, custom role editor, delete with confirm.
 #[island]
-pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
-    let slug = Memo::new(move |_| slug_from_settings_pathname(&current_browser_pathname()));
+pub fn WorkspaceSettingsRolesBody(slug: String) -> impl IntoView {
+    let prop_slug = StoredValue::new(slug);
+    let slug = Memo::new(move |_| resolve_settings_island_slug(&prop_slug.get_value()));
 
     let roles = browser_load({
         move || {
-            let slug = slug_from_settings_pathname(&current_browser_pathname());
+            let slug = resolve_settings_island_slug(&prop_slug.get_value());
             list_workspace_roles(slug)
         }
     });
     let permissions = browser_load({
         move || {
-            let slug = slug_from_settings_pathname(&current_browser_pathname());
+            let slug = resolve_settings_island_slug(&prop_slug.get_value());
             list_workspace_permissions(slug)
         }
     });
     let members = browser_load({
         move || {
-            let slug = slug_from_settings_pathname(&current_browser_pathname());
+            let slug = resolve_settings_island_slug(&prop_slug.get_value());
             list_workspace_members(slug)
         }
     });
     let context = browser_load({
         move || {
-            let slug = slug_from_settings_pathname(&current_browser_pathname());
+            let slug = resolve_settings_island_slug(&prop_slug.get_value());
             get_workspace_settings_context(slug)
         }
     });

@@ -12,6 +12,9 @@ use leptos_router::components::Outlet;
 use leptos_router::hooks::{use_location, use_params_map};
 
 /// Resolve workspace slug for settings: route param first, pathname fallback.
+///
+/// Call from **route components** (not islands) so `use_params_map` works on SSR
+/// and the value can be passed into islands as a prop.
 pub(crate) fn settings_slug_signal() -> Memo<String> {
     let params = use_params_map();
     let location = use_location();

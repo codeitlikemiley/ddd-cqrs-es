@@ -41,6 +41,19 @@ pub(crate) fn slug_from_settings_pathname(path: &str) -> String {
     }
 }
 
+/// Resolve workspace slug for settings islands.
+///
+/// Prefer the Router-serialized island prop (SSR + soft-nav HTML `data-props`).
+/// Fall back to the live browser path after soft-nav / SPA hops.
+pub(crate) fn resolve_settings_island_slug(prop_slug: &str) -> String {
+    let prop = prop_slug.trim();
+    if !prop.is_empty() {
+        return prop.to_owned();
+    }
+    use crate::app::helpers::current_browser_pathname;
+    slug_from_settings_pathname(&current_browser_pathname())
+}
+
 /// Display label for a role id when role catalog is unavailable.
 pub(crate) fn display_role_name(role_id: &str) -> String {
     match role_id {

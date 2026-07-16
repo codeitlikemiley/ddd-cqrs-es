@@ -5,10 +5,11 @@
 #![allow(clippy::unit_arg)]
 
 use super::shared::{
-    display_role_name, format_settings_timestamp_ms, role_label_from_options, settings_page_stub,
-    slug_from_settings_pathname,
+    display_role_name, format_settings_timestamp_ms, resolve_settings_island_slug,
+    role_label_from_options, settings_page_stub,
 };
-use crate::app::helpers::{current_browser_pathname, server_error_text};
+use super::shell::settings_slug_signal;
+use crate::app::helpers::server_error_text;
 use crate::app::{
     InviteWorkspaceMember, ResendWorkspaceInvitation, RevokeWorkspaceInvitation, browser_load,
     get_workspace_settings_context, list_workspace_invitations,
@@ -27,28 +28,35 @@ use leptos::task::spawn_local;
 
 #[component]
 pub fn WorkspaceSettingsInvitationsPage() -> impl IntoView {
+    let slug = settings_slug_signal();
     settings_page_stub(
         "Invitations",
         "Pending invites to join this workspace.",
         "Requires member.view. Invite, resend, and revoke need member.invite and step-up (AAL2).",
-        view! { <WorkspaceSettingsInvitationsBody /> },
+        view! {
+            {move || {
+                let s = slug.get();
+                view! { <WorkspaceSettingsInvitationsBody slug=s /> }.into_any()
+            }}
+        },
     )
 }
 
 /// Island: invite form + invitation table with resend/revoke for pending rows.
 #[island]
-pub fn WorkspaceSettingsInvitationsBody() -> impl IntoView {
-    let slug = Memo::new(move |_| slug_from_settings_pathname(&current_browser_pathname()));
+pub fn WorkspaceSettingsInvitationsBody(slug: String) -> impl IntoView {
+    let prop_slug = StoredValue::new(slug);
+    let slug = Memo::new(move |_| resolve_settings_island_slug(&prop_slug.get_value()));
 
     let invitations = browser_load({
         move || {
-            let slug = slug_from_settings_pathname(&current_browser_pathname());
+            let slug = resolve_settings_island_slug(&prop_slug.get_value());
             list_workspace_invitations(slug)
         }
     });
     let context = browser_load({
         move || {
-            let slug = slug_from_settings_pathname(&current_browser_pathname());
+            let slug = resolve_settings_island_slug(&prop_slug.get_value());
             get_workspace_settings_context(slug)
         }
     });
