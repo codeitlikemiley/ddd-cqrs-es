@@ -117,11 +117,10 @@
 }
 
 /*
- * Fullstack example visual system
+ * Fullstack example visual system — see DESIGN.md (source of truth).
  *
- * Based on the ChatGPT-Inspired Neutral DESIGN.md brief: a content-first
- * surface. Tokens stay semantic so a user-selected accent can land later
- * without rewriting every component.
+ * Content-first neutral surfaces. Tokens stay semantic so a user-selected
+ * accent can land later without rewriting every component.
  *
  * Light elevation (zinc-25 pattern — Porzio / ChatGPT):
  *   canvas  ≈ zinc-25  — airy page field (not pure white, not zinc-50 dingy)

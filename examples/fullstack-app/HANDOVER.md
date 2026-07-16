@@ -271,11 +271,12 @@ git show a5c8871 --stat
 
 ## 8. Tailwind rewrite status
 
-**Status: complete** (Phase 5 closeout). Tracker: `TAILWIND_MIGRATION.md`.
+**Status: complete** (Phase 5 closeout). Tracker: `TAILWIND_MIGRATION.md`.  
+**Visual system / elevation:** `DESIGN.md` (zinc-25 light canvas, semantic surfaces).
 
 What landed:
 
-1. Design tokens in `@theme inline` + CSS vars (`:root` / dark).
+1. Design tokens in `@theme inline` + CSS vars (`:root` / dark) — light canvas ≈ zinc-25 so pure-white surfaces float (see `DESIGN.md`).
 2. Shared utilities in `src/ui/classes.rs`; primitives (`button`, `panel`, shells) emit utilities.
 3. Domain markup converted (auth, account, board, settings, orgs, admin, workspace shell, settings shell, home).
 4. Residual semantic CSS purged from `input.css` (tiny non-semantic residuals only: drawer/modal scroll locks + `board-pulse` keyframes).
@@ -325,6 +326,7 @@ If any of the above look diluted by a “refactor” or UI commit, flag as **blo
 | `examples/fullstack-app/Makefile` | `check`, `grpc-check`, spin targets |
 | `examples/fullstack-app/src/ui/` | Tailwind utility constants + UI primitives |
 | `examples/fullstack-app/TAILWIND_MIGRATION.md` | Tailwind rewrite tracker (complete) |
+| `examples/fullstack-app/DESIGN.md` | Visual system brief (zinc-25 light elevation, semantic tokens) |
 | `examples/fullstack-app/input.css` | Pure Tailwind v4 entry (tokens + base) |
 | `examples/fullstack-app/src/app/` | Routes, islands, server_fns |
 | `examples/fullstack-app/src/application/` | App service layer |
