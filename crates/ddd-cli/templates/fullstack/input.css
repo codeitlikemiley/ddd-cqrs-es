@@ -6398,6 +6398,164 @@ html.board-modal-open body {
   justify-content: flex-end;
 }
 
+.workspace-settings-audit-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem 1rem;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin: 0 0 0.75rem;
+}
+
+.workspace-settings-audit-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+}
+
+.workspace-settings-audit-filter {
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  min-width: 9rem;
+}
+
+.workspace-settings-audit-filter > span {
+  color: var(--text-secondary, #64748b);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.workspace-settings-audit-filter-actor {
+  min-width: 12rem;
+  flex: 1 1 12rem;
+  max-width: 18rem;
+}
+
+.workspace-settings-audit-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.workspace-settings-audit-hint {
+  margin: 0 0 1rem;
+  font-size: 0.85rem;
+}
+
+.workspace-settings-audit-table td {
+  vertical-align: middle;
+}
+
+.workspace-settings-audit-when {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.workspace-settings-audit-actor,
+.workspace-settings-audit-action {
+  display: grid;
+  gap: 0.12rem;
+}
+
+.workspace-settings-audit-actor strong,
+.workspace-settings-audit-action strong {
+  font-weight: 600;
+}
+
+.workspace-settings-audit-target {
+  font-size: 0.92rem;
+}
+
+.workspace-settings-audit-detail-button {
+  font-size: 13px;
+  padding: 6px 10px;
+}
+
+.workspace-settings-audit-footer {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: space-between;
+  margin-top: 1rem;
+}
+
+.workspace-settings-audit-detail-modal {
+  max-width: min(36rem, 96vw);
+}
+
+.workspace-settings-audit-detail-list {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0 0 1.1rem;
+}
+
+.workspace-settings-audit-detail-list > div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.workspace-settings-audit-detail-list dt {
+  color: var(--text-secondary, #64748b);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.workspace-settings-audit-detail-list dd {
+  display: grid;
+  gap: 0.15rem;
+  margin: 0;
+}
+
+.workspace-settings-audit-metadata h3 {
+  font-size: 0.95rem;
+  margin: 0 0 0.25rem;
+}
+
+.workspace-settings-audit-metadata p {
+  margin: 0 0 0.5rem;
+}
+
+.workspace-settings-audit-json {
+  background: color-mix(in srgb, var(--text-primary, #0f172a) 4%, transparent);
+  border: 1px solid var(--border-subtle, #e2e8f0);
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  margin: 0 0 1rem;
+  max-height: 16rem;
+  overflow: auto;
+  padding: 0.75rem 0.85rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.workspace-settings-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.78rem;
+}
+
+.workspace-settings-status-pill[data-outcome="succeeded"],
+.workspace-settings-status-pill[data-outcome="allowed"] {
+  background: color-mix(in srgb, #0f7b58 16%, transparent);
+  color: #0f7b58;
+}
+
+.workspace-settings-status-pill[data-outcome="failed"],
+.workspace-settings-status-pill[data-outcome="denied"] {
+  background: color-mix(in srgb, #dc2626 14%, transparent);
+  color: #b91c1c;
+}
+
 @media (max-width: 900px) {
   .workspace-settings-shell {
     grid-template-columns: minmax(0, 1fr);

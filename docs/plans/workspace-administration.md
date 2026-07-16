@@ -9,7 +9,7 @@
 | Field | Value |
 |-------|--------|
 | Run ID | `07aef382` |
-| Current PR | PR4c (proposed) |
+| Current PR | PR4d (proposed) |
 | Phase | awaiting_approval |
 | Branch base | `codex/fullstack-verification-flow` |
 
@@ -42,7 +42,7 @@
 | PR4a | General + Members UI | PR3 | done (code; awaiting orchestrator advance) |
 | PR4b | Invitations UI + revoke/resend | PR3 + wasi-auth | done (code; awaiting orchestrator advance) |
 | PR4c | Roles UI + delete custom role | PR3 + wasi-auth | done (code; awaiting orchestrator advance) |
-| PR4d | Audit humanization | PR3 | pending |
+| PR4d | Audit humanization | PR3 | done (code; awaiting orchestrator advance) |
 | PR4e | Ownership transfer + Danger zone | PR3 + wasi-auth | pending |
 | PR5 | Isolation harness + authz matrix + browser suite | PR4* | pending |
 
@@ -145,8 +145,15 @@ Default order: `PR0 → PR1 → PR2 → PR3 → PR4a → PR4b → PR4c → PR4d 
 
 ### PR4d — Audit
 
-- [ ] Humanized table + filters + cursor + details drawer
+- [x] Humanized table + filters + cursor + details drawer
 - Evidence:
+  - UI audit: humanized action labels, outcome pills, target summary; actor email via members map when available
+  - Client filters: action select, outcome select, actor text (API is cursor-only)
+  - Cursor pagination: Load more via `after` = last page `next_cursor`; Refresh reloads from start
+  - Details modal: raw ids, sequence/org/actor/target; notes request_id/policy_revision not on list API; safe JSON of returned fields
+  - Pure UI humanization (no DTO enrichment; list API lacks request_id/metadata)
+  - `bash examples/fullstack-app/scripts/sync_fullstack_template.sh` + `check` — green
+  - `cd examples/fullstack-app && make check` — green; hydrate check green; `bash scripts/check_loc.sh` — OK
 
 ### PR4e — Ownership + Danger
 

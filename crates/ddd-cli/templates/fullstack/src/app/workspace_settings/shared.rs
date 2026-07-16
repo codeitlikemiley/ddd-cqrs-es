@@ -89,6 +89,28 @@ pub(crate) fn format_settings_timestamp_ms(ms: u64) -> String {
     }
 }
 
+/// Local date + time for audit log rows (hydrate).
+pub(crate) fn format_settings_datetime_ms(ms: u64) -> String {
+    if ms == 0 {
+        return "—".to_owned();
+    }
+    #[cfg(feature = "hydrate")]
+    {
+        use wasm_bindgen::JsValue;
+        let date = js_sys::Date::new(&JsValue::from_f64(ms as f64));
+        date.to_locale_string("en-CA", &JsValue::UNDEFINED)
+            .as_string()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| format!("{ms}"))
+    }
+    #[cfg(not(feature = "hydrate"))]
+    {
+        let days = ms / 86_400_000;
+        let year = 1970 + (days / 365);
+        format!("~{year}")
+    }
+}
+
 /// Settings section keys (path segment after `/settings/`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SettingsSection {
