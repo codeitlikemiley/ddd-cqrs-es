@@ -14,20 +14,20 @@ use crate::contracts::{
 use crate::ui::classes::{
     BANNER_ERROR, BOARD_BIND_EDITOR, BOARD_BIND_FIELD, BOARD_BIND_FIELD_LABEL, BOARD_BIND_HINT,
     BOARD_BIND_ROW, BOARD_CHECKLIST, BOARD_CHECKLIST_ITEM, BOARD_CHECKLIST_ITEM_DONE,
-    BOARD_CHECKLIST_LG, BOARD_CONTAINER, BOARD_CONTAINER_BODY, BOARD_CONTAINER_BODY_STACK,
-    BOARD_CONTAINER_EDITING, BOARD_CONTAINER_HEAD, BOARD_DRAG_HANDLE, BOARD_EMPTY_TILE,
-    BOARD_FEED, BOARD_FEED_COPY, BOARD_FEED_DOT, BOARD_FEED_DOT_ERR, BOARD_FEED_DOT_OK,
-    BOARD_FEED_ITEM, BOARD_INLINE_LINK, BOARD_INLINE_LINK_FLUSH, BOARD_INLINE_LINKS,
-    BOARD_LIST, BOARD_LIST_GROW, BOARD_LIST_META, BOARD_LIST_ROW, BOARD_LIST_STRONG, BOARD_METRIC,
-    BOARD_METRIC_META, BOARD_METRIC_NUMBER, BOARD_METRIC_VALUE, BOARD_NODE_SLOT, BOARD_NOTES,
-    BOARD_NOTES_INPUT, BOARD_NOTIF, BOARD_NOTIF_BODY, BOARD_NOTIF_COPY, BOARD_NOTIF_DISMISS,
-    BOARD_NOTIF_INFO, BOARD_NOTIF_LIST, BOARD_NOTIF_TIME, BOARD_NOTIF_TITLE, BOARD_NOTIF_WARN,
-    BOARD_PILL, BOARD_PILL_LIVE, BOARD_PULSE, BOARD_SCORE_BAR, BOARD_SCORE_BAR_FILL,
-    BOARD_SECURITY, BOARD_SECURITY_SCORE, BOARD_SECURITY_SCORE_LABEL, BOARD_SECURITY_SCORE_VALUE,
-    BOARD_SPAN_CHIP, BOARD_SPAN_CHIP_ACTIVE, BOARD_SPAN_GROUP, BOARD_TABLE, BOARD_TABLE_TD,
-    BOARD_TABLE_TH, BOARD_TABLE_WRAP, BOARD_TILE, BOARD_TILE_BODY, BOARD_TILE_BODY_DIMMED,
-    BOARD_TILE_CONTROLS, BOARD_TILE_DROP_TARGET, BOARD_TILE_EDITING, BOARD_TILE_HEAD,
-    BOARD_TILE_HEAD_MAIN, BOARD_TILE_KICKER, BOARD_TILE_REMOVE, INPUT, MUTED,
+    BOARD_CHECKLIST_LG, BOARD_CONTAINER_BODY, BOARD_CONTAINER_BODY_STACK, BOARD_CONTAINER_HEAD,
+    BOARD_DRAG_HANDLE, BOARD_EMPTY_TILE, BOARD_FEED, BOARD_FEED_COPY, BOARD_FEED_DOT,
+    BOARD_FEED_DOT_ERR, BOARD_FEED_DOT_OK, BOARD_FEED_ITEM, BOARD_INLINE_LINK,
+    BOARD_INLINE_LINK_FLUSH, BOARD_INLINE_LINKS, BOARD_LIST, BOARD_LIST_GROW, BOARD_LIST_META,
+    BOARD_LIST_ROW, BOARD_LIST_STRONG, BOARD_METRIC, BOARD_METRIC_META, BOARD_METRIC_NUMBER,
+    BOARD_METRIC_VALUE, BOARD_NODE_SLOT, BOARD_NOTES, BOARD_NOTES_INPUT, BOARD_NOTIF,
+    BOARD_NOTIF_BODY, BOARD_NOTIF_COPY, BOARD_NOTIF_DISMISS, BOARD_NOTIF_INFO, BOARD_NOTIF_LIST,
+    BOARD_NOTIF_TIME, BOARD_NOTIF_TITLE, BOARD_NOTIF_WARN, BOARD_PILL, BOARD_PILL_LIVE,
+    BOARD_PULSE, BOARD_SCORE_BAR, BOARD_SCORE_BAR_FILL, BOARD_SECURITY, BOARD_SECURITY_SCORE,
+    BOARD_SECURITY_SCORE_LABEL, BOARD_SECURITY_SCORE_VALUE, BOARD_SPAN_CHIP,
+    BOARD_SPAN_CHIP_ACTIVE, BOARD_SPAN_GROUP, BOARD_TABLE, BOARD_TABLE_TD, BOARD_TABLE_TH,
+    BOARD_TABLE_WRAP, BOARD_TILE_BODY, BOARD_TILE_BODY_DIMMED, BOARD_TILE_CONTROLS,
+    BOARD_TILE_HEAD, BOARD_TILE_HEAD_MAIN, BOARD_TILE_KICKER, BOARD_TILE_REMOVE, INPUT, MUTED,
+    board_container_class, board_tile_class,
 };
 use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
@@ -100,6 +100,7 @@ pub(crate) fn render_node(
             col_span: initial_span,
             children,
         } => {
+            let id_cls = id.clone();
             let id_span = id.clone();
             let id_ds = id.clone();
             let id_dover = id.clone();
@@ -127,7 +128,11 @@ pub(crate) fn render_node(
             };
             view! {
                 <section
-                    class=move || if editing.get() { BOARD_CONTAINER_EDITING } else { BOARD_CONTAINER }
+                    class=move || {
+                        let is_drop = drop_target.get().as_deref() == Some(id_cls.as_str())
+                            && drag_id.get().as_deref() != Some(id_cls.as_str());
+                        board_container_class(editing.get(), is_drop)
+                    }
                     // Reactive: reads layout signal so width updates without full remount.
                     data-span=span_attr
                     style=grid_style
@@ -318,13 +323,7 @@ pub(crate) fn render_node(
                     class=move || {
                         let is_drop = drop_target.get().as_deref() == Some(id_cls.as_str())
                             && drag_id.get().as_deref() != Some(id_cls.as_str());
-                        if is_drop {
-                            BOARD_TILE_DROP_TARGET
-                        } else if editing.get() {
-                            BOARD_TILE_EDITING
-                        } else {
-                            BOARD_TILE
-                        }
+                        board_tile_class(editing.get(), is_drop)
                     }
                     data-span=span_attr
                     style=grid_style

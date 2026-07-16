@@ -422,6 +422,8 @@ pub const BOARD_MODAL_BACKDROP: &str =
     "fixed inset-0 z-[80] grid place-items-center bg-overlay-scrim px-4 py-6 overscroll-contain";
 pub const BOARD_MODAL: &str = "grid max-h-[min(84dvh,720px)] w-[min(720px,100%)] max-w-[720px] grid-rows-[auto_minmax(0,1fr)] gap-[18px] overflow-hidden rounded-[18px] border border-border-subtle bg-surface p-5 shadow-[0_24px_64px_rgba(0,0,0,0.22)]";
 pub const BOARD_MODAL_RESOURCES: &str = "grid max-h-[min(90dvh,860px)] w-[min(1040px,100%)] max-w-[1040px] grid-rows-[auto_minmax(0,1fr)] gap-[18px] overflow-hidden rounded-[18px] border border-border-subtle bg-surface p-5 shadow-[0_24px_64px_rgba(0,0,0,0.22)]";
+/// Non-scrolling chrome stack (head + tabs + banners) — pair with body as the sole `1fr` row.
+pub const BOARD_MODAL_CHROME: &str = "grid min-h-0 gap-[18px]";
 pub const BOARD_MODAL_HEAD: &str = "flex items-start justify-between gap-4";
 pub const BOARD_MODAL_HEAD_TITLE: &str = "m-0 mb-1 text-lg font-[650] tracking-tight";
 pub const BOARD_MODAL_HEAD_P: &str = "m-0 text-[13px] text-secondary";
@@ -431,8 +433,8 @@ pub const BOARD_PICKER_GRID: &str =
     "grid min-h-0 grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-2.5 overflow-auto overscroll-contain";
 pub const BOARD_PICKER_CARD: &str =
     "grid min-h-[132px] grid-rows-[1fr_auto] items-end gap-3 rounded-[14px] border border-border-subtle bg-surface-subtle p-3.5";
-pub const BOARD_PICKER_CARD_ADDED: &str =
-    "grid min-h-[132px] grid-rows-[1fr_auto] items-end gap-3 rounded-[14px] border border-border-subtle bg-surface-subtle p-3.5 opacity-[0.72]";
+/// Extra for already-placed single-instance widgets (`with_extra(BOARD_PICKER_CARD, …)`).
+pub const BOARD_PICKER_CARD_ADDED: &str = "opacity-[0.72]";
 pub const BOARD_PICKER_CARD_TITLE: &str =
     "mb-1 block text-sm font-[650] tracking-tight";
 pub const BOARD_PICKER_CARD_P: &str = "m-0 text-xs leading-[1.45] text-secondary";
@@ -444,14 +446,41 @@ pub const BOARD_GRID: &str =
     "grid min-w-0 grid-cols-12 gap-3.5 max-[960px]:grid-cols-2 max-[720px]:grid-cols-1";
 pub const BOARD_NODE_SLOT: &str = "contents";
 
-pub const BOARD_TILE: &str = "grid min-h-[168px] min-w-0 col-span-6 gap-3 rounded-[18px] border border-border-subtle bg-surface px-4 pb-[18px] pt-4 transition-[border-color,box-shadow,transform] duration-[160ms] ease-in-out max-[720px]:![grid-column:1/-1]";
-pub const BOARD_TILE_EDITING: &str = "grid min-h-[168px] min-w-0 col-span-6 gap-3 rounded-[18px] border border-border-subtle bg-surface px-4 pb-[18px] pt-4 transition-[border-color,box-shadow,transform] duration-[160ms] ease-in-out cursor-grab shadow-[0_0_0_1px_color-mix(in_srgb,var(--focus-ring)_35%,transparent)] active:cursor-grabbing max-[720px]:![grid-column:1/-1]";
-pub const BOARD_TILE_DROP_TARGET: &str = "grid min-h-[168px] min-w-0 col-span-6 gap-3 rounded-[18px] border border-focus bg-surface px-4 pb-[18px] pt-4 transition-[border-color,box-shadow,transform] duration-[160ms] ease-in-out cursor-grab shadow-[0_0_0_2px_color-mix(in_srgb,var(--focus-ring)_28%,transparent)] max-[720px]:![grid-column:1/-1]";
-pub const BOARD_CONTAINER: &str = "grid min-h-[168px] min-w-0 col-span-6 content-start gap-3 rounded-[18px] border border-border-subtle bg-[color-mix(in_srgb,var(--bg-surface-subtle)_55%,var(--bg-surface))] px-4 pb-[18px] pt-4 transition-[border-color,box-shadow,transform] duration-[160ms] ease-in-out max-[720px]:![grid-column:1/-1]";
-pub const BOARD_CONTAINER_EDITING: &str = "grid min-h-[168px] min-w-0 col-span-6 content-start gap-3 rounded-[18px] border border-border-subtle bg-[color-mix(in_srgb,var(--bg-surface-subtle)_55%,var(--bg-surface))] px-4 pb-[18px] pt-4 transition-[border-color,box-shadow,transform] duration-[160ms] ease-in-out cursor-grab shadow-[0_0_0_1px_color-mix(in_srgb,var(--focus-ring)_35%,transparent)] active:cursor-grabbing max-[720px]:![grid-column:1/-1]";
+/// Tile shell base — column span comes from reactive inline `grid-column: span N`.
+pub const BOARD_TILE: &str = "grid min-h-[168px] min-w-0 gap-3 rounded-[18px] border border-border-subtle bg-surface px-4 pb-[18px] pt-4 transition-[border-color,box-shadow,transform] duration-[160ms] ease-in-out max-[720px]:![grid-column:1/-1]";
+/// State extras for `with_extra(BOARD_TILE, Some(…))`.
+pub const BOARD_TILE_EDITING: &str = "cursor-grab shadow-[0_0_0_1px_color-mix(in_srgb,var(--focus-ring)_35%,transparent)] active:cursor-grabbing";
+pub const BOARD_TILE_DROP_TARGET: &str = "cursor-grab !border-focus shadow-[0_0_0_2px_color-mix(in_srgb,var(--focus-ring)_28%,transparent)]";
+
+/// Container shell base (same span / mobile rules as tiles).
+pub const BOARD_CONTAINER: &str = "grid min-h-[168px] min-w-0 content-start gap-3 rounded-[18px] border border-border-subtle bg-[color-mix(in_srgb,var(--bg-surface-subtle)_55%,var(--bg-surface))] px-4 pb-[18px] pt-4 transition-[border-color,box-shadow,transform] duration-[160ms] ease-in-out max-[720px]:![grid-column:1/-1]";
+pub const BOARD_CONTAINER_EDITING: &str = "cursor-grab shadow-[0_0_0_1px_color-mix(in_srgb,var(--focus-ring)_35%,transparent)] active:cursor-grabbing";
+pub const BOARD_CONTAINER_DROP_TARGET: &str = "cursor-grab !border-focus shadow-[0_0_0_2px_color-mix(in_srgb,var(--focus-ring)_28%,transparent)]";
 pub const BOARD_CONTAINER_HEAD: &str = "flex items-center justify-between gap-2.5";
 pub const BOARD_CONTAINER_BODY: &str = "grid min-w-0 grid-cols-12 gap-3";
 pub const BOARD_CONTAINER_BODY_STACK: &str = "grid min-w-0 grid-cols-1 gap-3 [&>*]:![grid-column:1/-1]";
+
+/// Compose tile shell + optional editing / drop-target extras (drop wins).
+pub fn board_tile_class(editing: bool, drop_target: bool) -> String {
+    if drop_target {
+        with_extra(BOARD_TILE, Some(BOARD_TILE_DROP_TARGET))
+    } else if editing {
+        with_extra(BOARD_TILE, Some(BOARD_TILE_EDITING))
+    } else {
+        BOARD_TILE.to_owned()
+    }
+}
+
+/// Compose container shell + optional editing / drop-target extras (drop wins).
+pub fn board_container_class(editing: bool, drop_target: bool) -> String {
+    if drop_target {
+        with_extra(BOARD_CONTAINER, Some(BOARD_CONTAINER_DROP_TARGET))
+    } else if editing {
+        with_extra(BOARD_CONTAINER, Some(BOARD_CONTAINER_EDITING))
+    } else {
+        BOARD_CONTAINER.to_owned()
+    }
+}
 
 pub const BOARD_TILE_HEAD: &str = "flex items-start justify-between gap-2.5";
 pub const BOARD_TILE_HEAD_MAIN: &str = "flex min-w-0 items-center gap-2";

@@ -14,11 +14,11 @@ use crate::app::{
 };
 use crate::ui::classes::{
     BANNER_ERROR, BANNER_OK, BOARD_JSON_PREVIEW_LG, BOARD_LIST, BOARD_LIST_GROW, BOARD_LIST_META,
-    BOARD_LIST_ROW, BOARD_LIST_STRONG, BOARD_MODAL_BACKDROP, BOARD_MODAL_CLOSE, BOARD_MODAL_HEAD,
-    BOARD_MODAL_HEAD_P, BOARD_MODAL_HEAD_TITLE, BOARD_MODAL_RESOURCES, BOARD_RQ_ACTIONS,
-    BOARD_RQ_BODY, BOARD_RQ_CARD, BOARD_RQ_CARD_DISABLED, BOARD_RQ_CARD_P, BOARD_RQ_CARD_TITLE,
-    BOARD_RQ_CATALOG, BOARD_RQ_CHECK, BOARD_RQ_FORM, BOARD_RQ_FORM_H3, BOARD_RQ_LISTS,
-    BOARD_RQ_OUTPUT, BOARD_RQ_ROW, BOARD_RQ_TAB, BOARD_RQ_TAB_ACTIVE, BOARD_RQ_TABS,
+    BOARD_LIST_ROW, BOARD_LIST_STRONG, BOARD_MODAL_BACKDROP, BOARD_MODAL_CHROME, BOARD_MODAL_CLOSE,
+    BOARD_MODAL_HEAD, BOARD_MODAL_HEAD_P, BOARD_MODAL_HEAD_TITLE, BOARD_MODAL_RESOURCES,
+    BOARD_RQ_ACTIONS, BOARD_RQ_BODY, BOARD_RQ_CARD, BOARD_RQ_CARD_DISABLED, BOARD_RQ_CARD_P,
+    BOARD_RQ_CARD_TITLE, BOARD_RQ_CATALOG, BOARD_RQ_CHECK, BOARD_RQ_FORM, BOARD_RQ_FORM_H3,
+    BOARD_RQ_LISTS, BOARD_RQ_OUTPUT, BOARD_RQ_ROW, BOARD_RQ_TAB, BOARD_RQ_TAB_ACTIVE, BOARD_RQ_TABS,
     BOARD_RQ_TEXTAREA, BOARD_TILE_REMOVE, BTN_PRIMARY, BTN_SECONDARY, FIELD, INPUT, MUTED, with_extra,
 };
 
@@ -212,29 +212,32 @@ pub fn resources_queries_modal(
                         aria-modal="true"
                         on:click=move |e| e.stop_propagation()
                     >
-                        <header class=BOARD_MODAL_HEAD>
-                            <div>
-                                <h2 class=BOARD_MODAL_HEAD_TITLE>"Resources & queries"</h2>
-                                <p class=BOARD_MODAL_HEAD_P>"Connect once (auth + headers), write queries, test server-side. Secrets live in the vault — never returned after save."</p>
+                        // Chrome (auto row) + body (1fr scrollport) — two direct children only.
+                        <div class=BOARD_MODAL_CHROME>
+                            <header class=BOARD_MODAL_HEAD>
+                                <div>
+                                    <h2 class=BOARD_MODAL_HEAD_TITLE>"Resources & queries"</h2>
+                                    <p class=BOARD_MODAL_HEAD_P>"Connect once (auth + headers), write queries, test server-side. Secrets live in the vault — never returned after save."</p>
+                                </div>
+                                <button type="button" class=BOARD_MODAL_CLOSE on:click=move |_| set_open.set(false)>"Close"</button>
+                            </header>
+
+                            <div class=BOARD_RQ_TABS role="tablist">
+                                <button type="button" class=move || if tab.get() == "catalog" { BOARD_RQ_TAB_ACTIVE } else { BOARD_RQ_TAB }
+                                    on:click=move |_| tab.set("catalog".into())>"Catalog"</button>
+                                <button type="button" class=move || if tab.get() == "resource" { BOARD_RQ_TAB_ACTIVE } else { BOARD_RQ_TAB }
+                                    on:click=move |_| tab.set("resource".into())>"Resource"</button>
+                                <button type="button" class=move || if tab.get() == "query" { BOARD_RQ_TAB_ACTIVE } else { BOARD_RQ_TAB }
+                                    on:click=move |_| tab.set("query".into())>"Query"</button>
                             </div>
-                            <button type="button" class=BOARD_MODAL_CLOSE on:click=move |_| set_open.set(false)>"Close"</button>
-                        </header>
 
-                        <div class=BOARD_RQ_TABS role="tablist">
-                            <button type="button" class=move || if tab.get() == "catalog" { BOARD_RQ_TAB_ACTIVE } else { BOARD_RQ_TAB }
-                                on:click=move |_| tab.set("catalog".into())>"Catalog"</button>
-                            <button type="button" class=move || if tab.get() == "resource" { BOARD_RQ_TAB_ACTIVE } else { BOARD_RQ_TAB }
-                                on:click=move |_| tab.set("resource".into())>"Resource"</button>
-                            <button type="button" class=move || if tab.get() == "query" { BOARD_RQ_TAB_ACTIVE } else { BOARD_RQ_TAB }
-                                on:click=move |_| tab.set("query".into())>"Query"</button>
+                            <p class=BANNER_ERROR hidden=move || form_error.get().is_none()>
+                                {move || form_error.get().unwrap_or_default()}
+                            </p>
+                            <p class=BANNER_OK hidden=move || form_ok.get().is_none()>
+                                {move || form_ok.get().unwrap_or_default()}
+                            </p>
                         </div>
-
-                        <p class=BANNER_ERROR hidden=move || form_error.get().is_none()>
-                            {move || form_error.get().unwrap_or_default()}
-                        </p>
-                        <p class=BANNER_OK hidden=move || form_ok.get().is_none()>
-                            {move || form_ok.get().unwrap_or_default()}
-                        </p>
 
                         <div class=BOARD_RQ_BODY>
                             <Show when=move || tab.get() == "catalog">
@@ -981,3 +984,4 @@ pub fn resources_queries_modal(
     }
     .into_any()
 }
+

@@ -23,7 +23,7 @@ use crate::ui::classes::{
     BOARD_PICKER_CARD, BOARD_PICKER_CARD_ADDED, BOARD_PICKER_CARD_P, BOARD_PICKER_CARD_TITLE,
     BOARD_PICKER_GRID, BOARD_SKELETON, BOARD_SKELETON_BAR, BOARD_SKELETON_GRID, BOARD_SKELETON_SPAN2,
     BOARD_SUB, BOARD_TITLE, BOARD_TOP, BOARD_TOP_ACTIONS, BOARD_TOP_COPY, BTN_PRIMARY,
-    BTN_SECONDARY, BTN_SECONDARY_ACTIVE,
+    BTN_SECONDARY, BTN_SECONDARY_ACTIVE, with_extra,
 };
 use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
@@ -269,7 +269,11 @@ pub fn DashboardHome() -> impl IntoView {
                                                 let already = !multi && placed.contains(kind.as_str());
                                                 let kind_add = kind.clone();
                                                 let first_source = first_source_base.clone();
-                                                let card_class = if already { BOARD_PICKER_CARD_ADDED } else { BOARD_PICKER_CARD };
+                                                let card_class = if already {
+                                                    with_extra(BOARD_PICKER_CARD, Some(BOARD_PICKER_CARD_ADDED))
+                                                } else {
+                                                    BOARD_PICKER_CARD.to_owned()
+                                                };
                                                 view! {
                                                     <article class=card_class>
                                                         <div>
