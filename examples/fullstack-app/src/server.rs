@@ -87,6 +87,15 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
         let is_browser_navigation = !is_grpc
             && !crate::rest::is_rest_request(&req)
             && matches!(*req.method(), http::Method::GET | http::Method::HEAD);
+        // WebAuthn rejects IP hosts as rpId. Canonicalize loopback IPs → localhost
+        // for document navigations so passkeys and session cookies share one host.
+        if is_browser_navigation
+            && !request_path.starts_with("/pkg/")
+            && let Some(location) =
+                loopback_ip_to_localhost_redirect(req.headers(), &request_path, request_query.as_deref())
+        {
+            return redirect_response(&location);
+        }
         if matches!(
             *req.method(),
             http::Method::POST | http::Method::PUT | http::Method::PATCH | http::Method::DELETE
@@ -364,9 +373,10 @@ async fn protected_ui_redirect(
         }
     }
 
-    let Some(permission) = ui_route_permission(path) else {
+    let Some(permission) = crate::access::permission_for_ui_path(path) else {
         return None;
     };
+    let permission = permission.as_str();
 
     match crate::application::require_authorized_route_for(permission, session_id).await {
         Ok(_) => None,
@@ -487,48 +497,6 @@ fn protected_ui_route(path: &str) -> bool {
         || path.starts_with("/org/")
         || path.starts_with("/organizations")
         || path.starts_with("/admin/")
-}
-
-fn ui_route_permission(path: &str) -> Option<&'static str> {
-    let path = path.trim_end_matches('/');
-    if let Some(perm) = workspace_settings_route_permission(path) {
-        return Some(perm);
-    }
-    match path {
-        "/admin/auth/signing-keys" => Some("auth:signing-key:admin"),
-        "/admin/auth/providers" => Some("auth:provider:write"),
-        "/admin/auth/redirects" => Some("auth:redirect:write"),
-        "/admin/authorization/policy" => Some("authz:check"),
-        // Legacy redirects still gate like the target settings pages.
-        "/organizations/settings" => Some("organization.view"),
-        "/organizations/members" | "/organizations/invitations" => Some("member.view"),
-        "/organizations/roles" | "/organizations/permissions" => Some("role.view"),
-        "/organizations/audit" => Some("audit.view"),
-        "/admin/users" => Some("system.user.manage"),
-        "/admin/health" => Some("system.health.read"),
-        "/admin/policies" => Some("system.policy.manage"),
-        _ => None,
-    }
-}
-
-/// Map `/org/{slug}/settings/…` to the permission required to open the UI page.
-fn workspace_settings_route_permission(path: &str) -> Option<&'static str> {
-    let rest = path.strip_prefix("/org/")?;
-    let (_, after_slug) = rest.split_once('/')?;
-    let section = if after_slug == "settings" {
-        ""
-    } else {
-        after_slug.strip_prefix("settings/")?
-    };
-    match section {
-        "" | "general" => Some("organization.view"),
-        "members" | "invitations" => Some("member.view"),
-        "roles" => Some("role.view"),
-        "audit" => Some("audit.view"),
-        // Membership-level: any authenticated org member may open the danger stub.
-        "danger" => Some("organization.view"),
-        _ => Some("organization.view"),
-    }
 }
 
 fn login_success_redirect(query: Option<&str>) -> &str {
@@ -693,9 +661,114 @@ fn redirect_response(location: &str) -> Result<Response, ErrorCode> {
     wasip3::http_compat::http_into_wasi_response(response)
 }
 
+/// Rewrite `http://127.0.0.1[:port]/…` (and `::1`) document URLs to `localhost`.
+///
+/// Browsers refuse WebAuthn when `rpId` is an IP address. Passkey enrollment and
+/// login must run on `http://localhost:PORT` while Spin can still bind
+/// `127.0.0.1:PORT`. REST/gRPC and static package fetches are left alone.
+fn loopback_ip_to_localhost_redirect(
+    headers: &http::HeaderMap,
+    path: &str,
+    query: Option<&str>,
+) -> Option<String> {
+    let host_header = headers
+        .get(http::header::HOST)
+        .and_then(|value| value.to_str().ok())?
+        .trim();
+    if host_header.is_empty() {
+        return None;
+    }
+    let (hostname, port) = match host_header.rsplit_once(':') {
+        Some((host, port))
+            if !host.is_empty()
+                && !host.starts_with('[')
+                && port.chars().all(|c| c.is_ascii_digit()) =>
+        {
+            (host, Some(port))
+        }
+        _ => {
+            // `[::1]:3008` or bare hostname
+            if let Some(rest) = host_header.strip_prefix('[') {
+                if let Some((host, port_part)) = rest.split_once("]:") {
+                    (host, Some(port_part))
+                } else if let Some(host) = rest.strip_suffix(']') {
+                    (host, None)
+                } else {
+                    (host_header, None)
+                }
+            } else {
+                (host_header, None)
+            }
+        }
+    };
+    let hostname = hostname.trim().trim_matches(|c| c == '[' || c == ']');
+    if !matches!(hostname, "127.0.0.1" | "::1") {
+        return None;
+    }
+    let mut location = String::from("http://localhost");
+    if let Some(port) = port.filter(|p| !p.is_empty()) {
+        location.push(':');
+        location.push_str(port);
+    }
+    if path.is_empty() {
+        location.push('/');
+    } else {
+        location.push_str(path);
+    }
+    if let Some(query) = query.filter(|q| !q.is_empty()) {
+        location.push('?');
+        location.push_str(query);
+    }
+    Some(location)
+}
+
 fn internal_error(error: impl std::fmt::Display) -> ErrorCode {
     tracing::error!(error = %error, "fullstack WASI request failed");
     ErrorCode::InternalError(None)
+}
+
+#[cfg(test)]
+mod loopback_redirect_tests {
+    use super::loopback_ip_to_localhost_redirect;
+    use http::header::HOST;
+
+    fn headers(host: &str) -> http::HeaderMap {
+        let mut map = http::HeaderMap::new();
+        map.insert(HOST, host.parse().expect("host header"));
+        map
+    }
+
+    #[test]
+    fn redirects_127_to_localhost_preserving_path_query_port() {
+        let location = loopback_ip_to_localhost_redirect(
+            &headers("127.0.0.1:3008"),
+            "/account/passkeys",
+            Some("next=%2Fdashboard"),
+        );
+        assert_eq!(
+            location.as_deref(),
+            Some("http://localhost:3008/account/passkeys?next=%2Fdashboard")
+        );
+    }
+
+    #[test]
+    fn redirects_ipv6_loopback() {
+        let location =
+            loopback_ip_to_localhost_redirect(&headers("[::1]:3008"), "/login", None);
+        assert_eq!(location.as_deref(), Some("http://localhost:3008/login"));
+    }
+
+    #[test]
+    fn leaves_localhost_and_public_hosts_alone() {
+        assert!(
+            loopback_ip_to_localhost_redirect(&headers("localhost:3008"), "/account/passkeys", None)
+                .is_none()
+        );
+        assert!(
+            loopback_ip_to_localhost_redirect(&headers("auth.example.com"), "/account/passkeys", None)
+                .is_none()
+        );
+    }
 }
 
 wasip3::http::service::export!(FullstackServer);

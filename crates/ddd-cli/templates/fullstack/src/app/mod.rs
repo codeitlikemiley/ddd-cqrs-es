@@ -373,18 +373,37 @@ export function passkeySupported() {
   return Boolean(window.PublicKeyCredential && navigator.credentials);
 }
 
+function passkeyLocalhostUrl() {
+  const port = window.location.port ? ":" + window.location.port : "";
+  return (
+    "http://localhost" +
+    port +
+    window.location.pathname +
+    window.location.search +
+    window.location.hash
+  );
+}
+
 function passkeyLoopbackHint() {
   const host = window.location.hostname;
   if (host === "127.0.0.1" || host === "::1" || host === "[::1]") {
-    const port = window.location.port ? ":" + window.location.port : "";
     return (
-      " Browsers reject IP addresses as WebAuthn rpId — open http://localhost" +
-      port +
-      window.location.pathname +
-      " (not 127.0.0.1) and set AUTH_PASSKEY_RP_ID=localhost with AUTH_PASSKEY_ORIGIN matching that URL."
+      " Browsers reject IP addresses as WebAuthn rpId — open " +
+      passkeyLocalhostUrl() +
+      " (not 127.0.0.1). Session cookies are host-scoped; sign in again on localhost if needed."
     );
   }
   return "";
+}
+
+/** WebAuthn cannot use IP hosts. Prefer an automatic hop to localhost. */
+function ensurePasskeyHostname() {
+  const host = window.location.hostname;
+  if (host === "127.0.0.1" || host === "::1" || host === "[::1]") {
+    window.location.replace(passkeyLocalhostUrl());
+    return false;
+  }
+  return true;
 }
 
 function passkeyErrorMessage(error) {
@@ -439,9 +458,9 @@ function serializeCreatedCredential(credential) {
 }
 
 export async function createPasskeyCredential(optionsJson) {
-  const loopbackHint = passkeyLoopbackHint();
-  if (loopbackHint) {
-    throw loopbackHint.trim();
+  // Auto-hop to localhost when the tab is still on 127.0.0.1 / ::1.
+  if (!ensurePasskeyHostname()) {
+    throw "Redirecting to localhost for WebAuthn (IP hosts are not valid rpIds).";
   }
   const publicKey = preparePublicKeyOptions(optionsJson);
   try {
@@ -492,9 +511,8 @@ export async function isConditionalMediationAvailable() {
 }
 
 export async function getPasskeyCredential(optionsJson, mediation) {
-  const loopbackHint = passkeyLoopbackHint();
-  if (loopbackHint) {
-    throw loopbackHint.trim();
+  if (!ensurePasskeyHostname()) {
+    throw "Redirecting to localhost for WebAuthn (IP hosts are not valid rpIds).";
   }
   const publicKey = preparePublicKeyOptions(optionsJson);
   const request = { publicKey };
@@ -599,6 +617,8 @@ pub mod organizations;
 pub mod path;
 pub mod router;
 pub mod server_fns;
+pub mod access_ui;
+pub mod theme;
 pub mod workspace;
 pub mod workspace_settings;
 
@@ -613,6 +633,8 @@ pub use router::App;
 #[cfg(feature = "ssr")]
 pub use router::shell;
 pub use server_fns::*;
+pub use access_ui::CanAccess;
+pub use theme::ThemeToggle;
 pub use workspace::{AppLayout, WorkspaceOnboardingGate, WorkspaceOnboardingPage, WorkspaceShell};
 pub use workspace_settings::{
     LegacySettingsRedirect, WorkspaceSettingsAuditPage, WorkspaceSettingsDangerPage,

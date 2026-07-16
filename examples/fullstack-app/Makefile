@@ -23,15 +23,17 @@ db ?= $(if $(DATABASE_BACKEND),$(DATABASE_BACKEND),postgres)
 
 # --- Public origin (single source of truth) ---------------------------------
 AUTH_PUBLIC_SCHEME ?= http
-AUTH_PUBLIC_BASE_URL ?= $(AUTH_PUBLIC_SCHEME)://$(listen)
-BASE_URL ?= $(AUTH_PUBLIC_BASE_URL)
 # Host without port for WebAuthn rpId (ports are not allowed in rpId).
 AUTH_PUBLIC_HOST := $(firstword $(subst :, ,$(listen)))
 AUTH_PUBLIC_PORT := $(word 2,$(subst :, ,$(listen)))
 # Browsers reject IP addresses as WebAuthn rpId (SecurityError). When Spin
-# listens on a loopback IP, passkeys must use the "localhost" hostname and the
-# browser must open http://localhost:PORT (not http://127.0.0.1:PORT).
-AUTH_PASSKEY_HOST := $(if $(filter 127.0.0.1 ::1,$(AUTH_PUBLIC_HOST)),localhost,$(AUTH_PUBLIC_HOST))
+# listens on a loopback IP, public URLs and passkeys use the "localhost"
+# hostname — open http://localhost:PORT (not http://127.0.0.1:PORT). The app
+# also 303-redirects document navigations from 127.0.0.1/::1 → localhost.
+AUTH_PUBLIC_CANONICAL_HOST := $(if $(filter 127.0.0.1 ::1,$(AUTH_PUBLIC_HOST)),localhost,$(AUTH_PUBLIC_HOST))
+AUTH_PUBLIC_BASE_URL ?= $(AUTH_PUBLIC_SCHEME)://$(AUTH_PUBLIC_CANONICAL_HOST)$(if $(AUTH_PUBLIC_PORT),:$(AUTH_PUBLIC_PORT),)
+BASE_URL ?= $(AUTH_PUBLIC_BASE_URL)
+AUTH_PASSKEY_HOST := $(AUTH_PUBLIC_CANONICAL_HOST)
 
 AUTH_PRODUCTION_MODE ?= false
 AUTH_REQUIRE_TRUSTED_INGRESS ?= false

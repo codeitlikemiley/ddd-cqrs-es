@@ -25,7 +25,9 @@ use crate::error::{AuthStackError, AuthStackResult};
 
 /// Canonical browser-facing origin fallback when Spin variables are unset.
 /// Prefer `AUTH_PUBLIC_BASE_URL` / Makefile `listen` in real runs.
-pub const DEFAULT_PUBLIC_BASE_URL: &str = "http://127.0.0.1:3008";
+/// Prefer `localhost` (not `127.0.0.1`) so WebAuthn rpId/origin and session
+/// cookies share a browser-valid hostname. Spin can still bind `127.0.0.1`.
+pub const DEFAULT_PUBLIC_BASE_URL: &str = "http://localhost:3008";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BrowserOrigin {
