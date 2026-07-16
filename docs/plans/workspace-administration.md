@@ -9,7 +9,7 @@
 | Field | Value |
 |-------|--------|
 | Run ID | `07aef382` |
-| Current PR | PR3 (proposed) |
+| Current PR | PR4a (proposed) |
 | Phase | awaiting_approval |
 | Branch base | `codex/fullstack-verification-flow` |
 
@@ -39,7 +39,7 @@
 | PR1 | OrganizationAccessModel + deps + error fidelity | — (∥ PR0) | done (code; step-up fidelity deferred) |
 | PR2 | Settings shell + slug routes + legacy redirects | PR0 | done (code; awaiting orchestrator advance) |
 | PR3 | Settings DTOs + slug-scoped reads + assign/remove/update fns | PR2 (+PR1 preferred) | done (code; awaiting orchestrator advance) |
-| PR4a | General + Members UI | PR3 | pending |
+| PR4a | General + Members UI | PR3 | done (code; awaiting orchestrator advance) |
 | PR4b | Invitations UI + revoke/resend | PR3 + wasi-auth | pending |
 | PR4c | Roles UI + delete custom role | PR3 + wasi-auth | pending |
 | PR4d | Audit humanization | PR3 | pending |
@@ -111,10 +111,15 @@ Default order: `PR0 → PR1 → PR2 → PR3 → PR4a → PR4b → PR4c → PR4d 
 
 ### PR4a — General + Members
 
-- [ ] Editable name; immutable slug
-- [ ] Members table + server-authored role combobox
-- [ ] Remove member confirm
+- [x] Editable name; immutable slug
+- [x] Members table + server-authored role combobox
+- [x] Remove member confirm
 - Evidence:
+  - General: name field, immutable slug/URL, status + created from context; Save → `update_workspace_name`; disabled when empty/unchanged; success + `server_error_text`; step-up banner links to `/account/mfa`
+  - Members: table (email, role, status, joined, actions); “You” badge; role `<select>` only from context `role_options` (owner static); assign → `assign_workspace_member_role`; remove board-modal confirm → `remove_workspace_member`; self-remove disabled (“Use Danger zone to leave (coming soon)”); pending states; list refresh on success/error
+  - Shared: `role_label_from_options`, `format_settings_timestamp_ms`; CSS for step-up, members actions, confirm
+  - `bash examples/fullstack-app/scripts/sync_fullstack_template.sh` + `… check` — template in sync
+  - `cd examples/fullstack-app && make check` — green; hydrate check green; `bash scripts/check_loc.sh` — OK
 
 ### PR4b — Invitations
 

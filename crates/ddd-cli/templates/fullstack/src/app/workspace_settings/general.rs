@@ -4,7 +4,7 @@
 #![allow(clippy::unused_unit)]
 #![allow(clippy::unit_arg)]
 
-use super::shared::{settings_page_stub, slug_from_settings_pathname};
+use super::shared::{format_settings_timestamp_ms, settings_page_stub, slug_from_settings_pathname};
 use crate::app::helpers::{current_browser_pathname, server_error_text};
 use crate::app::{
     UpdateWorkspaceName, browser_load, get_workspace_settings_context, update_workspace_name,
@@ -38,8 +38,10 @@ pub fn WorkspaceSettingsGeneralBody() -> impl IntoView {
     let save_value = save.value();
 
     let (name, set_name) = signal(String::new());
+    let (original_name, set_original_name) = signal(String::new());
     let (seeded, set_seeded) = signal(false);
     let (client_error, set_client_error) = signal(None::<String>);
+    let (show_success, set_show_success) = signal(false);
 
     Effect::new(move |_| {
         if seeded.get() {
@@ -47,18 +49,23 @@ pub fn WorkspaceSettingsGeneralBody() -> impl IntoView {
         }
         if let Some(Ok(ctx)) = context.get() {
             set_name.set(ctx.organization.name.clone());
+            set_original_name.set(ctx.organization.name.clone());
             set_seeded.set(true);
         }
     });
 
-    Effect::new(move |_| {
-        if let Some(Ok(summary)) = save_value.get() {
+    Effect::new(move |_| match save_value.get() {
+        Some(Ok(summary)) => {
             set_name.set(summary.name.clone());
+            set_original_name.set(summary.name.clone());
             set_client_error.set(None);
+            set_show_success.set(true);
         }
-        if let Some(Err(error)) = save_value.get() {
+        Some(Err(error)) => {
+            set_show_success.set(false);
             set_client_error.set(Some(server_error_text(error)));
         }
+        None => {}
     });
 
     let load_error = Memo::new(move |_| {
@@ -74,6 +81,14 @@ pub fn WorkspaceSettingsGeneralBody() -> impl IntoView {
             .and_then(|result| result.ok())
             .map(|ctx| ctx.requires_step_up)
             .unwrap_or(false)
+    });
+
+    let name_dirty = Memo::new(move |_| {
+        name.get().trim() != original_name.get().trim()
+    });
+
+    let can_save = Memo::new(move |_| {
+        !pending.get() && !name.get().trim().is_empty() && name_dirty.get()
     });
 
     view! {
@@ -94,9 +109,14 @@ pub fn WorkspaceSettingsGeneralBody() -> impl IntoView {
                     let name_value = name.get_untracked().trim().to_owned();
                     if slug_value.is_empty() || name_value.is_empty() {
                         set_client_error.set(Some("workspace name is required".to_owned()));
+                        set_show_success.set(false);
+                        return;
+                    }
+                    if name_value == original_name.get_untracked().trim() {
                         return;
                     }
                     set_client_error.set(None);
+                    set_show_success.set(false);
                     save.dispatch(UpdateWorkspaceName {
                         slug: slug_value,
                         name: name_value,
@@ -111,7 +131,10 @@ pub fn WorkspaceSettingsGeneralBody() -> impl IntoView {
                         maxlength="120"
                         autocomplete="organization"
                         prop:value=move || name.get()
-                        on:input=move |event| set_name.set(event_target_value(&event))
+                        on:input=move |event| {
+                            set_name.set(event_target_value(&event));
+                            set_show_success.set(false);
+                        }
                         disabled=move || pending.get()
                     />
                 </label>
@@ -136,11 +159,31 @@ pub fn WorkspaceSettingsGeneralBody() -> impl IntoView {
                         }}
                         <span class="workspace-settings-readonly-tag">" read-only"</span>
                     </dd>
+                    {move || {
+                        context.get().and_then(|r| r.ok()).map(|ctx| {
+                            let status = if ctx.organization.status.trim().is_empty() {
+                                "—".to_owned()
+                            } else {
+                                ctx.organization.status.clone()
+                            };
+                            let created = format_settings_timestamp_ms(ctx.organization.created_at_ms);
+                            view! {
+                                <dt>"Status"</dt>
+                                <dd>{status}</dd>
+                                <dt>"Created"</dt>
+                                <dd>{created}</dd>
+                            }
+                            .into_any()
+                        })
+                        .unwrap_or_else(|| view! { <></> }.into_any())
+                    }}
                 </dl>
 
                 <Show when=move || step_up_hint.get()>
-                    <p class="board-muted">
-                        "Saving the name requires a step-up session (AAL2). Complete MFA if prompted."
+                    <p class="workspace-settings-step-up" role="status">
+                        "Saving the name requires a step-up session (AAL2). "
+                        <a href="/account/mfa">"Complete MFA"</a>
+                        " if your session is not elevated, then try again."
                     </p>
                 </Show>
 
@@ -148,15 +191,15 @@ pub fn WorkspaceSettingsGeneralBody() -> impl IntoView {
                     <p class="error-banner">{move || client_error.get().unwrap_or_default()}</p>
                 </Show>
 
-                <Show when=move || matches!(save_value.get(), Some(Ok(_)))>
-                    <p class="result-line">"Workspace name saved."</p>
+                <Show when=move || show_success.get()>
+                    <p class="result-line" role="status">"Workspace name saved."</p>
                 </Show>
 
                 <div class="actions">
                     <button
                         type="submit"
                         class="link-button link-button-primary"
-                        disabled=move || pending.get() || name.get().trim().is_empty()
+                        disabled=move || !can_save.get()
                     >
                         {move || if pending.get() { "Saving…" } else { "Save name" }}
                     </button>

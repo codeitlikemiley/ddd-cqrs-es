@@ -48,6 +48,47 @@ pub(crate) fn display_role_name(role_id: &str) -> String {
     }
 }
 
+/// Prefer server-authored role option labels; fall back to built-in names.
+pub(crate) fn role_label_from_options(
+    role_id: &str,
+    options: &[crate::contracts::WorkspaceRoleOption],
+) -> String {
+    options
+        .iter()
+        .find(|opt| opt.role_id == role_id)
+        .map(|opt| {
+            if opt.name.trim().is_empty() {
+                display_role_name(role_id)
+            } else {
+                opt.name.clone()
+            }
+        })
+        .unwrap_or_else(|| display_role_name(role_id))
+}
+
+/// Compact timestamp for settings tables (joined / created).
+pub(crate) fn format_settings_timestamp_ms(ms: u64) -> String {
+    if ms == 0 {
+        return "—".to_owned();
+    }
+    #[cfg(feature = "hydrate")]
+    {
+        use wasm_bindgen::JsValue;
+        let date = js_sys::Date::new(&JsValue::from_f64(ms as f64));
+        date.to_locale_date_string("en-CA", &JsValue::UNDEFINED)
+            .as_string()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| format!("{ms}"))
+    }
+    #[cfg(not(feature = "hydrate"))]
+    {
+        // Stable SSR placeholder; hydrate replaces with locale date.
+        let days = ms / 86_400_000;
+        let year = 1970 + (days / 365);
+        format!("~{year}")
+    }
+}
+
 /// Settings section keys (path segment after `/settings/`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SettingsSection {
