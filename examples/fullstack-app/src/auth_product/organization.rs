@@ -40,7 +40,7 @@ use wasi_auth::{
         management::{
             AdminUserRecord, AuditEventRecord, InvitationRecord, InvitationService,
             ManagementError, MembershipRecord, ORGANIZATION_PERMISSION_CATALOG,
-            OrganizationManagementService, RoleRecord,
+            OrganizationAccessModel, OrganizationManagementService, RoleRecord,
             UpsertRoleRequest as ProductUpsertRoleRequest,
         },
         mfa::{MfaKeyMaterial, MfaService, MfaServiceError},
@@ -368,6 +368,24 @@ pub async fn upsert_role(
         .map_err(map_management_error)
 }
 
+pub async fn delete_role(
+    session_id: &str,
+    organization_id: &str,
+    role_id: &str,
+) -> AuthStackResult<()> {
+    let session_id = bounded_session_id(session_id)?;
+    management_service()
+        .await?
+        .delete_role(
+            &session_id,
+            organization_id,
+            role_id,
+            &request_id("delete-role")?,
+        )
+        .await
+        .map_err(map_management_error)
+}
+
 pub async fn assign_role(
     session_id: &str,
     organization_id: &str,
@@ -411,5 +429,19 @@ pub fn organization_permission_catalog() -> Vec<String> {
     ORGANIZATION_PERMISSION_CATALOG
         .iter()
         .map(|permission| (*permission).to_owned())
+        .collect()
+}
+
+/// Custom-role-eligible permission options with labels from the product access model.
+pub fn organization_permission_options() -> Vec<crate::contracts::PermissionOption> {
+    OrganizationAccessModel::product_default()
+        .definitions()
+        .iter()
+        .filter(|definition| definition.custom_role_eligible)
+        .map(|definition| crate::contracts::PermissionOption {
+            id: definition.id.to_owned(),
+            label: definition.label.to_owned(),
+            group: definition.group.to_owned(),
+        })
         .collect()
 }

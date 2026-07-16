@@ -6257,6 +6257,147 @@ html.board-modal-open body {
   color: #0f7b58;
 }
 
+.workspace-settings-roles-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0 0 1rem;
+}
+
+.workspace-settings-roles-table td {
+  vertical-align: middle;
+}
+
+.workspace-settings-role-name {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.workspace-settings-role-name strong {
+  font-weight: 600;
+}
+
+.workspace-settings-role-name small {
+  font-size: 0.75rem;
+}
+
+.workspace-settings-role-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 0.12rem 0.55rem;
+  text-transform: uppercase;
+}
+
+.workspace-settings-role-badge.is-built-in {
+  background: color-mix(in srgb, #475569 14%, transparent);
+  color: #334155;
+}
+
+.workspace-settings-role-badge.is-custom {
+  background: color-mix(in srgb, #7c3aed 14%, transparent);
+  color: #6d28d9;
+}
+
+.workspace-settings-role-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.workspace-settings-role-form {
+  border: 1px solid var(--border-subtle, #e2e8f0);
+  border-radius: 12px;
+  display: grid;
+  gap: 0.9rem;
+  margin: 0 0 1.25rem;
+  max-width: 48rem;
+  padding: 1rem 1.1rem 1.15rem;
+}
+
+.workspace-settings-role-form-head h2 {
+  font-size: 1.05rem;
+  margin: 0 0 0.25rem;
+}
+
+.workspace-settings-role-form-head p {
+  margin: 0;
+}
+
+.workspace-settings-permission-fieldset {
+  border: 0;
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+}
+
+.workspace-settings-permission-fieldset legend {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  padding: 0;
+}
+
+.workspace-settings-permission-group {
+  display: grid;
+  gap: 0.45rem;
+  margin-bottom: 0.85rem;
+}
+
+.workspace-settings-permission-group h3 {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  margin: 0;
+  text-transform: uppercase;
+  color: var(--text-secondary, #64748b);
+}
+
+.workspace-settings-permission-grid {
+  display: grid;
+  gap: 0.45rem;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+}
+
+.workspace-settings-permission-option {
+  align-items: flex-start;
+  border: 1px solid var(--border-subtle, #e2e8f0);
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  gap: 0.55rem;
+  padding: 0.55rem 0.65rem;
+}
+
+.workspace-settings-permission-option input {
+  margin-top: 0.2rem;
+}
+
+.workspace-settings-permission-option span {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.workspace-settings-permission-option strong {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.workspace-settings-permission-option small {
+  font-size: 0.72rem;
+}
+
+.workspace-settings-role-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  justify-content: flex-end;
+}
+
 @media (max-width: 900px) {
   .workspace-settings-shell {
     grid-template-columns: minmax(0, 1fr);

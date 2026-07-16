@@ -139,9 +139,20 @@ pub struct RoleUpsertRequest {
     pub permissions: Vec<String>,
 }
 
+/// One permission option for custom-role multi-select UIs.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PermissionOption {
+    pub id: String,
+    pub label: String,
+    pub group: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PermissionCatalogResponse {
     pub permissions: Vec<String>,
+    /// Labeled options (custom-role eligible) when the access model is available.
+    #[serde(default)]
+    pub options: Vec<PermissionOption>,
 }
 
 /// Organization slice for workspace settings chrome and general page.

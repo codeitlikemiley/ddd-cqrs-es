@@ -9,7 +9,7 @@
 | Field | Value |
 |-------|--------|
 | Run ID | `07aef382` |
-| Current PR | PR4b (proposed) |
+| Current PR | PR4c (proposed) |
 | Phase | awaiting_approval |
 | Branch base | `codex/fullstack-verification-flow` |
 
@@ -41,7 +41,7 @@
 | PR3 | Settings DTOs + slug-scoped reads + assign/remove/update fns | PR2 (+PR1 preferred) | done (code; awaiting orchestrator advance) |
 | PR4a | General + Members UI | PR3 | done (code; awaiting orchestrator advance) |
 | PR4b | Invitations UI + revoke/resend | PR3 + wasi-auth | done (code; awaiting orchestrator advance) |
-| PR4c | Roles UI + delete custom role | PR3 + wasi-auth | pending |
+| PR4c | Roles UI + delete custom role | PR3 + wasi-auth | done (code; awaiting orchestrator advance) |
 | PR4d | Audit humanization | PR3 | pending |
 | PR4e | Ownership transfer + Danger zone | PR3 + wasi-auth | pending |
 | PR5 | Isolation harness + authz matrix + browser suite | PR4* | pending |
@@ -134,9 +134,14 @@ Default order: `PR0 → PR1 → PR2 → PR3 → PR4a → PR4b → PR4c → PR4d 
 
 ### PR4c — Roles
 
-- [ ] Combined roles + capabilities UI
-- [ ] Custom role create/edit/delete
+- [x] Combined roles + capabilities UI
+- [x] Custom role create/edit/delete
 - Evidence:
+  - wasi-auth: `delete_role.sql` + `OrganizationManagementService::delete_role` (non-built-in only; blocks active members / pending invitations with `RoleInUse` counts; retargets residual FK refs to `member`; bumps `authorization_revision`; audit `role.manage` delete; AAL2 + `role.manage`)
+  - ddd: `auth_product::delete_role`; `delete_workspace_role` / `list_workspace_permissions`; application + server_fns; registered on Leptos handler
+  - UI roles: list with built-in/custom badge, permission count, member counts (from members list); create/edit custom role (name, id, multi-select from access-model options); delete with confirm + conflict message; built-ins immutable
+  - `bash examples/fullstack-app/scripts/sync_fullstack_template.sh` + `check` — green
+  - `cd examples/fullstack-app && make check` — green; hydrate check green; `bash scripts/check_loc.sh` — OK
 
 ### PR4d — Audit
 

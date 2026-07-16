@@ -240,6 +240,7 @@ pub async fn list_permissions(
     }
     Ok(PermissionCatalogResponse {
         permissions: crate::auth_product::organization_permission_catalog(),
+        options: crate::auth_product::organization_permission_options(),
     })
 }
 
@@ -574,4 +575,29 @@ pub async fn upsert_workspace_role(
         permissions,
     )
     .await
+}
+
+pub async fn delete_workspace_role(
+    slug: String,
+    role_id: String,
+    auth: RequestAuth,
+) -> AuthStackResult<AcceptedResponse> {
+    validate_identifier("role_id", &role_id)?;
+    let (context, _) = verified_context_and_permissions(auth, true).await?;
+    let resolved = resolve_workspace_by_slug_with_context(&context, &slug).await?;
+    crate::auth_product::delete_role(
+        context.session_id().as_str(),
+        &resolved.organization_id,
+        &role_id,
+    )
+    .await?;
+    Ok(AcceptedResponse { accepted: true })
+}
+
+pub async fn list_workspace_permissions(
+    slug: String,
+    auth: RequestAuth,
+) -> AuthStackResult<PermissionCatalogResponse> {
+    let resolved = resolve_workspace_by_slug(auth.clone(), &slug).await?;
+    list_permissions(resolved.organization_id, auth).await
 }

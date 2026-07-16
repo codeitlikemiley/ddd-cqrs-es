@@ -241,6 +241,12 @@ pub(crate) fn map_management_error(error: ManagementError<SpinPostgresError>) ->
         ManagementError::ProtectedInvariant => {
             AuthStackError::conflict("operation would violate an ownership or account invariant")
         }
+        ManagementError::RoleInUse {
+            member_count,
+            invitation_count,
+        } => AuthStackError::conflict(format!(
+            "cannot delete role while {member_count} active member(s) and {invitation_count} pending invitation(s) still use it"
+        )),
         ManagementError::RestrictedPermission => {
             AuthStackError::validation("custom role contains a restricted permission")
         }

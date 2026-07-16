@@ -427,3 +427,38 @@ pub async fn upsert_workspace_role(
         unreachable!()
     }
 }
+
+#[server(prefix = "/api/ui")]
+pub async fn delete_workspace_role(
+    slug: String,
+    role_id: String,
+) -> Result<AcceptedResponse, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        crate::application::delete_workspace_role(slug, role_id, server_fn_request_auth())
+            .await
+            .map_err(server_fn_error)
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (slug, role_id);
+        unreachable!()
+    }
+}
+
+#[server(prefix = "/api/ui")]
+pub async fn list_workspace_permissions(
+    slug: String,
+) -> Result<crate::contracts::PermissionCatalogResponse, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        crate::application::list_workspace_permissions(slug, server_fn_request_auth())
+            .await
+            .map_err(server_fn_error)
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = slug;
+        unreachable!()
+    }
+}

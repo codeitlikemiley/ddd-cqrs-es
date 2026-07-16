@@ -7,7 +7,8 @@ use crate::app::{
     AcceptOrganizationInvitation, App, AssignWorkspaceMemberRole, ChangePassword,
     CompleteEmailVerification, CompleteOauthCallback, CompletePasswordReset, ConfirmTotpEnrollment,
     CreateDashboardSecret, CreateOrganization, DeleteDashboardQuery, DeleteDashboardResource,
-    DeleteDashboardSecret, DeleteDashboardSource, DevelopmentMailCaptureEnabled,
+    DeleteDashboardSecret, DeleteDashboardSource, DeleteWorkspaceRole,
+    DevelopmentMailCaptureEnabled,
     DismissDashboardNotification, GetAccountProfile, GetAdminHealth, GetAuthCapabilities,
     GetAuthorizationCapabilities, GetCurrentSession, GetDashboardSnapshot, GetMfaStatus,
     GetPublicProfile, GetWorkspaceSettingsContext, InviteCurrentOrganizationMember,
@@ -15,7 +16,8 @@ use crate::app::{
     ListAuthProviders, ListCurrentOrganizationAudit, ListCurrentOrganizationInvitations,
     ListCurrentOrganizationMembers, ListCurrentOrganizationRoles, ListDashboardSecrets,
     ListOrganizations, ListPolicyVersions, ListSigningKeys, ListWorkspaceAudit,
-    ListWorkspaceInvitations, ListWorkspaceMembers, ListWorkspaceRoles, LoginEmailPassword,
+    ListWorkspaceInvitations, ListWorkspaceMembers, ListWorkspacePermissions, ListWorkspaceRoles,
+    LoginEmailPassword,
     LogoutCurrentSession, MigrateWorkspaceLegacyData, PublishPolicyVersion, RegisterEmailPassword,
     RemoveWorkspaceMember, RequireAuthenticatedRoute, RequireAuthorizedRoute,
     ResendEmailVerification, ResendWorkspaceInvitation, ResolveWorkspaceVaultTarget,
@@ -286,6 +288,8 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
             .with_server_fn::<RevokeWorkspaceInvitation>()
             .with_server_fn::<ResendWorkspaceInvitation>()
             .with_server_fn::<UpsertWorkspaceRole>()
+            .with_server_fn::<DeleteWorkspaceRole>()
+            .with_server_fn::<ListWorkspacePermissions>()
             .with_server_fn::<ListAdminUsers>()
             .with_server_fn::<GetAdminHealth>()
             .with_server_fn::<ListPolicyVersions>()
