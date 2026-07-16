@@ -838,6 +838,10 @@ fn settings_nav_skeleton() -> AnyView {
     .into_any()
 }
 
+fn render_settings_nav_items_unfiltered(slug: &str) -> AnyView {
+    render_settings_nav_item_list(slug, nav_settings_items().iter().collect())
+}
+
 fn render_settings_nav_items(slug: &str, ctx: &AccessContext) -> AnyView {
     let items: Vec<_> = nav_settings_items()
         .iter()
@@ -851,6 +855,13 @@ fn render_settings_nav_items(slug: &str, ctx: &AccessContext) -> AnyView {
         }
         .into_any();
     }
+    render_settings_nav_item_list(slug, items)
+}
+
+fn render_settings_nav_item_list(
+    slug: &str,
+    items: Vec<&crate::access::NavItem>,
+) -> AnyView {
     items
         .into_iter()
         .map(|item| {
@@ -888,23 +899,26 @@ fn render_settings_nav_items(slug: &str, ctx: &AccessContext) -> AnyView {
 
 /// Island: load org membership capabilities and render settings section links.
 ///
-/// Results are cached in-memory + `sessionStorage` so navigating between
-/// `/settings/*` sections does not flash a loader again.
+/// Strategy (no flash, no hydration panic):
+/// 1. SSR + first client paint always render the **full** settings catalog for the
+///    current slug (same markup both sides → no tachys mismatch).
+/// 2. After hydrate, restore cache immediately, then refresh from the network.
+/// 3. When capabilities arrive, filter to the caller's role (owners see no change).
+/// Never seed the signal from cache during island construction — that desynced
+/// SSR skeleton vs client links and panicked hydrate.
 #[island]
 pub fn WorkspaceSettingsNavLinks() -> impl IntoView {
-    #[cfg(feature = "hydrate")]
-    let initial = read_settings_nav_cache();
-    #[cfg(not(feature = "hydrate"))]
-    let initial = None::<SettingsNavSnapshot>;
-
-    let (snapshot, set_snapshot) = signal(initial.map(Ok::<_, ServerFnError>));
-    let (fetch_error, set_fetch_error) = signal(false);
+    // None = optimistic full catalog (SSR-safe). Some = role-filtered snapshot.
+    let (snapshot, set_snapshot) = signal(None::<Result<SettingsNavSnapshot, ServerFnError>>);
 
     #[cfg(feature = "hydrate")]
     Effect::new(move |_| {
-        // Refresh in the background; never clear a warm cache (avoids nav flash).
         spawn_local(async move {
+            // Wait until island hydration has finished, then apply cache/network.
             let _ = after_island_hydration().await;
+            if let Some(cached) = read_settings_nav_cache() {
+                set_snapshot.set(Some(Ok(cached)));
+            }
             let session = get_current_session().await;
             let orgs = list_organizations().await;
             match (session, orgs) {
@@ -914,26 +928,23 @@ pub fn WorkspaceSettingsNavLinks() -> impl IntoView {
                         organizations,
                     };
                     write_settings_nav_cache(&snap);
-                    set_fetch_error.set(false);
                     set_snapshot.set(Some(Ok(snap)));
                 }
                 (Err(err), _) | (_, Err(err)) => {
-                    if snapshot.get_untracked().is_none() {
-                        set_fetch_error.set(true);
+                    // Keep optimistic / cached links; only surface error if we have nothing.
+                    if snapshot.get_untracked().is_none()
+                        && read_settings_nav_cache().is_none()
+                    {
                         set_snapshot.set(Some(Err(err)));
                     }
                 }
-                _ => {
-                    if snapshot.get_untracked().is_none() {
-                        set_fetch_error.set(true);
-                    }
-                }
+                _ => {}
             }
         });
     });
     #[cfg(not(feature = "hydrate"))]
     {
-        let _ = (&set_snapshot, &set_fetch_error);
+        let _ = &set_snapshot;
     }
 
     view! {
@@ -941,24 +952,9 @@ pub fn WorkspaceSettingsNavLinks() -> impl IntoView {
             {move || {
                 let slug = settings_slug_from_path(&current_browser_pathname());
                 match snapshot.get() {
-                    None => {
-                        if fetch_error.get() {
-                            view! {
-                                <p class=WS_NAV_LABEL_SECONDARY>
-                                    "Could not load workspace permissions."
-                                </p>
-                            }
-                            .into_any()
-                        } else {
-                            settings_nav_skeleton()
-                        }
-                    }
-                    Some(Err(_)) => view! {
-                        <p class=WS_NAV_LABEL_SECONDARY>
-                            "Could not load workspace permissions."
-                        </p>
-                    }
-                    .into_any(),
+                    // Optimistic / SSR: full catalog — same markup both sides, zero flash.
+                    None => render_settings_nav_items_unfiltered(&slug),
+                    Some(Err(_)) => settings_nav_skeleton(),
                     Some(Ok(snap)) => {
                         let caps = snap
                             .organizations
