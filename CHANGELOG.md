@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0-rc.3
+
+- Fullstack Leptos template: **persistent workspace chrome** soft-nav so org
+  switcher, account menu, and theme stay mounted across in-app hops
+  (`islands_router` + content-only region swap).
+- Cache-first chrome snapshot and client-side flyout focus for settings/account
+  menus; composable skeleton loaders for page bodies.
+- Documented the technique in
+  `docs/tutorial/leptos-islands-persistent-chrome.md` for reuse in other islands
+  apps.
+- Dual-synced the CLI `fullstack` template with the example product tree.
+- **Note:** `wasi-auth` stays at `0.1.0-rc.2` (no auth crate changes in this
+  release).
+
 ## 0.3.0-rc.2
 
 - Added native Resend delivery through `wasi-auth-outbox-worker` with durable
