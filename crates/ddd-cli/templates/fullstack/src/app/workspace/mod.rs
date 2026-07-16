@@ -20,16 +20,23 @@ use crate::app::{
     CreateOrganization, LogoutButton, SelectOrganization, browser_load, get_current_session,
     list_organizations,
 };
+use crate::contracts::{OrganizationListResponse, SessionView};
 use leptos::prelude::*;
 use leptos_router::components::Outlet;
 use leptos_router::hooks::use_location;
+use server_fn::ServerFnError;
+#[cfg(feature = "hydrate")]
+use leptos::task::spawn_local;
 #[cfg(feature = "hydrate")]
 use wasm_bindgen::prelude::*;
 #[cfg(feature = "hydrate")]
 use web_sys::window;
 
 #[cfg(feature = "hydrate")]
-use crate::app::{bind_user_menu_dismiss, bind_workspace_nav_active, init_workspace_sidebar};
+use crate::app::{
+    after_island_hydration, bind_user_menu_dismiss, bind_workspace_nav_active,
+    init_workspace_sidebar,
+};
 use crate::ui::classes::{
     BANNER_ERROR, BTN_PRIMARY, FIELD, INPUT, MONO_VALUE, MUTED, ONBOARDING_CARD, ONBOARDING_FORM,
     ONBOARDING_LEDE, ONBOARDING_PAGE, ONBOARDING_TITLE, ORG_SWITCHER, ORG_SWITCHER_AVATAR,
@@ -43,10 +50,11 @@ use crate::ui::classes::{
     USER_MENU_LOGOUT, USER_MENU_META, USER_MENU_PANEL, USER_MENU_PANEL_LABEL, USER_MENU_TRIGGER,
     WS_BRAND, WS_BRAND_COPY, WS_BRAND_MARK, WS_CONTENT, WS_HIDDEN_MARKER, WS_MAIN, WS_MENU_BAR,
     WS_MENU_BARS, WS_MENU_BUTTON_DESKTOP, WS_MENU_BUTTON_MOBILE, WS_NAV, WS_NAV_BACKDROP,
-    WS_NAV_ICON, WS_NAV_LABEL, WS_NAV_LABEL_SECONDARY, WS_NAV_LINK, WS_NAV_TEXT, WS_NAV_TOGGLE,
-    WS_RAIL_ICON, WS_RAIL_ICON_BAR, WS_RAIL_TOGGLE, WS_SHELL, WS_SIDEBAR, WS_SIDEBAR_CLOSE,
-    WS_SIDEBAR_FOOT, WS_SIDEBAR_TOP, WS_SYSTEM_NAV, WS_TOPBAR, WS_TOPBAR_BRAND, WS_TOPBAR_ORG,
-    WS_TOPBAR_PAGE, WS_TOPBAR_TITLE, with_extra,
+    WS_NAV_ICON, WS_NAV_LABEL, WS_NAV_LABEL_SECONDARY, WS_NAV_LINK, WS_NAV_SKELETON,
+    WS_NAV_SKELETON_ROW, WS_NAV_TEXT, WS_NAV_TOGGLE, WS_RAIL_ICON, WS_RAIL_ICON_BAR,
+    WS_RAIL_TOGGLE, WS_SHELL, WS_SIDEBAR, WS_SIDEBAR_CLOSE, WS_SIDEBAR_FOOT, WS_SIDEBAR_TOP,
+    WS_SYSTEM_NAV, WS_TOPBAR, WS_TOPBAR_BRAND, WS_TOPBAR_ORG, WS_TOPBAR_PAGE, WS_TOPBAR_TITLE,
+    with_extra,
 };
 
 /// Inline stroke icon for workspace nav (replaces CSS mask icons).
@@ -769,103 +777,204 @@ fn WorkspacePrimaryNav() -> impl IntoView {
     }
 }
 
+/// Shared client cache so settings section links do not flash a loader on every
+/// `/org/{slug}/settings/*` navigation (island remounts, same membership).
+#[derive(Clone)]
+struct SettingsNavSnapshot {
+    session: SessionView,
+    organizations: OrganizationListResponse,
+}
+
+#[cfg(feature = "hydrate")]
+const SETTINGS_NAV_CACHE_KEY: &str = "workspace-settings-nav-v1";
+
+#[cfg(feature = "hydrate")]
+thread_local! {
+    static SETTINGS_NAV_MEMORY: std::cell::RefCell<Option<SettingsNavSnapshot>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(feature = "hydrate")]
+fn read_settings_nav_cache() -> Option<SettingsNavSnapshot> {
+    if let Some(hit) = SETTINGS_NAV_MEMORY.with(|cell| cell.borrow().clone()) {
+        return Some(hit);
+    }
+    let window = window()?;
+    let storage = window.session_storage().ok().flatten()?;
+    let raw = storage.get_item(SETTINGS_NAV_CACHE_KEY).ok().flatten()?;
+    let (session, organizations): (SessionView, OrganizationListResponse) =
+        serde_json::from_str(&raw).ok()?;
+    let snap = SettingsNavSnapshot {
+        session,
+        organizations,
+    };
+    SETTINGS_NAV_MEMORY.with(|cell| *cell.borrow_mut() = Some(snap.clone()));
+    Some(snap)
+}
+
+#[cfg(feature = "hydrate")]
+fn write_settings_nav_cache(snap: &SettingsNavSnapshot) {
+    SETTINGS_NAV_MEMORY.with(|cell| *cell.borrow_mut() = Some(snap.clone()));
+    if let Some(window) = window() {
+        if let Ok(Some(storage)) = window.session_storage() {
+            if let Ok(raw) = serde_json::to_string(&(&snap.session, &snap.organizations)) {
+                let _ = storage.set_item(SETTINGS_NAV_CACHE_KEY, &raw);
+            }
+        }
+    }
+}
+
+fn settings_nav_skeleton() -> AnyView {
+    view! {
+        <div class=WS_NAV_SKELETON aria-busy="true" aria-label="Loading settings navigation">
+            <span class=WS_NAV_SKELETON_ROW></span>
+            <span class=WS_NAV_SKELETON_ROW></span>
+            <span class=WS_NAV_SKELETON_ROW></span>
+            <span class=WS_NAV_SKELETON_ROW></span>
+            <span class=WS_NAV_SKELETON_ROW></span>
+            <span class=WS_NAV_SKELETON_ROW></span>
+        </div>
+    }
+    .into_any()
+}
+
+fn render_settings_nav_items(slug: &str, ctx: &AccessContext) -> AnyView {
+    let items: Vec<_> = nav_settings_items()
+        .iter()
+        .filter(|item| item.requirement.is_satisfied_by(ctx))
+        .collect();
+    if items.is_empty() {
+        return view! {
+            <p class=WS_NAV_LABEL_SECONDARY>
+                "No settings available for your role."
+            </p>
+        }
+        .into_any();
+    }
+    items
+        .into_iter()
+        .map(|item| {
+            let href = match &item.href {
+                NavHref::Static(path) => (*path).to_owned(),
+                NavHref::SettingsSection(segment) => {
+                    if slug.is_empty() {
+                        "/organizations".to_owned()
+                    } else {
+                        format!("/org/{slug}/settings/{segment}")
+                    }
+                }
+            };
+            let label = item.label;
+            let data_nav = item.id;
+            let disabled = slug.is_empty() && matches!(item.href, NavHref::SettingsSection(_));
+            let icon = item.icon;
+            view! {
+                <a
+                    class=WS_NAV_LINK
+                    href=href
+                    data-nav=data_nav
+                    title=label
+                    class:is-disabled=disabled
+                    aria-disabled=disabled
+                >
+                    {icon.map(|kind| nav_icon(kind).into_any())}
+                    <span class=WS_NAV_TEXT>{label}</span>
+                </a>
+            }
+        })
+        .collect_view()
+        .into_any()
+}
+
 /// Island: load org membership capabilities and render settings section links.
 ///
-/// Islands have no Router context — slug comes from `current_browser_pathname()`.
+/// Results are cached in-memory + `sessionStorage` so navigating between
+/// `/settings/*` sections does not flash a loader again.
 #[island]
 pub fn WorkspaceSettingsNavLinks() -> impl IntoView {
-    let session = browser_load(get_current_session);
-    let orgs = browser_load(list_organizations);
+    #[cfg(feature = "hydrate")]
+    let initial = read_settings_nav_cache();
+    #[cfg(not(feature = "hydrate"))]
+    let initial = None::<SettingsNavSnapshot>;
+
+    let (snapshot, set_snapshot) = signal(initial.map(Ok::<_, ServerFnError>));
+    let (fetch_error, set_fetch_error) = signal(false);
+
+    #[cfg(feature = "hydrate")]
+    Effect::new(move |_| {
+        // Refresh in the background; never clear a warm cache (avoids nav flash).
+        spawn_local(async move {
+            let _ = after_island_hydration().await;
+            let session = get_current_session().await;
+            let orgs = list_organizations().await;
+            match (session, orgs) {
+                (Ok(session), Ok(organizations)) if session.authenticated => {
+                    let snap = SettingsNavSnapshot {
+                        session,
+                        organizations,
+                    };
+                    write_settings_nav_cache(&snap);
+                    set_fetch_error.set(false);
+                    set_snapshot.set(Some(Ok(snap)));
+                }
+                (Err(err), _) | (_, Err(err)) => {
+                    if snapshot.get_untracked().is_none() {
+                        set_fetch_error.set(true);
+                        set_snapshot.set(Some(Err(err)));
+                    }
+                }
+                _ => {
+                    if snapshot.get_untracked().is_none() {
+                        set_fetch_error.set(true);
+                    }
+                }
+            }
+        });
+    });
+    #[cfg(not(feature = "hydrate"))]
+    {
+        let _ = (&set_snapshot, &set_fetch_error);
+    }
 
     view! {
         <div data-testid="workspace-settings-nav-links">
             {move || {
                 let slug = settings_slug_from_path(&current_browser_pathname());
-                let orgs_state = orgs.get();
-                let loaded = orgs_state.is_some();
-                let load_failed = matches!(&orgs_state, Some(Err(_)));
-                let ctx = match (session.get(), orgs_state.as_ref()) {
-                    (Some(Ok(view)), Some(Ok(list))) if view.authenticated => {
-                        let caps = list
+                match snapshot.get() {
+                    None => {
+                        if fetch_error.get() {
+                            view! {
+                                <p class=WS_NAV_LABEL_SECONDARY>
+                                    "Could not load workspace permissions."
+                                </p>
+                            }
+                            .into_any()
+                        } else {
+                            settings_nav_skeleton()
+                        }
+                    }
+                    Some(Err(_)) => view! {
+                        <p class=WS_NAV_LABEL_SECONDARY>
+                            "Could not load workspace permissions."
+                        </p>
+                    }
+                    .into_any(),
+                    Some(Ok(snap)) => {
+                        let caps = snap
+                            .organizations
                             .organizations
                             .iter()
                             .find(|org| !slug.is_empty() && org.slug == slug)
                             .map(|org| org.permissions.as_slice())
                             .unwrap_or(&[]);
-                        AccessContext::from_permissions(
-                            true,
+                        let ctx = AccessContext::from_permissions(
+                            snap.session.authenticated,
                             caps.iter().map(String::as_str),
-                            &view.assurance,
-                            view.system_administrator,
-                        )
+                            &snap.session.assurance,
+                            snap.session.system_administrator,
+                        );
+                        render_settings_nav_items(&slug, &ctx)
                     }
-                    (Some(Ok(view)), _) if view.authenticated => AccessContext::from_permissions(
-                        true,
-                        std::iter::empty::<&str>(),
-                        &view.assurance,
-                        view.system_administrator,
-                    ),
-                    _ => AccessContext::anonymous(),
-                };
-                let items: Vec<_> = nav_settings_items()
-                    .iter()
-                    .filter(|item| item.requirement.is_satisfied_by(&ctx))
-                    .collect();
-
-                if !loaded {
-                    view! {
-                        <p class=WS_NAV_LABEL_SECONDARY>"Loading settings…"</p>
-                    }
-                    .into_any()
-                } else if load_failed {
-                    view! {
-                        <p class=WS_NAV_LABEL_SECONDARY>
-                            "Could not load workspace permissions."
-                        </p>
-                    }
-                    .into_any()
-                } else if items.is_empty() {
-                    view! {
-                        <p class=WS_NAV_LABEL_SECONDARY>
-                            "No settings available for your role."
-                        </p>
-                    }
-                    .into_any()
-                } else {
-                    items
-                        .into_iter()
-                        .map(|item| {
-                            let href = match &item.href {
-                                NavHref::Static(path) => (*path).to_owned(),
-                                NavHref::SettingsSection(segment) => {
-                                    if slug.is_empty() {
-                                        "/organizations".to_owned()
-                                    } else {
-                                        format!("/org/{slug}/settings/{segment}")
-                                    }
-                                }
-                            };
-                            let label = item.label;
-                            let data_nav = item.id;
-                            let disabled =
-                                slug.is_empty() && matches!(item.href, NavHref::SettingsSection(_));
-                            let icon = item.icon;
-                            view! {
-                                <a
-                                    class=WS_NAV_LINK
-                                    href=href
-                                    data-nav=data_nav
-                                    title=label
-                                    class:is-disabled=disabled
-                                    aria-disabled=disabled
-                                >
-                                    {icon.map(|kind| nav_icon(kind).into_any())}
-                                    <span class=WS_NAV_TEXT>{label}</span>
-                                </a>
-                            }
-                        })
-                        .collect_view()
-                        .into_any()
                 }
             }}
         </div>

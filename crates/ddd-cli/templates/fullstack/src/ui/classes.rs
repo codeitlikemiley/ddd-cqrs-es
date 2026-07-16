@@ -960,6 +960,11 @@ pub const WS_NAV_ICON: &str =
 pub const WS_NAV_TEXT: &str =
     "min-w-0 overflow-hidden text-ellipsis whitespace-nowrap shell-mini:hidden";
 
+/// Settings-nav cold load: soft grey pulse bars (semantic surface-subtle).
+pub const WS_NAV_SKELETON: &str = "grid gap-1.5 px-1 py-1";
+pub const WS_NAV_SKELETON_ROW: &str =
+    "h-9 w-full animate-pulse rounded-[10px] bg-surface-subtle shell-mini:mx-auto shell-mini:h-9 shell-mini:w-9 shell-mini:rounded-full";
+
 pub const WS_SIDEBAR_FOOT: &str =
     "relative mt-auto border-t border-border-subtle pt-2.5 shell-mini:relative shell-mini:z-[60] shell-mini:flex shell-mini:w-full shell-mini:justify-center shell-mini:!overflow-visible shell-mobile:block";
 
