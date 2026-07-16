@@ -686,6 +686,11 @@ pub(crate) async fn finalize_new_session(
     session_id: &SessionId,
 ) -> AuthStackResult<(String, String, u64)> {
     let result = async {
+        // wasi-auth management SQL hard-requires AAL2 for org/member/role mutations.
+        // Local password login is AAL1. When mutation step-up is not enforced
+        // (default outside production), promote the session so the demo UI works
+        // without MFA. Production keeps AAL1 until real step-up.
+        maybe_promote_development_session_assurance(session_id.as_str()).await?;
         bind_default_organization_for_session(session_id.as_str()).await?;
         issue_tokens(session_id).await
     }
@@ -694,6 +699,28 @@ pub(crate) async fn finalize_new_session(
         let _ = revoke_user_session(session_id.as_str(), session_id.as_str()).await;
     }
     result
+}
+
+/// Promote AAL1 → AAL2 for local/dev sessions when step-up is not required.
+async fn maybe_promote_development_session_assurance(session_id: &str) -> AuthStackResult<()> {
+    if crate::application::mutation_step_up_required().await {
+        return Ok(());
+    }
+    let sid = session_id.trim();
+    if sid.is_empty() {
+        return Ok(());
+    }
+    // Direct SQL: wasi-auth has no public "promote assurance without TOTP" API.
+    crate::store::execute_sql(
+        "UPDATE auth_sessions \
+         SET assurance = 'aal2', updated_at_ms = (EXTRACT(EPOCH FROM NOW()) * 1000)::bigint \
+         WHERE session_id = ?1::text::uuid \
+           AND revoked_at_ms IS NULL \
+           AND assurance = 'aal1'",
+        vec![serde_json::Value::String(sid.to_owned())],
+    )
+    .await
+    .map(|_| ())
 }
 
 pub(crate) async fn argon2_policy() -> AuthStackResult<Argon2Policy> {

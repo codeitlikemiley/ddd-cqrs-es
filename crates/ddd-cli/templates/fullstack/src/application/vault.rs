@@ -110,25 +110,18 @@ pub async fn delete_dashboard_secret(
 }
 
 pub(crate) async fn vault_reveal_require_step_up() -> bool {
-    let production = matches!(
-        config_value("AUTH_PRODUCTION_MODE")
-            .await
-            .as_deref()
-            .map(str::trim)
-            .map(str::to_ascii_lowercase)
-            .as_deref(),
-        Some("1" | "true" | "yes" | "on")
-    );
+    // Prefer the shared mutation policy; keep AUTH_VAULT_REVEAL_REQUIRE_STEP_UP
+    // as a reveal-specific override when set.
     match config_value("AUTH_VAULT_REVEAL_REQUIRE_STEP_UP")
         .await
         .as_deref()
         .map(str::trim)
         .map(str::to_ascii_lowercase)
+        .as_deref()
     {
-        Some(v) if matches!(v.as_str(), "1" | "true" | "yes" | "on") => true,
-        Some(v) if matches!(v.as_str(), "0" | "false" | "no" | "off") => false,
-        // Default: require AAL2 in production; allow in local dev.
-        _ => production,
+        Some("1" | "true" | "yes" | "on") => true,
+        Some("0" | "false" | "no" | "off") => false,
+        _ => mutation_step_up_required().await,
     }
 }
 
@@ -138,13 +131,18 @@ pub async fn reveal_dashboard_secret(
     secret_id: String,
     auth: RequestAuth,
 ) -> AuthStackResult<crate::contracts::SecretRevealResponse> {
-    let (context, _) = verified_context_and_permissions(auth, true).await?;
+    let require_step_up = vault_reveal_require_step_up().await;
+    let (context, _) = verified_context_and_permissions(auth, require_step_up).await?;
     let org_id = require_vault_org(
         &context,
         organization_id.as_deref(),
         org_slug.as_deref(),
         "vault.reveal",
-        AssuranceRequirement::Aal2,
+        if require_step_up {
+            AssuranceRequirement::Aal2
+        } else {
+            AssuranceRequirement::Aal1
+        },
     )
     .await?;
     crate::store::reveal_secret(&org_id, secret_id.trim()).await

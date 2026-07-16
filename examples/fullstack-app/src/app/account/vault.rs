@@ -2,9 +2,10 @@
 #![allow(clippy::unused_unit)]
 #![allow(clippy::unit_arg)]
 
+use crate::access::{action_seed_demos, action_vault_create_secret};
 use crate::app::helpers::{redirect_browser, server_error_text, short_id_label};
 use crate::app::{
-    CreateDashboardSecret, DeleteDashboardSecret, ListDashboardSecrets,
+    CanAccess, CreateDashboardSecret, DeleteDashboardSecret, ListDashboardSecrets,
     ResolveWorkspaceVaultTarget, RevealDashboardSecret, SeedDashboardDemos, browser_load,
     create_dashboard_secret, delete_dashboard_secret, list_dashboard_secrets,
     resolve_workspace_vault_target, reveal_dashboard_secret, seed_dashboard_demos,
@@ -196,8 +197,8 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
         None => {}
     });
 
-    Effect::new(move |_| {
-        if let Some(Ok(_)) = seed_action.value().get() {
+    Effect::new(move |_| match seed_action.value().get() {
+        Some(Ok(_)) => {
             form_ok.set(Some(
                 "Demo connectors seeded. Open the dashboard to see bound widgets.".into(),
             ));
@@ -212,6 +213,11 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
                 });
             }
         }
+        Some(Err(e)) => {
+            form_ok.set(None);
+            form_error.set(Some(server_error_text(e)));
+        }
+        None => {}
     });
 
     let open_create_modal = move || {
@@ -235,14 +241,16 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
                 </p>
                 <div class=VAULT_ACTIONS>
                     <a class=BTN_SECONDARY href="/dashboard">"Back to dashboard"</a>
-                    <button
-                        type="button"
-                        class=BTN_SECONDARY
-                        disabled=move || seed_action.pending().get()
-                        on:click=move |_| { seed_action.dispatch(SeedDashboardDemos {}); }
-                    >
-                        {move || if seed_action.pending().get() { "Loading demos…" } else { "Load demo connectors" }}
-                    </button>
+                    <CanAccess requirement=action_seed_demos()>
+                        <button
+                            type="button"
+                            class=BTN_SECONDARY
+                            disabled=move || seed_action.pending().get()
+                            on:click=move |_| { seed_action.dispatch(SeedDashboardDemos {}); }
+                        >
+                            {move || if seed_action.pending().get() { "Loading demos…" } else { "Load demo connectors" }}
+                        </button>
+                    </CanAccess>
                 </div>
             </section>
 
@@ -258,9 +266,11 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
                     <h2 class=VAULT_PANEL_HEAD_TITLE>"Secrets"</h2>
                     <div class=VAULT_PANEL_HEAD_META>
                         <span class=MUTED>{move || format!("{} stored", secrets.get().len())}</span>
-                        <button type="button" class=with_extra(BTN_SECONDARY, Some(VAULT_ADD_INLINE)) on:click=move |_| open_create_modal()>
-                            "Add secret"
-                        </button>
+                        <CanAccess requirement=action_vault_create_secret()>
+                            <button type="button" class=with_extra(BTN_SECONDARY, Some(VAULT_ADD_INLINE)) on:click=move |_| open_create_modal()>
+                                "Add secret"
+                            </button>
+                        </CanAccess>
                     </div>
                 </header>
                 <div class=VAULT_TABLE_WRAP>

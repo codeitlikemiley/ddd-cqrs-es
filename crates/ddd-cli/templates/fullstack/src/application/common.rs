@@ -130,14 +130,63 @@ pub(crate) fn assurance_satisfies(
     }
 }
 
+/// Whether mutating APIs enforce AAL2 step-up.
+///
+/// Default: only when `AUTH_PRODUCTION_MODE` is enabled. Local password login is
+/// AAL1, so hard-requiring AAL2 made vault/dashboard/workspace mutations fail
+/// with a misleading "authentication is required". Override with
+/// `AUTH_MUTATION_REQUIRE_STEP_UP=true|false`.
+pub(crate) async fn mutation_step_up_required() -> bool {
+    let production = matches!(
+        config_value("AUTH_PRODUCTION_MODE")
+            .await
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("1" | "true" | "yes" | "on")
+    );
+    match config_value("AUTH_MUTATION_REQUIRE_STEP_UP")
+        .await
+        .as_deref()
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("1" | "true" | "yes" | "on") => true,
+        Some("0" | "false" | "no" | "off") => false,
+        _ => production,
+    }
+}
+
+/// Lower AAL2 to AAL1 when mutation step-up is disabled (local development).
+pub(crate) async fn effective_assurance(
+    requirement: AssuranceRequirement,
+) -> AssuranceRequirement {
+    match requirement {
+        AssuranceRequirement::Aal1 => AssuranceRequirement::Aal1,
+        AssuranceRequirement::Aal2 if mutation_step_up_required().await => {
+            AssuranceRequirement::Aal2
+        }
+        AssuranceRequirement::Aal2 => AssuranceRequirement::Aal1,
+    }
+}
+
+pub(crate) fn step_up_required_error() -> AuthStackError {
+    AuthStackError::validation(
+        "step-up authentication (AAL2) is required. Complete MFA on /account/mfa, then try again.",
+    )
+}
+
 pub(crate) async fn require_organization_permission(
     context: &VerifiedAuthContext,
     organization_id: &str,
     permission: &str,
     assurance: AssuranceRequirement,
 ) -> AuthStackResult<()> {
+    let assurance = effective_assurance(assurance).await;
     if !assurance_satisfies(context.assurance(), assurance) {
-        return Err(AuthStackError::AuthRequired);
+        return Err(step_up_required_error());
     }
     let organization = crate::auth_product::organization_for_session(
         context.session_id().as_str(),
@@ -160,6 +209,7 @@ pub(crate) async fn require_workspace_permission(
     permission: &str,
     assurance: AssuranceRequirement,
 ) -> AuthStackResult<WorkspaceAuthorization> {
+    let assurance = effective_assurance(assurance).await;
     let (context, _) =
         verified_context_and_permissions(auth, assurance == AssuranceRequirement::Aal2).await?;
     let user_id = context.principal().user_id().as_str().to_owned();
@@ -219,6 +269,9 @@ pub(crate) async fn verified_context_and_permissions(
     auth: RequestAuth,
     step_up: bool,
 ) -> AuthStackResult<(VerifiedAuthContext, Vec<String>)> {
+    // Callers pass step_up for sensitive mutations; only enforce when policy says so
+    // (production by default — see mutation_step_up_required).
+    let step_up = step_up && mutation_step_up_required().await;
     if let Some(verified) = auth.verified {
         if step_up
             && !verified
@@ -226,7 +279,7 @@ pub(crate) async fn verified_context_and_permissions(
                 .assurance()
                 .satisfies(AuthenticationAssurance::Aal2)
         {
-            return Err(AuthStackError::AuthRequired);
+            return Err(step_up_required_error());
         }
         let permissions = verified
             .authorization()
@@ -289,7 +342,12 @@ pub(crate) async fn verified_context_and_permissions(
         .await
         .map_err(|error| {
             tracing::warn!(error = %error, "trusted ingress rejected credentials");
-            AuthStackError::AuthRequired
+            // Step-up policy failures should not look like a missing session.
+            if step_up {
+                step_up_required_error()
+            } else {
+                AuthStackError::AuthRequired
+            }
         })?
         .ok_or(AuthStackError::AuthRequired)?;
     let permissions = verified

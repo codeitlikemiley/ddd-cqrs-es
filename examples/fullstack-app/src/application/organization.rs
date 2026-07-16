@@ -310,7 +310,10 @@ pub async fn get_workspace_settings_context(
     auth: RequestAuth,
 ) -> AuthStackResult<WorkspaceSettingsContext> {
     let (context, _) = verified_context_and_permissions(auth, false).await?;
-    let requires_step_up = !assurance_satisfies(context.assurance(), AssuranceRequirement::Aal2);
+    // Only surface step-up UI when mutations actually enforce AAL2 (production /
+    // AUTH_MUTATION_REQUIRE_STEP_UP) and the session is still AAL1.
+    let requires_step_up = mutation_step_up_required().await
+        && !assurance_satisfies(context.assurance(), AssuranceRequirement::Aal2);
     let resolved = resolve_workspace_by_slug_with_context(&context, &slug).await?;
     let org = &resolved.organization;
     let session_id = context.session_id().as_str();
