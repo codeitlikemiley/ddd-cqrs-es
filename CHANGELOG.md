@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0-rc.4
+
+- Fix CLI packaging: ship fullstack manifest as `Cargo.toml.template` so
+  `cargo package` includes the full template tree (nested `Cargo.toml` was
+  treated as a separate package and dropped from the crate).
+- Yank recommendation: `ddd-cqrs-es-cli 0.3.0-rc.3` cannot scaffold fullstack
+  (`fullstack Cargo.toml must be embedded`); use `0.3.0-rc.4`.
+
 ## 0.3.0-rc.3
 
 - Fullstack Leptos template: **persistent workspace chrome** soft-nav so org

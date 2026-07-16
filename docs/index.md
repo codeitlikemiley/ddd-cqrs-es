@@ -15,7 +15,7 @@ Add the crate as a dependency in your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ddd_cqrs_es = "0.3.0-rc.3"
+ddd_cqrs_es = "0.3.0-rc.4"
 ```
 
 ### Feature Flags

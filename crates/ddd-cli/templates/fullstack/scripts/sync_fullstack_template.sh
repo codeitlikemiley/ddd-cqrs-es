@@ -12,7 +12,7 @@ if [[ ! -d "$SRC" || ! -d "$DST" ]]; then
 fi
 
 SYNC_PATHS=(
-  Cargo.toml
+  # Cargo.toml is mirrored as Cargo.toml.template (see note below).
   build.rs
   compose.yaml
   src
@@ -62,6 +62,26 @@ for path in "${SYNC_PATHS[@]}"; do
     changed=1
   fi
 done
+
+# Nested Cargo.toml is excluded from `cargo package` (treated as another crate).
+# Ship it as Cargo.toml.template; the CLI rewrites it to Cargo.toml on init.
+if [[ "$MODE" == "check" ]]; then
+  if [[ -f "$DST/Cargo.toml.template" ]] && cmp -s "$SRC/Cargo.toml" "$DST/Cargo.toml.template"; then
+    :
+  else
+    echo "changed file: Cargo.toml -> Cargo.toml.template"
+    changed=1
+  fi
+  # stale nested package name must not reappear
+  if [[ -f "$DST/Cargo.toml" ]]; then
+    echo "error: template still has Cargo.toml (must be Cargo.toml.template only)" >&2
+    changed=1
+  fi
+else
+  cp "$SRC/Cargo.toml" "$DST/Cargo.toml.template"
+  rm -f "$DST/Cargo.toml"
+  echo "mirrored Cargo.toml → Cargo.toml.template"
+fi
 
 if [[ "$MODE" == "check" ]]; then
   if [[ "$changed" -eq 1 ]]; then

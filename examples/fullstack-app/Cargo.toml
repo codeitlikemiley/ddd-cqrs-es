@@ -49,7 +49,7 @@ tonic = { version = "0.12", default-features = false, features = ["codegen", "pr
 tokio = { version = "1.52", features = ["macros", "rt"], optional = true }
 tokio-postgres = { version = "0.7", optional = true }
 wasi-auth = { version = "=0.1.0-rc.2", default-features = false, optional = true }
-ddd_cqrs_es = { version = "=0.3.0-rc.3", default-features = false, features = ["json", "serde", "async", "tracing", "json-file"], optional = true }
+ddd_cqrs_es = { version = "=0.3.0-rc.4", default-features = false, features = ["json", "serde", "async", "tracing", "json-file"], optional = true }
 qrcode = { version = "0.14", default-features = false, features = ["svg"], optional = true }
 
 [target.wasm32-unknown-unknown.dependencies]

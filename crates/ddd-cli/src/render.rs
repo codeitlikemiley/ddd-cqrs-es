@@ -276,7 +276,7 @@ fn render_leptos_wasi(input: &InitRenderInput, names: &NameParts) -> Vec<FileOpe
 
 fn render_fullstack(input: &InitRenderInput) -> Vec<FileOperation> {
     let cargo_template = TEMPLATE_DIR
-        .get_file("fullstack/Cargo.toml")
+        .get_file("fullstack/Cargo.toml.template")
         .expect("fullstack Cargo.toml must be embedded")
         .contents_utf8()
         .expect("fullstack Cargo.toml must be UTF-8");
@@ -287,8 +287,8 @@ fn render_fullstack(input: &InitRenderInput) -> Vec<FileOperation> {
             1,
         )
         .replace(
-            // Keep in sync with templates/fullstack/Cargo.toml pin; rewritten to CLI version.
-            "ddd_cqrs_es = { version = \"=0.3.0-rc.3\"",
+            // Keep in sync with templates/fullstack/Cargo.toml.template pin; rewritten to CLI version.
+            "ddd_cqrs_es = { version = \"=0.3.0-rc.4\"",
             &format!("ddd_cqrs_es = {{ version = \"={}\"", framework_version()),
         )
         .replace(
@@ -322,7 +322,12 @@ fn append_fullstack_template_operations(
             .strip_prefix("fullstack")
             .expect("fullstack template files must be under fullstack");
         let relative_path_string = relative_path.display().to_string();
-        if relative_path_string == "README.md" || relative_path_string == "Cargo.toml" {
+        // Cargo.toml is written from Cargo.toml.template (renamed so cargo package
+        // does not treat templates/fullstack as a nested package and drop the tree).
+        if relative_path_string == "README.md"
+            || relative_path_string == "Cargo.toml"
+            || relative_path_string == "Cargo.toml.template"
+        {
             continue;
         }
         let content = render_fullstack_template_content(
