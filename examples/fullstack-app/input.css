@@ -6114,6 +6114,9 @@ html.board-modal-open body {
   font-weight: 500;
 }
 
+/* Beat `.panel p { margin-bottom: 0 }` (0,1,1) so step-up always has breathing room. */
+.panel p.workspace-settings-step-up,
+p.workspace-settings-step-up,
 .workspace-settings-step-up {
   background: color-mix(in srgb, #f59e0b 12%, transparent);
   border: 1px solid color-mix(in srgb, #f59e0b 35%, transparent);
@@ -6121,7 +6124,7 @@ html.board-modal-open body {
   color: var(--text-secondary);
   font-size: 13px;
   line-height: 1.45;
-  margin: 0 0 12px;
+  margin: 0 0 1.25rem;
   padding: 10px 12px;
 }
 
@@ -6138,7 +6141,54 @@ html.board-modal-open body {
   max-width: 36rem;
 }
 
-.workspace-settings-members-table td {
+/* Full-width settings tables (members / roles / invitations / audit). */
+.workspace-settings-table-wrap {
+  margin: 0;
+  overflow-x: auto;
+  width: 100%;
+}
+
+.workspace-settings-table-wrap .data-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  min-width: 100%;
+  table-layout: auto;
+  width: 100%;
+}
+
+.workspace-settings-table-wrap .data-table th,
+.workspace-settings-table-wrap .data-table td {
+  border-bottom: 1px solid var(--border-subtle, #e2e8f0);
+  box-sizing: border-box;
+  padding: 0.85rem 0.9rem 1rem;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.workspace-settings-table-wrap .data-table th {
+  color: var(--text-secondary, #64748b);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  padding-bottom: 0.7rem;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.workspace-settings-table-wrap .data-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.workspace-settings-table-wrap .data-table tbody tr:hover td {
+  background: color-mix(in srgb, var(--text-primary, #0f172a) 2.5%, transparent);
+}
+
+.workspace-settings-members-table td,
+.workspace-settings-roles-table td,
+.workspace-settings-invitations-table td,
+.workspace-settings-audit-table td {
   vertical-align: middle;
 }
 
@@ -6158,14 +6208,41 @@ html.board-modal-open body {
   text-transform: uppercase;
 }
 
-.workspace-settings-role-select {
-  max-width: 12rem;
-  min-width: 8rem;
+/* Native select chevron needs extra right padding so it never hugs the edge.
+   Beat `.panel select` (padding 10px 12px) with equal-or-higher specificity. */
+.panel .workspace-settings-role-select,
+.workspace-settings-role-select,
+.workspace-settings-stub select,
+.workspace-settings-audit-filter select,
+.workspace-settings-transfer-modal select {
+  -webkit-appearance: none;
+  appearance: none;
+  background-color: var(--bg-surface, #fff);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1.5 1.75L6 6.25L10.5 1.75' stroke='%2364748b' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-position: right 0.85rem center;
+  background-repeat: no-repeat;
+  background-size: 12px 8px;
+  border: 1px solid var(--border-strong, #cbd5e1);
+  border-radius: 10px;
+  box-sizing: border-box;
+  color: var(--text-primary, #0f172a);
+  cursor: pointer;
+  max-width: 14rem;
+  min-height: 42px;
+  min-width: 8.5rem;
+  padding: 10px 2.5rem 10px 12px;
+  width: auto;
 }
 
 .workspace-settings-role-select-label {
   display: inline-flex;
   margin: 0;
+}
+
+.workspace-settings-audit-filter select {
+  max-width: none;
+  min-width: 10rem;
+  width: 100%;
 }
 
 .workspace-settings-member-actions {
@@ -6192,14 +6269,26 @@ html.board-modal-open body {
   justify-content: flex-end;
 }
 
-.workspace-settings-danger-button {
+.workspace-settings-danger-button,
+.primary-button.workspace-settings-danger-button,
+.secondary-button.workspace-settings-danger-button {
   background: #b91c1c;
   border-color: #b91c1c;
+  color: #fff;
 }
 
-.workspace-settings-danger-button:hover:not(:disabled) {
+.workspace-settings-danger-button:hover:not(:disabled),
+.primary-button.workspace-settings-danger-button:hover:not(:disabled),
+.secondary-button.workspace-settings-danger-button:hover:not(:disabled) {
   background: #991b1b;
   border-color: #991b1b;
+  color: #fff;
+}
+
+.workspace-settings-danger-button:disabled,
+.primary-button.workspace-settings-danger-button:disabled,
+.secondary-button.workspace-settings-danger-button:disabled {
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .workspace-settings-danger-hint {
@@ -6220,7 +6309,14 @@ html.board-modal-open body {
   padding: 1rem 1.15rem;
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 0.75rem;
+}
+
+.workspace-settings-danger-card > p,
+.workspace-settings-danger-card > h3 {
+  max-width: 100%;
+  width: 100%;
 }
 
 .workspace-settings-danger-card h3 {
@@ -6228,11 +6324,26 @@ html.board-modal-open body {
   font-size: 1.05rem;
 }
 
+/* Match other settings actions: content-sized on desktop/tablet. */
+.workspace-settings-danger-card .workspace-settings-danger-button,
+.workspace-settings-danger-card .primary-button,
+.workspace-settings-danger-card .secondary-button {
+  align-self: flex-start;
+  width: auto;
+  max-width: 100%;
+}
+
 .workspace-settings-danger-confirm-field {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 0.75rem;
   max-width: 28rem;
+  width: 100%;
+}
+
+.workspace-settings-danger-confirm-field > .auth-field {
+  width: 100%;
 }
 
 .workspace-settings-transfer-bar {
@@ -6241,8 +6352,8 @@ html.board-modal-open body {
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  margin-bottom: 1rem;
-  padding: 0.75rem 1rem;
+  margin: 0 0 1.35rem;
+  padding: 0.85rem 1rem;
   border: 1px solid var(--border-subtle);
   border-radius: 10px;
   background: var(--bg-surface);
@@ -6273,7 +6384,7 @@ html.board-modal-open body {
 .workspace-settings-invite-form {
   display: grid;
   gap: 0.85rem;
-  margin: 0 0 1.25rem;
+  margin: 0.15rem 0 1.25rem;
   max-width: 36rem;
 }
 
@@ -6322,11 +6433,14 @@ html.board-modal-open body {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
-  margin: 0 0 1rem;
+  justify-content: flex-start;
+  margin: 0 0 1.25rem;
+  width: 100%;
 }
 
-.workspace-settings-roles-table td {
-  vertical-align: middle;
+.workspace-settings-roles-toolbar > .primary-button,
+.workspace-settings-roles-toolbar > .secondary-button {
+  margin-inline: 0;
 }
 
 .workspace-settings-role-name {
@@ -6459,20 +6573,30 @@ html.board-modal-open body {
   justify-content: flex-end;
 }
 
+/* Audit page uses more of the main column — denser table still needs room. */
+.workspace-settings-content:has(.workspace-settings-audit-table),
+.workspace-settings-content:has(.workspace-settings-audit-toolbar) {
+  max-width: min(1120px, 100%);
+}
+
 .workspace-settings-audit-toolbar {
   display: flex;
   flex-wrap: wrap;
   gap: 0.85rem 1rem;
   align-items: flex-end;
-  justify-content: space-between;
-  margin: 0 0 0.75rem;
+  justify-content: flex-start;
+  margin: 0 0 1rem;
+  width: 100%;
 }
 
 .workspace-settings-audit-filters {
   display: flex;
+  flex: 1 1 auto;
   flex-wrap: wrap;
   gap: 0.75rem;
   align-items: flex-end;
+  min-width: 0;
+  width: 100%;
 }
 
 .workspace-settings-audit-filter {
@@ -6480,7 +6604,7 @@ html.board-modal-open body {
   gap: 0.3rem;
   font-size: 0.85rem;
   font-weight: 600;
-  min-width: 9rem;
+  min-width: 9.5rem;
 }
 
 .workspace-settings-audit-filter > span {
@@ -6497,44 +6621,117 @@ html.board-modal-open body {
   max-width: 18rem;
 }
 
-.workspace-settings-audit-toolbar-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
 .workspace-settings-audit-hint {
-  margin: 0 0 1rem;
+  margin: 0 0 1.1rem;
   font-size: 0.85rem;
 }
 
-.workspace-settings-audit-table td {
-  vertical-align: middle;
+/* Fixed-layout dense audit grid */
+.workspace-settings-table-wrap .workspace-settings-audit-table {
+  table-layout: fixed;
+}
+
+.workspace-settings-audit-col-when {
+  width: 7.5rem;
+}
+
+.workspace-settings-audit-col-actor {
+  width: 22%;
+}
+
+.workspace-settings-audit-col-action {
+  width: 20%;
+}
+
+.workspace-settings-audit-col-target {
+  width: 18%;
+}
+
+.workspace-settings-audit-col-outcome {
+  width: 3.25rem;
+  text-align: center;
+}
+
+.workspace-settings-audit-col-details {
+  width: 3rem;
+  text-align: center;
 }
 
 .workspace-settings-audit-when {
-  white-space: nowrap;
+  color: var(--text-secondary, #64748b);
+  font-size: 0.86rem;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.workspace-settings-audit-actor,
-.workspace-settings-audit-action {
-  display: grid;
-  gap: 0.12rem;
-}
-
-.workspace-settings-audit-actor strong,
-.workspace-settings-audit-action strong {
-  font-weight: 600;
-}
-
+.workspace-settings-audit-actor-email,
+.workspace-settings-audit-action-label,
 .workspace-settings-audit-target {
+  display: block;
   font-size: 0.92rem;
+  font-weight: 500;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.workspace-settings-audit-detail-button {
-  font-size: 13px;
-  padding: 6px 10px;
+.workspace-settings-audit-outcome-icon {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.85rem;
+  font-weight: 700;
+  height: 1.7rem;
+  justify-content: center;
+  line-height: 1;
+  width: 1.7rem;
+}
+
+.workspace-settings-audit-outcome-icon.is-ok {
+  background: color-mix(in srgb, #0f7b58 16%, transparent);
+  color: #0f7b58;
+}
+
+.workspace-settings-audit-outcome-icon.is-fail {
+  background: color-mix(in srgb, #dc2626 14%, transparent);
+  color: #b91c1c;
+}
+
+.workspace-settings-audit-outcome-icon.is-deny {
+  background: color-mix(in srgb, #d97706 16%, transparent);
+  color: #b45309;
+}
+
+.workspace-settings-audit-outcome-icon.is-unknown {
+  background: color-mix(in srgb, #94a3b8 18%, transparent);
+  color: #64748b;
+}
+
+.workspace-settings-audit-icon-button {
+  align-items: center;
+  appearance: none;
+  background: var(--bg-surface, #fff);
+  border: 1px solid var(--border-subtle, #e2e8f0);
+  border-radius: 999px;
+  color: var(--text-secondary, #64748b);
+  cursor: pointer;
+  display: inline-flex;
+  height: 2rem;
+  justify-content: center;
+  padding: 0;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+  width: 2rem;
+}
+
+.workspace-settings-audit-icon-button:hover {
+  background: var(--bg-surface-hover, #f4f4f5);
+  border-color: var(--border-strong, #cbd5e1);
+  color: var(--text-primary, #0f172a);
+}
+
+.workspace-settings-audit-eye {
+  display: block;
 }
 
 .workspace-settings-audit-footer {
@@ -6544,6 +6741,107 @@ html.board-modal-open body {
   gap: 0.75rem;
   justify-content: space-between;
   margin-top: 1rem;
+}
+
+/* Filter combobox (Action / Outcome typeahead) */
+.filter-combobox {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 11rem;
+  position: relative;
+  flex: 0 1 14rem;
+}
+
+.filter-combobox-label {
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.filter-combobox-label > span {
+  color: var(--text-secondary, #64748b);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.filter-combobox-control {
+  position: relative;
+}
+
+.filter-combobox-input {
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--bg-surface, #fff);
+  border: 1px solid var(--border-strong, #cbd5e1);
+  border-radius: 10px;
+  box-sizing: border-box;
+  color: var(--text-primary, #0f172a);
+  min-height: 42px;
+  padding: 10px 2.4rem 10px 12px;
+  width: 100%;
+}
+
+.filter-combobox-input:focus {
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus-ring) 18%, transparent);
+  outline: none;
+}
+
+.filter-combobox-chevron {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1.5 1.75L6 6.25L10.5 1.75' stroke='%2364748b' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 12px 8px;
+  height: 100%;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 2.25rem;
+}
+
+.filter-combobox-list {
+  background: var(--bg-elevated, #fff);
+  border: 1px solid var(--border-subtle, #e2e8f0);
+  border-radius: 10px;
+  box-shadow: var(--shadow-soft, 0 8px 24px rgba(0, 0, 0, 0.1));
+  list-style: none;
+  margin: 0.25rem 0 0;
+  max-height: 16rem;
+  overflow: auto;
+  padding: 0.3rem;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  z-index: 30;
+}
+
+.filter-combobox-option {
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  padding: 0.5rem 0.65rem;
+}
+
+.filter-combobox-option.is-active,
+.filter-combobox-option:hover {
+  background: var(--bg-surface-hover, #f4f4f5);
+}
+
+.filter-combobox-option.is-selected {
+  font-weight: 650;
+}
+
+.filter-combobox-empty {
+  color: var(--text-secondary, #64748b);
+  font-size: 0.85rem;
+  padding: 0.55rem 0.65rem;
 }
 
 .workspace-settings-audit-detail-modal {
@@ -6676,6 +6974,125 @@ html.board-modal-open body {
 
   .workspace-settings-content {
     padding: 20px 16px 56px;
+  }
+}
+
+/* Card-style settings rows on narrow viewports. */
+@media (max-width: 720px) {
+  .workspace-settings-table-wrap {
+    overflow: visible;
+  }
+
+  .workspace-settings-table-wrap .data-table,
+  .workspace-settings-table-wrap .data-table tbody {
+    display: grid;
+    gap: 0.75rem;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .workspace-settings-table-wrap .data-table thead {
+    border: 0;
+    clip: rect(0 0 0 0);
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    padding: 0;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+  }
+
+  .workspace-settings-table-wrap .data-table tr {
+    background: color-mix(in srgb, var(--bg-surface, #fff) 92%, var(--bg-canvas, #f8fafc));
+    border: 1px solid var(--border-subtle, #e2e8f0);
+    border-radius: 12px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    display: grid;
+    gap: 0;
+    padding: 0.35rem 0.85rem 0.55rem;
+    width: 100%;
+  }
+
+  .workspace-settings-table-wrap .data-table tbody tr:hover td {
+    background: transparent;
+  }
+
+  .workspace-settings-table-wrap .data-table td {
+    align-items: flex-start;
+    border-bottom: 1px solid color-mix(in srgb, var(--border-subtle, #e2e8f0) 80%, transparent);
+    display: flex;
+    gap: 0.85rem;
+    justify-content: space-between;
+    min-width: 0;
+    padding: 0.65rem 0;
+    white-space: normal;
+  }
+
+  .workspace-settings-table-wrap .data-table td:last-child {
+    border-bottom: 0;
+  }
+
+  .workspace-settings-table-wrap .data-table td::before {
+    color: var(--text-secondary, #64748b);
+    content: attr(data-label);
+    flex: 0 0 auto;
+    font-size: 0.72rem;
+    font-weight: 650;
+    letter-spacing: 0.04em;
+    line-height: 1.35;
+    max-width: 38%;
+    padding-top: 0.15rem;
+    text-transform: uppercase;
+  }
+
+  .workspace-settings-table-wrap .data-table td > * {
+    min-width: 0;
+    text-align: right;
+  }
+
+  .workspace-settings-member-actions,
+  .workspace-settings-role-actions,
+  .workspace-settings-invitation-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: flex-end;
+    min-width: 0;
+    white-space: normal;
+  }
+
+  .workspace-settings-role-select,
+  .workspace-settings-stub select {
+    max-width: min(14rem, 58vw);
+  }
+
+  .workspace-settings-audit-filter {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .workspace-settings-audit-filter select,
+  .workspace-settings-audit-filter-actor {
+    max-width: none;
+    width: 100%;
+  }
+
+  .workspace-settings-transfer-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .workspace-settings-transfer-bar .secondary-button {
+    width: 100%;
+  }
+
+  /* Danger actions: full-width touch targets on small screens only. */
+  .workspace-settings-danger-card .workspace-settings-danger-button,
+  .workspace-settings-danger-card .primary-button,
+  .workspace-settings-danger-card .secondary-button {
+    align-self: stretch;
+    width: 100%;
   }
 }
 

@@ -9,6 +9,7 @@
 mod banner;
 mod brand;
 mod button;
+mod combobox;
 mod field;
 mod kicker;
 mod panel;
@@ -17,6 +18,7 @@ mod shells;
 pub use banner::{ErrorBanner, ResultLine, SuccessBanner};
 pub use brand::AuthBrand;
 pub use button::{LinkButton, PrimaryButton, SecondaryButton};
+pub use combobox::{ComboboxOption, FilterCombobox};
 pub use field::{Field, FieldGroup, TextInput};
 pub use kicker::SectionLabel;
 pub use panel::{CompactPanel, Panel};

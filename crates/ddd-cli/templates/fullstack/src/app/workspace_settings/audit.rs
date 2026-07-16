@@ -5,11 +5,16 @@
 #![allow(clippy::unit_arg)]
 
 use super::shared::{
-    format_settings_datetime_ms, settings_page_stub, slug_from_settings_pathname,
+    format_relative_time_ms, format_settings_datetime_ms, settings_page_stub,
+    slug_from_settings_pathname,
 };
-use crate::app::helpers::{current_browser_pathname, server_error_text, short_id_label};
-use crate::app::{browser_load, list_workspace_audit, list_workspace_members};
+use crate::app::helpers::{current_browser_pathname, server_error_text};
+use crate::app::{
+    browser_load, get_workspace_settings_context, list_workspace_audit, list_workspace_members,
+    list_workspace_roles,
+};
 use crate::contracts::AuditEventSummary;
+use crate::ui::{ComboboxOption, FilterCombobox};
 use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
 use leptos::task::spawn_local;
@@ -44,23 +49,37 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
             list_workspace_members(slug)
         }
     });
+    let context = browser_load({
+        move || {
+            let slug = slug_from_settings_pathname(&current_browser_pathname());
+            get_workspace_settings_context(slug)
+        }
+    });
+    let roles = browser_load({
+        move || {
+            let slug = slug_from_settings_pathname(&current_browser_pathname());
+            list_workspace_roles(slug)
+        }
+    });
 
     let (events, set_events) = signal(Vec::<AuditEventSummary>::new());
     let (next_cursor, set_next_cursor) = signal(0u64);
     let (has_more, set_has_more) = signal(false);
     let (list_ready, set_list_ready) = signal(false);
-    let (refreshing, set_refreshing) = signal(false);
     let (loading_more, set_loading_more) = signal(false);
     let (load_error, set_load_error) = signal(None::<String>);
     let (actor_emails, set_actor_emails) = signal(BTreeMap::<String, String>::new());
+    let (workspace_name, set_workspace_name) = signal(String::new());
+    let (workspace_slug, set_workspace_slug) = signal(String::new());
+    let (role_names, set_role_names) = signal(BTreeMap::<String, String>::new());
 
-    let (filter_action, set_filter_action) = signal(String::new());
-    let (filter_outcome, set_filter_outcome) = signal(String::new());
+    let filter_action = RwSignal::new(String::new());
+    let filter_outcome = RwSignal::new(String::new());
     let (filter_actor, set_filter_actor) = signal(String::new());
     let (selected, set_selected) = signal(None::<AuditEventSummary>);
 
     Effect::new(move |_| {
-        if list_ready.get() || refreshing.get() {
+        if list_ready.get() {
             return;
         }
         match initial.get() {
@@ -90,6 +109,28 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
                 }
             }
             set_actor_emails.set(map);
+        }
+    });
+
+    Effect::new(move |_| {
+        if let Some(Ok(ctx)) = context.get() {
+            set_workspace_name.set(ctx.organization.name);
+            set_workspace_slug.set(ctx.organization.slug);
+        }
+    });
+
+    Effect::new(move |_| {
+        if let Some(Ok(list)) = roles.get() {
+            let mut map = BTreeMap::new();
+            for role in list.roles {
+                let name = if role.name.trim().is_empty() {
+                    role.role_id.clone()
+                } else {
+                    role.name
+                };
+                map.insert(role.role_id, name);
+            }
+            set_role_names.set(map);
         }
     });
 
@@ -137,7 +178,12 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
                 set.insert(event.action);
             }
         }
-        set.into_iter().collect::<Vec<_>>()
+        set.into_iter()
+            .map(|value| ComboboxOption {
+                label: humanize_audit_action(&value),
+                value,
+            })
+            .collect::<Vec<_>>()
     });
 
     let outcome_options = Memo::new(move |_| {
@@ -150,10 +196,17 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
                 set.insert(event.outcome);
             }
         }
-        set.into_iter().collect::<Vec<_>>()
+        set.into_iter()
+            .map(|value| ComboboxOption {
+                label: humanize_audit_outcome(&value),
+                value,
+            })
+            .collect::<Vec<_>>()
     });
 
-    let busy = Memo::new(move |_| refreshing.get() || loading_more.get());
+    let action_options_signal = Signal::derive(move || action_options.get());
+    let outcome_options_signal = Signal::derive(move || outcome_options.get());
+    let busy = Memo::new(move |_| loading_more.get());
 
     view! {
         <Show when=move || !list_ready.get() && load_error.get().is_none()>
@@ -167,68 +220,26 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
         <Show when=move || list_ready.get()>
             <div class="workspace-settings-audit-toolbar">
                 <div class="workspace-settings-audit-filters">
-                    <label class="workspace-settings-audit-filter">
-                        <span>"Action"</span>
-                        <select
-                            class="workspace-settings-role-select"
-                            prop:value=move || filter_action.get()
-                            disabled=move || busy.get()
-                            on:change=move |event| {
-                                set_filter_action.set(event_target_value(&event));
-                            }
-                        >
-                            <option value="">"All actions"</option>
-                            {move || {
-                                action_options
-                                    .get()
-                                    .into_iter()
-                                    .map(|action| {
-                                        let label = humanize_audit_action(&action);
-                                        let selected = action == filter_action.get();
-                                        view! {
-                                            <option value=action.clone() selected=selected>
-                                                {label}
-                                            </option>
-                                        }
-                                    })
-                                    .collect_view()
-                            }}
-                        </select>
-                    </label>
-                    <label class="workspace-settings-audit-filter">
-                        <span>"Outcome"</span>
-                        <select
-                            class="workspace-settings-role-select"
-                            prop:value=move || filter_outcome.get()
-                            disabled=move || busy.get()
-                            on:change=move |event| {
-                                set_filter_outcome.set(event_target_value(&event));
-                            }
-                        >
-                            <option value="">"All outcomes"</option>
-                            {move || {
-                                outcome_options
-                                    .get()
-                                    .into_iter()
-                                    .map(|outcome| {
-                                        let label = humanize_audit_outcome(&outcome);
-                                        let selected = outcome == filter_outcome.get();
-                                        view! {
-                                            <option value=outcome.clone() selected=selected>
-                                                {label}
-                                            </option>
-                                        }
-                                    })
-                                    .collect_view()
-                            }}
-                        </select>
-                    </label>
+                    <FilterCombobox
+                        label="Action"
+                        all_label="All actions"
+                        options=action_options_signal
+                        value=filter_action
+                        disabled=Signal::derive(move || busy.get())
+                    />
+                    <FilterCombobox
+                        label="Outcome"
+                        all_label="All outcomes"
+                        options=outcome_options_signal
+                        value=filter_outcome
+                        disabled=Signal::derive(move || busy.get())
+                    />
                     <label class="workspace-settings-audit-filter workspace-settings-audit-filter-actor">
                         <span>"Actor"</span>
                         <input
                             class="auth-input"
                             type="search"
-                            placeholder="Email or user id"
+                            placeholder="Email"
                             prop:value=move || filter_actor.get()
                             disabled=move || busy.get()
                             on:input=move |event| {
@@ -237,43 +248,10 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
                         />
                     </label>
                 </div>
-                <div class="workspace-settings-audit-toolbar-actions">
-                    <button
-                        type="button"
-                        class="secondary-button"
-                        disabled=move || busy.get() || slug.get().is_empty()
-                        on:click=move |_| {
-                            let slug_value = slug.get_untracked();
-                            if slug_value.is_empty() {
-                                return;
-                            }
-                            set_refreshing.set(true);
-                            set_load_error.set(None);
-                            fetch_audit_page(
-                                slug_value,
-                                None,
-                                set_events,
-                                set_next_cursor,
-                                set_has_more,
-                                set_refreshing,
-                                set_load_error,
-                                true,
-                            );
-                        }
-                    >
-                        {move || {
-                            if refreshing.get() {
-                                "Refreshing…"
-                            } else {
-                                "Refresh"
-                            }
-                        }}
-                    </button>
-                </div>
             </div>
 
             <p class="board-muted workspace-settings-audit-hint">
-                "Filters apply to loaded events. Use Load more to fetch the next cursor page, then filter again."
+                "Filters apply to loaded events. Use Load more to fetch older pages."
             </p>
 
             {move || {
@@ -305,24 +283,36 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
                 }
 
                 let emails = actor_emails.get();
+                let org_name = workspace_name.get();
+                let org_slug = workspace_slug.get();
+                let roles_map = role_names.get();
                 view! {
                     <div class="table-wrap workspace-settings-table-wrap">
                         <table class="data-table workspace-settings-audit-table">
                             <thead>
                                 <tr>
-                                    <th scope="col">"When"</th>
-                                    <th scope="col">"Actor"</th>
-                                    <th scope="col">"Action"</th>
-                                    <th scope="col">"Target"</th>
-                                    <th scope="col">"Outcome"</th>
-                                    <th scope="col">"Details"</th>
+                                    <th scope="col" class="workspace-settings-audit-col-when">"When"</th>
+                                    <th scope="col" class="workspace-settings-audit-col-actor">"Actor"</th>
+                                    <th scope="col" class="workspace-settings-audit-col-action">"Action"</th>
+                                    <th scope="col" class="workspace-settings-audit-col-target">"Target"</th>
+                                    <th scope="col" class="workspace-settings-audit-col-outcome">"Outcome"</th>
+                                    <th scope="col" class="workspace-settings-audit-col-details">
+                                        <span class="sr-only">"Details"</span>
+                                    </th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {rows
                                     .into_iter()
                                     .map(|event| {
-                                        audit_row(event, emails.clone(), set_selected)
+                                        audit_row(
+                                            event,
+                                            emails.clone(),
+                                            org_name.clone(),
+                                            org_slug.clone(),
+                                            roles_map.clone(),
+                                            set_selected,
+                                        )
                                     })
                                     .collect_view()}
                             </tbody>
@@ -420,17 +410,29 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
                             let emails = actor_emails.get();
                             let actor = actor_display(&event.actor_user_id, &emails);
                             let when = format_settings_datetime_ms(event.recorded_at_ms);
+                            let relative = format_relative_time_ms(event.recorded_at_ms);
                             let org = event
                                 .organization_id
                                 .clone()
                                 .filter(|v| !v.trim().is_empty())
                                 .unwrap_or_else(|| "—".to_owned());
+                            let target_label = resolve_target_label(
+                                &event.target_type,
+                                &event.target_id,
+                                &workspace_name.get(),
+                                &workspace_slug.get(),
+                                &emails,
+                                &role_names.get(),
+                            );
                             let metadata_json = safe_event_metadata_json(&event);
                             view! {
                                 <dl class="workspace-settings-audit-detail-list">
                                     <div>
                                         <dt>"When"</dt>
-                                        <dd>{when}</dd>
+                                        <dd>
+                                            <span>{when}</span>
+                                            <small class="board-muted">{relative}</small>
+                                        </dd>
                                     </div>
                                     <div>
                                         <dt>"Sequence"</dt>
@@ -457,7 +459,7 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
                                     <div>
                                         <dt>"Target"</dt>
                                         <dd>
-                                            <span>{humanize_target_summary(&event.target_type, &event.target_id)}</span>
+                                            <span>{target_label}</span>
                                             <small class="board-muted">
                                                 {format!(
                                                     "{} · {}",
@@ -485,18 +487,6 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
                                     <div>
                                         <dt>"Organization id"</dt>
                                         <dd class="workspace-settings-mono">{org}</dd>
-                                    </div>
-                                    <div>
-                                        <dt>"Request id"</dt>
-                                        <dd class="board-muted">
-                                            "Not exposed by the current audit list API."
-                                        </dd>
-                                    </div>
-                                    <div>
-                                        <dt>"Policy revision"</dt>
-                                        <dd class="board-muted">
-                                            "Not exposed by the current audit list API."
-                                        </dd>
                                     </div>
                                 </dl>
                                 <div class="workspace-settings-audit-metadata">
@@ -528,51 +518,102 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
 fn audit_row(
     event: AuditEventSummary,
     emails: BTreeMap<String, String>,
+    workspace_name: String,
+    workspace_slug: String,
+    role_names: BTreeMap<String, String>,
     set_selected: WriteSignal<Option<AuditEventSummary>>,
 ) -> impl IntoView {
-    let when = format_settings_datetime_ms(event.recorded_at_ms);
+    let when_relative = format_relative_time_ms(event.recorded_at_ms);
+    let when_absolute = format_settings_datetime_ms(event.recorded_at_ms);
+    let when_iso = if event.recorded_at_ms == 0 {
+        String::new()
+    } else {
+        // Approximate ISO for datetime attr; hydrate locale stays in title.
+        format!("{}", event.recorded_at_ms)
+    };
     let actor = actor_display(&event.actor_user_id, &emails);
+    let actor_title = actor.clone();
     let action_label = humanize_audit_action(&event.action);
-    let action_raw = event.action.clone();
-    let target = humanize_target_summary(&event.target_type, &event.target_id);
+    let action_title = action_label.clone();
+    let target = resolve_target_label(
+        &event.target_type,
+        &event.target_id,
+        &workspace_name,
+        &workspace_slug,
+        &emails,
+        &role_names,
+    );
+    let target_title = target.clone();
     let outcome = event.outcome.clone();
     let outcome_label = humanize_audit_outcome(&outcome);
+    let outcome_title = outcome_label.clone();
+    let outcome_icon = outcome_icon_glyph(&outcome);
     let event_for_click = event.clone();
 
     view! {
-        <tr>
-            <td>
-                <time class="workspace-settings-audit-when">{when}</time>
+        <tr class="workspace-settings-audit-row">
+            <td data-label="When" class="workspace-settings-audit-col-when">
+                <time
+                    class="workspace-settings-audit-when"
+                    datetime=when_iso
+                    title=when_absolute
+                >
+                    {when_relative}
+                </time>
             </td>
-            <td>
-                <div class="workspace-settings-audit-actor">
-                    <strong>{actor}</strong>
-                    <small class="board-muted workspace-settings-mono">
-                        {short_id_label(&event.actor_user_id)}
-                    </small>
-                </div>
-            </td>
-            <td>
-                <div class="workspace-settings-audit-action">
-                    <strong>{action_label}</strong>
-                    <small class="board-muted workspace-settings-mono">{action_raw}</small>
-                </div>
-            </td>
-            <td>
-                <span class="workspace-settings-audit-target">{target}</span>
-            </td>
-            <td>
-                <span class="workspace-settings-status-pill" data-outcome=outcome>
-                    {outcome_label}
+            <td data-label="Actor" class="workspace-settings-audit-col-actor">
+                <span class="workspace-settings-audit-actor-email" title=actor_title>
+                    {actor}
                 </span>
             </td>
-            <td>
+            <td data-label="Action" class="workspace-settings-audit-col-action">
+                <span class="workspace-settings-audit-action-label" title=action_title>
+                    {action_label}
+                </span>
+            </td>
+            <td data-label="Target" class="workspace-settings-audit-col-target">
+                <span class="workspace-settings-audit-target" title=target_title>
+                    {target}
+                </span>
+            </td>
+            <td data-label="Outcome" class="workspace-settings-audit-col-outcome">
+                <span
+                    class=format!(
+                        "workspace-settings-audit-outcome-icon is-{}",
+                        outcome_class(&outcome)
+                    )
+                    title=outcome_title
+                    aria-label=outcome_label
+                    role="img"
+                >
+                    {outcome_icon}
+                </span>
+            </td>
+            <td data-label="Details" class="workspace-settings-audit-col-details">
                 <button
                     type="button"
-                    class="secondary-button workspace-settings-audit-detail-button"
+                    class="workspace-settings-audit-icon-button"
+                    aria-label="View event details"
+                    title="View details"
                     on:click=move |_| set_selected.set(Some(event_for_click.clone()))
                 >
-                    "View"
+                    <svg
+                        class="workspace-settings-audit-eye"
+                        viewBox="0 0 24 24"
+                        width="16"
+                        height="16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.75"
+                        aria-hidden="true"
+                    >
+                        <path
+                            d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        ></path>
+                        <circle cx="12" cy="12" r="3"></circle>
+                    </svg>
                 </button>
             </td>
         </tr>
@@ -646,7 +687,108 @@ fn actor_display(actor_user_id: &str, emails: &BTreeMap<String, String>) -> Stri
     if actor_user_id == "system" || actor_user_id.is_empty() {
         return "System".to_owned();
     }
-    short_id_label(actor_user_id)
+    // Prefer a soft fallback over raw UUID noise in the table.
+    "Unknown member".to_owned()
+}
+
+fn resolve_target_label(
+    target_type: &str,
+    target_id: &str,
+    workspace_name: &str,
+    workspace_slug: &str,
+    emails: &BTreeMap<String, String>,
+    role_names: &BTreeMap<String, String>,
+) -> String {
+    let id = target_id.trim();
+    match target_type {
+        "organization" => {
+            if !workspace_name.trim().is_empty() {
+                workspace_name.to_owned()
+            } else if !workspace_slug.trim().is_empty() {
+                workspace_slug.to_owned()
+            } else {
+                "Workspace".to_owned()
+            }
+        }
+        "session" => "Session".to_owned(),
+        "user" | "membership" | "member" => {
+            if let Some(email) = emails.get(id) {
+                if !email.trim().is_empty() {
+                    return email.clone();
+                }
+            }
+            if id.is_empty() {
+                "Member".to_owned()
+            } else {
+                "Member".to_owned()
+            }
+        }
+        "invitation" => {
+            if let Some(email) = emails.get(id) {
+                if !email.trim().is_empty() {
+                    return email.clone();
+                }
+            }
+            "Invitation".to_owned()
+        }
+        "role" => {
+            if let Some(name) = role_names.get(id) {
+                return name.clone();
+            }
+            if id.is_empty() {
+                "Role".to_owned()
+            } else {
+                // Role ids are human keys (admin, member), not UUIDs.
+                id.to_owned()
+            }
+        }
+        "passkey" => "Passkey".to_owned(),
+        "signing_key" => "Signing key".to_owned(),
+        "policy_bundle" => "Policy bundle".to_owned(),
+        "oauth_provider" => "OAuth provider".to_owned(),
+        other if other.is_empty() => {
+            if id.is_empty() {
+                "Resource".to_owned()
+            } else if looks_like_uuid(id) {
+                "Resource".to_owned()
+            } else {
+                id.to_owned()
+            }
+        }
+        other => {
+            let kind = humanize_target_type(other);
+            if id.is_empty() || looks_like_uuid(id) {
+                kind
+            } else {
+                format!("{kind}: {id}")
+            }
+        }
+    }
+}
+
+fn looks_like_uuid(value: &str) -> bool {
+    let v = value.trim();
+    v.len() >= 32
+        && v.chars()
+            .all(|c| c.is_ascii_hexdigit() || c == '-' || c == '_')
+}
+
+fn outcome_class(outcome: &str) -> &'static str {
+    match outcome {
+        "succeeded" | "allowed" => "ok",
+        "failed" => "fail",
+        "denied" => "deny",
+        _ => "unknown",
+    }
+}
+
+fn outcome_icon_glyph(outcome: &str) -> &'static str {
+    match outcome {
+        "succeeded" | "allowed" => "✓",
+        "failed" => "✕",
+        "denied" => "⊘",
+        _ => "·",
+    }
 }
 
 const KNOWN_AUDIT_ACTIONS: &[&str] = &[
@@ -773,20 +915,6 @@ fn humanize_target_type(target_type: &str) -> String {
     }
 }
 
-fn humanize_target_summary(target_type: &str, target_id: &str) -> String {
-    let kind = humanize_target_type(target_type);
-    if target_id.trim().is_empty() {
-        return kind;
-    }
-    // Prefer readable role ids; otherwise shorten UUIDs.
-    let id = if target_type == "role" || target_id.len() <= 24 {
-        target_id.to_owned()
-    } else {
-        short_id_label(target_id)
-    };
-    format!("{kind} · {id}")
-}
-
 fn humanize_dotted_identifier(value: &str) -> String {
     value
         .split(|c| c == '.' || c == '_' || c == '-')
@@ -806,7 +934,6 @@ fn humanize_dotted_identifier(value: &str) -> String {
 /// Pretty JSON of list-API fields only (no invented secrets or missing columns).
 fn safe_event_metadata_json(event: &AuditEventSummary) -> String {
     let org = event.organization_id.as_deref().unwrap_or("");
-    // Manual formatting avoids a wasm-only serde_json dependency path in hydrate islands.
     format!(
         "{{\n  \"sequence\": {},\n  \"organization_id\": {},\n  \"actor_user_id\": {},\n  \"action\": {},\n  \"target_type\": {},\n  \"target_id\": {},\n  \"outcome\": {},\n  \"recorded_at_ms\": {},\n  \"request_id\": null,\n  \"policy_revision\": null,\n  \"metadata\": {{}}\n}}",
         event.sequence,

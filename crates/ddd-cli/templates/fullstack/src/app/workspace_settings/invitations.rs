@@ -394,18 +394,18 @@ fn invitation_row(
 
     view! {
         <tr class="workspace-settings-invitation-row">
-            <td>
+            <td data-label="Email">
                 <span class="workspace-settings-member-email">{email}</span>
             </td>
-            <td>{role_label}</td>
-            <td>
+            <td data-label="Role">{role_label}</td>
+            <td data-label="Status">
                 <span class=format!(
                     "workspace-settings-status-pill is-{}",
                     status
                 )>{status.clone()}</span>
             </td>
-            <td>{expires}</td>
-            <td class="workspace-settings-member-actions">
+            <td data-label="Expires">{expires}</td>
+            <td class="workspace-settings-member-actions" data-label="Actions">
                 {if is_pending {
                     view! {
                         <div class="workspace-settings-invitation-actions">

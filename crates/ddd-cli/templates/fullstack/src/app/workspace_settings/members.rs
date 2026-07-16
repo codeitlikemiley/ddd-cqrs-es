@@ -594,7 +594,7 @@ fn member_row(
         } else {
             "workspace-settings-member-row"
         }>
-            <td>
+            <td data-label="Email">
                 <span class="workspace-settings-member-email">{email}</span>
                 {if is_you {
                     view! { <span class="workspace-settings-you-badge">"You"</span> }.into_any()
@@ -602,7 +602,7 @@ fn member_row(
                     view! { <></> }.into_any()
                 }}
             </td>
-            <td>
+            <td data-label="Role">
                 {if can_change_role {
                     let select_disabled = actions_locked || row_busy;
                     view! {
@@ -665,9 +665,9 @@ fn member_row(
                     view! { <span>{role_label}</span> }.into_any()
                 }}
             </td>
-            <td>{status}</td>
-            <td>{joined}</td>
-            <td class="workspace-settings-member-actions">
+            <td data-label="Status">{status}</td>
+            <td data-label="Joined">{joined}</td>
+            <td class="workspace-settings-member-actions" data-label="Actions">
                 {if is_you {
                     view! {
                         <span

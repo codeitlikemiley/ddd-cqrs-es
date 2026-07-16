@@ -111,6 +111,68 @@ pub(crate) fn format_settings_datetime_ms(ms: u64) -> String {
     }
 }
 
+/// Human-friendly relative time for table rows (e.g. "3 min ago").
+pub(crate) fn format_relative_time_ms(ms: u64) -> String {
+    if ms == 0 {
+        return "—".to_owned();
+    }
+    #[cfg(feature = "hydrate")]
+    {
+        let now = js_sys::Date::now() as i64;
+        let then = ms as i64;
+        let secs = ((now - then) / 1000).max(0) as u64;
+        if secs < 5 {
+            return "just now".to_owned();
+        }
+        if secs < 60 {
+            return format!("{secs} sec ago");
+        }
+        let mins = secs / 60;
+        if mins < 60 {
+            return if mins == 1 {
+                "1 min ago".to_owned()
+            } else {
+                format!("{mins} min ago")
+            };
+        }
+        let hours = mins / 60;
+        if hours < 48 {
+            return if hours == 1 {
+                "1 hr ago".to_owned()
+            } else {
+                format!("{hours} hr ago")
+            };
+        }
+        let days = hours / 24;
+        if days < 45 {
+            return if days == 1 {
+                "1 day ago".to_owned()
+            } else {
+                format!("{days} days ago")
+            };
+        }
+        let months = days / 30;
+        if months < 18 {
+            return if months == 1 {
+                "1 mo ago".to_owned()
+            } else {
+                format!("{months} mo ago")
+            };
+        }
+        let years = days / 365;
+        if years <= 1 {
+            "1 yr ago".to_owned()
+        } else {
+            format!("{years} yr ago")
+        }
+    }
+    #[cfg(not(feature = "hydrate"))]
+    {
+        let _ = ms;
+        "…".to_owned()
+    }
+}
+
 /// Settings section keys (path segment after `/settings/`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SettingsSection {

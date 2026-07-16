@@ -632,13 +632,13 @@ fn role_row(
 
     view! {
         <tr class="workspace-settings-role-row">
-            <td>
+            <td data-label="Role">
                 <div class="workspace-settings-role-name">
                     <strong>{name}</strong>
                     <small class="board-muted">{role_id.clone()}</small>
                 </div>
             </td>
-            <td>
+            <td data-label="Type">
                 <span class=if built_in {
                     "workspace-settings-role-badge is-built-in"
                 } else {
@@ -647,9 +647,9 @@ fn role_row(
                     {if built_in { "Built-in" } else { "Custom" }}
                 </span>
             </td>
-            <td>{permission_count}</td>
-            <td>{members_label}</td>
-            <td class="workspace-settings-member-actions">
+            <td data-label="Permissions">{permission_count}</td>
+            <td data-label="Members">{members_label}</td>
+            <td class="workspace-settings-member-actions" data-label="Actions">
                 {if built_in {
                     view! {
                         <span class="board-muted" title="Built-in roles are immutable">
