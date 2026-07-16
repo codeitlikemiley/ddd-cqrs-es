@@ -34,7 +34,7 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                 // Apply sidebar preference before first paint so every navigation
                 // keeps mini/hidden without flashing full → mini.
                 <script>
-                    {r#"(function(){try{var m=localStorage.getItem("workspace-sidebar-mode");if(m==="mini"||m==="hidden"||m==="full"){document.documentElement.setAttribute("data-sidebar-pref",m);}}catch(e){}})();"#}
+                    {r#"(function(){try{var m=localStorage.getItem("workspace-sidebar-mode");if(m==="mini"||m==="hidden"||m==="full"){document.documentElement.setAttribute("data-sidebar-pref",m);}var t=localStorage.getItem("app-theme");if(t==="light"||t==="dark"||t==="system"){document.documentElement.setAttribute("data-theme",t);}else{document.documentElement.setAttribute("data-theme","system");}}catch(e){try{document.documentElement.setAttribute("data-theme","system");}catch(_){}}})();"#}
                 </script>
                 <AutoReload options=options.clone() />
                 <HydrationScripts options=options.clone() islands=true root="" />

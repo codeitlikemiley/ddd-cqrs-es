@@ -8,8 +8,25 @@
 @source "./src/**/*.{rs,html,css}";
 @source "./public/**/*.{html,js}";
 
-/* Dark mode follows OS preference (matches historical :root media query). */
-@custom-variant dark (@media (prefers-color-scheme: dark));
+/*
+ * Dark mode: explicit data-theme on <html>, or system preference when
+ * data-theme="system" / unset. ThemeToggle cycles light → dark → system.
+ */
+@custom-variant dark {
+  &:where(html[data-theme="dark"] &, html[data-theme="dark"] & *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(
+      html[data-theme="system"] &,
+      html[data-theme="system"] & *,
+      html:not([data-theme]) &,
+      html:not([data-theme]) & *
+    ) {
+      @slot;
+    }
+  }
+}
 
 /*
  * Workspace shell mode variants (desktop ≥961px).
@@ -105,7 +122,8 @@
  * without rewriting every component.
  */
 
-:root {
+:root,
+html[data-theme="light"] {
   color-scheme: light;
   --bg-canvas: #ffffff;
   --bg-sidebar: #f9f9f9;
@@ -142,8 +160,40 @@
   --overlay-scrim-strong: rgba(13, 13, 13, 0.58);
 }
 
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-canvas: #212121;
+  --bg-sidebar: #171717;
+  --bg-surface: #2f2f2f;
+  --bg-surface-subtle: #262626;
+  --bg-surface-hover: #303030;
+  --bg-surface-active: #383838;
+  --bg-elevated: #2f2f2f;
+  --bg-inverse: #ffffff;
+  --text-primary: #ececec;
+  --text-secondary: #b4b4b4;
+  --text-tertiary: #8b8b8b;
+  --text-disabled: #666666;
+  --text-inverse: #0d0d0d;
+  --border-subtle: #3a3a3a;
+  --border-strong: #555555;
+  --focus-ring: #a0a0a0;
+  --accent: #ffffff;
+  --accent-contrast: #0d0d0d;
+  --accent-subtle: #2f2f2f;
+  --danger: #ff5a65;
+  --warning: #f0a54a;
+  --success: #4bc49a;
+  --code-bg: #171717;
+  --shadow: rgba(0, 0, 0, 0.35);
+  --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --overlay-scrim: rgba(0, 0, 0, 0.62);
+  --overlay-scrim-strong: rgba(0, 0, 0, 0.72);
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  html[data-theme="system"],
+  :root:not([data-theme]) {
     color-scheme: dark;
     --bg-canvas: #212121;
     --bg-sidebar: #171717;
@@ -170,7 +220,6 @@
     --code-bg: #171717;
     --shadow: rgba(0, 0, 0, 0.35);
     --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.35);
-    /* Deeper black dim — pure white scrim is the anti-pattern here. */
     --overlay-scrim: rgba(0, 0, 0, 0.62);
     --overlay-scrim-strong: rgba(0, 0, 0, 0.72);
   }

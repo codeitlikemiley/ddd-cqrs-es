@@ -8,7 +8,13 @@ use crate::app::helpers::{
     can_view_system_navigation, current_browser_pathname, org_monogram, redirect_browser,
     server_error_text,
 };
-use crate::app::path::{is_workspace_path, is_workspace_settings_path, workspace_topbar_title};
+use crate::access::{
+    can_view_any_settings, nav_product_items, nav_settings_items, AccessContext, NavHref,
+};
+use crate::app::path::{
+    is_workspace_path, is_workspace_settings_path, settings_slug_from_path, workspace_topbar_title,
+};
+use crate::app::theme::ThemeToggle;
 
 use crate::app::{
     CreateOrganization, LogoutButton, SelectOrganization, browser_load, get_current_session,
@@ -159,20 +165,11 @@ pub fn WorkspaceShell(children: Children) -> impl IntoView {
                         "Close"
                     </label>
                 </div>
-                <nav class=WS_NAV aria-label="Authenticated workspace">
-                    <a class=WS_NAV_LINK href="/dashboard" data-nav="overview" title="Overview">
-                        {nav_icon("overview")}
-                        <span class=WS_NAV_TEXT>"Overview"</span>
-                    </a>
-                    <a class=WS_NAV_LINK href="/organizations" data-nav="organizations" title="Organizations">
-                        {nav_icon("organizations")}
-                        <span class=WS_NAV_TEXT>"Organizations"</span>
-                    </a>
-                    <WorkspaceSystemNav />
-                </nav>
+                <WorkspacePrimaryNav />
                 <div class=WS_SIDEBAR_FOOT>
                     <WorkspaceOrgSwitcher />
                     <WorkspaceUserMenu />
+                    <ThemeToggle />
                 </div>
             </aside>
             <div class=WS_MAIN>
@@ -485,6 +482,17 @@ pub fn WorkspaceOrgSwitcher() -> impl IntoView {
                                 }
                             })
                             .unwrap_or_else(|| "/organizations".into());
+                        let settings_href = active
+                            .as_ref()
+                            .map(|o| {
+                                if o.slug.is_empty() {
+                                    "/organizations".into()
+                                } else {
+                                    format!("/org/{}/settings/general", o.slug)
+                                }
+                            })
+                            .unwrap_or_else(|| "/organizations".into());
+                        let show_settings = can_view_any_settings(&AccessContext::from_session(&sess));
                         let orgs_for_list = list.organizations.clone();
 
                         view! {
@@ -537,6 +545,11 @@ pub fn WorkspaceOrgSwitcher() -> impl IntoView {
                                     <div class=ORG_SWITCHER_DIVIDER aria-hidden="true"></div>
                                     <a class=ORG_SWITCHER_LINK href="/organizations" role="menuitem">"Manage workspaces"</a>
                                     <a class=ORG_SWITCHER_LINK href=vault_href role="menuitem">"Secret vault"</a>
+                                    <Show when=move || show_settings>
+                                        <a class=ORG_SWITCHER_LINK href=settings_href.clone() role="menuitem">
+                                            "Workspace settings"
+                                        </a>
+                                    </Show>
                                 </div>
                             </details>
                         }.into_any()
@@ -645,42 +658,155 @@ pub fn WorkspaceUserMenu() -> impl IntoView {
 
 /// Root layout: keep shell chrome mounted across navigations within each mode.
 ///
-/// Settings routes are a **nested** `ParentRoute` (`WorkspaceSettingsShell`) so
-/// `:slug` is available to the shell. AppLayout must not wrap them again.
+/// Settings routes nest under `WorkspaceSettingsShell` (outlet only) so they
+/// share this workspace rail — primary nav swaps to settings sections by path.
 #[component]
 pub fn AppLayout() -> impl IntoView {
     let location = use_location();
-    // Mode only flips when entering/leaving settings vs workspace vs public chrome.
-    let layout_mode = Memo::new(move |_| {
-        let path = location.pathname.get();
-        if is_workspace_settings_path(&path) {
-            2_u8 // nested settings shell owns chrome — bare outlet
-        } else if is_workspace_path(&path) {
-            1_u8 // workspace rail
-        } else {
-            0_u8 // auth / public
-        }
+    let in_workspace = Memo::new(move |_| is_workspace_path(&location.pathname.get()));
+
+    view! {
+        {move || {
+            if in_workspace.get() {
+                view! {
+                    <WorkspaceShell>
+                        <Outlet />
+                    </WorkspaceShell>
+                }
+                .into_any()
+            } else {
+                view! {
+                    <main class="block min-h-dvh w-full box-border">
+                        <Outlet />
+                    </main>
+                }
+                .into_any()
+            }
+        }}
+    }
+}
+
+/// Primary sidebar nav: product rail or workspace-settings sections (permission-filtered).
+#[component]
+fn WorkspacePrimaryNav() -> impl IntoView {
+    let location = use_location();
+    let session = browser_load(get_current_session);
+    let settings_mode = Memo::new(move |_| is_workspace_settings_path(&location.pathname.get()));
+    let settings_slug = Memo::new(move |_| settings_slug_from_path(&location.pathname.get()));
+    let access = Memo::new(move |_| match session.get() {
+        Some(Ok(view)) if view.authenticated => AccessContext::from_session(&view),
+        _ => AccessContext::anonymous(),
     });
 
     view! {
-        {move || match layout_mode.get() {
-            2 => view! {
-                // Settings ParentRoute already mounts WorkspaceSettingsShell.
-                <Outlet />
+        <nav
+            class=WS_NAV
+            aria-label=move || {
+                if settings_mode.get() {
+                    "Workspace settings"
+                } else {
+                    "Authenticated workspace"
+                }
             }
-            .into_any(),
-            1 => view! {
-                <WorkspaceShell>
-                    <Outlet />
-                </WorkspaceShell>
-            }
-            .into_any(),
-            _ => view! {
-                <main class="block min-h-dvh w-full box-border">
-                    <Outlet />
-                </main>
-            }
-            .into_any(),
-        }}
+        >
+            {move || {
+                let ctx = access.get();
+                if settings_mode.get() {
+                    let slug = settings_slug.get();
+                    let items: Vec<_> = nav_settings_items()
+                        .iter()
+                        .filter(|item| item.requirement.is_satisfied_by(&ctx))
+                        .collect();
+                    view! {
+                        <p class=WS_NAV_LABEL>"Settings"</p>
+                        <a
+                            class=WS_NAV_LINK
+                            href="/dashboard"
+                            data-nav="overview"
+                            title="Back to overview"
+                        >
+                            {nav_icon("overview")}
+                            <span class=WS_NAV_TEXT>"Overview"</span>
+                        </a>
+                        {if items.is_empty() {
+                            view! {
+                                <p class=WS_NAV_LABEL_SECONDARY>
+                                    "No settings available for your role."
+                                </p>
+                            }
+                            .into_any()
+                        } else {
+                            items
+                                .into_iter()
+                                .map(|item| {
+                                    let href = match &item.href {
+                                        NavHref::Static(path) => (*path).to_owned(),
+                                        NavHref::SettingsSection(segment) => {
+                                            if slug.is_empty() {
+                                                "/organizations".to_owned()
+                                            } else {
+                                                format!("/org/{slug}/settings/{segment}")
+                                            }
+                                        }
+                                    };
+                                    let label = item.label;
+                                    let data_nav = item.id;
+                                    let disabled = slug.is_empty()
+                                        && matches!(item.href, NavHref::SettingsSection(_));
+                                    let icon = item.icon;
+                                    view! {
+                                        <a
+                                            class=WS_NAV_LINK
+                                            href=href
+                                            data-nav=data_nav
+                                            title=label
+                                            class:is-disabled=disabled
+                                            aria-disabled=disabled
+                                        >
+                                            {icon.map(|kind| nav_icon(kind).into_any())}
+                                            <span class=WS_NAV_TEXT>{label}</span>
+                                        </a>
+                                    }
+                                })
+                                .collect_view()
+                                .into_any()
+                        }}
+                    }
+                    .into_any()
+                } else {
+                    let product: Vec<_> = nav_product_items()
+                        .iter()
+                        .filter(|item| item.requirement.is_satisfied_by(&ctx))
+                        .collect();
+                    view! {
+                        {product
+                            .into_iter()
+                            .map(|item| {
+                                let href = match &item.href {
+                                    NavHref::Static(path) => *path,
+                                    NavHref::SettingsSection(_) => "/dashboard",
+                                };
+                                let label = item.label;
+                                let data_nav = item.id;
+                                let icon = item.icon.unwrap_or("overview");
+                                view! {
+                                    <a
+                                        class=WS_NAV_LINK
+                                        href=href
+                                        data-nav=data_nav
+                                        title=label
+                                    >
+                                        {nav_icon(icon)}
+                                        <span class=WS_NAV_TEXT>{label}</span>
+                                    </a>
+                                }
+                            })
+                            .collect_view()}
+                        <WorkspaceSystemNav />
+                    }
+                    .into_any()
+                }
+            }}
+        </nav>
     }
 }

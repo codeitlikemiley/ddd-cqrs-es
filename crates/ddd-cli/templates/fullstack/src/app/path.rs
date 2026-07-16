@@ -2,7 +2,7 @@
 
 /// Slug-scoped workspace settings (`/org/{slug}/settings` and subpaths).
 ///
-/// These use the settings sidebar shell, not the global workspace rail.
+/// Settings share the global workspace rail; only the primary nav items change.
 pub(crate) fn is_workspace_settings_path(path: &str) -> bool {
     let path = path.trim_end_matches('/');
     let Some(rest) = path.strip_prefix("/org/") else {
@@ -15,15 +15,28 @@ pub(crate) fn is_workspace_settings_path(path: &str) -> bool {
     after_slug == "settings" || after_slug.starts_with("settings/")
 }
 
+/// Extract `{slug}` from `/org/{slug}/settings…` (empty when not a settings path).
+pub(crate) fn settings_slug_from_path(path: &str) -> String {
+    let path = path.trim_end_matches('/');
+    let Some(rest) = path.strip_prefix("/org/") else {
+        return String::new();
+    };
+    let Some((slug, after)) = rest.split_once('/') else {
+        return String::new();
+    };
+    if after == "settings" || after.starts_with("settings/") {
+        slug.to_owned()
+    } else {
+        String::new()
+    }
+}
+
 pub(crate) fn is_workspace_path(path: &str) -> bool {
     let path = path.trim_end_matches('/');
     if path.starts_with("/onboarding") {
         return false;
     }
-    // Settings chrome is exclusive — do not wrap with the global workspace rail.
-    if is_workspace_settings_path(path) {
-        return false;
-    }
+    // Settings use the same workspace rail (nav swaps to settings sections).
     path == "/dashboard"
         || path.starts_with("/dashboard/")
         || path.starts_with("/account")
@@ -47,7 +60,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_paths_use_settings_shell_not_workspace_rail() {
+    fn settings_paths_share_workspace_rail() {
         assert!(is_workspace_settings_path("/org/acme/settings"));
         assert!(is_workspace_settings_path("/org/acme/settings/"));
         assert!(is_workspace_settings_path("/org/acme/settings/general"));
@@ -62,9 +75,10 @@ mod tests {
         assert!(!is_workspace_settings_path("/org/settings"));
         assert!(!is_workspace_settings_path("/org/acme/settings-extra"));
 
-        assert!(!is_workspace_path("/org/acme/settings"));
-        assert!(!is_workspace_path("/org/acme/settings/general"));
-        assert!(!is_workspace_path("/org/acme/settings/invitations"));
+        // Unified chrome: settings ride the same workspace shell.
+        assert!(is_workspace_path("/org/acme/settings"));
+        assert!(is_workspace_path("/org/acme/settings/general"));
+        assert!(is_workspace_path("/org/acme/settings/invitations"));
         assert!(is_workspace_path("/org/acme/vault"));
     }
 

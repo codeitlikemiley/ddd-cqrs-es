@@ -952,7 +952,7 @@ pub const WS_NAV_LABEL: &str =
 
 pub const WS_NAV_LABEL_SECONDARY: &str = "mt-4";
 
-pub const WS_NAV_LINK: &str = "relative flex min-h-9 min-w-0 items-center gap-2.5 overflow-hidden rounded-[10px] border-0 bg-transparent px-3 py-2 text-sm font-medium leading-tight text-secondary no-underline transition-[background-color,color,padding] duration-[140ms] ease-in-out hover:bg-surface-hover hover:text-primary [&.is-active]:bg-surface-active [&.is-active]:font-semibold [&.is-active]:text-primary shell-mini:w-11 shell-mini:justify-center shell-mini:p-2.5 shell-mobile:min-h-10 shell-mobile:w-full shell-mobile:justify-start shell-mobile:px-3 shell-mobile:py-2";
+pub const WS_NAV_LINK: &str = "relative flex min-h-9 min-w-0 items-center gap-2.5 overflow-hidden rounded-[10px] border-0 bg-transparent px-3 py-2 text-sm font-medium leading-tight text-secondary no-underline transition-[background-color,color,padding] duration-[140ms] ease-in-out hover:bg-surface-hover hover:text-primary [&.is-active]:bg-surface-active [&.is-active]:font-semibold [&.is-active]:text-primary [&.is-disabled]:pointer-events-none [&.is-disabled]:cursor-not-allowed [&.is-disabled]:opacity-45 shell-mini:w-11 shell-mini:justify-center shell-mini:p-2.5 shell-mobile:min-h-10 shell-mobile:w-full shell-mobile:justify-start shell-mobile:px-3 shell-mobile:py-2";
 
 pub const WS_NAV_ICON: &str =
     "inline-flex h-4 w-4 flex-none items-center justify-center text-current opacity-[0.88] [&_svg]:h-4 [&_svg]:w-4";
@@ -1024,6 +1024,17 @@ pub const ORG_SWITCHER_DIVIDER: &str = "mx-1 my-2 h-px bg-border-subtle";
 pub const ORG_SWITCHER_LINK: &str =
     "block rounded-lg px-2.5 py-2 text-[13px] text-primary no-underline hover:bg-[var(--bg-muted,#f4f4f5)]";
 pub const ORG_SWITCHER_FALLBACK: &str = "p-2 text-[13px] text-secondary";
+
+// ── Theme toggle (sidebar foot, below account flyout) ──────────────────────
+
+pub const THEME_TOGGLE: &str = "mt-1 flex w-full min-h-11 cursor-pointer items-center gap-2.5 rounded-xl border-0 bg-transparent px-2.5 py-2 text-left hover:bg-surface-hover shell-mini:w-11 shell-mini:min-h-11 shell-mini:justify-center shell-mini:p-2 shell-mobile:w-full shell-mobile:justify-start shell-mobile:px-3 shell-mobile:py-2";
+pub const THEME_TOGGLE_ICON: &str =
+    "inline-flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full bg-surface-subtle text-sm text-primary";
+pub const THEME_TOGGLE_META: &str =
+    "grid min-w-0 flex-[1_1_auto] gap-px text-left shell-mini:hidden";
+pub const THEME_TOGGLE_LABEL: &str =
+    "overflow-hidden text-ellipsis whitespace-nowrap text-[13px] font-medium text-primary";
+pub const THEME_TOGGLE_HINT: &str = "text-[11px] text-tertiary";
 
 // ── User menu (sidebar foot account flyout) ────────────────────────────────
 

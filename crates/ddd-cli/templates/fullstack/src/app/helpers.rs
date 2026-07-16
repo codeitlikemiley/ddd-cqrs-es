@@ -102,11 +102,50 @@ pub(crate) fn mark_active_nav(pathname: &str) {
             "[data-nav='system']",
             pathname == "/admin" || pathname.starts_with("/admin/"),
         ),
+        (
+            "[data-nav='settings-general']",
+            pathname.ends_with("/settings")
+                || pathname.ends_with("/settings/")
+                || pathname.ends_with("/settings/general"),
+        ),
+        (
+            "[data-nav='settings-members']",
+            pathname.ends_with("/settings/members"),
+        ),
+        (
+            "[data-nav='settings-invitations']",
+            pathname.ends_with("/settings/invitations"),
+        ),
+        (
+            "[data-nav='settings-roles']",
+            pathname.ends_with("/settings/roles"),
+        ),
+        (
+            "[data-nav='settings-audit']",
+            pathname.ends_with("/settings/audit"),
+        ),
+        (
+            "[data-nav='settings-danger']",
+            pathname.ends_with("/settings/danger"),
+        ),
     ];
 
+    // Clear previous actives on all data-nav links, then set matches.
+    if let Ok(nodes) = document.query_selector_all("[data-nav]") {
+        for i in 0..nodes.length() {
+            if let Some(node) = nodes.item(i) {
+                if let Some(el) = node.dyn_ref::<web_sys::Element>() {
+                    let _ = el.class_list().remove_1("is-active");
+                }
+            }
+        }
+    }
+
     for (selector, active) in states {
-        if let Ok(Some(element)) = document.query_selector(selector) {
-            let _ = element.class_list().toggle_with_force("is-active", active);
+        if active {
+            if let Ok(Some(element)) = document.query_selector(selector) {
+                let _ = element.class_list().add_1("is-active");
+            }
         }
     }
 }
