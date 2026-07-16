@@ -33,6 +33,13 @@ pub const PANEL: &str =
 pub const PANEL_COMPACT: &str =
     "rounded-[10px] border border-border-subtle bg-surface-subtle p-3.5 shadow-none";
 
+/// Block panel (legacy `.panel-inline`) — no CSS grid.
+pub const PANEL_INLINE: &str =
+    "block min-w-0 rounded-[14px] border border-border-subtle bg-surface p-6";
+
+/// Panel heading (legacy `.panel h2`).
+pub const PANEL_TITLE: &str = "m-0 text-lg font-semibold tracking-tight";
+
 // ── Fields ─────────────────────────────────────────────────────────────────
 
 /// Vertical field stack (legacy `.auth-fields`).
@@ -46,6 +53,9 @@ pub const FIELD_HINT: &str = "text-xs leading-normal text-tertiary";
 
 /// Text input chrome (legacy `.auth-input`).
 pub const INPUT: &str = "w-full min-h-11 rounded-[10px] border border-border-strong bg-surface px-3 py-2.5 text-primary outline-none placeholder:text-tertiary focus:border-focus focus:shadow-[0_0_0_3px_color-mix(in_srgb,var(--focus-ring)_18%,transparent)]";
+
+/// Multi-line field (legacy `.panel textarea`).
+pub const TEXTAREA: &str = "w-full min-h-[120px] resize-y rounded-[10px] border border-border-strong bg-surface px-3 py-2.5 text-primary outline-none placeholder:text-tertiary focus:border-focus focus:shadow-[0_0_0_3px_color-mix(in_srgb,var(--focus-ring)_18%,transparent)]";
 
 // ── Feedback ───────────────────────────────────────────────────────────────
 
@@ -150,12 +160,17 @@ pub const ACCOUNT_CARD_ACTIONS: &str =
 /// Monospace value (legacy `.mono-value`). Safe to use outside account too.
 pub const MONO_VALUE: &str = "font-mono text-xs tracking-tight";
 
-/// Key/value definition list parts (legacy `.kv` dt/dd).
+/// Key/value definition list (legacy `.kv`) + dt/dd parts.
+pub const KV_LIST: &str =
+    "m-0 grid grid-cols-[minmax(100px,max-content)_minmax(0,1fr)] gap-x-4 gap-y-2.5";
 pub const KV_DT: &str = "text-[13px] leading-normal text-secondary";
 pub const KV_DD: &str = "m-0 min-w-0 break-words text-[13px] text-primary";
 
-/// Muted helper (legacy `.board-muted`).
+/// Muted helper (legacy `.board-muted` / `.muted`).
 pub const MUTED: &str = "m-0 text-[13px] text-tertiary";
+
+/// Checkbox / switch row (legacy `.inline-field`).
+pub const INLINE_FIELD: &str = "!flex items-center gap-2 [&_input]:min-h-0 [&_input]:w-auto";
 
 /// Screen-reader only (legacy `.sr-only`).
 pub const SR_ONLY: &str = "absolute m-[-1px] h-px w-px overflow-hidden whitespace-nowrap border-0 p-0 [clip:rect(0,0,0,0)]";
@@ -197,6 +212,13 @@ pub const SESSION_ASSURANCE: &str = "whitespace-nowrap rounded-full border borde
 
 /// Client-data slot (display:contents host for async islands).
 pub const CLIENT_DATA_SLOT: &str = "contents";
+
+/// Prefixed URL control (legacy `.slug-input-group` / `.onboarding-slug-row`).
+pub const SLUG_INPUT_GROUP: &str = "flex w-full min-h-11 items-stretch overflow-hidden rounded-[10px] border border-border-strong bg-surface focus-within:border-focus focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--focus-ring)_18%,transparent)]";
+pub const SLUG_INPUT_PREFIX: &str = "inline-flex flex-none items-center whitespace-nowrap border-0 border-r border-border-subtle bg-[var(--bg-muted,#f4f4f5)] px-3 font-mono text-[13px] leading-none text-secondary";
+/// Compose with `INPUT` + `MONO_VALUE` via `with_extra` / format.
+pub const SLUG_INPUT_FIELD: &str =
+    "!min-h-0 !w-auto min-w-0 flex-auto !rounded-none !border-0 !shadow-none focus:!border-0 focus:!shadow-none";
 
 // ── MFA ────────────────────────────────────────────────────────────────────
 
@@ -792,3 +814,88 @@ pub const WS_AUDIT_METADATA_H3: &str = "mb-1 mt-0 text-[0.95rem]";
 pub const WS_AUDIT_METADATA_P: &str = "mb-2 mt-0";
 pub const WS_AUDIT_JSON: &str = "mb-4 mt-0 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border-subtle bg-[color-mix(in_srgb,var(--text-primary)_4%,transparent)] px-[0.85rem] py-3 font-mono text-xs leading-snug";
 pub const WS_MONO: &str = "font-mono text-[0.78rem]";
+
+// ── Organizations (workspace picker + create modal) ────────────────────────
+
+/// Organizations page root (legacy `.orgs-page`).
+pub const ORG_PAGE: &str = "col-span-full grid max-w-[960px] min-w-0 gap-[22px]";
+pub const ORG_TOOLBAR: &str =
+    "grid items-end gap-4 grid-cols-[minmax(0,1fr)_auto] max-[720px]:grid-cols-1 max-[720px]:[&>button]:w-full";
+pub const ORG_TOOLBAR_COPY: &str = "min-w-0";
+/// Eyebrow / kicker — same token as `BOARD_KICKER` (legacy `.dash-eyebrow`).
+pub const ORG_KICKER: &str =
+    "m-0 mb-2 text-[11px] font-[650] uppercase tracking-[0.08em] text-tertiary";
+pub const ORG_TOOLBAR_TITLE: &str =
+    "m-0 text-[clamp(24px,2.8vw,30px)] font-[650] tracking-[-0.035em]";
+pub const ORG_TOOLBAR_SUB: &str =
+    "mt-2 mb-0 max-w-[52ch] text-sm leading-normal text-secondary";
+
+pub const ORG_LIST_PANEL: &str =
+    "min-w-0 overflow-hidden rounded-2xl border border-border-subtle bg-surface";
+pub const ORG_LIST: &str = "m-0 grid list-none gap-0 p-0";
+pub const ORG_ROW: &str = "grid items-center gap-3.5 border-b border-border-subtle px-4 py-3.5 transition-colors duration-150 last:border-b-0 hover:bg-surface-subtle grid-cols-[auto_minmax(0,1fr)_auto] max-[720px]:grid-cols-[auto_minmax(0,1fr)]";
+pub const ORG_ROW_ACTIVE: &str =
+    "bg-[color-mix(in_srgb,var(--success)_6%,var(--bg-surface))]";
+pub const ORG_AVATAR: &str = "inline-flex h-[42px] w-[42px] flex-none items-center justify-center rounded-xl text-[13px] font-bold tracking-wide text-white";
+pub const ORG_ROW_MAIN: &str = "grid min-w-0 gap-1.5";
+pub const ORG_ROW_TITLE: &str = "flex min-w-0 flex-wrap items-center gap-2 [&_strong]:max-w-full [&_strong]:truncate [&_strong]:text-sm [&_strong]:font-[650] [&_strong]:tracking-tight";
+pub const ORG_ROW_META: &str = "flex flex-wrap items-center gap-2";
+pub const ORG_BADGE: &str = "rounded-full border border-border-subtle bg-surface-subtle px-2 py-[3px] text-[11px] font-[650] lowercase text-secondary";
+pub const ORG_BADGE_ACTIVE: &str = "rounded-full border border-[color-mix(in_srgb,var(--success)_30%,var(--border-subtle))] bg-[color-mix(in_srgb,var(--success)_14%,var(--bg-surface))] px-2 py-[3px] text-[11px] font-[650] normal-case text-success";
+pub const ORG_STATUS: &str = "text-xs text-tertiary";
+pub const ORG_ROW_ACTIONS: &str =
+    "flex gap-2 max-[720px]:col-span-full max-[720px]:[&_a]:w-full max-[720px]:[&_button]:w-full";
+pub const ORG_EMPTY: &str = "grid justify-items-center gap-2.5 px-6 py-12 text-center";
+pub const ORG_EMPTY_MARK: &str = "mb-1.5 inline-flex h-[52px] w-[52px] items-center justify-center rounded-2xl bg-inverse text-lg font-bold text-on-inverse";
+pub const ORG_EMPTY_TITLE: &str = "m-0 text-lg font-[650] tracking-tight";
+pub const ORG_EMPTY_P: &str = "m-0 mb-2 max-w-[36ch] text-sm leading-normal text-secondary";
+pub const ORG_SKELETON: &str = "grid gap-0 [&_span]:block [&_span]:h-[72px] [&_span]:rounded-xl [&_span]:border-b [&_span]:border-border-subtle [&_span]:bg-surface-subtle";
+
+/// Create-organization modal (migrated off residual `.board-modal*` / `.orgs-create-*`).
+pub const ORG_CREATE_BACKDROP: &str =
+    "fixed inset-0 z-[90] grid place-items-center bg-overlay-scrim px-4 py-6 overscroll-contain";
+/// Overflow visible so focus rings are not clipped (unlike shared vault/board modals).
+pub const ORG_CREATE_MODAL: &str = "grid w-[min(600px,100%)] max-w-[600px] gap-[18px] overflow-visible rounded-[18px] border border-border-subtle bg-surface p-5 shadow-[0_24px_64px_rgba(0,0,0,0.22)]";
+pub const ORG_CREATE_BODY: &str = "grid min-h-0 overflow-visible";
+pub const ORG_CREATE_FORM: &str = "grid gap-5";
+pub const ORG_CREATE_FIELDS: &str = "grid gap-[18px] p-1";
+pub const ORG_CREATE_ACTIONS: &str = "flex items-center justify-end gap-2.5 border-t border-border-subtle pt-[18px] max-[720px]:grid max-[720px]:grid-cols-1 max-[720px]:[&_button]:w-full";
+/// Reuse vault modal head/close chrome for create dialog.
+pub const ORG_CREATE_HEAD: &str = "flex items-start justify-between gap-4";
+pub const ORG_CREATE_HEAD_TITLE: &str = "m-0 mb-1 text-lg font-[650] tracking-tight";
+pub const ORG_CREATE_HEAD_P: &str = "m-0 text-[13px] text-secondary";
+pub const ORG_CREATE_CLOSE: &str = "flex-none cursor-pointer rounded-full border border-border-subtle bg-surface-subtle px-3 py-2 text-xs font-[650] text-secondary hover:text-primary disabled:cursor-wait disabled:opacity-55";
+pub const ORG_CREATE_KICKER: &str =
+    "m-0 mb-[7px] text-[11px] font-[650] uppercase tracking-[0.08em] text-tertiary";
+
+/// Org avatar with deterministic tone background (0–5).
+pub fn org_avatar_class(tone: u8) -> String {
+    let bg = match tone % 6 {
+        0 => "bg-[#0f7b58]",
+        1 => "bg-[#2563eb]",
+        2 => "bg-[#a05a00]",
+        3 => "bg-[#0d9488]",
+        4 => "bg-[#b45309]",
+        _ => "bg-[#475569]",
+    };
+    with_extra(ORG_AVATAR, Some(bg))
+}
+
+/// Active vs idle workspace row.
+pub fn org_row_class(is_active: bool) -> String {
+    if is_active {
+        with_extra(ORG_ROW, Some(ORG_ROW_ACTIVE))
+    } else {
+        ORG_ROW.to_owned()
+    }
+}
+
+// ── Workspace onboarding (focused first-workspace create) ──────────────────
+
+/// Compose with residual `.page` shell if present, or use alone.
+pub const ONBOARDING_PAGE: &str = "mx-auto max-w-[520px] px-5 pb-20 pt-12";
+pub const ONBOARDING_CARD: &str = "grid gap-2";
+pub const ONBOARDING_TITLE: &str = "m-0 text-[1.6rem] font-[650] tracking-tight";
+pub const ONBOARDING_LEDE: &str =
+    "m-0 mb-4 max-w-[42ch] text-sm leading-[1.55] text-secondary";
+pub const ONBOARDING_FORM: &str = "grid gap-3.5";

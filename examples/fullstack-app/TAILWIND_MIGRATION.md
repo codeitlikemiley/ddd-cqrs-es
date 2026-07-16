@@ -22,10 +22,10 @@
 | 3.1 | Auth surfaces (pages + forms → constants) | **done** (legacy CSS still present until unused) |
 | 3.2 | Public / error shells | **done** |
 | 3.3–3.5 | Account domain (MFA/passkeys/vault/profile/sessions/providers) → utilities | **done** (account CSS deleted; shared mono/kv/modal CSS remains for other domains) |
-| 3.6 | Organizations shared buttons/fields | **partial** |
-| 3.7–3.8 | Dashboard board + resources shared primitives | **done** (board/resources CSS deleted; shared board-modal/muted kept for org create residual) |
+| 3.6 | Organizations shared buttons/fields | **done** (orgs list/create modal pure Tailwind; CSS deleted) |
+| 3.7–3.8 | Dashboard board + resources shared primitives | **done** (board/resources CSS deleted; scroll-lock class + `board-pulse` keyframes remain) |
 | 3.9 | Workspace settings shared primitives | **done** (domain pages pure Tailwind; shell chrome residual until Phase 4/5) |
-| 3.10–3.11 | Admin + onboarding | **partial** |
+| 3.10–3.11 | Admin + onboarding | **done** (admin forms/KV/inline-field + onboarding/slug-input utilities; domain CSS deleted) |
 | 4 | Workspace shell (sidebar modes, drawer, flyouts) | pending |
 | 5 | Closeout: delete residual CSS, update smokes, dual-sync, docs | pending |
 
@@ -36,7 +36,8 @@
 - 2026-07-16: Account domain pure Tailwind — MFA/passkeys/vault/profile/sessions/providers markup → `classes.rs` utilities; deleted matching account CSS. Left `.vault-modal-confirm` stub + shared `.mono-value`/`.kv`/board-modal for other domains.
 - 2026-07-16: Dashboard board + resources pure Tailwind — `dashboard/board/*` + `resources.rs` → `BOARD_*` / shared constants; deleted board page/tile/rq CSS. Kept `.board-modal*` / `.board-muted` + `@keyframes board-pulse` for org-create residual + live-dot animation (settings later moved to `VAULT_MODAL_*`).
 - 2026-07-16: Workspace settings domain pure Tailwind — `workspace_settings/{general,members,invitations,roles,audit,danger,shared}` → `WS_*` / vault modal constants; mobile card tables + danger full-width via utilities; deleted domain settings CSS + filter-combobox residual. Kept settings shell chrome (sidebar/nav/topbar/content) + org `board-modal*`.
-- Next: orgs/admin domain classes, then workspace shell chrome, then residual closeout.
+- 2026-07-16: Organizations + admin + onboarding pure Tailwind — `organizations/**`, `admin/**`, onboarding panel/page, slug-input → `ORG_*` / `ONBOARDING_*` / `SLUG_INPUT_*` / shared `KV_LIST`/`INLINE_FIELD`/`TEXTAREA`; create modal off residual `board-modal*`; deleted orgs/admin/onboarding/dash/board-modal (except `html.board-modal-open` scroll lock + `@keyframes board-pulse`). Workspace shell residual remains for Phase 4.
+- Next: workspace shell chrome, then residual closeout.
 
 ## Residual CSS allowlist
 

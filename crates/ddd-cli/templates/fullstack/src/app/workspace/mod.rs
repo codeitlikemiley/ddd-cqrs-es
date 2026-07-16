@@ -25,8 +25,9 @@ use web_sys::window;
 #[cfg(feature = "hydrate")]
 use crate::app::{bind_user_menu_dismiss, bind_workspace_nav_active, init_workspace_sidebar};
 use crate::ui::classes::{
-    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
-    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+    BANNER_ERROR, BTN_PRIMARY, FIELD, INPUT, MONO_VALUE, MUTED, ONBOARDING_CARD, ONBOARDING_FORM,
+    ONBOARDING_LEDE, ONBOARDING_PAGE, ONBOARDING_TITLE, PANEL, SECTION_LABEL, SLUG_INPUT_FIELD,
+    SLUG_INPUT_GROUP, SLUG_INPUT_PREFIX, with_extra,
 };
 
 /// Persistent workspace chrome. Children render in the main content outlet.
@@ -174,9 +175,9 @@ pub fn WorkspaceOnboardingGate() -> impl IntoView {
 
 #[component]
 pub fn WorkspaceOnboardingPage() -> impl IntoView {
-    // Minimal chrome — Linear-style focused create.
+    // Minimal chrome — Linear-style focused create. Residual `.page` / `.page-brand*` shell CSS.
     view! {
-        <div class="page onboarding-page">
+        <div class=format!("page {ONBOARDING_PAGE}")>
             <header class="page-brand">
                 <a class="page-brand-link" href="/" aria-label="wasi-auth home">
                     <span class="page-brand-mark" aria-hidden="true">"d"</span>
@@ -235,15 +236,21 @@ pub fn WorkspaceOnboardingPanel() -> impl IntoView {
         out.trim_matches('-').chars().take(48).collect()
     };
 
+    let slug_input_class = with_extra(
+        &with_extra(INPUT, Some(SLUG_INPUT_FIELD)),
+        Some(MONO_VALUE),
+    );
+    let card_class = with_extra(PANEL, Some(ONBOARDING_CARD));
+
     view! {
-        <section class=format!("{}{}", PANEL, " onboarding-card")>
+        <section class=card_class>
             <p class=SECTION_LABEL>"Welcome"</p>
-            <h1 class="onboarding-title">"Create your workspace"</h1>
-            <p class="onboarding-lede">
+            <h1 class=ONBOARDING_TITLE>"Create your workspace"</h1>
+            <p class=ONBOARDING_LEDE>
                 "Workspaces hold your team, secret vault, and connectors. "
                 "Pick a name and a short URL — you can invite others later."
             </p>
-            <div class="onboarding-form">
+            <div class=ONBOARDING_FORM>
                 <label class=FIELD>
                     <span>"Workspace name"</span>
                     <input
@@ -264,10 +271,10 @@ pub fn WorkspaceOnboardingPanel() -> impl IntoView {
                 </label>
                 <label class=FIELD>
                     <span>"Workspace URL"</span>
-                    <div class="slug-input-group" role="group" aria-label="Workspace URL">
-                        <span class="slug-input-prefix" aria-hidden="true">"/org/"</span>
+                    <div class=SLUG_INPUT_GROUP role="group" aria-label="Workspace URL">
+                        <span class=SLUG_INPUT_PREFIX aria-hidden="true">"/org/"</span>
                         <input
-                            class=format!("{}{}", INPUT, " slug-input-field mono-value")
+                            class=slug_input_class.clone()
                             type="text"
                             maxlength="48"
                             placeholder="acme"
@@ -279,7 +286,7 @@ pub fn WorkspaceOnboardingPanel() -> impl IntoView {
                             }
                         />
                     </div>
-                    <span class="board-muted">"Used in links like /org/acme/vault. Letters, numbers, hyphens."</span>
+                    <span class=MUTED>"Used in links like /org/acme/vault. Letters, numbers, hyphens."</span>
                 </label>
                 <button
                     type="button"

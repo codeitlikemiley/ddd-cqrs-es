@@ -10,7 +10,7 @@ use crate::app::helpers::{
 };
 use crate::app::{browser_load, get_workspace_settings_context, list_organizations};
 use crate::ui::classes::{
-    BANNER_ERROR, MONO_VALUE, PANEL, RESULT_LINE, WS_REDIRECT, with_extra,
+    BANNER_ERROR, MONO_VALUE, ORG_KICKER, PANEL, RESULT_LINE, WS_REDIRECT, with_extra,
 };
 use leptos::prelude::*;
 use leptos_router::components::Outlet;
@@ -82,7 +82,7 @@ pub fn WorkspaceSettingsShell() -> impl IntoView {
                         </span>
                     </label>
                     <div class="workspace-settings-topbar-title">
-                        <span class="dash-eyebrow">"Workspace"</span>
+                        <span class=ORG_KICKER>"Workspace"</span>
                         <strong>"Settings"</strong>
                     </div>
                 </header>

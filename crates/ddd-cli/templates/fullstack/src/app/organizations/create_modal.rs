@@ -7,8 +7,10 @@
 use crate::app::helpers::action_result_text;
 use crate::app::{CreateOrganization, create_organization};
 use crate::ui::classes::{
-    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
-    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+    BANNER_ERROR, BTN_PRIMARY, BTN_SECONDARY, FIELD, FIELD_HINT, INPUT, MONO_VALUE,
+    ORG_CREATE_ACTIONS, ORG_CREATE_BACKDROP, ORG_CREATE_BODY, ORG_CREATE_CLOSE, ORG_CREATE_FIELDS,
+    ORG_CREATE_FORM, ORG_CREATE_HEAD, ORG_CREATE_HEAD_P, ORG_CREATE_HEAD_TITLE, ORG_CREATE_KICKER,
+    ORG_CREATE_MODAL, SLUG_INPUT_FIELD, SLUG_INPUT_GROUP, SLUG_INPUT_PREFIX, with_extra,
 };
 use leptos::prelude::*;
 
@@ -60,6 +62,7 @@ pub fn CreateOrganizationModal(
         }
     });
 
+    // Lock document scroll while open (shared class with dashboard board modals).
     Effect::new(move |_| {
         let is_open = open.get();
         #[cfg(feature = "hydrate")]
@@ -89,10 +92,15 @@ pub fn CreateOrganizationModal(
         }
     });
 
+    let slug_input_class = with_extra(
+        &with_extra(INPUT, Some(SLUG_INPUT_FIELD)),
+        Some(MONO_VALUE),
+    );
+
     view! {
         <Show when=move || open.get()>
             <div
-                class="board-modal-backdrop orgs-create-backdrop"
+                class=ORG_CREATE_BACKDROP
                 role="presentation"
                 tabindex="-1"
                 on:click=move |_| {
@@ -108,33 +116,33 @@ pub fn CreateOrganizationModal(
                 on:wheel=move |event| event.stop_propagation()
             >
                 <div
-                    class="board-modal orgs-create-modal"
+                    class=ORG_CREATE_MODAL
                     role="dialog"
                     aria-modal="true"
                     aria-labelledby="org-create-title"
                     aria-describedby="org-create-description"
                     on:click=move |event| event.stop_propagation()
                 >
-                    <header class="board-modal-head">
+                    <header class=ORG_CREATE_HEAD>
                         <div>
-                            <p class="dash-eyebrow">"New workspace"</p>
-                            <h2 id="org-create-title">"Create organization"</h2>
-                            <p id="org-create-description">
+                            <p class=ORG_CREATE_KICKER>"New workspace"</p>
+                            <h2 id="org-create-title" class=ORG_CREATE_HEAD_TITLE>"Create organization"</h2>
+                            <p id="org-create-description" class=ORG_CREATE_HEAD_P>
                                 "Choose a recognizable name and URL. You will become the owner."
                             </p>
                         </div>
                         <button
                             type="button"
-                            class="board-modal-close"
+                            class=ORG_CREATE_CLOSE
                             disabled=move || create_pending.get()
                             on:click=move |_| set_open.set(false)
                         >
                             "Close"
                         </button>
                     </header>
-                    <div class="board-modal-body orgs-create-body">
+                    <div class=ORG_CREATE_BODY>
                         <form
-                            class="orgs-create-form"
+                            class=ORG_CREATE_FORM
                             on:submit=move |event| {
                                 event.prevent_default();
                                 let value = name.get_untracked().trim().to_owned();
@@ -148,7 +156,7 @@ pub fn CreateOrganizationModal(
                                 });
                             }
                         >
-                            <div class="orgs-create-fields">
+                            <div class=ORG_CREATE_FIELDS>
                                 <label class=FIELD>
                                     <span>"Organization name"</span>
                                     <input
@@ -167,14 +175,14 @@ pub fn CreateOrganizationModal(
                                             }
                                         }
                                     />
-                                    <small>"Use the name teammates will recognize in the workspace switcher."</small>
+                                    <small class=FIELD_HINT>"Use the name teammates will recognize in the workspace switcher."</small>
                                 </label>
                                 <label class=FIELD>
                                     <span>"Workspace URL"</span>
-                                    <div class="slug-input-group" role="group" aria-label="Workspace URL">
-                                        <span class="slug-input-prefix" aria-hidden="true">"/org/"</span>
+                                    <div class=SLUG_INPUT_GROUP role="group" aria-label="Workspace URL">
+                                        <span class=SLUG_INPUT_PREFIX aria-hidden="true">"/org/"</span>
                                         <input
-                                            class=format!("{}{}", INPUT, " slug-input-field mono-value")
+                                            class=slug_input_class.clone()
                                             type="text"
                                             maxlength="48"
                                             autocomplete="off"
@@ -186,7 +194,7 @@ pub fn CreateOrganizationModal(
                                             }
                                         />
                                     </div>
-                                    <small>"Lowercase letters, numbers, and hyphens only."</small>
+                                    <small class=FIELD_HINT>"Lowercase letters, numbers, and hyphens only."</small>
                                 </label>
                             </div>
                             <Show when=move || {
@@ -194,7 +202,7 @@ pub fn CreateOrganizationModal(
                             }>
                                 <p class=BANNER_ERROR>{move || action_result_text(create_value.get())}</p>
                             </Show>
-                            <div class="orgs-create-actions">
+                            <div class=ORG_CREATE_ACTIONS>
                                 <button
                                     type="button"
                                     class=BTN_SECONDARY

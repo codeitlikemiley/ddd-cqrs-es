@@ -13,8 +13,11 @@ use crate::app::{
     select_organization,
 };
 use crate::ui::classes::{
-    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
-    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+    BANNER_ERROR, BTN_PRIMARY, BTN_SECONDARY, MONO_VALUE, ORG_BADGE, ORG_BADGE_ACTIVE, ORG_EMPTY,
+    ORG_EMPTY_MARK, ORG_EMPTY_P, ORG_EMPTY_TITLE, ORG_KICKER, ORG_LIST, ORG_LIST_PANEL, ORG_PAGE,
+    ORG_ROW_ACTIONS, ORG_ROW_MAIN, ORG_ROW_META, ORG_ROW_TITLE, ORG_SKELETON, ORG_STATUS,
+    ORG_TOOLBAR, ORG_TOOLBAR_COPY, ORG_TOOLBAR_SUB, ORG_TOOLBAR_TITLE, org_avatar_class,
+    org_row_class, with_extra,
 };
 use leptos::prelude::*;
 
@@ -39,12 +42,12 @@ pub fn OrganizationsHome() -> impl IntoView {
     });
 
     view! {
-        <div class="orgs-page">
-            <header class="orgs-toolbar">
-                <div class="orgs-toolbar-copy">
-                    <p class="dash-eyebrow">"Tenancy"</p>
-                    <h2 class="orgs-toolbar-title">"Your workspaces"</h2>
-                    <p class="orgs-toolbar-sub">
+        <div class=ORG_PAGE>
+            <header class=ORG_TOOLBAR>
+                <div class=ORG_TOOLBAR_COPY>
+                    <p class=ORG_KICKER>"Tenancy"</p>
+                    <h2 class=ORG_TOOLBAR_TITLE>"Your workspaces"</h2>
+                    <p class=ORG_TOOLBAR_SUB>
                         "The first workspace is the default after sign-in. Select another to switch the active tenant."
                     </p>
                 </div>
@@ -61,7 +64,7 @@ pub fn OrganizationsHome() -> impl IntoView {
                 <p class=BANNER_ERROR>{move || action_result_text(select_value.get())}</p>
             </Show>
 
-            <section class="orgs-list-panel" aria-label="Workspace list">
+            <section class=ORG_LIST_PANEL aria-label="Workspace list">
                 {move || {
                     let active_tenant = session
                         .get()
@@ -70,10 +73,10 @@ pub fn OrganizationsHome() -> impl IntoView {
                         .filter(|value| !value.trim().is_empty());
                     match organizations.get() {
                         Some(Ok(response)) if response.organizations.is_empty() => view! {
-                            <div class="orgs-empty">
-                                <div class="orgs-empty-mark" aria-hidden="true">"W"</div>
-                                <h3>"No workspaces yet"</h3>
-                                <p>"Create your first workspace to invite teammates and manage roles."</p>
+                            <div class=ORG_EMPTY>
+                                <div class=ORG_EMPTY_MARK aria-hidden="true">"W"</div>
+                                <h3 class=ORG_EMPTY_TITLE>"No workspaces yet"</h3>
+                                <p class=ORG_EMPTY_P>"Create your first workspace to invite teammates and manage roles."</p>
                                 <button
                                     type="button"
                                     class=BTN_PRIMARY
@@ -84,7 +87,7 @@ pub fn OrganizationsHome() -> impl IntoView {
                             </div>
                         }.into_any(),
                         Some(Ok(response)) => view! {
-                            <ul class="orgs-list">
+                            <ul class=ORG_LIST>
                                 <For
                                     each=move || response.organizations.clone()
                                     key=|organization| organization.organization_id.clone()
@@ -97,6 +100,8 @@ pub fn OrganizationsHome() -> impl IntoView {
                                             .is_some_and(|id| id == &organization_id);
                                         let monogram = org_monogram(&organization.name);
                                         let tone = org_tone_index(&organization.name);
+                                        let avatar_class = org_avatar_class(tone);
+                                        let row_class = org_row_class(is_active);
                                         let role = organization.current_user_role.clone();
                                         let status = organization.status.clone();
                                         let vault_href = if org_slug.is_empty() {
@@ -136,43 +141,40 @@ pub fn OrganizationsHome() -> impl IntoView {
                                             .into_any()
                                         };
                                         view! {
-                                            <li
-                                                class="orgs-row"
-                                                class:is-active=is_active
-                                            >
+                                            <li class=row_class>
                                                 <div
-                                                    class="orgs-avatar"
-                                                    data-tone=tone.to_string()
+                                                    class=avatar_class
                                                     aria-hidden="true"
                                                 >
                                                     {monogram}
                                                 </div>
-                                                <div class="orgs-row-main">
-                                                    <div class="orgs-row-title">
+                                                <div class=ORG_ROW_MAIN>
+                                                    <div class=ORG_ROW_TITLE>
                                                         <strong>{organization.name.clone()}</strong>
                                                         {if is_active {
                                                             view! {
-                                                                <span class="orgs-badge orgs-badge-active">"Active"</span>
+                                                                <span class=ORG_BADGE_ACTIVE>"Active"</span>
                                                             }
                                                             .into_any()
                                                         } else {
                                                             view! {}.into_any()
                                                         }}
                                                     </div>
-                                                    <div class="orgs-row-meta">
-                                                        <span class="orgs-badge">{role}</span>
-                                                        <span class="orgs-status">{status}</span>
+                                                    <div class=ORG_ROW_META>
+                                                        <span class=ORG_BADGE>{role}</span>
+                                                        <span class=ORG_STATUS>{status}</span>
                                                         {if org_slug.is_empty() {
                                                             view! {}.into_any()
                                                         } else {
+                                                            let slug_class = with_extra(ORG_STATUS, Some(MONO_VALUE));
                                                             view! {
-                                                                <span class="orgs-status mono-value">{format!("/{org_slug}")}</span>
+                                                                <span class=slug_class>{format!("/{org_slug}")}</span>
                                                             }
                                                             .into_any()
                                                         }}
                                                     </div>
                                                 </div>
-                                                <div class="orgs-row-actions">
+                                                <div class=ORG_ROW_ACTIONS>
                                                     {action}
                                                 </div>
                                             </li>
@@ -185,7 +187,7 @@ pub fn OrganizationsHome() -> impl IntoView {
                             <p class=BANNER_ERROR>{server_error_text(error)}</p>
                         }.into_any(),
                         None => view! {
-                            <div class="orgs-skeleton" aria-busy="true">
+                            <div class=ORG_SKELETON aria-busy="true">
                                 <span></span><span></span><span></span>
                             </div>
                         }.into_any(),
