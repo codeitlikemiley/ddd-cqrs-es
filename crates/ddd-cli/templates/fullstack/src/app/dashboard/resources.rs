@@ -13,8 +13,13 @@ use crate::app::{
     UpsertDashboardQuery, UpsertDashboardResource,
 };
 use crate::ui::classes::{
-    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
-    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+    BANNER_ERROR, BANNER_OK, BOARD_JSON_PREVIEW_LG, BOARD_LIST, BOARD_LIST_GROW, BOARD_LIST_META,
+    BOARD_LIST_ROW, BOARD_LIST_STRONG, BOARD_MODAL_BACKDROP, BOARD_MODAL_CLOSE, BOARD_MODAL_HEAD,
+    BOARD_MODAL_HEAD_P, BOARD_MODAL_HEAD_TITLE, BOARD_MODAL_RESOURCES, BOARD_RQ_ACTIONS,
+    BOARD_RQ_BODY, BOARD_RQ_CARD, BOARD_RQ_CARD_DISABLED, BOARD_RQ_CARD_P, BOARD_RQ_CARD_TITLE,
+    BOARD_RQ_CATALOG, BOARD_RQ_CHECK, BOARD_RQ_FORM, BOARD_RQ_FORM_H3, BOARD_RQ_LISTS,
+    BOARD_RQ_OUTPUT, BOARD_RQ_ROW, BOARD_RQ_TAB, BOARD_RQ_TAB_ACTIVE, BOARD_RQ_TABS,
+    BOARD_RQ_TEXTAREA, BOARD_TILE_REMOVE, BTN_PRIMARY, BTN_SECONDARY, FIELD, INPUT, MUTED, with_extra,
 };
 
 fn event_target_value(event: &leptos::ev::Event) -> String {
@@ -196,47 +201,47 @@ pub fn resources_queries_modal(
             }
             view! {
                 <div
-                    class="board-modal-backdrop"
+                    class=BOARD_MODAL_BACKDROP
                     role="presentation"
                     on:click=move |_| set_open.set(false)
                     on:wheel=move |e| e.stop_propagation()
                 >
                     <div
-                        class="board-modal board-modal-wide board-modal-resources"
+                        class=BOARD_MODAL_RESOURCES
                         role="dialog"
                         aria-modal="true"
                         on:click=move |e| e.stop_propagation()
                     >
-                        <header class="board-modal-head">
+                        <header class=BOARD_MODAL_HEAD>
                             <div>
-                                <h2>"Resources & queries"</h2>
-                                <p>"Connect once (auth + headers), write queries, test server-side. Secrets live in the vault — never returned after save."</p>
+                                <h2 class=BOARD_MODAL_HEAD_TITLE>"Resources & queries"</h2>
+                                <p class=BOARD_MODAL_HEAD_P>"Connect once (auth + headers), write queries, test server-side. Secrets live in the vault — never returned after save."</p>
                             </div>
-                            <button type="button" class="board-modal-close" on:click=move |_| set_open.set(false)>"Close"</button>
+                            <button type="button" class=BOARD_MODAL_CLOSE on:click=move |_| set_open.set(false)>"Close"</button>
                         </header>
 
-                        <div class="board-rq-tabs" role="tablist">
-                            <button type="button" class="board-rq-tab" class:is-active=move || tab.get() == "catalog"
+                        <div class=BOARD_RQ_TABS role="tablist">
+                            <button type="button" class=move || if tab.get() == "catalog" { BOARD_RQ_TAB_ACTIVE } else { BOARD_RQ_TAB }
                                 on:click=move |_| tab.set("catalog".into())>"Catalog"</button>
-                            <button type="button" class="board-rq-tab" class:is-active=move || tab.get() == "resource"
+                            <button type="button" class=move || if tab.get() == "resource" { BOARD_RQ_TAB_ACTIVE } else { BOARD_RQ_TAB }
                                 on:click=move |_| tab.set("resource".into())>"Resource"</button>
-                            <button type="button" class="board-rq-tab" class:is-active=move || tab.get() == "query"
+                            <button type="button" class=move || if tab.get() == "query" { BOARD_RQ_TAB_ACTIVE } else { BOARD_RQ_TAB }
                                 on:click=move |_| tab.set("query".into())>"Query"</button>
                         </div>
 
                         <p class=BANNER_ERROR hidden=move || form_error.get().is_none()>
                             {move || form_error.get().unwrap_or_default()}
                         </p>
-                        <p class="success-banner" hidden=move || form_ok.get().is_none()>
+                        <p class=BANNER_OK hidden=move || form_ok.get().is_none()>
                             {move || form_ok.get().unwrap_or_default()}
                         </p>
 
-                        <div class="board-modal-body board-rq-body">
+                        <div class=BOARD_RQ_BODY>
                             <Show when=move || tab.get() == "catalog">
-                                <div class="board-rq-catalog">
-                                    <article class="board-rq-card" class:is-disabled=move || !http_enabled>
-                                        <strong>"REST API"</strong>
-                                        <p>"Base URL, Bearer / Basic / API key / OAuth2 client credentials, default headers."</p>
+                                <div class=BOARD_RQ_CATALOG>
+                                    <article class=if http_enabled { BOARD_RQ_CARD } else { BOARD_RQ_CARD_DISABLED }>
+                                        <strong class=BOARD_RQ_CARD_TITLE>"REST API"</strong>
+                                        <p class=BOARD_RQ_CARD_P>"Base URL, Bearer / Basic / API key / OAuth2 client credentials, default headers."</p>
                                         <button type="button" class=BTN_PRIMARY disabled=move || !http_enabled
                                             on:click=move |_| {
                                                 res_kind.set("rest".into());
@@ -244,9 +249,9 @@ pub fn resources_queries_modal(
                                             }
                                         >"Connect REST"</button>
                                     </article>
-                                    <article class="board-rq-card" class:is-disabled=move || !postgres_enabled>
-                                        <strong>"PostgreSQL"</strong>
-                                        <p>"Host, database, user, password secret, and SSL settings. SELECT-only SQL."</p>
+                                    <article class=if postgres_enabled { BOARD_RQ_CARD } else { BOARD_RQ_CARD_DISABLED }>
+                                        <strong class=BOARD_RQ_CARD_TITLE>"PostgreSQL"</strong>
+                                        <p class=BOARD_RQ_CARD_P>"Host, database, user, password secret, and SSL settings. SELECT-only SQL."</p>
                                         <button type="button" class=BTN_PRIMARY disabled=move || !postgres_enabled
                                             on:click=move |_| {
                                                 res_kind.set("postgres".into());
@@ -254,9 +259,9 @@ pub fn resources_queries_modal(
                                             }
                                         >"Connect Postgres"</button>
                                     </article>
-                                    <article class="board-rq-card">
-                                        <strong>"gRPC"</strong>
-                                        <p>"Unary via JSON gateway (grpc-gateway) today. Native Spin HTTP/2 gRPC is gated."
+                                    <article class=BOARD_RQ_CARD>
+                                        <strong class=BOARD_RQ_CARD_TITLE>"gRPC"</strong>
+                                        <p class=BOARD_RQ_CARD_P>"Unary via JSON gateway (grpc-gateway) today. Native Spin HTTP/2 gRPC is gated."
                                             {if grpc_enabled { " (AUTH_DASHBOARD_GRPC_ENABLED=on)" } else { "" }}
                                         </p>
                                         <button type="button" class=BTN_PRIMARY
@@ -266,14 +271,14 @@ pub fn resources_queries_modal(
                                             }
                                         >"Connect gRPC"</button>
                                     </article>
-                                    <article class="board-rq-card">
-                                        <strong>"App builtins"</strong>
-                                        <p>"Session, orgs, audit, MFA — already on the board as widgets."</p>
+                                    <article class=BOARD_RQ_CARD>
+                                        <strong class=BOARD_RQ_CARD_TITLE>"App builtins"</strong>
+                                        <p class=BOARD_RQ_CARD_P>"Session, orgs, audit, MFA — already on the board as widgets."</p>
                                         <button type="button" class=BTN_SECONDARY disabled=true>"Built-in"</button>
                                     </article>
-                                    <article class="board-rq-card">
-                                        <strong>"Demo connectors"</strong>
-                                        <p>"One-click REST + app Postgres resources, queries, and bound board widgets."</p>
+                                    <article class=BOARD_RQ_CARD>
+                                        <strong class=BOARD_RQ_CARD_TITLE>"Demo connectors"</strong>
+                                        <p class=BOARD_RQ_CARD_P>"One-click REST + app Postgres resources, queries, and bound board widgets."</p>
                                         <button
                                             type="button"
                                             class=BTN_PRIMARY
@@ -284,15 +289,15 @@ pub fn resources_queries_modal(
                                         </button>
                                     </article>
                                 </div>
-                                <div class="board-rq-lists">
+                                <div class=BOARD_RQ_LISTS>
                                     <section>
-                                        <h3>"Connections"</h3>
-                                        <ul class="board-list">
+                                        <h3 class=BOARD_RQ_FORM_H3>"Connections"</h3>
+                                        <ul class=BOARD_LIST>
                                             {move || {
                                                 let list = resources.get();
                                                 if list.is_empty() {
                                                     return view! {
-                                                        <li class="board-muted">
+                                                        <li class=MUTED>
                                                             "No resources yet. Connect REST/Postgres above, or load demos."
                                                         </li>
                                                     }.into_any();
@@ -301,16 +306,16 @@ pub fn resources_queries_modal(
                                                     let id = res.id.clone();
                                                     let id2 = res.id.clone();
                                                     view! {
-                                                        <li class="board-list-row">
-                                                            <div class="board-list-grow">
-                                                                <strong>{res.name.clone()}</strong>
-                                                                <span class="board-list-meta">{format!("{} · {} · auth={}", res.kind.label(), res.detail, res.auth_type)}</span>
+                                                        <li class=BOARD_LIST_ROW>
+                                                            <div class=BOARD_LIST_GROW>
+                                                                <strong class=BOARD_LIST_STRONG>{res.name.clone()}</strong>
+                                                                <span class=BOARD_LIST_META>{format!("{} · {} · auth={}", res.kind.label(), res.detail, res.auth_type)}</span>
                                                             </div>
                                                             <button type="button" class=BTN_SECONDARY on:click=move |_| {
                                                                 qry_resource_id.set(id.clone());
                                                                 tab.set("query".into());
                                                             }>"Query"</button>
-                                                            <button type="button" class="board-tile-remove" aria-label="Delete resource" on:click=move |_| {
+                                                            <button type="button" class=BOARD_TILE_REMOVE aria-label="Delete resource" on:click=move |_| {
                                                                 delete_resource.dispatch(DeleteDashboardResource { resource_id: id2.clone() });
                                                                 resources.update(|l| l.retain(|r| r.id != id2));
                                                             }>"×"</button>
@@ -321,27 +326,27 @@ pub fn resources_queries_modal(
                                         </ul>
                                     </section>
                                     <section>
-                                        <h3>"Queries"</h3>
-                                        <ul class="board-list">
+                                        <h3 class=BOARD_RQ_FORM_H3>"Queries"</h3>
+                                        <ul class=BOARD_LIST>
                                             {move || {
                                                 let list = queries.get();
                                                 if list.is_empty() {
-                                                    return view! { <li class="board-muted">"No queries yet."</li> }.into_any();
+                                                    return view! { <li class=MUTED>"No queries yet."</li> }.into_any();
                                                 }
                                                 list.into_iter().map(|q| {
                                                     let id = q.id.clone();
                                                     let id2 = q.id.clone();
                                                     view! {
-                                                        <li class="board-list-row">
-                                                            <div class="board-list-grow">
-                                                                <strong>{q.name.clone()}</strong>
-                                                                <span class="board-list-meta">{q.detail.clone()}</span>
+                                                        <li class=BOARD_LIST_ROW>
+                                                            <div class=BOARD_LIST_GROW>
+                                                                <strong class=BOARD_LIST_STRONG>{q.name.clone()}</strong>
+                                                                <span class=BOARD_LIST_META>{q.detail.clone()}</span>
                                                             </div>
                                                             <button type="button" class=BTN_SECONDARY on:click=move |_| {
                                                                 run_query.dispatch(RunDashboardQuery { query_id: id.clone() });
                                                                 tab.set("query".into());
                                                             }>"Test"</button>
-                                                            <button type="button" class="board-tile-remove" on:click=move |_| {
+                                                            <button type="button" class=BOARD_TILE_REMOVE on:click=move |_| {
                                                                 delete_query.dispatch(DeleteDashboardQuery { query_id: id2.clone() });
                                                                 queries.update(|l| l.retain(|x| x.id != id2));
                                                             }>"×"</button>
@@ -355,8 +360,8 @@ pub fn resources_queries_modal(
                             </Show>
 
                             <Show when=move || tab.get() == "resource">
-                                <section class="board-sources-form board-rq-form">
-                                    <h3>{move || match res_kind.get().as_str() {
+                                <section class=BOARD_RQ_FORM>
+                                    <h3 class=BOARD_RQ_FORM_H3>{move || match res_kind.get().as_str() {
                                         "postgres" => "PostgreSQL resource",
                                         "grpc" => "gRPC resource",
                                         _ => "REST resource",
@@ -403,12 +408,12 @@ pub fn resources_queries_modal(
                                                 }).collect_view()}
                                             </select>
                                         </label>
-                                        <p class="board-muted">
+                                        <p class=MUTED>
                                             "Empty list? Add secrets in Account → Secret vault, then reopen this dialog."
                                         </p>
                                     </Show>
                                     <Show when=move || res_auth.get() == "api_key">
-                                        <div class="board-rq-row">
+                                        <div class=BOARD_RQ_ROW>
                                             <label class=FIELD><span>"Key name"</span>
                                                 <input class=INPUT prop:value=move || res_api_key_name.get()
                                                     on:input=move |e| res_api_key_name.set(event_target_value(&e)) />
@@ -469,24 +474,24 @@ pub fn resources_queries_modal(
                                         </label>
                                     </Show>
 
-                                    <h3>"Default headers"</h3>
-                                    <ul class="board-list">
+                                    <h3 class=BOARD_RQ_FORM_H3>"Default headers"</h3>
+                                    <ul class=BOARD_LIST>
                                         {move || res_headers.get().into_iter().enumerate().map(|(idx, h)| {
                                             let label = match &h.value {
                                                 HeaderValue::Literal { value } => format!("{}: {value}", h.name),
                                                 HeaderValue::Secret { secret_id } => format!("{}: secret:{secret_id}", h.name),
                                             };
                                             view! {
-                                                <li class="board-list-row">
-                                                    <span class="board-list-meta">{label}</span>
-                                                    <button type="button" class="board-tile-remove" on:click=move |_| {
+                                                <li class=BOARD_LIST_ROW>
+                                                    <span class=BOARD_LIST_META>{label}</span>
+                                                    <button type="button" class=BOARD_TILE_REMOVE on:click=move |_| {
                                                         res_headers.update(|list| { list.remove(idx); });
                                                     }>"×"</button>
                                                 </li>
                                             }
                                         }).collect_view()}
                                     </ul>
-                                    <div class="board-rq-row">
+                                    <div class=BOARD_RQ_ROW>
                                         <label class=FIELD><span>"Header name"</span>
                                             <input class=INPUT prop:value=move || hdr_name.get()
                                                 on:input=move |e| hdr_name.set(event_target_value(&e)) />
@@ -535,7 +540,7 @@ pub fn resources_queries_modal(
                                     </Show>
 
                                     <Show when=move || res_kind.get() == "postgres">
-                                            <div class="board-rq-row">
+                                            <div class=BOARD_RQ_ROW>
                                                 <label class=FIELD><span>"Host"</span>
                                                     <input class=INPUT prop:value=move || pg_host.get()
                                                         on:input=move |e| pg_host.set(event_target_value(&e)) />
@@ -572,11 +577,11 @@ pub fn resources_queries_modal(
                                                     <option value="require">"require"</option>
                                                 </select>
                                             </label>
-                                        <p class="board-muted">"SQL is SELECT-only. Spin must allow outbound postgres://host:port (see spin.toml)."</p>
+                                        <p class=MUTED>"SQL is SELECT-only. Spin must allow outbound postgres://host:port (see spin.toml)."</p>
                                     </Show>
 
                                     <Show when=move || res_kind.get() == "grpc">
-                                        <div class="board-rq-row">
+                                        <div class=BOARD_RQ_ROW>
                                             <label class=FIELD><span>"Host"</span>
                                                 <input class=INPUT prop:value=move || grpc_host.get()
                                                     on:input=move |e| grpc_host.set(event_target_value(&e)) />
@@ -586,7 +591,7 @@ pub fn resources_queries_modal(
                                                     on:input=move |e| grpc_port.set(event_target_value(&e)) />
                                             </label>
                                         </div>
-                                        <label class="board-rq-check">
+                                        <label class=BOARD_RQ_CHECK>
                                             <input type="checkbox" prop:checked=move || grpc_tls.get()
                                                 on:change=move |e| {
                                                     #[cfg(feature = "hydrate")]
@@ -628,7 +633,7 @@ pub fn resources_queries_modal(
                                                 </select>
                                             </label>
                                         </Show>
-                                        <p class="board-muted">"Unary calls POST ProtoJSON to gateway_base_url/service/method. Without a gateway, execution returns a clear capability error."</p>
+                                        <p class=MUTED>"Unary calls POST ProtoJSON to gateway_base_url/service/method. Without a gateway, execution returns a clear capability error."</p>
                                     </Show>
 
                                     <button type="button" class=BTN_PRIMARY on:click=move |_| {
@@ -758,8 +763,8 @@ pub fn resources_queries_modal(
                             </Show>
 
                             <Show when=move || tab.get() == "query">
-                                <section class="board-sources-form board-rq-form">
-                                    <h3>"Query against a resource"</h3>
+                                <section class=BOARD_RQ_FORM>
+                                    <h3 class=BOARD_RQ_FORM_H3>"Query against a resource"</h3>
                                     <label class=FIELD><span>"Name"</span>
                                         <input class=INPUT prop:value=move || qry_name.get()
                                             on:input=move |e| qry_name.set(event_target_value(&e)) />
@@ -785,7 +790,7 @@ pub fn resources_queries_modal(
                                         };
                                         view! {
                                             <Show when=move || !is_pg() && !is_grpc()>
-                                                <div class="board-rq-row">
+                                                <div class=BOARD_RQ_ROW>
                                                     <label class=FIELD><span>"Method"</span>
                                                         <select class=INPUT prop:value=move || qry_method.get()
                                                             on:change=move |e| qry_method.set(event_target_value(&e))>
@@ -803,13 +808,13 @@ pub fn resources_queries_modal(
                                                     </label>
                                                 </div>
                                                 <label class=FIELD><span>"Body (POST/PUT/PATCH)"</span>
-                                                    <textarea class=format!("{}{}", INPUT, " board-rq-textarea") prop:value=move || qry_body.get()
+                                                    <textarea class=with_extra(INPUT, Some(BOARD_RQ_TEXTAREA)) prop:value=move || qry_body.get()
                                                         on:input=move |e| qry_body.set(event_target_value(&e))></textarea>
                                                 </label>
                                             </Show>
                                             <Show when=is_pg>
                                                 <label class=FIELD><span>"SQL (SELECT only)"</span>
-                                                    <textarea class=format!("{}{}", INPUT, " board-rq-textarea") prop:value=move || qry_sql.get()
+                                                    <textarea class=with_extra(INPUT, Some(BOARD_RQ_TEXTAREA)) prop:value=move || qry_sql.get()
                                                         on:input=move |e| qry_sql.set(event_target_value(&e))></textarea>
                                                 </label>
                                             </Show>
@@ -825,19 +830,19 @@ pub fn resources_queries_modal(
                                                         on:input=move |e| qry_grpc_method.set(event_target_value(&e)) />
                                                 </label>
                                                 <label class=FIELD><span>"Request JSON (ProtoJSON)"</span>
-                                                    <textarea class=format!("{}{}", INPUT, " board-rq-textarea") prop:value=move || qry_grpc_request.get()
+                                                    <textarea class=with_extra(INPUT, Some(BOARD_RQ_TEXTAREA)) prop:value=move || qry_grpc_request.get()
                                                         on:input=move |e| qry_grpc_request.set(event_target_value(&e))></textarea>
                                                 </label>
                                             </Show>
                                         }
                                     }
-                                    <h3>"Transform"</h3>
+                                    <h3 class=BOARD_RQ_FORM_H3>"Transform"</h3>
                                     <label class=FIELD><span>"JSON path"</span>
                                         <input class=INPUT placeholder="data.items"
                                             prop:value=move || qry_json_path.get()
                                             on:input=move |e| qry_json_path.set(event_target_value(&e)) />
                                     </label>
-                                    <label class="board-rq-check">
+                                    <label class=BOARD_RQ_CHECK>
                                         <input type="checkbox" prop:checked=move || qry_as_array.get()
                                             on:change=move |e| {
                                                 #[cfg(feature = "hydrate")]
@@ -857,7 +862,7 @@ pub fn resources_queries_modal(
                                         <input class=INPUT prop:value=move || qry_limit.get()
                                             on:input=move |e| qry_limit.set(event_target_value(&e)) />
                                     </label>
-                                    <div class="board-rq-actions">
+                                    <div class=BOARD_RQ_ACTIONS>
                                         <button type="button" class=BTN_PRIMARY on:click=move |_| {
                                             let name = qry_name.get_untracked().trim().to_owned();
                                             let resource_id = qry_resource_id.get_untracked();
@@ -941,16 +946,16 @@ pub fn resources_queries_modal(
                                     </div>
 
                                     <Show when=move || test_result.get().is_some()>
-                                        <div class="board-rq-output">
-                                            <div class="board-rq-tabs" role="tablist">
-                                                <button type="button" class="board-rq-tab" class:is-active=move || test_tab.get() == "raw"
+                                        <div class=BOARD_RQ_OUTPUT>
+                                            <div class=BOARD_RQ_TABS role="tablist">
+                                                <button type="button" class=move || if test_tab.get() == "raw" { BOARD_RQ_TAB_ACTIVE } else { BOARD_RQ_TAB }
                                                     on:click=move |_| test_tab.set("raw".into())>"Raw"</button>
-                                                <button type="button" class="board-rq-tab" class:is-active=move || test_tab.get() == "transformed"
+                                                <button type="button" class=move || if test_tab.get() == "transformed" { BOARD_RQ_TAB_ACTIVE } else { BOARD_RQ_TAB }
                                                     on:click=move |_| test_tab.set("transformed".into())>"Transformed"</button>
-                                                <button type="button" class="board-rq-tab" class:is-active=move || test_tab.get() == "meta"
+                                                <button type="button" class=move || if test_tab.get() == "meta" { BOARD_RQ_TAB_ACTIVE } else { BOARD_RQ_TAB }
                                                     on:click=move |_| test_tab.set("meta".into())>"Meta"</button>
                                             </div>
-                                            <pre class="board-json-preview board-json-preview-lg">{move || {
+                                            <pre class=BOARD_JSON_PREVIEW_LG>{move || {
                                                 match test_result.get() {
                                                     None => String::new(),
                                                     Some(r) => match test_tab.get().as_str() {

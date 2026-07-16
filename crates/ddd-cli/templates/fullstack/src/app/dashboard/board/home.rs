@@ -17,8 +17,13 @@ use crate::contracts::{
     DashboardWidgetKind, HttpDisplayMode, HttpQueryResult, QueryResult, QuerySummary, WidgetBind,
 };
 use crate::ui::classes::{
-    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
-    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+    BANNER_ERROR, BOARD_EDIT_HINT, BOARD_EMPTY, BOARD_EMPTY_BOARD, BOARD_EMPTY_BOARD_TITLE,
+    BOARD_GRID, BOARD_KICKER, BOARD_MODAL, BOARD_MODAL_BACKDROP, BOARD_MODAL_CLOSE,
+    BOARD_MODAL_HEAD, BOARD_MODAL_HEAD_P, BOARD_MODAL_HEAD_TITLE, BOARD_PAGE, BOARD_PICKER_BADGE,
+    BOARD_PICKER_CARD, BOARD_PICKER_CARD_ADDED, BOARD_PICKER_CARD_P, BOARD_PICKER_CARD_TITLE,
+    BOARD_PICKER_GRID, BOARD_SKELETON, BOARD_SKELETON_BAR, BOARD_SKELETON_GRID, BOARD_SKELETON_SPAN2,
+    BOARD_SUB, BOARD_TITLE, BOARD_TOP, BOARD_TOP_ACTIONS, BOARD_TOP_COPY, BTN_PRIMARY,
+    BTN_SECONDARY, BTN_SECONDARY_ACTIVE,
 };
 use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
@@ -109,26 +114,26 @@ pub fn DashboardHome() -> impl IntoView {
     });
 
     view! {
-        <div class="board-page" class:is-editing=move || editing.get()>
+        <div class=BOARD_PAGE>
             {move || match board.get() {
                 None => view! {
-                    <div class="board-skeleton" aria-busy="true">
-                        <div class="board-skeleton-bar"></div>
-                        <div class="board-skeleton-grid">
+                    <div class=BOARD_SKELETON aria-busy="true">
+                        <div class=BOARD_SKELETON_BAR></div>
+                        <div class=BOARD_SKELETON_GRID>
                             <span></span><span></span><span></span><span></span>
-                            <span class="span-2"></span><span class="span-2"></span>
+                            <span class=BOARD_SKELETON_SPAN2></span><span class=BOARD_SKELETON_SPAN2></span>
                         </div>
                     </div>
                 }.into_any(),
                 Some(Err(error)) => view! {
-                    <section class="board-empty">
+                    <section class=BOARD_EMPTY>
                         <p class=BANNER_ERROR>{server_error_text(error)}</p>
                     </section>
                 }.into_any(),
                 Some(Ok(_)) => {
                     let data = snapshot.get().or_else(|| board.get().and_then(Result::ok));
                     let Some(data) = data else {
-                        return view! { <div class="board-skeleton" aria-busy="true"></div> }.into_any();
+                        return view! { <div class=BOARD_SKELETON aria-busy="true"></div> }.into_any();
                     };
                     let greeting = data.greeting_name.clone();
                     let has_tenant = data.has_tenant;
@@ -153,17 +158,17 @@ pub fn DashboardHome() -> impl IntoView {
                     // No full-width "Workspace required" CTA — keep the board for real data.
                     let _ = org_count;
                     view! {
-                        <header class="board-top">
-                            <div class="board-top-copy">
-                                <p class="board-kicker">
+                        <header class=BOARD_TOP>
+                            <div class=BOARD_TOP_COPY>
+                                <p class=BOARD_KICKER>
                                     {if has_tenant {
                                         tenant_label.clone().unwrap_or_else(|| "Workspace".into())
                                     } else {
                                         "Dashboard".into()
                                     }}
                                 </p>
-                                <h1 class="board-title">{format!("Good to see you, {greeting}")}</h1>
-                                <p class="board-sub">
+                                <h1 class=BOARD_TITLE>{format!("Good to see you, {greeting}")}</h1>
+                                <p class=BOARD_SUB>
                                     {if has_tenant {
                                         "12-column board with containers, bound widgets, and workspace resources."
                                     } else {
@@ -171,8 +176,9 @@ pub fn DashboardHome() -> impl IntoView {
                                     }}
                                 </p>
                             </div>
-                            <div class="board-top-actions">
-                                <button type="button" class=BTN_SECONDARY class:is-active=move || editing.get()
+                            <div class=BOARD_TOP_ACTIONS>
+                                <button type="button"
+                                    class=move || if editing.get() { BTN_SECONDARY_ACTIVE } else { BTN_SECONDARY }
                                     disabled=board_actions_disabled
                                     on:click=move |_| {
                                         set_editing.update(|v| *v = !*v);
@@ -196,7 +202,7 @@ pub fn DashboardHome() -> impl IntoView {
                         </header>
 
                         <Show when=move || editing.get()>
-                            <p class="board-edit-hint">
+                            <p class=BOARD_EDIT_HINT>
                                 "Drag tiles to reorder. Size chips use a 12-column grid (3=¼, 4=⅓, 6=½, 12=full). Add a Row/Stack container to group tiles."
                             </p>
                         </Show>
@@ -207,24 +213,24 @@ pub fn DashboardHome() -> impl IntoView {
                         // Widget catalog modal
                         <Show when=move || picker_open.get()>
                             <div
-                                class="board-modal-backdrop"
+                                class=BOARD_MODAL_BACKDROP
                                 role="presentation"
                                 on:click=move |_| set_picker_open.set(false)
                                 on:wheel=move |e| e.stop_propagation()
                             >
-                                <div class="board-modal" role="dialog" aria-modal="true" on:click=move |e| e.stop_propagation()>
-                                    <header class="board-modal-head">
+                                <div class=BOARD_MODAL role="dialog" aria-modal="true" on:click=move |e| e.stop_propagation()>
+                                    <header class=BOARD_MODAL_HEAD>
                                         <div>
-                                            <h2>"Add to board"</h2>
-                                            <p>"Widgets, containers, and HTTP panels. Notes and HTTP panels can be added multiple times."</p>
+                                            <h2 class=BOARD_MODAL_HEAD_TITLE>"Add to board"</h2>
+                                            <p class=BOARD_MODAL_HEAD_P>"Widgets, containers, and HTTP panels. Notes and HTTP panels can be added multiple times."</p>
                                         </div>
-                                        <button type="button" class="board-modal-close" on:click=move |_| set_picker_open.set(false)>"Close"</button>
+                                        <button type="button" class=BOARD_MODAL_CLOSE on:click=move |_| set_picker_open.set(false)>"Close"</button>
                                     </header>
-                                    <div class="board-picker-grid board-modal-body">
-                                        <article class="board-picker-card">
+                                    <div class=BOARD_PICKER_GRID>
+                                        <article class=BOARD_PICKER_CARD>
                                             <div>
-                                                <strong>"Row container"</strong>
-                                                <p>"Horizontal group for child tiles (12-col)."</p>
+                                                <strong class=BOARD_PICKER_CARD_TITLE>"Row container"</strong>
+                                                <p class=BOARD_PICKER_CARD_P>"Horizontal group for child tiles (12-col)."</p>
                                             </div>
                                             <button type="button" class=BTN_PRIMARY on:click=move |_| {
                                                 let mut next = layout.get_untracked();
@@ -238,10 +244,10 @@ pub fn DashboardHome() -> impl IntoView {
                                                 set_picker_open.set(false);
                                             }>"Add row"</button>
                                         </article>
-                                        <article class="board-picker-card">
+                                        <article class=BOARD_PICKER_CARD>
                                             <div>
-                                                <strong>"Stack container"</strong>
-                                                <p>"Vertical stack for child tiles."</p>
+                                                <strong class=BOARD_PICKER_CARD_TITLE>"Stack container"</strong>
+                                                <p class=BOARD_PICKER_CARD_P>"Vertical stack for child tiles."</p>
                                             </div>
                                             <button type="button" class=BTN_PRIMARY on:click=move |_| {
                                                 let mut next = layout.get_untracked();
@@ -263,13 +269,14 @@ pub fn DashboardHome() -> impl IntoView {
                                                 let already = !multi && placed.contains(kind.as_str());
                                                 let kind_add = kind.clone();
                                                 let first_source = first_source_base.clone();
+                                                let card_class = if already { BOARD_PICKER_CARD_ADDED } else { BOARD_PICKER_CARD };
                                                 view! {
-                                                    <article class="board-picker-card" class:is-added=already>
+                                                    <article class=card_class>
                                                         <div>
-                                                            <strong>{kind.label()}</strong>
-                                                            <p>{kind.description()}</p>
+                                                            <strong class=BOARD_PICKER_CARD_TITLE>{kind.label()}</strong>
+                                                            <p class=BOARD_PICKER_CARD_P>{kind.description()}</p>
                                                             <Show when=move || multi>
-                                                                <span class="board-picker-badge">"Multiple allowed"</span>
+                                                                <span class=BOARD_PICKER_BADGE>"Multiple allowed"</span>
                                                             </Show>
                                                         </div>
                                                         <button type="button" class=BTN_PRIMARY disabled=already on:click=move |_| {
@@ -320,7 +327,7 @@ pub fn DashboardHome() -> impl IntoView {
                             )
                         }
 
-                        <div class="board-grid board-grid-12" aria-label="Dashboard board">
+                        <div class=BOARD_GRID aria-label="Dashboard board">
                             {move || {
                                 let nodes = layout.get().nodes;
                                 let snap = snapshot.get().or_else(|| board.get().and_then(Result::ok));
@@ -345,8 +352,8 @@ pub fn DashboardHome() -> impl IntoView {
                                 )
                             }}
                             <Show when=move || layout.get().nodes.is_empty()>
-                                <div class="board-empty-board">
-                                    <h2>"Empty board"</h2>
+                                <div class=BOARD_EMPTY_BOARD>
+                                    <h2 class=BOARD_EMPTY_BOARD_TITLE>"Empty board"</h2>
                                     <p>"Add widgets or containers to start designing your workspace."</p>
                                     <button type="button" class=BTN_PRIMARY on:click=move |_| set_picker_open.set(true)>"Browse catalog"</button>
                                 </div>

@@ -12,8 +12,22 @@ use crate::contracts::{
     DashboardWidgetKind, HttpDisplayMode, HttpQueryResult, QueryResult, QuerySummary, WidgetBind,
 };
 use crate::ui::classes::{
-    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
-    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+    BANNER_ERROR, BOARD_BIND_EDITOR, BOARD_BIND_FIELD, BOARD_BIND_FIELD_LABEL, BOARD_BIND_HINT,
+    BOARD_BIND_ROW, BOARD_CHECKLIST, BOARD_CHECKLIST_ITEM, BOARD_CHECKLIST_ITEM_DONE,
+    BOARD_CHECKLIST_LG, BOARD_CONTAINER, BOARD_CONTAINER_BODY, BOARD_CONTAINER_BODY_STACK,
+    BOARD_CONTAINER_EDITING, BOARD_CONTAINER_HEAD, BOARD_DRAG_HANDLE, BOARD_EMPTY_TILE,
+    BOARD_FEED, BOARD_FEED_COPY, BOARD_FEED_DOT, BOARD_FEED_DOT_ERR, BOARD_FEED_DOT_OK,
+    BOARD_FEED_ITEM, BOARD_INLINE_LINK, BOARD_INLINE_LINK_FLUSH, BOARD_INLINE_LINKS,
+    BOARD_LIST, BOARD_LIST_GROW, BOARD_LIST_META, BOARD_LIST_ROW, BOARD_LIST_STRONG, BOARD_METRIC,
+    BOARD_METRIC_META, BOARD_METRIC_NUMBER, BOARD_METRIC_VALUE, BOARD_NODE_SLOT, BOARD_NOTES,
+    BOARD_NOTES_INPUT, BOARD_NOTIF, BOARD_NOTIF_BODY, BOARD_NOTIF_COPY, BOARD_NOTIF_DISMISS,
+    BOARD_NOTIF_INFO, BOARD_NOTIF_LIST, BOARD_NOTIF_TIME, BOARD_NOTIF_TITLE, BOARD_NOTIF_WARN,
+    BOARD_PILL, BOARD_PILL_LIVE, BOARD_PULSE, BOARD_SCORE_BAR, BOARD_SCORE_BAR_FILL,
+    BOARD_SECURITY, BOARD_SECURITY_SCORE, BOARD_SECURITY_SCORE_LABEL, BOARD_SECURITY_SCORE_VALUE,
+    BOARD_SPAN_CHIP, BOARD_SPAN_CHIP_ACTIVE, BOARD_SPAN_GROUP, BOARD_TABLE, BOARD_TABLE_TD,
+    BOARD_TABLE_TH, BOARD_TABLE_WRAP, BOARD_TILE, BOARD_TILE_BODY, BOARD_TILE_BODY_DIMMED,
+    BOARD_TILE_CONTROLS, BOARD_TILE_DROP_TARGET, BOARD_TILE_EDITING, BOARD_TILE_HEAD,
+    BOARD_TILE_HEAD_MAIN, BOARD_TILE_KICKER, BOARD_TILE_REMOVE, INPUT, MUTED,
 };
 use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
@@ -41,7 +55,7 @@ pub(crate) fn render_node_list(
         .map(|node| {
             let key = node.id().to_owned();
             view! {
-                <div class="board-node-slot" data-node-id=key>
+                <div class=BOARD_NODE_SLOT data-node-id=key>
                     {render_node(
                         node,
                         snap.clone(),
@@ -113,10 +127,7 @@ pub(crate) fn render_node(
             };
             view! {
                 <section
-                    class="board-container"
-                    class:is-row=is_row
-                    class:is-stack=!is_row
-                    class:is-editing=move || editing.get()
+                    class=move || if editing.get() { BOARD_CONTAINER_EDITING } else { BOARD_CONTAINER }
                     // Reactive: reads layout signal so width updates without full remount.
                     data-span=span_attr
                     style=grid_style
@@ -174,11 +185,11 @@ pub(crate) fn render_node(
                         drop_target.set(None);
                     }
                 >
-                    <header class="board-container-head">
-                        <span class="board-tile-kicker">{kind_label}</span>
+                    <header class=BOARD_CONTAINER_HEAD>
+                        <span class=BOARD_TILE_KICKER>{kind_label}</span>
                         <Show when=move || editing.get()>
                             <div
-                                class="board-tile-controls"
+                                class=BOARD_TILE_CONTROLS
                                 draggable="false"
                                 on:mousedown=move |e| e.stop_propagation()
                                 on:dragstart=move |e| {
@@ -187,7 +198,7 @@ pub(crate) fn render_node(
                                 }
                             >
                                 {span_chips(id_chips.clone(), layout, save_layout)}
-                                <button type="button" class="board-tile-remove" aria-label="Remove container" on:click={
+                                <button type="button" class=BOARD_TILE_REMOVE aria-label="Remove container" on:click={
                                     let id_remove = id_remove.clone();
                                     move |_| {
                                         let mut next = layout.get_untracked();
@@ -199,7 +210,7 @@ pub(crate) fn render_node(
                             </div>
                         </Show>
                     </header>
-                    <div class="board-container-body" class:is-row=is_row>
+                    <div class=if is_row { BOARD_CONTAINER_BODY } else { BOARD_CONTAINER_BODY_STACK }>
                         {
                             let empty = children.is_empty();
                             // Re-render children from layout so nested reorder/span stay live.
@@ -241,7 +252,7 @@ pub(crate) fn render_node(
                                             })
                                             .unwrap_or(empty)
                                 }>
-                                    <p class="board-muted">"Empty container — add tiles at the root level for now; nest by grouping with rows."</p>
+                                    <p class=MUTED>"Empty container — add tiles at the root level for now; nest by grouping with rows."</p>
                                 </Show>
                             }
                         }
@@ -304,14 +315,19 @@ pub(crate) fn render_node(
             let queries_edit = query_summaries.clone();
             view! {
                 <article
-                    class="board-tile"
+                    class=move || {
+                        let is_drop = drop_target.get().as_deref() == Some(id_cls.as_str())
+                            && drag_id.get().as_deref() != Some(id_cls.as_str());
+                        if is_drop {
+                            BOARD_TILE_DROP_TARGET
+                        } else if editing.get() {
+                            BOARD_TILE_EDITING
+                        } else {
+                            BOARD_TILE
+                        }
+                    }
                     data-span=span_attr
                     style=grid_style
-                    class:is-editing=move || editing.get()
-                    class:is-drop-target=move || {
-                        drop_target.get().as_deref() == Some(id_cls.as_str())
-                            && drag_id.get().as_deref() != Some(id_cls.as_str())
-                    }
                     draggable=move || if editing.get() { "true" } else { "false" }
                     on:dragstart=move |event| {
                         if !editing.get_untracked() {
@@ -365,12 +381,12 @@ pub(crate) fn render_node(
                         drop_target.set(None);
                     }
                 >
-                    <header class="board-tile-head">
-                        <div class="board-tile-head-main">
+                    <header class=BOARD_TILE_HEAD>
+                        <div class=BOARD_TILE_HEAD_MAIN>
                             <Show when=move || editing.get()>
-                                <span class="board-drag-handle" aria-hidden="true">"⠿"</span>
+                                <span class=BOARD_DRAG_HANDLE aria-hidden="true">"⠿"</span>
                             </Show>
-                            <p class="board-tile-kicker">{kind_label}</p>
+                            <p class=BOARD_TILE_KICKER>{kind_label}</p>
                         </div>
                         <Show when=move || editing.get()>
                             {
@@ -378,7 +394,7 @@ pub(crate) fn render_node(
                                 let id_remove = id_remove.clone();
                                 view! {
                                     <div
-                                        class="board-tile-controls"
+                                        class=BOARD_TILE_CONTROLS
                                         draggable="false"
                                         on:mousedown=move |e| e.stop_propagation()
                                         on:dragstart=move |e| {
@@ -387,7 +403,7 @@ pub(crate) fn render_node(
                                         }
                                     >
                                         {span_chips(id_chips, layout, save_layout)}
-                                        <button type="button" class="board-tile-remove" aria-label="Remove" on:click=move |_| {
+                                        <button type="button" class=BOARD_TILE_REMOVE aria-label="Remove" on:click=move |_| {
                                             let mut next = layout.get_untracked();
                                             if remove_node(&mut next.nodes, &id_remove) {
                                                 commit_layout(layout, save_layout, next);
@@ -415,7 +431,7 @@ pub(crate) fn render_node(
                             )
                         }
                     </Show>
-                    <div class="board-tile-body" class:is-dimmed=move || editing.get() && !is_bound>{body}</div>
+                    <div class=move || if editing.get() && !is_bound { BOARD_TILE_BODY_DIMMED } else { BOARD_TILE_BODY }>{body}</div>
                 </article>
             }
             .into_any()
@@ -464,7 +480,7 @@ pub(crate) fn bind_fields_editor(
 
     view! {
         <div
-            class="board-bind-editor"
+            class=BOARD_BIND_EDITOR
             draggable="false"
             on:mousedown=move |e| e.stop_propagation()
             on:dragstart=move |e| {
@@ -472,8 +488,8 @@ pub(crate) fn bind_fields_editor(
                 e.stop_propagation();
             }
         >
-            <label class="board-bind-field">
-                <span>"Query"</span>
+            <label class=BOARD_BIND_FIELD>
+                <span class=BOARD_BIND_FIELD_LABEL>"Query"</span>
                 <select
                     class=INPUT
                     prop:value=selected.clone()
@@ -495,8 +511,8 @@ pub(crate) fn bind_fields_editor(
                     }).collect_view()}
                 </select>
             </label>
-            <label class="board-bind-field">
-                <span>"Display"</span>
+            <label class=BOARD_BIND_FIELD>
+                <span class=BOARD_BIND_FIELD_LABEL>"Display"</span>
                 <select
                     class=INPUT
                     prop:value=match mode {
@@ -526,8 +542,8 @@ pub(crate) fn bind_fields_editor(
                     <option value="table">"Table"</option>
                 </select>
             </label>
-            <label class="board-bind-field">
-                <span>"Items path"</span>
+            <label class=BOARD_BIND_FIELD>
+                <span class=BOARD_BIND_FIELD_LABEL>"Items path"</span>
                 <input class=INPUT prop:value=items_path placeholder="e.g. data.items"
                     on:change={
                         let wid = wid.clone();
@@ -540,9 +556,9 @@ pub(crate) fn bind_fields_editor(
                     }
                 />
             </label>
-            <div class="board-bind-row">
-                <label class="board-bind-field">
-                    <span>"Value / title path"</span>
+            <div class=BOARD_BIND_ROW>
+                <label class=BOARD_BIND_FIELD>
+                    <span class=BOARD_BIND_FIELD_LABEL>"Value / title path"</span>
                     <input class=INPUT prop:value=if matches!(mode, HttpDisplayMode::Metric) { value_path.clone() } else { title_path.clone() }
                         placeholder=if matches!(mode, HttpDisplayMode::Metric) { "value" } else { "name" }
                         on:change={
@@ -561,8 +577,8 @@ pub(crate) fn bind_fields_editor(
                         }
                     />
                 </label>
-                <label class="board-bind-field">
-                    <span>"Label / subtitle path"</span>
+                <label class=BOARD_BIND_FIELD>
+                    <span class=BOARD_BIND_FIELD_LABEL>"Label / subtitle path"</span>
                     <input class=INPUT prop:value=if matches!(mode, HttpDisplayMode::Metric) { label_path } else { subtitle_path }
                         placeholder=if matches!(mode, HttpDisplayMode::Metric) { "label" } else { "id" }
                         on:change={
@@ -582,8 +598,8 @@ pub(crate) fn bind_fields_editor(
                     />
                 </label>
             </div>
-            <label class="board-bind-field">
-                <span>"Meta path"</span>
+            <label class=BOARD_BIND_FIELD>
+                <span class=BOARD_BIND_FIELD_LABEL>"Meta path"</span>
                 <input class=INPUT prop:value=meta_path placeholder="optional"
                     on:change={
                         let wid = wid.clone();
@@ -596,7 +612,7 @@ pub(crate) fn bind_fields_editor(
                     }
                 />
             </label>
-            <p class="board-muted board-bind-hint">"Bind paths are dotted JSON paths relative to items path (or root). Table auto-detects columns when empty."</p>
+            <p class=BOARD_BIND_HINT>"Bind paths are dotted JSON paths relative to items path (or root). Table auto-detects columns when empty."</p>
         </div>
     }
     .into_any()
@@ -609,17 +625,19 @@ pub(crate) fn span_chips(
 ) -> AnyView {
     let presets = [(3u8, "¼"), (4, "⅓"), (6, "½"), (12, "Full")];
     view! {
-        <div class="board-span-group" role="group" aria-label="Width">
+        <div class=BOARD_SPAN_GROUP role="group" aria-label="Width">
             {presets.into_iter().map(|(size, label)| {
                 let id = id.clone();
                 let id_active = id.clone();
                 view! {
                     <button
                         type="button"
-                        class="board-span-chip"
-                        // Reactive active state — was frozen at first render before.
-                        class:is-active=move || {
-                            find_col_span(&layout.get().nodes, &id_active).unwrap_or(0) == size
+                        class=move || {
+                            if find_col_span(&layout.get().nodes, &id_active).unwrap_or(0) == size {
+                                BOARD_SPAN_CHIP_ACTIVE
+                            } else {
+                                BOARD_SPAN_CHIP
+                            }
                         }
                         on:click=move |ev| {
                             ev.stop_propagation();
@@ -655,60 +673,68 @@ pub(crate) fn render_widget_body(
     }
 
     let Some(data) = data else {
-        return view! { <p class="board-muted">"Loading…"</p> }.into_any();
+        return view! { <p class=MUTED>"Loading…"</p> }.into_any();
     };
 
     match kind {
         DashboardWidgetKind::MetricSession => view! {
-            <div class="board-metric">
-                <strong class="board-metric-value">
-                    <span class="board-pulse" aria-hidden="true"></span>"Verified"
+            <div class=BOARD_METRIC>
+                <strong class=BOARD_METRIC_VALUE>
+                    <span class=BOARD_PULSE aria-hidden="true"></span>"Verified"
                 </strong>
-                <span class="board-metric-meta">{data.assurance.to_uppercase()}</span>
+                <span class=BOARD_METRIC_META>{data.assurance.to_uppercase()}</span>
             </div>
         }
         .into_any(),
         DashboardWidgetKind::MetricDevices => view! {
-            <div class="board-metric">
-                <strong class="board-metric-value board-metric-number">{data.active_session_count.to_string()}</strong>
-                <span class="board-metric-meta">"signed-in sessions"</span>
+            <div class=BOARD_METRIC>
+                <strong class=BOARD_METRIC_NUMBER>{data.active_session_count.to_string()}</strong>
+                <span class=BOARD_METRIC_META>"signed-in sessions"</span>
             </div>
         }
         .into_any(),
         DashboardWidgetKind::MetricOrgs => view! {
-            <div class="board-metric">
-                <strong class="board-metric-value board-metric-number">{data.organization_count.to_string()}</strong>
-                <span class="board-metric-meta">"workspaces"</span>
+            <div class=BOARD_METRIC>
+                <strong class=BOARD_METRIC_NUMBER>{data.organization_count.to_string()}</strong>
+                <span class=BOARD_METRIC_META>"workspaces"</span>
             </div>
         }
         .into_any(),
         DashboardWidgetKind::MetricSecurity => view! {
-            <div class="board-metric">
-                <strong class="board-metric-value board-metric-number">{format!("{}%", data.security_score)}</strong>
-                <span class="board-metric-meta">{if data.totp_enrolled { "MFA on" } else { "MFA off" }}</span>
-                <div class="board-score-bar" aria-hidden="true"><span style=format!("width:{}%", data.security_score)></span></div>
+            <div class=BOARD_METRIC>
+                <strong class=BOARD_METRIC_NUMBER>{format!("{}%", data.security_score)}</strong>
+                <span class=BOARD_METRIC_META>{if data.totp_enrolled { "MFA on" } else { "MFA off" }}</span>
+                <div class=BOARD_SCORE_BAR aria-hidden="true"><span class=BOARD_SCORE_BAR_FILL style=format!("width:{}%", data.security_score)></span></div>
             </div>
         }
         .into_any(),
         DashboardWidgetKind::Activity => {
             if data.activity.is_empty() {
                 view! {
-                    <div class="board-empty-tile">
+                    <div class=BOARD_EMPTY_TILE>
                         <p>{if data.has_tenant { "No audit events yet." } else { "Select an organization to stream activity." }}</p>
                     </div>
                 }
                 .into_any()
             } else {
                 view! {
-                    <ul class="board-feed">
-                        {data.activity.into_iter().take(8).map(|event| view! {
-                            <li class="board-feed-item">
-                                <span class="board-feed-dot" data-outcome=event.outcome.clone()></span>
-                                <div class="board-feed-copy">
-                                    <strong>{event.action}</strong>
-                                    <span>{format!("{} · {}", event.outcome, relative_ms(event.recorded_at_ms))}</span>
-                                </div>
-                            </li>
+                    <ul class=BOARD_FEED>
+                        {data.activity.into_iter().take(8).map(|event| {
+                            let outcome = event.outcome.clone();
+                            let dot = match outcome.as_str() {
+                                "success" | "allowed" | "ok" => BOARD_FEED_DOT_OK,
+                                "denied" | "failed" | "error" => BOARD_FEED_DOT_ERR,
+                                _ => BOARD_FEED_DOT,
+                            };
+                            view! {
+                                <li class=BOARD_FEED_ITEM>
+                                    <span class=dot></span>
+                                    <div class=BOARD_FEED_COPY>
+                                        <strong class=BOARD_LIST_STRONG>{event.action}</strong>
+                                        <span class=BOARD_LIST_META>{format!("{} · {}", event.outcome, relative_ms(event.recorded_at_ms))}</span>
+                                    </div>
+                                </li>
+                            }
                         }).collect_view()}
                     </ul>
                 }
@@ -717,20 +743,25 @@ pub(crate) fn render_widget_body(
         }
         DashboardWidgetKind::Notifications => {
             if notifications.is_empty() {
-                view! { <div class="board-empty-tile"><p>"You're caught up."</p></div> }.into_any()
+                view! { <div class=BOARD_EMPTY_TILE><p>"You're caught up."</p></div> }.into_any()
             } else {
                 view! {
-                    <ul class="board-notif-list">
+                    <ul class=BOARD_NOTIF_LIST>
                         {notifications.into_iter().map(|item| {
                             let id = item.id.clone();
+                            let notif_class = match item.level.as_str() {
+                                "warn" => BOARD_NOTIF_WARN,
+                                "info" => BOARD_NOTIF_INFO,
+                                _ => BOARD_NOTIF,
+                            };
                             view! {
-                                <li class="board-notif" data-level=item.level.clone()>
-                                    <div class="board-notif-copy">
-                                        <strong>{item.title}</strong>
-                                        <p>{item.body}</p>
-                                        <span class="board-notif-time">{relative_ms(item.created_at_ms)}</span>
+                                <li class=notif_class>
+                                    <div class=BOARD_NOTIF_COPY>
+                                        <strong class=BOARD_NOTIF_TITLE>{item.title}</strong>
+                                        <p class=BOARD_NOTIF_BODY>{item.body}</p>
+                                        <span class=BOARD_NOTIF_TIME>{relative_ms(item.created_at_ms)}</span>
                                     </div>
-                                    <button type="button" class="board-notif-dismiss" on:click=move |_| {
+                                    <button type="button" class=BOARD_NOTIF_DISMISS on:click=move |_| {
                                         dismiss_action.dispatch(DismissDashboardNotification { notification_id: id.clone() });
                                     }>"Dismiss"</button>
                                 </li>
@@ -742,59 +773,70 @@ pub(crate) fn render_widget_body(
             }
         }
         DashboardWidgetKind::Sessions => view! {
-            <ul class="board-list">
+            <ul class=BOARD_LIST>
                 {data.sessions.into_iter().take(6).map(|session| view! {
-                    <li class="board-list-row">
-                        <div>
-                            <strong>{if session.current { "This browser" } else { "Other session" }}</strong>
-                            <span class="board-list-meta">{format!("{} · {}", session.assurance.to_uppercase(), relative_ms(session.expires_at_ms))}</span>
+                    <li class=BOARD_LIST_ROW>
+                        <div class=BOARD_LIST_GROW>
+                            <strong class=BOARD_LIST_STRONG>{if session.current { "This browser" } else { "Other session" }}</strong>
+                            <span class=BOARD_LIST_META>{format!("{} · {}", session.assurance.to_uppercase(), relative_ms(session.expires_at_ms))}</span>
                         </div>
-                        <span class="board-pill" class:is-live=session.current>{if session.current { "Live" } else { "Active" }}</span>
+                        <span class=if session.current { BOARD_PILL_LIVE } else { BOARD_PILL }>
+                            {if session.current { "Live" } else { "Active" }}
+                        </span>
                     </li>
                 }).collect_view()}
             </ul>
-            <a class="board-inline-link" href="/account/sessions">"Manage sessions"</a>
+            <a class=BOARD_INLINE_LINK href="/account/sessions">"Manage sessions"</a>
         }
         .into_any(),
         DashboardWidgetKind::Organizations => {
             if data.organizations.is_empty() {
-                view! { <div class="board-empty-tile"><p>"No workspaces yet."</p><a class="board-inline-link" href="/organizations">"Create one"</a></div> }.into_any()
+                view! { <div class=BOARD_EMPTY_TILE><p>"No workspaces yet."</p><a class=BOARD_INLINE_LINK href="/organizations">"Create one"</a></div> }.into_any()
             } else {
                 let active = data.tenant_label.clone();
                 view! {
-                    <ul class="board-list">
+                    <ul class=BOARD_LIST>
                         {data.organizations.into_iter().take(6).map(|org| {
                             let is_active = active.as_ref().is_some_and(|t| t == &org.organization_id);
                             view! {
-                                <li class="board-list-row">
-                                    <div class="board-list-grow">
-                                        <strong>{org.name}</strong>
-                                        <span class="board-list-meta">{org.current_user_role}</span>
+                                <li class=BOARD_LIST_ROW>
+                                    <div class=BOARD_LIST_GROW>
+                                        <strong class=BOARD_LIST_STRONG>{org.name}</strong>
+                                        <span class=BOARD_LIST_META>{org.current_user_role}</span>
                                     </div>
-                                    <span class="board-pill" class:is-live=is_active>{if is_active { "Active" } else { "Joined" }}</span>
+                                    <span class=if is_active { BOARD_PILL_LIVE } else { BOARD_PILL }>
+                                        {if is_active { "Active" } else { "Joined" }}
+                                    </span>
                                 </li>
                             }
                         }).collect_view()}
                     </ul>
-                    <a class="board-inline-link" href="/organizations">"All organizations"</a>
+                    <a class=BOARD_INLINE_LINK href="/organizations">"All organizations"</a>
                 }
                 .into_any()
             }
         }
         DashboardWidgetKind::SecurityPosture => view! {
-            <div class="board-security">
-                <div class="board-security-score">
-                    <strong>{format!("{}%", data.security_score)}</strong><span>"posture"</span>
+            <div class=BOARD_SECURITY>
+                <div class=BOARD_SECURITY_SCORE>
+                    <strong class=BOARD_SECURITY_SCORE_VALUE>{format!("{}%", data.security_score)}</strong>
+                    <span class=BOARD_SECURITY_SCORE_LABEL>"posture"</span>
                 </div>
-                <ul class="board-checklist">
-                    <li class:is-done=data.totp_enrolled>{if data.totp_enrolled { "Authenticator enrolled" } else { "Enroll authenticator" }}</li>
-                    <li class:is-done=(data.recovery_codes_remaining > 0)>{format!("{} recovery codes left", data.recovery_codes_remaining)}</li>
-                    <li class:is-done=(data.active_session_count <= 3)>{format!("{} active sessions", data.active_session_count)}</li>
+                <ul class=BOARD_CHECKLIST>
+                    <li class=if data.totp_enrolled { BOARD_CHECKLIST_ITEM_DONE } else { BOARD_CHECKLIST_ITEM }>
+                        {if data.totp_enrolled { "Authenticator enrolled" } else { "Enroll authenticator" }}
+                    </li>
+                    <li class={if data.recovery_codes_remaining > 0 { BOARD_CHECKLIST_ITEM_DONE } else { BOARD_CHECKLIST_ITEM }}>
+                        {format!("{} recovery codes left", data.recovery_codes_remaining)}
+                    </li>
+                    <li class={if data.active_session_count <= 3 { BOARD_CHECKLIST_ITEM_DONE } else { BOARD_CHECKLIST_ITEM }}>
+                        {format!("{} active sessions", data.active_session_count)}
+                    </li>
                 </ul>
-                <div class="board-inline-links">
-                    <a class="board-inline-link" href="/account/mfa">"MFA"</a>
-                    <a class="board-inline-link" href="/account/passkeys">"Passkeys"</a>
-                    <a class="board-inline-link" href="/account/sessions">"Sessions"</a>
+                <div class=BOARD_INLINE_LINKS>
+                    <a class=BOARD_INLINE_LINK_FLUSH href="/account/mfa">"MFA"</a>
+                    <a class=BOARD_INLINE_LINK_FLUSH href="/account/passkeys">"Passkeys"</a>
+                    <a class=BOARD_INLINE_LINK_FLUSH href="/account/sessions">"Sessions"</a>
                 </div>
             </div>
         }
@@ -802,8 +844,8 @@ pub(crate) fn render_widget_body(
         DashboardWidgetKind::Notes => {
             let widget_id_save = widget_id.clone();
             view! {
-                <div class="board-notes">
-                    <textarea class="board-notes-input" rows="5" maxlength="2000"
+                <div class=BOARD_NOTES>
+                    <textarea class=BOARD_NOTES_INPUT rows="5" maxlength="2000"
                         placeholder="Scratch pad — only you can see this."
                         prop:value=note_text
                         on:blur=move |event| {
@@ -813,17 +855,25 @@ pub(crate) fn render_widget_body(
                             });
                         }
                     />
-                    <p class="board-muted">"Saves when you leave the field."</p>
+                    <p class=MUTED>"Saves when you leave the field."</p>
                 </div>
             }
             .into_any()
         }
         DashboardWidgetKind::Checklist => view! {
-            <ul class="board-checklist board-checklist-lg">
-                <li class:is-done=data.email.is_some()><a href="/account/profile">"Complete profile"</a></li>
-                <li class:is-done=(data.organization_count > 0)><a href="/organizations">"Create or join an organization"</a></li>
-                <li class:is-done=data.has_tenant><a href="/organizations">"Select an active tenant"</a></li>
-                <li class:is-done=data.totp_enrolled><a href="/account/mfa">"Turn on multi-factor auth"</a></li>
+            <ul class=BOARD_CHECKLIST_LG>
+                <li class=if data.email.is_some() { BOARD_CHECKLIST_ITEM_DONE } else { BOARD_CHECKLIST_ITEM }>
+                    <a href="/account/profile">"Complete profile"</a>
+                </li>
+                <li class={if data.organization_count > 0 { BOARD_CHECKLIST_ITEM_DONE } else { BOARD_CHECKLIST_ITEM }}>
+                    <a href="/organizations">"Create or join an organization"</a>
+                </li>
+                <li class=if data.has_tenant { BOARD_CHECKLIST_ITEM_DONE } else { BOARD_CHECKLIST_ITEM }>
+                    <a href="/organizations">"Select an active tenant"</a>
+                </li>
+                <li class=if data.totp_enrolled { BOARD_CHECKLIST_ITEM_DONE } else { BOARD_CHECKLIST_ITEM }>
+                    <a href="/account/mfa">"Turn on multi-factor auth"</a>
+                </li>
             </ul>
         }
         .into_any(),
@@ -831,7 +881,7 @@ pub(crate) fn render_widget_body(
         | DashboardWidgetKind::BoundMetric
         | DashboardWidgetKind::BoundList
         | DashboardWidgetKind::BoundTable => {
-            view! { <p class="board-muted">"Query-bound widget"</p> }.into_any()
+            view! { <p class=MUTED>"Query-bound widget"</p> }.into_any()
         }
     }
 }
@@ -845,7 +895,7 @@ pub(crate) fn render_bound_widget(
 ) -> AnyView {
     let Some(qid) = source_id.filter(|s| !s.is_empty()) else {
         return view! {
-            <div class="board-empty-tile">
+            <div class=BOARD_EMPTY_TILE>
                 <p>"Edit board → bind a query on this tile (Resources → Query)."</p>
             </div>
         }
@@ -859,7 +909,7 @@ pub(crate) fn render_bound_widget(
         (r.ok, r.error.clone(), r.data_json.clone())
     } else {
         return view! {
-            <div class="board-empty-tile">
+            <div class=BOARD_EMPTY_TILE>
                 <p>"No result for this query yet. Open Resources, Test the query, then refresh."</p>
             </div>
         }
@@ -868,7 +918,7 @@ pub(crate) fn render_bound_widget(
 
     if !ok {
         return view! {
-            <div class="board-empty-tile">
+            <div class=BOARD_EMPTY_TILE>
                 <p class=BANNER_ERROR>{error.unwrap_or_else(|| "Query failed".into())}</p>
             </div>
         }
@@ -880,9 +930,9 @@ pub(crate) fn render_bound_widget(
             let (value, label, meta) =
                 crate::app::dashboard::bind::project_bound_metric(&data_json, &bind);
             view! {
-                <div class="board-metric">
-                    <strong class="board-metric-value board-metric-number">{value}</strong>
-                    <span class="board-metric-meta">{if meta.is_empty() { label } else { format!("{label} · {meta}") }}</span>
+                <div class=BOARD_METRIC>
+                    <strong class=BOARD_METRIC_NUMBER>{value}</strong>
+                    <span class=BOARD_METRIC_META>{if meta.is_empty() { label } else { format!("{label} · {meta}") }}</span>
                 </div>
             }
             .into_any()
@@ -890,10 +940,10 @@ pub(crate) fn render_bound_widget(
         HttpDisplayMode::List => {
             let items = crate::app::dashboard::bind::project_bound_list(&data_json, &bind, 12);
             if items.is_empty() {
-                return view! { <div class="board-empty-tile"><p>"No rows"</p></div> }.into_any();
+                return view! { <div class=BOARD_EMPTY_TILE><p>"No rows"</p></div> }.into_any();
             }
             view! {
-                <ul class="board-list">
+                <ul class=BOARD_LIST>
                     {items.into_iter().map(|(title, subtitle, meta)| {
                         let meta_empty = subtitle.is_empty() && meta.is_empty();
                         let meta_line = match (subtitle.is_empty(), meta.is_empty()) {
@@ -903,10 +953,10 @@ pub(crate) fn render_bound_widget(
                             (false, false) => format!("{subtitle} · {meta}"),
                         };
                         view! {
-                            <li class="board-list-row">
-                                <div class="board-list-grow">
-                                    <strong>{title}</strong>
-                                    <span class="board-list-meta" hidden=meta_empty>{meta_line}</span>
+                            <li class=BOARD_LIST_ROW>
+                                <div class=BOARD_LIST_GROW>
+                                    <strong class=BOARD_LIST_STRONG>{title}</strong>
+                                    <span class=BOARD_LIST_META hidden=meta_empty>{meta_line}</span>
                                 </div>
                             </li>
                         }
@@ -919,21 +969,21 @@ pub(crate) fn render_bound_widget(
             let (headers, rows) =
                 crate::app::dashboard::bind::project_bound_table(&data_json, &bind, 20);
             if headers.is_empty() {
-                return view! { <div class="board-empty-tile"><p>"No columns"</p></div> }
+                return view! { <div class=BOARD_EMPTY_TILE><p>"No columns"</p></div> }
                     .into_any();
             }
             view! {
-                <div class="board-table-wrap">
-                    <table class="board-table">
+                <div class=BOARD_TABLE_WRAP>
+                    <table class=BOARD_TABLE>
                         <thead>
                             <tr>
-                                {headers.into_iter().map(|h| view! { <th>{h}</th> }).collect_view()}
+                                {headers.into_iter().map(|h| view! { <th class=BOARD_TABLE_TH>{h}</th> }).collect_view()}
                             </tr>
                         </thead>
                         <tbody>
                             {rows.into_iter().map(|row| view! {
                                 <tr>
-                                    {row.into_iter().map(|cell| view! { <td>{cell}</td> }).collect_view()}
+                                    {row.into_iter().map(|cell| view! { <td class=BOARD_TABLE_TD>{cell}</td> }).collect_view()}
                                 </tr>
                             }).collect_view()}
                         </tbody>

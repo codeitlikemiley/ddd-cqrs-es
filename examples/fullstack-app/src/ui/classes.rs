@@ -393,3 +393,193 @@ pub const COMBOBOX_EMPTY: &str = "px-2.5 py-2 text-[13px] text-tertiary";
 pub const COMBOBOX_OPTION: &str = "cursor-pointer rounded-lg px-2.5 py-2 text-[13px] text-primary";
 pub const COMBOBOX_OPTION_ACTIVE: &str = "bg-surface-hover";
 pub const COMBOBOX_OPTION_SELECTED: &str = "font-semibold";
+
+// ── Dashboard board ────────────────────────────────────────────────────────
+
+/// Board page root (legacy `.board-page`).
+pub const BOARD_PAGE: &str = "grid w-full min-w-0 gap-[22px]";
+
+/// Header strip: copy + actions.
+pub const BOARD_TOP: &str =
+    "grid items-end gap-[18px] grid-cols-[minmax(0,1fr)_auto] max-[720px]:grid-cols-1";
+pub const BOARD_TOP_COPY: &str = "min-w-0";
+pub const BOARD_KICKER: &str =
+    "m-0 mb-2 text-[11px] font-[650] uppercase tracking-[0.08em] text-tertiary";
+pub const BOARD_TITLE: &str =
+    "m-0 text-[clamp(28px,3.4vw,40px)] font-[650] leading-[1.08] tracking-[-0.045em]";
+pub const BOARD_SUB: &str = "mt-2.5 mb-0 max-w-[56ch] text-[15px] leading-[1.55] text-secondary";
+pub const BOARD_TOP_ACTIONS: &str =
+    "flex flex-wrap items-center justify-end gap-2.5 max-[720px]:justify-stretch [&_button]:max-[720px]:flex-auto";
+
+/// Inverse active state for secondary edit toggle (legacy `.secondary-button.is-active`).
+pub const BTN_SECONDARY_ACTIVE: &str = "inline-flex items-center justify-center min-h-[42px] rounded-[10px] px-3.5 py-2.5 text-[13px] font-semibold no-underline cursor-pointer transition-[background-color,border-color,color,transform,opacity] duration-[180ms] ease-in-out bg-inverse text-on-inverse border border-inverse hover:bg-[color-mix(in_srgb,var(--bg-inverse)_82%,var(--text-primary))] active:translate-y-px disabled:cursor-wait disabled:opacity-55";
+
+pub const BOARD_EDIT_HINT: &str =
+    "m-0 rounded-xl border border-border-subtle bg-surface-subtle px-3.5 py-2.5 text-[13px] leading-[1.45] text-secondary";
+
+/// Shared modal chrome (also used by org/settings via residual CSS — prefer these constants).
+pub const BOARD_MODAL_BACKDROP: &str =
+    "fixed inset-0 z-[80] grid place-items-center bg-overlay-scrim px-4 py-6 overscroll-contain";
+pub const BOARD_MODAL: &str = "grid max-h-[min(84dvh,720px)] w-[min(720px,100%)] max-w-[720px] grid-rows-[auto_minmax(0,1fr)] gap-[18px] overflow-hidden rounded-[18px] border border-border-subtle bg-surface p-5 shadow-[0_24px_64px_rgba(0,0,0,0.22)]";
+pub const BOARD_MODAL_RESOURCES: &str = "grid max-h-[min(90dvh,860px)] w-[min(1040px,100%)] max-w-[1040px] grid-rows-[auto_minmax(0,1fr)] gap-[18px] overflow-hidden rounded-[18px] border border-border-subtle bg-surface p-5 shadow-[0_24px_64px_rgba(0,0,0,0.22)]";
+pub const BOARD_MODAL_HEAD: &str = "flex items-start justify-between gap-4";
+pub const BOARD_MODAL_HEAD_TITLE: &str = "m-0 mb-1 text-lg font-[650] tracking-tight";
+pub const BOARD_MODAL_HEAD_P: &str = "m-0 text-[13px] text-secondary";
+pub const BOARD_MODAL_CLOSE: &str = "flex-none cursor-pointer rounded-full border border-border-subtle bg-surface-subtle px-3 py-2 text-xs font-[650] text-secondary hover:text-primary";
+
+pub const BOARD_PICKER_GRID: &str =
+    "grid min-h-0 grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-2.5 overflow-auto overscroll-contain";
+pub const BOARD_PICKER_CARD: &str =
+    "grid min-h-[132px] grid-rows-[1fr_auto] items-end gap-3 rounded-[14px] border border-border-subtle bg-surface-subtle p-3.5";
+pub const BOARD_PICKER_CARD_ADDED: &str =
+    "grid min-h-[132px] grid-rows-[1fr_auto] items-end gap-3 rounded-[14px] border border-border-subtle bg-surface-subtle p-3.5 opacity-[0.72]";
+pub const BOARD_PICKER_CARD_TITLE: &str =
+    "mb-1 block text-sm font-[650] tracking-tight";
+pub const BOARD_PICKER_CARD_P: &str = "m-0 text-xs leading-[1.45] text-secondary";
+pub const BOARD_PICKER_BADGE: &str =
+    "mt-2 inline-block text-[11px] font-[650] uppercase tracking-[0.04em] text-tertiary";
+
+/// 12-col board grid (inline `style` sets per-tile span; mobile forces full width).
+pub const BOARD_GRID: &str =
+    "grid min-w-0 grid-cols-12 gap-3.5 max-[960px]:grid-cols-2 max-[720px]:grid-cols-1";
+pub const BOARD_NODE_SLOT: &str = "contents";
+
+pub const BOARD_TILE: &str = "grid min-h-[168px] min-w-0 col-span-6 gap-3 rounded-[18px] border border-border-subtle bg-surface px-4 pb-[18px] pt-4 transition-[border-color,box-shadow,transform] duration-[160ms] ease-in-out max-[720px]:![grid-column:1/-1]";
+pub const BOARD_TILE_EDITING: &str = "grid min-h-[168px] min-w-0 col-span-6 gap-3 rounded-[18px] border border-border-subtle bg-surface px-4 pb-[18px] pt-4 transition-[border-color,box-shadow,transform] duration-[160ms] ease-in-out cursor-grab shadow-[0_0_0_1px_color-mix(in_srgb,var(--focus-ring)_35%,transparent)] active:cursor-grabbing max-[720px]:![grid-column:1/-1]";
+pub const BOARD_TILE_DROP_TARGET: &str = "grid min-h-[168px] min-w-0 col-span-6 gap-3 rounded-[18px] border border-focus bg-surface px-4 pb-[18px] pt-4 transition-[border-color,box-shadow,transform] duration-[160ms] ease-in-out cursor-grab shadow-[0_0_0_2px_color-mix(in_srgb,var(--focus-ring)_28%,transparent)] max-[720px]:![grid-column:1/-1]";
+pub const BOARD_CONTAINER: &str = "grid min-h-[168px] min-w-0 col-span-6 content-start gap-3 rounded-[18px] border border-border-subtle bg-[color-mix(in_srgb,var(--bg-surface-subtle)_55%,var(--bg-surface))] px-4 pb-[18px] pt-4 transition-[border-color,box-shadow,transform] duration-[160ms] ease-in-out max-[720px]:![grid-column:1/-1]";
+pub const BOARD_CONTAINER_EDITING: &str = "grid min-h-[168px] min-w-0 col-span-6 content-start gap-3 rounded-[18px] border border-border-subtle bg-[color-mix(in_srgb,var(--bg-surface-subtle)_55%,var(--bg-surface))] px-4 pb-[18px] pt-4 transition-[border-color,box-shadow,transform] duration-[160ms] ease-in-out cursor-grab shadow-[0_0_0_1px_color-mix(in_srgb,var(--focus-ring)_35%,transparent)] active:cursor-grabbing max-[720px]:![grid-column:1/-1]";
+pub const BOARD_CONTAINER_HEAD: &str = "flex items-center justify-between gap-2.5";
+pub const BOARD_CONTAINER_BODY: &str = "grid min-w-0 grid-cols-12 gap-3";
+pub const BOARD_CONTAINER_BODY_STACK: &str = "grid min-w-0 grid-cols-1 gap-3 [&>*]:![grid-column:1/-1]";
+
+pub const BOARD_TILE_HEAD: &str = "flex items-start justify-between gap-2.5";
+pub const BOARD_TILE_HEAD_MAIN: &str = "flex min-w-0 items-center gap-2";
+pub const BOARD_DRAG_HANDLE: &str =
+    "cursor-grab select-none text-sm leading-none tracking-[-0.08em] text-tertiary";
+pub const BOARD_TILE_KICKER: &str =
+    "m-0 text-[11px] font-[650] uppercase tracking-[0.07em] text-tertiary";
+pub const BOARD_TILE_CONTROLS: &str = "flex flex-wrap items-center justify-end gap-2";
+pub const BOARD_SPAN_GROUP: &str =
+    "inline-flex gap-0.5 rounded-full border border-border-subtle bg-surface-subtle p-0.5";
+pub const BOARD_SPAN_CHIP: &str =
+    "min-w-8 cursor-pointer appearance-none rounded-full border-0 bg-transparent px-2 py-1 text-[11px] font-bold text-tertiary hover:text-primary";
+pub const BOARD_SPAN_CHIP_ACTIVE: &str =
+    "min-w-8 cursor-pointer appearance-none rounded-full border-0 bg-surface px-2 py-1 text-[11px] font-bold text-primary shadow-[0_1px_2px_rgba(0,0,0,0.08)]";
+pub const BOARD_TILE_REMOVE: &str = "inline-flex h-7 w-7 cursor-pointer appearance-none items-center justify-center rounded-full border border-border-subtle bg-surface-subtle p-0 text-secondary hover:border-danger hover:text-danger";
+pub const BOARD_TILE_BODY: &str = "min-w-0";
+pub const BOARD_TILE_BODY_DIMMED: &str = "min-w-0 opacity-[0.92] pointer-events-none";
+
+pub const BOARD_METRIC: &str = "grid gap-1.5 pt-1";
+pub const BOARD_METRIC_VALUE: &str =
+    "inline-flex items-center gap-2 text-[22px] font-[650] tracking-tight";
+pub const BOARD_METRIC_NUMBER: &str =
+    "inline-flex items-center gap-2 text-[34px] font-[650] tabular-nums tracking-[-0.04em]";
+pub const BOARD_METRIC_META: &str = "text-[13px] text-secondary";
+pub const BOARD_PULSE: &str = "inline-block h-2 w-2 rounded-full bg-success shadow-[0_0_0_0_color-mix(in_srgb,var(--success)_40%,transparent)] animate-[board-pulse_2.2s_ease-in-out_infinite]";
+pub const BOARD_SCORE_BAR: &str =
+    "mt-2 h-1.5 overflow-hidden rounded-full bg-surface-subtle";
+pub const BOARD_SCORE_BAR_FILL: &str = "block h-full rounded-full bg-inverse";
+
+pub const BOARD_LIST: &str = "m-0 grid list-none gap-0 p-0";
+pub const BOARD_LIST_ROW: &str = "grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5 border-b border-border-subtle py-2.5 last:border-b-0";
+pub const BOARD_LIST_GROW: &str = "grid min-w-0 gap-0.5";
+pub const BOARD_LIST_STRONG: &str = "text-[13px] font-[650] tracking-tight";
+pub const BOARD_LIST_META: &str = "text-xs text-tertiary";
+
+pub const BOARD_FEED: &str = "m-0 grid list-none gap-0 p-0";
+pub const BOARD_FEED_ITEM: &str =
+    "grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2.5 border-b border-border-subtle py-2.5 last:border-b-0";
+pub const BOARD_FEED_DOT: &str = "mt-1.5 h-2 w-2 rounded-full bg-tertiary";
+pub const BOARD_FEED_DOT_OK: &str = "mt-1.5 h-2 w-2 rounded-full bg-success";
+pub const BOARD_FEED_DOT_ERR: &str = "mt-1.5 h-2 w-2 rounded-full bg-danger";
+pub const BOARD_FEED_COPY: &str = "grid min-w-0 gap-0.5";
+
+pub const BOARD_PILL: &str =
+    "whitespace-nowrap rounded-full border border-border-subtle bg-surface-subtle px-2 py-[3px] text-[11px] font-[650] text-secondary";
+pub const BOARD_PILL_LIVE: &str = "whitespace-nowrap rounded-full border border-[color-mix(in_srgb,var(--success)_28%,var(--border-subtle))] bg-[color-mix(in_srgb,var(--success)_14%,var(--bg-surface))] px-2 py-[3px] text-[11px] font-[650] text-success";
+
+pub const BOARD_NOTIF_LIST: &str = "m-0 grid list-none gap-0 p-0";
+pub const BOARD_NOTIF: &str =
+    "grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2.5 border-b border-border-subtle py-3 last:border-b-0";
+pub const BOARD_NOTIF_WARN: &str =
+    "grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2.5 border-b border-border-subtle border-l-2 border-l-warning py-3 pl-2.5 last:border-b-0";
+pub const BOARD_NOTIF_INFO: &str =
+    "grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2.5 border-b border-border-subtle border-l-2 border-l-border-strong py-3 pl-2.5 last:border-b-0";
+pub const BOARD_NOTIF_COPY: &str = "min-w-0";
+pub const BOARD_NOTIF_TITLE: &str = "mb-[3px] block text-[13px] font-[650]";
+pub const BOARD_NOTIF_BODY: &str = "m-0 text-[13px] leading-[1.45] text-secondary";
+pub const BOARD_NOTIF_TIME: &str = "mt-1.5 block text-[11px] text-tertiary";
+pub const BOARD_NOTIF_DISMISS: &str =
+    "cursor-pointer appearance-none border-0 bg-transparent p-0.5 text-xs font-semibold text-tertiary hover:text-primary";
+
+pub const BOARD_SECURITY: &str = "grid gap-3";
+pub const BOARD_SECURITY_SCORE: &str = "flex items-baseline gap-2";
+pub const BOARD_SECURITY_SCORE_VALUE: &str =
+    "text-[32px] font-[650] tabular-nums tracking-[-0.04em]";
+pub const BOARD_SECURITY_SCORE_LABEL: &str = "text-[13px] text-tertiary";
+
+pub const BOARD_CHECKLIST: &str = "m-0 grid list-none gap-2 p-0";
+pub const BOARD_CHECKLIST_ITEM: &str = "relative pl-[18px] text-[13px] text-secondary before:absolute before:left-0 before:top-[5px] before:h-2 before:w-2 before:rounded-full before:bg-border-strong before:content-['']";
+pub const BOARD_CHECKLIST_ITEM_DONE: &str = "relative pl-[18px] text-[13px] text-primary before:absolute before:left-0 before:top-[5px] before:h-2 before:w-2 before:rounded-full before:bg-success before:content-['']";
+pub const BOARD_CHECKLIST_LG: &str = "m-0 grid list-none gap-2 p-0 [&_a]:text-inherit [&_a]:no-underline hover:[&_a]:underline";
+
+pub const BOARD_INLINE_LINK: &str =
+    "mt-2.5 inline-flex text-xs font-[650] text-secondary no-underline hover:text-primary hover:underline";
+pub const BOARD_INLINE_LINKS: &str = "flex flex-wrap gap-3";
+pub const BOARD_INLINE_LINK_FLUSH: &str =
+    "inline-flex text-xs font-[650] text-secondary no-underline hover:text-primary hover:underline";
+
+pub const BOARD_NOTES: &str = "grid gap-2.5";
+pub const BOARD_NOTES_INPUT: &str = "w-full min-h-[110px] resize-y rounded-xl border border-border-subtle bg-surface-subtle p-3 font-inherit leading-normal text-primary outline-none focus:border-focus";
+
+pub const BOARD_EMPTY_TILE: &str = "grid justify-items-start gap-2.5 text-secondary";
+pub const BOARD_EMPTY: &str = "grid justify-items-start gap-2.5 text-secondary";
+pub const BOARD_EMPTY_BOARD: &str = "col-span-full grid justify-items-center gap-2.5 rounded-[18px] border border-dashed border-border-strong bg-surface px-6 py-12 text-center text-secondary";
+pub const BOARD_EMPTY_BOARD_TITLE: &str = "m-0 text-xl font-[650] text-primary";
+
+pub const BOARD_SKELETON: &str = "grid gap-4";
+pub const BOARD_SKELETON_BAR: &str = "h-[88px] rounded-[14px] bg-surface-subtle";
+pub const BOARD_SKELETON_GRID: &str =
+    "grid grid-cols-4 gap-3 max-[720px]:grid-cols-2 [&_span]:block [&_span]:h-[140px] [&_span]:rounded-2xl [&_span]:bg-surface-subtle";
+pub const BOARD_SKELETON_SPAN2: &str = "col-span-2 !h-[180px]";
+
+pub const BOARD_BIND_EDITOR: &str =
+    "mb-2 grid gap-2 rounded-xl border border-border-subtle bg-surface-subtle p-2.5";
+pub const BOARD_BIND_FIELD: &str = "grid gap-1";
+pub const BOARD_BIND_FIELD_LABEL: &str =
+    "text-[11px] font-[650] uppercase tracking-[0.04em] text-tertiary";
+pub const BOARD_BIND_ROW: &str = "grid grid-cols-2 gap-2 max-[720px]:grid-cols-1";
+pub const BOARD_BIND_HINT: &str = "m-0 text-[11px] text-tertiary";
+
+pub const BOARD_TABLE_WRAP: &str = "max-h-[280px] overflow-auto";
+pub const BOARD_TABLE: &str = "w-full border-collapse text-xs";
+pub const BOARD_TABLE_TH: &str =
+    "border-b border-border-subtle px-2 py-1.5 text-left align-top text-[10px] font-bold uppercase tracking-[0.05em] text-tertiary";
+pub const BOARD_TABLE_TD: &str =
+    "border-b border-border-subtle px-2 py-1.5 text-left align-top";
+
+// ── Resources & queries modal ──────────────────────────────────────────────
+
+pub const BOARD_RQ_TABS: &str = "flex flex-wrap gap-1.5";
+pub const BOARD_RQ_TAB: &str = "cursor-pointer appearance-none rounded-full border border-border-subtle bg-surface-subtle px-3 py-1.5 text-xs font-[650] text-secondary";
+pub const BOARD_RQ_TAB_ACTIVE: &str = "cursor-pointer appearance-none rounded-full border border-inverse bg-inverse px-3 py-1.5 text-xs font-[650] text-on-inverse";
+pub const BOARD_RQ_BODY: &str = "grid min-h-0 gap-4 overflow-auto overscroll-contain";
+pub const BOARD_RQ_CATALOG: &str =
+    "grid grid-cols-2 gap-3 max-[720px]:grid-cols-1";
+pub const BOARD_RQ_CARD: &str =
+    "grid gap-2 rounded-[14px] border border-border-subtle bg-surface-subtle p-3.5";
+pub const BOARD_RQ_CARD_DISABLED: &str =
+    "grid gap-2 rounded-[14px] border border-border-subtle bg-surface-subtle p-3.5 opacity-55";
+pub const BOARD_RQ_CARD_TITLE: &str = "text-sm font-[650]";
+pub const BOARD_RQ_CARD_P: &str = "m-0 text-xs leading-[1.45] text-secondary";
+pub const BOARD_RQ_LISTS: &str = "grid grid-cols-2 gap-4 max-[720px]:grid-cols-1";
+pub const BOARD_RQ_FORM: &str = "grid gap-3";
+pub const BOARD_RQ_FORM_H3: &str = "m-0 mb-2.5 text-sm font-[650]";
+pub const BOARD_RQ_ROW: &str = "grid grid-cols-2 gap-2.5 max-[720px]:grid-cols-1";
+pub const BOARD_RQ_TEXTAREA: &str = "min-h-[88px] resize-y";
+pub const BOARD_RQ_CHECK: &str = "flex items-center gap-2 text-[13px]";
+pub const BOARD_RQ_ACTIONS: &str = "flex flex-wrap gap-2";
+pub const BOARD_RQ_OUTPUT: &str = "mt-2 grid gap-2";
+pub const BOARD_JSON_PREVIEW_LG: &str =
+    "max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-[10px] border border-border-subtle bg-surface-subtle p-2.5 text-[11px]";
