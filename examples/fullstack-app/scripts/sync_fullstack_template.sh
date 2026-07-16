@@ -25,6 +25,7 @@ SYNC_PATHS=(
   spin.production.toml.example
   Makefile
   README.md
+  DESIGN.md
   .env.example
   scripts
 )

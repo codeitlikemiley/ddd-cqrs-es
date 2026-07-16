@@ -196,19 +196,38 @@ view! {
 
 ---
 
-## 9. Change process
+## 9. Workspace chrome persistence (islands)
+
+Sidebar **org switcher**, **account menu**, and **theme toggle** must not re-flash
+on every soft navigation. Implementation notes for authors:
+
+1. Enable `HydrationScripts { islands: true, islands_router: true }`.
+2. Mark stable regions: `#workspace-content`, `#workspace-primary-nav`,
+   `#workspace-topbar-title` (swapped) vs `#workspace-chrome-foot` (persisted).
+3. Install `initWorkspaceChromePersist()` from `WorkspaceSidebarControls` so
+   in-app hops only replace content/nav/title and leave chrome islands mounted.
+4. Cache session + org memberships (`workspace-chrome-v1`) for cold remounts;
+   use `data-nav` + `mark_active_nav` for flyout focus (islands have no Router).
+
+Full guide (technique, anti-patterns, verification):
+
+- Monorepo docs: [`docs/tutorial/leptos-islands-persistent-chrome.md`](../../docs/tutorial/leptos-islands-persistent-chrome.md)
+
+## 10. Change process
 
 1. Edit tokens in `examples/fullstack-app/input.css` (this brief stays in sync).
 2. Dual-sync product files to the CLI template when required  
    (`scripts/sync_fullstack_template.sh` — `input.css` is on the allowlist).
 3. Prefer class constants in `src/ui/classes.rs` over ad-hoc utilities in islands.
 4. Rebuild Tailwind via the normal Spin/Cargo frontend pipeline; verify light **and** dark.
+5. After chrome/nav changes, dual-sync the template and re-check soft-nav probes
+   (same `leptos-island` node identity for foot menus across hops).
 
 When this document and `input.css` disagree, **update both** in the same change.
 
 ---
 
-## 10. Credits / inspiration
+## 11. Credits / inspiration
 
 - ChatGPT-style neutral product chrome (content-first, soft fields).
 - [Caleb Porzio — zinc-25 Tailwind note](https://x.com/calebporzio/status/2077409452571934940):
