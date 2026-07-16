@@ -21,6 +21,33 @@ pub(crate) fn settings_slug_from_params() -> Memo<String> {
     })
 }
 
+/// Parse `/org/{slug}/settings…` from a browser pathname (islands have no Router).
+pub(crate) fn slug_from_settings_pathname(path: &str) -> String {
+    let path = path.trim_end_matches('/');
+    let Some(rest) = path.strip_prefix("/org/") else {
+        return String::new();
+    };
+    let Some((slug, after)) = rest.split_once('/') else {
+        return String::new();
+    };
+    if after == "settings" || after.starts_with("settings/") {
+        slug.to_owned()
+    } else {
+        String::new()
+    }
+}
+
+/// Display label for a role id when role catalog is unavailable.
+pub(crate) fn display_role_name(role_id: &str) -> String {
+    match role_id {
+        "owner" => "Owner".to_owned(),
+        "admin" => "Admin".to_owned(),
+        "member" => "Member".to_owned(),
+        "viewer" => "Viewer".to_owned(),
+        other => other.to_owned(),
+    }
+}
+
 /// Settings section keys (path segment after `/settings/`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SettingsSection {

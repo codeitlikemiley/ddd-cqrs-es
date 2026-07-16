@@ -188,3 +188,198 @@ pub async fn list_current_organization_audit() -> Result<AuditEventListResponse,
     #[cfg(not(feature = "ssr"))]
     unreachable!()
 }
+
+// --- Slug-scoped workspace settings (PR3) ------------------------------------
+
+#[server(prefix = "/api/ui")]
+pub async fn get_workspace_settings_context(
+    slug: String,
+) -> Result<WorkspaceSettingsContext, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        crate::application::get_workspace_settings_context(slug, server_fn_request_auth())
+            .await
+            .map_err(server_fn_error)
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = slug;
+        unreachable!()
+    }
+}
+
+#[server(prefix = "/api/ui")]
+pub async fn list_workspace_members(slug: String) -> Result<MembershipListResponse, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        crate::application::list_workspace_members(slug, server_fn_request_auth())
+            .await
+            .map_err(server_fn_error)
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = slug;
+        unreachable!()
+    }
+}
+
+#[server(prefix = "/api/ui")]
+pub async fn list_workspace_invitations(
+    slug: String,
+) -> Result<InvitationListResponse, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        crate::application::list_workspace_invitations(slug, server_fn_request_auth())
+            .await
+            .map_err(server_fn_error)
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = slug;
+        unreachable!()
+    }
+}
+
+#[server(prefix = "/api/ui")]
+pub async fn list_workspace_roles(slug: String) -> Result<RoleListResponse, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        crate::application::list_workspace_roles(slug, server_fn_request_auth())
+            .await
+            .map_err(server_fn_error)
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = slug;
+        unreachable!()
+    }
+}
+
+#[server(prefix = "/api/ui")]
+pub async fn list_workspace_audit(
+    slug: String,
+    after: Option<String>,
+    limit: Option<u32>,
+) -> Result<AuditEventListResponse, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        crate::application::list_workspace_audit(slug, after, limit, server_fn_request_auth())
+            .await
+            .map_err(server_fn_error)
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (slug, after, limit);
+        unreachable!()
+    }
+}
+
+#[server(prefix = "/api/ui")]
+pub async fn update_workspace_name(
+    slug: String,
+    name: String,
+) -> Result<OrganizationSummary, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        crate::application::update_workspace_name(slug, name, server_fn_request_auth())
+            .await
+            .map_err(server_fn_error)
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (slug, name);
+        unreachable!()
+    }
+}
+
+#[server(prefix = "/api/ui")]
+pub async fn assign_workspace_member_role(
+    slug: String,
+    user_id: String,
+    role_id: String,
+) -> Result<crate::contracts::MembershipSummary, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        crate::application::assign_workspace_member_role(
+            slug,
+            user_id,
+            role_id,
+            server_fn_request_auth(),
+        )
+        .await
+        .map_err(server_fn_error)
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (slug, user_id, role_id);
+        unreachable!()
+    }
+}
+
+#[server(prefix = "/api/ui")]
+pub async fn remove_workspace_member(
+    slug: String,
+    user_id: String,
+) -> Result<AcceptedResponse, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        crate::application::remove_workspace_member(slug, user_id, server_fn_request_auth())
+            .await
+            .map_err(server_fn_error)
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (slug, user_id);
+        unreachable!()
+    }
+}
+
+#[server(prefix = "/api/ui")]
+pub async fn invite_workspace_member(
+    slug: String,
+    email: String,
+    role_id: String,
+) -> Result<crate::contracts::InvitationSummary, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        crate::application::invite_workspace_member(
+            slug,
+            email,
+            role_id,
+            server_fn_request_auth(),
+        )
+        .await
+        .map_err(server_fn_error)
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (slug, email, role_id);
+        unreachable!()
+    }
+}
+
+#[server(prefix = "/api/ui")]
+pub async fn upsert_workspace_role(
+    slug: String,
+    role_id: String,
+    name: String,
+    permissions: Vec<String>,
+) -> Result<crate::contracts::RoleSummary, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        crate::application::upsert_workspace_role(
+            slug,
+            role_id,
+            name,
+            permissions,
+            server_fn_request_auth(),
+        )
+        .await
+        .map_err(server_fn_error)
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (slug, role_id, name, permissions);
+        unreachable!()
+    }
+}

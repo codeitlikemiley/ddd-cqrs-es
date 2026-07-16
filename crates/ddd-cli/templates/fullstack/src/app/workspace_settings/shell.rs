@@ -4,11 +4,11 @@
 #![allow(clippy::unused_unit)]
 #![allow(clippy::unit_arg)]
 
-use super::shared::SettingsSection;
+use super::shared::{SettingsSection, slug_from_settings_pathname};
 use crate::app::helpers::{
     current_browser_pathname, org_monogram, org_tone_index, server_error_text,
 };
-use crate::app::{browser_load, list_organizations};
+use crate::app::{browser_load, get_workspace_settings_context, list_organizations};
 use leptos::prelude::*;
 
 /// Settings chrome: identity + section nav + main outlet.
@@ -73,14 +73,24 @@ pub fn WorkspaceSettingsSidebar() -> impl IntoView {
         });
     }
 
-    let slug = Memo::new(move |_| slug_from_settings_path(&path.get()));
+    let slug = Memo::new(move |_| slug_from_settings_pathname(&path.get()));
     let active = Memo::new(move |_| {
         SettingsSection::from_path(&path.get()).unwrap_or(SettingsSection::General)
+    });
+    // Prefer slug-scoped settings context; fall back to org list for identity.
+    let settings_ctx = browser_load({
+        move || {
+            let slug = slug_from_settings_pathname(&current_browser_pathname());
+            get_workspace_settings_context(slug)
+        }
     });
     let orgs = browser_load(list_organizations);
 
     let identity = Memo::new(move |_| {
         let slug_now = slug.get();
+        if let Some(Ok(ctx)) = settings_ctx.get() {
+            return Some((ctx.organization.name, ctx.organization.slug));
+        }
         match orgs.get() {
             Some(Ok(list)) => list
                 .organizations
@@ -104,8 +114,12 @@ pub fn WorkspaceSettingsSidebar() -> impl IntoView {
         }
     });
 
-    let loading = Memo::new(move |_| orgs.get().is_none());
+    let loading = Memo::new(move |_| settings_ctx.get().is_none() && orgs.get().is_none());
     let list_error = Memo::new(move |_| {
+        // Prefer surfacing settings-context errors (slug membership) over list noise.
+        if let Some(Err(error)) = settings_ctx.get() {
+            return Some(server_error_text(error));
+        }
         orgs.get().and_then(|result| match result {
             Ok(_) => None,
             Err(error) => Some(server_error_text(error)),
@@ -229,21 +243,6 @@ pub fn WorkspaceSettingsSidebar() -> impl IntoView {
                 </a>
             </div>
         </aside>
-    }
-}
-
-fn slug_from_settings_path(path: &str) -> String {
-    let path = path.trim_end_matches('/');
-    let Some(rest) = path.strip_prefix("/org/") else {
-        return String::new();
-    };
-    let Some((slug, after)) = rest.split_once('/') else {
-        return String::new();
-    };
-    if after == "settings" || after.starts_with("settings/") {
-        slug.to_owned()
-    } else {
-        String::new()
     }
 }
 

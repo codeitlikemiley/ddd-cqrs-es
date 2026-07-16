@@ -9,7 +9,7 @@
 | Field | Value |
 |-------|--------|
 | Run ID | `07aef382` |
-| Current PR | PR2 (proposed) |
+| Current PR | PR3 (proposed) |
 | Phase | awaiting_approval |
 | Branch base | `codex/fullstack-verification-flow` |
 
@@ -26,7 +26,7 @@
 - [x] **M0** Baseline & module split (PR0)
 - [x] **M1** Access model (PR1)
 - [x] **M2** Settings shell & routes (PR2)
-- [ ] **M3** Read models & transport (PR3)
+- [x] **M3** Read models & transport (PR3)
 - [ ] **M4** Settings areas (PR4a–e)
 - [ ] **M5** Lifecycle SQL (ships with PR4b/c/e)
 - [ ] **M6** Verification & isolation (PR5)
@@ -38,7 +38,7 @@
 | PR0 | Tracker + org UI module split + template sync | — | done |
 | PR1 | OrganizationAccessModel + deps + error fidelity | — (∥ PR0) | done (code; step-up fidelity deferred) |
 | PR2 | Settings shell + slug routes + legacy redirects | PR0 | done (code; awaiting orchestrator advance) |
-| PR3 | Settings DTOs + slug-scoped reads + assign/remove/update fns | PR2 (+PR1 preferred) | pending |
+| PR3 | Settings DTOs + slug-scoped reads + assign/remove/update fns | PR2 (+PR1 preferred) | done (code; awaiting orchestrator advance) |
 | PR4a | General + Members UI | PR3 | pending |
 | PR4b | Invitations UI + revoke/resend | PR3 + wasi-auth | pending |
 | PR4c | Roles UI + delete custom role | PR3 + wasi-auth | pending |
@@ -95,11 +95,19 @@ Default order: `PR0 → PR1 → PR2 → PR3 → PR4a → PR4b → PR4c → PR4d 
 
 ### PR3 — M3 Transport
 
-- [ ] `WorkspaceSettingsContext` (+ page DTOs)
-- [ ] Slug resolve + membership check helper
-- [ ] Slug-scoped server_fns
-- [ ] Wire update/assign/remove for UI
+- [x] `WorkspaceSettingsContext` (+ page DTOs)
+- [x] Slug resolve + membership check helper
+- [x] Slug-scoped server_fns
+- [x] Wire update/assign/remove for UI
 - Evidence:
+  - Contracts: `WorkspaceSettingsContext`, `WorkspaceSettingsOrganization`, `WorkspaceSettingsMembership`, `WorkspaceRoleOption` in `contracts/organization.rs`
+  - `resolve_workspace_by_slug` / `resolve_workspace_by_slug_with_context` — slug → org id (store) + active membership via `organization_for_session` (not session tenant alone)
+  - Server fns (`/api/ui`): `get_workspace_settings_context`, `list_workspace_{members,invitations,roles,audit}`, `update_workspace_name`, `assign_workspace_member_role`, `remove_workspace_member`, `invite_workspace_member`, `upsert_workspace_role`
+  - Mutations re-verify AAL2 + slug membership; slug immutable on rename
+  - UI: General loads context, editable name + read-only slug, Save → `update_workspace_name` with `server_error_text`; Members loads `list_workspace_members` table (email/role/status)
+  - Shell identity prefers settings context name/slug
+  - `bash examples/fullstack-app/scripts/sync_fullstack_template.sh` + `… check` — template in sync
+  - `cd examples/fullstack-app && make check` — green; hydrate check green; `bash scripts/check_loc.sh` — OK
 
 ### PR4a — General + Members
 

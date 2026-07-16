@@ -143,3 +143,44 @@ pub struct RoleUpsertRequest {
 pub struct PermissionCatalogResponse {
     pub permissions: Vec<String>,
 }
+
+/// Organization slice for workspace settings chrome and general page.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceSettingsOrganization {
+    pub organization_id: String,
+    pub name: String,
+    pub slug: String,
+    pub status: String,
+    pub created_at_ms: u64,
+}
+
+/// Caller's membership in the resolved workspace (active only).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceSettingsMembership {
+    pub role_id: String,
+    pub role_name: String,
+    pub status: String,
+}
+
+/// Role option for assign/invite comboboxes (owner excluded for ordinary assign).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceRoleOption {
+    pub role_id: String,
+    pub name: String,
+    pub built_in: bool,
+}
+
+/// Slug-scoped settings bootstrap payload for the caller.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceSettingsContext {
+    pub organization: WorkspaceSettingsOrganization,
+    pub membership: WorkspaceSettingsMembership,
+    /// Effective permissions for the caller in this workspace.
+    pub capabilities: Vec<String>,
+    /// Roles suitable for assign/invite comboboxes (excludes `owner`).
+    pub role_options: Vec<WorkspaceRoleOption>,
+    pub member_count: u32,
+    pub pending_invitation_count: u32,
+    /// True when session assurance is below AAL2 (mutations need step-up).
+    pub requires_step_up: bool,
+}
