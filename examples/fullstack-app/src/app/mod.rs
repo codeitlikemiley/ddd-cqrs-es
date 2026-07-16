@@ -303,8 +303,9 @@ export function bindUserMenuDismiss() {
   }
   window.__userMenuDismissBound = true;
 
-  // Keep in sync with WorkspaceUserMenu / WorkspaceOrgSwitcher markup.
-  const FLYOUT_SELECTOR = ".user-menu-details, .org-switcher-details";
+  // Keep in sync with WorkspaceUserMenu / WorkspaceOrgSwitcher markup
+  // (`data-flyout` hooks — pure-utility class lists are not stable selectors).
+  const FLYOUT_SELECTOR = '[data-flyout="user-menu"], [data-flyout="org-switcher"]';
 
   function closeOpenMenus(except) {
     document.querySelectorAll(FLYOUT_SELECTOR + "[open]").forEach((details) => {

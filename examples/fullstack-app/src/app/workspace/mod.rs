@@ -488,7 +488,7 @@ pub fn WorkspaceOrgSwitcher() -> impl IntoView {
                         let orgs_for_list = list.organizations.clone();
 
                         view! {
-                            <details class=ORG_SWITCHER_DETAILS>
+                            <details class=ORG_SWITCHER_DETAILS data-flyout="org-switcher">
                                 <summary class=ORG_SWITCHER_TRIGGER aria-label="Switch workspace">
                                     <span class=ORG_SWITCHER_AVATAR aria-hidden="true">{monogram}</span>
                                     <span class=ORG_SWITCHER_META>
@@ -604,7 +604,7 @@ pub fn WorkspaceUserMenu() -> impl IntoView {
                         .map(|ch| ch.to_ascii_uppercase())
                         .unwrap_or('U');
                     view! {
-                        <details class=USER_MENU_DETAILS>
+                        <details class=USER_MENU_DETAILS data-flyout="user-menu">
                             <summary class=USER_MENU_TRIGGER aria-label="Account menu">
                                 <span class=USER_MENU_AVATAR aria-hidden="true">{initial.to_string()}</span>
                                 <span class=USER_MENU_META>

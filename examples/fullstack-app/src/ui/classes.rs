@@ -903,7 +903,7 @@ pub fn org_row_class(is_active: bool) -> &'static str {
 
 /// Root flex shell (not grid — main must grow when rail is display:none).
 pub const WS_SHELL: &str =
-    "group/shell flex min-h-dvh w-full flex-row items-stretch bg-canvas max-[960px]:flex-col";
+    "group/shell flex min-h-dvh w-full flex-row items-stretch bg-canvas shell-mobile:flex-col";
 
 /// Checkbox peer for pure-CSS mobile drawer (no WASM required).
 pub const WS_NAV_TOGGLE: &str =
@@ -911,10 +911,10 @@ pub const WS_NAV_TOGGLE: &str =
 
 /// Full-viewport scrim behind the mobile drawer.
 pub const WS_NAV_BACKDROP: &str =
-    "fixed inset-0 z-[35] m-0 hidden appearance-none border-0 bg-overlay-scrim p-0 max-[960px]:peer-checked:block";
+    "fixed inset-0 z-[35] m-0 hidden appearance-none border-0 bg-overlay-scrim p-0 shell-mobile:peer-checked:block";
 
 /// Left rail — sticky desktop column; fixed off-canvas drawer on mobile.
-pub const WS_SIDEBAR: &str = "sticky top-0 z-auto flex h-dvh w-[260px] max-w-[260px] min-w-0 flex-[0_0_260px] flex-col gap-4 overflow-hidden border-r border-border-subtle bg-sidebar px-2.5 py-3 shell-animated:transition-[width,flex-basis] shell-animated:duration-[180ms] shell-animated:ease-[cubic-bezier(0.16,1,0.3,1)] shell-mini:w-[68px] shell-mini:max-w-[68px] shell-mini:flex-[0_0_68px] shell-mini:items-center shell-mini:gap-3 shell-mini:overflow-visible shell-mini:px-2 shell-mini:py-3 shell-hidden:!pointer-events-none shell-hidden:!hidden shell-hidden:!h-0 shell-hidden:!max-h-0 shell-hidden:!min-h-0 shell-hidden:!w-0 shell-hidden:!max-w-0 shell-hidden:!flex-[0_0_0] shell-hidden:!border-0 shell-hidden:!p-0 shell-hidden:!opacity-0 shell-hidden:!overflow-hidden max-[960px]:fixed max-[960px]:left-0 max-[960px]:top-0 max-[960px]:z-40 max-[960px]:h-dvh max-[960px]:w-[min(300px,86vw)] max-[960px]:max-w-[min(300px,86vw)] max-[960px]:gap-3.5 max-[960px]:overflow-y-auto max-[960px]:border-r max-[960px]:px-2.5 max-[960px]:py-3 max-[960px]:pb-3.5 max-[960px]:opacity-100 max-[960px]:pointer-events-auto max-[960px]:-translate-x-[105%] max-[960px]:transform max-[960px]:transition-transform max-[960px]:duration-200 max-[960px]:ease-[cubic-bezier(0.16,1,0.3,1)] max-[960px]:peer-checked:translate-x-0 max-[960px]:peer-checked:shadow-[8px_0_32px_rgba(0,0,0,0.14)]";
+pub const WS_SIDEBAR: &str = "sticky top-0 z-auto flex h-dvh w-[260px] max-w-[260px] min-w-0 flex-[0_0_260px] flex-col gap-4 overflow-hidden border-r border-border-subtle bg-sidebar px-2.5 py-3 shell-animated:transition-[width,flex-basis] shell-animated:duration-[180ms] shell-animated:ease-[cubic-bezier(0.16,1,0.3,1)] shell-mini:w-[68px] shell-mini:max-w-[68px] shell-mini:flex-[0_0_68px] shell-mini:items-center shell-mini:gap-3 shell-mini:!overflow-visible shell-mini:px-2 shell-mini:py-3 shell-hidden:!pointer-events-none shell-hidden:!hidden shell-hidden:!h-0 shell-hidden:!max-h-0 shell-hidden:!min-h-0 shell-hidden:!w-0 shell-hidden:!max-w-0 shell-hidden:!flex-[0_0_0] shell-hidden:!border-0 shell-hidden:!p-0 shell-hidden:!opacity-0 shell-hidden:!overflow-hidden shell-mobile:fixed shell-mobile:left-0 shell-mobile:top-0 shell-mobile:z-40 shell-mobile:h-dvh shell-mobile:w-[min(300px,86vw)] shell-mobile:max-w-[min(300px,86vw)] shell-mobile:gap-3.5 shell-mobile:overflow-y-auto shell-mobile:border-r shell-mobile:px-2.5 shell-mobile:py-3 shell-mobile:pb-3.5 shell-mobile:opacity-100 shell-mobile:pointer-events-auto shell-mobile:-translate-x-[105%] shell-mobile:transform shell-mobile:transition-transform shell-mobile:duration-200 shell-mobile:ease-[cubic-bezier(0.16,1,0.3,1)] shell-mobile:peer-checked:translate-x-0 shell-mobile:peer-checked:shadow-[8px_0_32px_rgba(0,0,0,0.14)]";
 
 pub const WS_SIDEBAR_TOP: &str =
     "flex min-h-11 items-center justify-between gap-1 shell-mini:w-full shell-mini:flex-col shell-mini:gap-2";
@@ -930,7 +930,7 @@ pub const WS_BRAND_COPY: &str =
 
 /// Desktop rail collapse control (full ↔ mini). Hidden on mobile drawer.
 pub const WS_RAIL_TOGGLE: &str =
-    "m-0 inline-flex h-8 w-8 flex-none cursor-pointer appearance-none items-center justify-center rounded-lg border-0 bg-transparent p-0 text-tertiary hover:bg-surface-hover hover:text-primary max-[960px]:!hidden";
+    "m-0 inline-flex h-8 w-8 flex-none cursor-pointer appearance-none items-center justify-center rounded-lg border-0 bg-transparent p-0 text-tertiary hover:bg-surface-hover hover:text-primary shell-mobile:!hidden";
 
 pub const WS_RAIL_ICON: &str =
     "relative block h-[14px] w-4 rounded-[3px] border-[1.5px] border-current";
@@ -940,17 +940,17 @@ pub const WS_RAIL_ICON_BAR: &str =
 
 /// Mobile drawer close control (label for checkbox).
 pub const WS_SIDEBAR_CLOSE: &str =
-    "hidden min-h-[30px] cursor-pointer select-none appearance-none items-center rounded-lg border border-border-strong bg-transparent px-2.5 text-xs font-semibold text-secondary max-[960px]:inline-flex";
+    "hidden min-h-[30px] cursor-pointer select-none appearance-none items-center rounded-lg border border-border-strong bg-transparent px-2.5 text-xs font-semibold text-secondary shell-mobile:inline-flex";
 
 pub const WS_NAV: &str =
-    "grid min-h-0 flex-[1_1_auto] content-start gap-0.5 overflow-y-auto shell-mini:w-full shell-mini:justify-items-center shell-mini:overflow-x-hidden shell-mini:overflow-y-auto max-[960px]:overflow-visible";
+    "grid min-h-0 flex-[1_1_auto] content-start gap-0.5 overflow-y-auto shell-mini:w-full shell-mini:justify-items-center shell-mini:overflow-x-hidden shell-mini:overflow-y-auto shell-mobile:overflow-visible";
 
 pub const WS_NAV_LABEL: &str =
     "mb-1 ml-2.5 mt-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-tertiary shell-mini:hidden";
 
 pub const WS_NAV_LABEL_SECONDARY: &str = "mt-4";
 
-pub const WS_NAV_LINK: &str = "relative flex min-h-9 min-w-0 items-center gap-2.5 overflow-hidden rounded-[10px] border-0 bg-transparent px-3 py-2 text-sm font-medium leading-tight text-secondary no-underline transition-[background-color,color,padding] duration-[140ms] ease-in-out hover:bg-surface-hover hover:text-primary [&.is-active]:bg-surface-active [&.is-active]:font-semibold [&.is-active]:text-primary shell-mini:w-11 shell-mini:justify-center shell-mini:p-2.5 max-[960px]:min-h-10 max-[960px]:w-full max-[960px]:justify-start max-[960px]:px-3 max-[960px]:py-2";
+pub const WS_NAV_LINK: &str = "relative flex min-h-9 min-w-0 items-center gap-2.5 overflow-hidden rounded-[10px] border-0 bg-transparent px-3 py-2 text-sm font-medium leading-tight text-secondary no-underline transition-[background-color,color,padding] duration-[140ms] ease-in-out hover:bg-surface-hover hover:text-primary [&.is-active]:bg-surface-active [&.is-active]:font-semibold [&.is-active]:text-primary shell-mini:w-11 shell-mini:justify-center shell-mini:p-2.5 shell-mobile:min-h-10 shell-mobile:w-full shell-mobile:justify-start shell-mobile:px-3 shell-mobile:py-2";
 
 pub const WS_NAV_ICON: &str =
     "inline-flex h-4 w-4 flex-none items-center justify-center text-current opacity-[0.88] [&_svg]:h-4 [&_svg]:w-4";
@@ -959,26 +959,26 @@ pub const WS_NAV_TEXT: &str =
     "min-w-0 overflow-hidden text-ellipsis whitespace-nowrap shell-mini:hidden";
 
 pub const WS_SIDEBAR_FOOT: &str =
-    "relative mt-auto border-t border-border-subtle pt-2.5 shell-mini:relative shell-mini:z-[60] shell-mini:flex shell-mini:w-full shell-mini:justify-center shell-mini:overflow-visible max-[960px]:block";
+    "relative mt-auto border-t border-border-subtle pt-2.5 shell-mini:relative shell-mini:z-[60] shell-mini:flex shell-mini:w-full shell-mini:justify-center shell-mini:!overflow-visible shell-mobile:block";
 
 pub const WS_MAIN: &str =
-    "flex min-w-0 w-auto flex-[1_1_auto] flex-col shell-hidden:!w-full shell-hidden:!max-w-none shell-hidden:!min-w-0 shell-hidden:!flex-[1_1_100%] max-[960px]:w-full max-[960px]:flex-[1_1_auto]";
+    "flex min-w-0 w-auto flex-[1_1_auto] flex-col shell-hidden:!w-full shell-hidden:!max-w-none shell-hidden:!min-w-0 shell-hidden:!flex-[1_1_100%] shell-mobile:w-full shell-mobile:flex-[1_1_auto]";
 
 /// Sticky top chrome: mobile always; desktop only when rail is hidden (Cmd+B).
 pub const WS_TOPBAR: &str =
-    "sticky top-0 z-20 hidden min-h-[52px] items-center justify-start gap-2.5 border-b border-border-subtle bg-canvas px-4 shell-hidden:flex max-[960px]:flex max-[960px]:justify-start max-[960px]:px-2.5 max-[960px]:pr-3.5";
+    "sticky top-0 z-20 hidden min-h-[52px] items-center justify-start gap-2.5 border-b border-border-subtle bg-canvas px-4 shell-hidden:flex shell-mobile:flex shell-mobile:justify-start shell-mobile:px-2.5 shell-mobile:pr-3.5";
 
 pub const WS_MENU_BUTTON_MOBILE: &str =
-    "m-0 hidden h-9 w-9 flex-none cursor-pointer select-none appearance-none items-center justify-center rounded-[10px] border-0 bg-transparent p-0 text-primary order-first mr-0.5 hover:bg-surface-hover max-[960px]:inline-flex";
+    "m-0 hidden h-9 w-9 flex-none cursor-pointer select-none appearance-none items-center justify-center rounded-[10px] border-0 bg-transparent p-0 text-primary order-first mr-0.5 hover:bg-surface-hover shell-mobile:inline-flex";
 
 pub const WS_MENU_BUTTON_DESKTOP: &str =
-    "m-0 hidden h-9 w-9 flex-none cursor-pointer select-none appearance-none items-center justify-center rounded-[10px] border-0 bg-transparent p-0 text-primary order-2 hover:bg-surface-hover shell-hidden:inline-flex max-[960px]:!hidden";
+    "m-0 hidden h-9 w-9 flex-none cursor-pointer select-none appearance-none items-center justify-center rounded-[10px] border-0 bg-transparent p-0 text-primary order-2 hover:bg-surface-hover shell-hidden:inline-flex shell-mobile:!hidden";
 
 pub const WS_MENU_BARS: &str = "grid w-4 gap-[3.5px]";
 pub const WS_MENU_BAR: &str = "block h-[1.5px] w-full rounded-full bg-primary";
 
 pub const WS_TOPBAR_BRAND: &str =
-    "hidden min-w-0 flex-[0_1_auto] items-center gap-2.5 py-0.5 no-underline order-0 shell-hidden:inline-flex max-[960px]:!hidden";
+    "hidden min-w-0 flex-[0_1_auto] items-center gap-2.5 py-0.5 no-underline order-0 shell-hidden:inline-flex shell-mobile:!hidden";
 
 pub const WS_TOPBAR_TITLE: &str =
     "flex min-w-0 flex-[1_1_auto] items-center shell-hidden:order-1 shell-hidden:flex-[1_1_auto] shell-hidden:justify-center";
@@ -987,10 +987,10 @@ pub const WS_TOPBAR_PAGE: &str =
     "overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium text-secondary";
 
 pub const WS_TOPBAR_ORG: &str =
-    "hidden max-w-[min(240px,42vw)] min-w-0 flex-[0_1_auto] max-[960px]:ml-auto max-[960px]:block";
+    "hidden max-w-[min(240px,42vw)] min-w-0 flex-[0_1_auto] shell-mobile:ml-auto shell-mobile:block";
 
 pub const WS_CONTENT: &str =
-    "mx-auto w-full max-w-[1280px] px-7 pb-20 pt-6 shell-hidden:mx-auto shell-hidden:w-full shell-hidden:max-w-[min(1120px,100%)] max-[960px]:max-w-none max-[960px]:px-4 max-[960px]:pb-14 max-[960px]:pt-5 max-[720px]:px-4 max-[720px]:pb-16 max-[720px]:pt-5";
+    "mx-auto w-full max-w-[1280px] px-7 pb-20 pt-6 shell-hidden:mx-auto shell-hidden:w-full shell-hidden:max-w-[min(1120px,100%)] shell-mobile:max-w-none shell-mobile:px-4 shell-mobile:pb-14 shell-mobile:pt-5 max-[720px]:px-4 max-[720px]:pb-16 max-[720px]:pt-5";
 
 pub const WS_SYSTEM_NAV: &str = "contents";
 pub const WS_HIDDEN_MARKER: &str = "hidden";
@@ -1000,7 +1000,7 @@ pub const WS_HIDDEN_MARKER: &str = "hidden";
 pub const ORG_SWITCHER: &str = "relative mb-2 w-full";
 pub const ORG_SWITCHER_DETAILS: &str =
     "relative w-full [&_summary]:list-none [&_summary::-webkit-details-marker]:hidden";
-pub const ORG_SWITCHER_TRIGGER: &str = "flex w-full min-h-11 cursor-pointer list-none items-center gap-2.5 rounded-xl border border-border-subtle bg-[color-mix(in_srgb,var(--bg-surface)_70%,transparent)] px-2.5 py-2 text-left hover:border-[color-mix(in_srgb,var(--accent,#6366f1)_28%,var(--border-subtle))] hover:bg-surface shell-mini:w-11 shell-mini:justify-center shell-mini:p-2 max-[960px]:w-full max-[960px]:justify-start";
+pub const ORG_SWITCHER_TRIGGER: &str = "flex w-full min-h-11 cursor-pointer list-none items-center gap-2.5 rounded-xl border border-border-subtle bg-[color-mix(in_srgb,var(--bg-surface)_70%,transparent)] px-2.5 py-2 text-left hover:border-[color-mix(in_srgb,var(--accent,#6366f1)_28%,var(--border-subtle))] hover:bg-surface shell-mini:w-11 shell-mini:justify-center shell-mini:p-2 shell-mobile:w-full shell-mobile:justify-start";
 pub const ORG_SWITCHER_AVATAR: &str =
     "inline-flex h-7 w-7 flex-none items-center justify-center rounded-[9px] bg-[color-mix(in_srgb,var(--accent,#6366f1)_16%,var(--bg-muted,#f4f4f5))] text-[11px] font-bold tracking-wide text-[var(--accent,#4f46e5)]";
 pub const ORG_SWITCHER_META: &str =
@@ -1025,10 +1025,10 @@ pub const ORG_SWITCHER_FALLBACK: &str = "p-2 text-[13px] text-secondary";
 
 // ── User menu (sidebar foot account flyout) ────────────────────────────────
 
-pub const USER_MENU: &str = "relative w-full shell-mini:overflow-visible";
+pub const USER_MENU: &str = "relative w-full shell-mini:!overflow-visible";
 pub const USER_MENU_DETAILS: &str =
-    "group/um relative w-full shell-mini:overflow-visible shell-mini:open:z-[200] [&_summary]:list-none [&_summary::-webkit-details-marker]:hidden";
-pub const USER_MENU_TRIGGER: &str = "flex w-full min-h-12 cursor-pointer items-center gap-2.5 rounded-xl border-0 bg-transparent px-2.5 py-2 hover:bg-surface-hover group-open/um:bg-surface-active shell-mini:w-11 shell-mini:min-h-11 shell-mini:justify-center shell-mini:p-2 max-[960px]:w-full max-[960px]:justify-start max-[960px]:px-3 max-[960px]:py-2";
+    "group/um relative w-full shell-mini:!overflow-visible shell-mini:open:z-[200] [&_summary]:list-none [&_summary::-webkit-details-marker]:hidden";
+pub const USER_MENU_TRIGGER: &str = "flex w-full min-h-12 cursor-pointer items-center gap-2.5 rounded-xl border-0 bg-transparent px-2.5 py-2 hover:bg-surface-hover group-open/um:bg-surface-active shell-mini:w-11 shell-mini:min-h-11 shell-mini:justify-center shell-mini:p-2 shell-mobile:w-full shell-mobile:justify-start shell-mobile:px-3 shell-mobile:py-2";
 pub const USER_MENU_AVATAR: &str =
     "inline-flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full bg-inverse text-xs font-bold text-on-inverse";
 pub const USER_MENU_META: &str =

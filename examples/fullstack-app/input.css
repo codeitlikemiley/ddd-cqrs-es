@@ -17,14 +17,19 @@
  * Mirror both live `data-sidebar` on the shell and the FOUC
  * `html[data-sidebar-pref]` set by the head script before hydrate.
  * Mobile drawer ignores these — it always uses the checkbox peer drawer.
+ *
+ * Leading `&:where(...)` is required: it keeps the utility class as the
+ * subject so specificity stays (0,1,0) and beats base utilities on the same
+ * node (e.g. shell-mini:w-[68px] wins over w-[260px]). Bare `:where(anc &)`
+ * zeros specificity after Lightning flatten and is dead in practice.
  */
 @custom-variant shell-mini {
   @media (min-width: 961px) {
-    :where(
-      [data-sidebar="mini"] &,
-      [data-sidebar="mini"]&,
-      html[data-sidebar-pref="mini"] [data-testid="workspace-shell"] &,
-      html[data-sidebar-pref="mini"] [data-testid="workspace-shell"]&
+    &:where(
+      [data-sidebar="mini"],
+      [data-sidebar="mini"] *,
+      html[data-sidebar-pref="mini"] [data-testid="workspace-shell"],
+      html[data-sidebar-pref="mini"] [data-testid="workspace-shell"] *
     ) {
       @slot;
     }
@@ -33,11 +38,11 @@
 
 @custom-variant shell-hidden {
   @media (min-width: 961px) {
-    :where(
-      [data-sidebar="hidden"] &,
-      [data-sidebar="hidden"]&,
-      html[data-sidebar-pref="hidden"] [data-testid="workspace-shell"] &,
-      html[data-sidebar-pref="hidden"] [data-testid="workspace-shell"]&
+    &:where(
+      [data-sidebar="hidden"],
+      [data-sidebar="hidden"] *,
+      html[data-sidebar-pref="hidden"] [data-testid="workspace-shell"],
+      html[data-sidebar-pref="hidden"] [data-testid="workspace-shell"] *
     ) {
       @slot;
     }
@@ -46,10 +51,13 @@
 
 /* Width transition only after JS adds `.is-sidebar-animated` (avoids FOUC flash). */
 @custom-variant shell-animated {
-  :where(.is-sidebar-animated &, .is-sidebar-animated&) {
+  &:where(.is-sidebar-animated, .is-sidebar-animated *) {
     @slot;
   }
 }
+
+/* Mobile drawer band: width ≤960 (pairs with desktop min-width: 961px; no 960px hole). */
+@custom-variant shell-mobile (@media (max-width: 960px));
 
 /*
  * Theme colors bridge to CSS custom properties so:
