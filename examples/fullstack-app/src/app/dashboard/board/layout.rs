@@ -132,6 +132,96 @@ pub(crate) fn find_node<'a>(nodes: &'a [BoardNode], id: &str) -> Option<&'a Boar
     None
 }
 
+/// Remove a node from the tree and return it.
+pub(crate) fn extract_node(nodes: &mut Vec<BoardNode>, id: &str) -> Option<BoardNode> {
+    if let Some(idx) = nodes.iter().position(|n| n.id() == id) {
+        return Some(nodes.remove(idx));
+    }
+    for node in nodes.iter_mut() {
+        if let BoardNode::Container { children, .. } = node
+            && let Some(found) = extract_node(children, id)
+        {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Append `child` under the container with `parent_id` (any depth).
+pub(crate) fn append_child(nodes: &mut Vec<BoardNode>, parent_id: &str, child: BoardNode) -> bool {
+    fn walk(nodes: &mut Vec<BoardNode>, parent_id: &str, child: &mut Option<BoardNode>) -> bool {
+        for node in nodes.iter_mut() {
+            if let BoardNode::Container { id, children, .. } = node {
+                if id == parent_id {
+                    if let Some(c) = child.take() {
+                        children.push(c);
+                        return true;
+                    }
+                    return false;
+                }
+                if walk(children, parent_id, child) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+    let mut child = Some(child);
+    walk(nodes, parent_id, &mut child)
+}
+
+/// True if `ancestor_id` is `node_id` or contains it.
+pub(crate) fn is_ancestor_of(nodes: &[BoardNode], ancestor_id: &str, node_id: &str) -> bool {
+    if ancestor_id == node_id {
+        return true;
+    }
+    let Some(BoardNode::Container { children, .. }) = find_node(nodes, ancestor_id) else {
+        return false;
+    };
+    id_exists(children, node_id)
+}
+
+/// Move an existing node into a container (appended to its children).
+pub(crate) fn move_into_container(
+    nodes: &mut Vec<BoardNode>,
+    node_id: &str,
+    container_id: &str,
+) -> bool {
+    if node_id == container_id {
+        return false;
+    }
+    // Target must be a container.
+    if !matches!(
+        find_node(nodes, container_id),
+        Some(BoardNode::Container { .. })
+    ) {
+        return false;
+    }
+    // Refuse nesting a container inside itself / its descendants.
+    if is_ancestor_of(nodes, node_id, container_id) {
+        return false;
+    }
+    let Some(node) = extract_node(nodes, node_id) else {
+        return false;
+    };
+    append_child(nodes, container_id, node)
+}
+
+/// Insert a new node either at board root or inside a target container.
+pub(crate) fn place_new_node(
+    nodes: &mut Vec<BoardNode>,
+    child: BoardNode,
+    parent_id: Option<&str>,
+) -> bool {
+    match parent_id {
+        None | Some("") => {
+            nodes.push(child);
+            true
+        }
+        Some(parent) => append_child(nodes, parent, child),
+    }
+}
+
 pub(crate) fn commit_layout(
     layout: RwSignal<DashboardLayout>,
     save_layout: ServerAction<SaveDashboardLayout>,

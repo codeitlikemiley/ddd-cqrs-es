@@ -3,7 +3,8 @@
 #![allow(unused_imports)]
 
 use super::layout::{
-    commit_layout, find_col_span, find_node, remove_node, reorder_siblings, set_span_by_id,
+    commit_layout, find_col_span, find_node, move_into_container, remove_node,
+    reorder_siblings, set_span_by_id,
 };
 use super::util::{current_unix_ms, event_target_value_board, parse_list_labels, relative_ms};
 use crate::app::{DismissDashboardNotification, SaveDashboardLayout, UpdateDashboardNote};
@@ -47,6 +48,8 @@ pub(crate) fn render_node_list(
     save_layout: ServerAction<SaveDashboardLayout>,
     dismiss_action: ServerAction<DismissDashboardNotification>,
     note_action: ServerAction<UpdateDashboardNote>,
+    placement_target: RwSignal<Option<String>>,
+    set_picker_open: WriteSignal<bool>,
 ) -> AnyView {
     // Key by id so reorder moves DOM nodes instead of patching in place by index
     // (index patching left stale data-span / body content until full page reload).
@@ -70,6 +73,8 @@ pub(crate) fn render_node_list(
                         save_layout,
                         dismiss_action,
                         note_action,
+                        placement_target,
+                        set_picker_open,
                     )}
                 </div>
             }
@@ -92,6 +97,8 @@ pub(crate) fn render_node(
     save_layout: ServerAction<SaveDashboardLayout>,
     dismiss_action: ServerAction<DismissDashboardNotification>,
     note_action: ServerAction<UpdateDashboardNote>,
+    placement_target: RwSignal<Option<String>>,
+    set_picker_open: WriteSignal<bool>,
 ) -> AnyView {
     match node {
         BoardNode::Container {
@@ -109,6 +116,8 @@ pub(crate) fn render_node(
             let id_chips = id.clone();
             let parent_id = id.clone();
             let parent_id_empty = id.clone();
+            let id_add_btn = id.clone();
+            let id_add_empty = id.clone();
             let kind_label = kind.label();
             let is_row = matches!(kind, BoardContainerKind::Row);
             let span_attr = {
@@ -171,6 +180,7 @@ pub(crate) fn render_node(
                     }
                     on:drop=move |e| {
                         e.prevent_default();
+                        e.stop_propagation();
                         if !editing.get_untracked() {
                             return;
                         }
@@ -180,8 +190,14 @@ pub(crate) fn render_node(
                         let Some(from_id) = from else {
                             return;
                         };
+                        if from_id == id_ddrop {
+                            return;
+                        }
                         let mut next = layout.get_untracked();
-                        if reorder_siblings(&mut next.nodes, &from_id, &id_ddrop) {
+                        // Nest into this container, or reorder among siblings if already peers.
+                        if move_into_container(&mut next.nodes, &from_id, &id_ddrop)
+                            || reorder_siblings(&mut next.nodes, &from_id, &id_ddrop)
+                        {
                             commit_layout(layout, save_layout, next);
                         }
                     }
@@ -203,6 +219,21 @@ pub(crate) fn render_node(
                                 }
                             >
                                 {span_chips(id_chips.clone(), layout, save_layout)}
+                                <button
+                                    type="button"
+                                    class=BOARD_SPAN_CHIP
+                                    aria-label="Add widget into container"
+                                    title="Add widget into this container"
+                                    on:click={
+                                        let id_add = id_add_btn.clone();
+                                        move |_| {
+                                            placement_target.set(Some(id_add.clone()));
+                                            set_picker_open.set(true);
+                                        }
+                                    }
+                                >
+                                    "+"
+                                </button>
                                 <button type="button" class=BOARD_TILE_REMOVE aria-label="Remove container" on:click={
                                     let id_remove = id_remove.clone();
                                     move |_| {
@@ -243,6 +274,8 @@ pub(crate) fn render_node(
                                         save_layout,
                                         dismiss_action,
                                         note_action,
+                                        placement_target,
+                                        set_picker_open,
                                     )
                                 }
                             };
@@ -257,7 +290,22 @@ pub(crate) fn render_node(
                                             })
                                             .unwrap_or(empty)
                                 }>
-                                    <p class=MUTED>"Empty container — add tiles at the root level for now; nest by grouping with rows."</p>
+                                    <div class=BOARD_EMPTY_TILE>
+                                        <p class=MUTED>"Empty container — drop tiles here, or add a widget."</p>
+                                        <button
+                                            type="button"
+                                            class=BOARD_INLINE_LINK
+                                            on:click={
+                                                let id_add = id_add_empty.clone();
+                                                move |_| {
+                                                    placement_target.set(Some(id_add.clone()));
+                                                    set_picker_open.set(true);
+                                                }
+                                            }
+                                        >
+                                            "Add widget here"
+                                        </button>
+                                    </div>
                                 </Show>
                             }
                         }

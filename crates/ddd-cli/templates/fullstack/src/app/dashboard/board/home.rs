@@ -2,15 +2,14 @@
 
 #![allow(unused_imports)]
 
-use super::layout::{
-    collect_placed_kinds, commit_layout, next_node_id, remove_node, reorder_siblings,
-};
+use super::layout::{collect_placed_kinds, commit_layout, next_node_id, place_new_node};
 use super::render::render_node_list;
+use crate::access::{filter_board_nodes, filter_widget_catalog, AccessContext};
 use crate::app::dashboard::resources as dashboard_resources;
 use crate::app::helpers::server_error_text;
 use crate::app::{
     DismissDashboardNotification, SaveDashboardLayout, UpdateDashboardNote, browser_load,
-    get_dashboard_snapshot,
+    get_current_session, get_dashboard_snapshot,
 };
 use crate::contracts::{
     BoardContainerKind, BoardNode, DashboardLayout, DashboardNotification, DashboardSnapshot,
@@ -39,6 +38,7 @@ pub fn DashboardPage() -> impl IntoView {
 #[island]
 pub fn DashboardHome() -> impl IntoView {
     let board = browser_load(get_dashboard_snapshot);
+    let session = browser_load(get_current_session);
     let save_layout = ServerAction::<SaveDashboardLayout>::new();
     let dismiss_action = ServerAction::<DismissDashboardNotification>::new();
     let note_action = ServerAction::<UpdateDashboardNote>::new();
@@ -55,14 +55,24 @@ pub fn DashboardHome() -> impl IntoView {
     let (sources_open, set_sources_open) = signal(false);
     let drag_id = RwSignal::new(None::<String>);
     let drop_target = RwSignal::new(None::<String>);
+    // When set, catalog adds nest under this container id; None = board root.
+    let placement_target = RwSignal::new(None::<String>);
     let (seeded, set_seeded) = signal(false);
     let (save_error, set_save_error) = signal(None::<String>);
+    let access = Memo::new(move |_| match session.get() {
+        Some(Ok(view)) if view.authenticated => AccessContext::from_session(&view),
+        _ => AccessContext::anonymous(),
+    });
 
     Effect::new(move |_| {
         if let Some(Ok(data)) = board.get() {
             if !seeded.get_untracked() {
                 let mut lay = data.layout.clone();
                 lay.migrate_if_needed();
+                let ctx = access.get_untracked();
+                if ctx.authenticated {
+                    lay.nodes = filter_board_nodes(lay.nodes, &ctx);
+                }
                 layout.set(lay);
                 set_notifications.set(data.notifications.clone());
                 set_seeded.set(true);
@@ -184,6 +194,7 @@ pub fn DashboardHome() -> impl IntoView {
                                         set_editing.update(|v| *v = !*v);
                                         drag_id.set(None);
                                         drop_target.set(None);
+                                        placement_target.set(None);
                                     }
                                 >
                                     {move || if editing.get() { "Done" } else { "Edit board" }}
@@ -193,7 +204,10 @@ pub fn DashboardHome() -> impl IntoView {
                                 >
                                     "Resources"
                                 </button>
-                                <button type="button" class=BTN_PRIMARY on:click=move |_| set_picker_open.set(true)
+                                <button type="button" class=BTN_PRIMARY on:click=move |_| {
+                                    placement_target.set(None);
+                                    set_picker_open.set(true);
+                                }
                                     disabled=board_actions_disabled
                                 >
                                     "Add widget"
@@ -203,28 +217,46 @@ pub fn DashboardHome() -> impl IntoView {
 
                         <Show when=move || editing.get()>
                             <p class=BOARD_EDIT_HINT>
-                                "Drag tiles to reorder. Size chips use a 12-column grid (3=¼, 4=⅓, 6=½, 12=full). Add a Row/Stack container to group tiles."
+                                "Drag tiles to reorder or drop onto a Row/Stack to nest. Size chips use a 12-column grid (3=¼, 4=⅓, 6=½, 12=full). Use + on a container to add widgets inside it."
                             </p>
                         </Show>
                         <p class=BANNER_ERROR hidden=move || save_error.get().is_none()>
                             {move || save_error.get().unwrap_or_default()}
                         </p>
 
-                        // Widget catalog modal
+                        // Widget catalog modal (optional placement_target nests under a container)
                         <Show when=move || picker_open.get()>
                             <div
                                 class=BOARD_MODAL_BACKDROP
                                 role="presentation"
-                                on:click=move |_| set_picker_open.set(false)
+                                on:click=move |_| {
+                                    set_picker_open.set(false);
+                                    placement_target.set(None);
+                                }
                                 on:wheel=move |e| e.stop_propagation()
                             >
                                 <div class=BOARD_MODAL role="dialog" aria-modal="true" on:click=move |e| e.stop_propagation()>
                                     <header class=BOARD_MODAL_HEAD>
                                         <div>
-                                            <h2 class=BOARD_MODAL_HEAD_TITLE>"Add to board"</h2>
-                                            <p class=BOARD_MODAL_HEAD_P>"Widgets, containers, and HTTP panels. Notes and HTTP panels can be added multiple times."</p>
+                                            <h2 class=BOARD_MODAL_HEAD_TITLE>
+                                                {move || if placement_target.get().is_some() {
+                                                    "Add into container"
+                                                } else {
+                                                    "Add to board"
+                                                }}
+                                            </h2>
+                                            <p class=BOARD_MODAL_HEAD_P>
+                                                {move || if placement_target.get().is_some() {
+                                                    "New widgets and nested containers go inside the selected Row/Stack."
+                                                } else {
+                                                    "Widgets, containers, and HTTP panels. Notes and HTTP panels can be added multiple times."
+                                                }}
+                                            </p>
                                         </div>
-                                        <button type="button" class=BOARD_MODAL_CLOSE on:click=move |_| set_picker_open.set(false)>"Close"</button>
+                                        <button type="button" class=BOARD_MODAL_CLOSE on:click=move |_| {
+                                            set_picker_open.set(false);
+                                            placement_target.set(None);
+                                        }>"Close"</button>
                                     </header>
                                     <div class=BOARD_PICKER_GRID>
                                         <article class=BOARD_PICKER_CARD>
@@ -234,14 +266,18 @@ pub fn DashboardHome() -> impl IntoView {
                                             </div>
                                             <button type="button" class=BTN_PRIMARY on:click=move |_| {
                                                 let mut next = layout.get_untracked();
-                                                next.nodes.push(BoardNode::Container {
+                                                let parent = placement_target.get_untracked();
+                                                let child = BoardNode::Container {
                                                     id: format!("c-row-{}", next.total_nodes() + 1),
                                                     kind: BoardContainerKind::Row,
                                                     col_span: 12,
                                                     children: Vec::new(),
-                                                });
-                                                commit_layout(layout, save_layout, next);
+                                                };
+                                                if place_new_node(&mut next.nodes, child, parent.as_deref()) {
+                                                    commit_layout(layout, save_layout, next);
+                                                }
                                                 set_picker_open.set(false);
+                                                placement_target.set(None);
                                             }>"Add row"</button>
                                         </article>
                                         <article class=BOARD_PICKER_CARD>
@@ -251,20 +287,29 @@ pub fn DashboardHome() -> impl IntoView {
                                             </div>
                                             <button type="button" class=BTN_PRIMARY on:click=move |_| {
                                                 let mut next = layout.get_untracked();
-                                                next.nodes.push(BoardNode::Container {
+                                                let parent = placement_target.get_untracked();
+                                                let child = BoardNode::Container {
                                                     id: format!("c-stack-{}", next.total_nodes() + 1),
                                                     kind: BoardContainerKind::Stack,
                                                     col_span: 6,
                                                     children: Vec::new(),
-                                                });
-                                                commit_layout(layout, save_layout, next);
+                                                };
+                                                if place_new_node(&mut next.nodes, child, parent.as_deref()) {
+                                                    commit_layout(layout, save_layout, next);
+                                                }
                                                 set_picker_open.set(false);
+                                                placement_target.set(None);
                                             }>"Add stack"</button>
                                         </article>
                                         {
                                             let placed = collect_placed_kinds(&layout.get());
                                             let first_source_base = first_http_source_id.clone();
-                                            DashboardWidgetKind::catalog().iter().cloned().map(|kind| {
+                                            let ctx = access.get();
+                                            let catalog = filter_widget_catalog(
+                                                DashboardWidgetKind::catalog(),
+                                                &ctx,
+                                            );
+                                            catalog.into_iter().map(|kind| {
                                                 let multi = kind.allows_multiple();
                                                 let already = !multi && placed.contains(kind.as_str());
                                                 let kind_add = kind.clone();
@@ -286,6 +331,7 @@ pub fn DashboardHome() -> impl IntoView {
                                                         <button type="button" class=BTN_PRIMARY disabled=already on:click=move |_| {
                                                             if already { return; }
                                                             let mut next = layout.get_untracked();
+                                                            let parent = placement_target.get_untracked();
                                                             let id = next_node_id(kind_add.as_str(), &next);
                                                             let source_id = if kind_add.is_query_bound() {
                                                                 first_source.clone()
@@ -293,7 +339,7 @@ pub fn DashboardHome() -> impl IntoView {
                                                                 None
                                                             };
                                                             let mode = kind_add.default_display_mode();
-                                                            next.nodes.push(BoardNode::Widget {
+                                                            let child = BoardNode::Widget {
                                                                 id,
                                                                 kind: kind_add.clone(),
                                                                 col_span: kind_add.default_span(),
@@ -303,9 +349,12 @@ pub fn DashboardHome() -> impl IntoView {
                                                                 source_id,
                                                                 bind: WidgetBind::for_display_mode(&mode),
                                                                 http_mode: mode,
-                                                            });
-                                                            commit_layout(layout, save_layout, next);
+                                                            };
+                                                            if place_new_node(&mut next.nodes, child, parent.as_deref()) {
+                                                                commit_layout(layout, save_layout, next);
+                                                            }
                                                             set_picker_open.set(false);
+                                                            placement_target.set(None);
                                                         }>
                                                             {if already { "On board" } else { "Add to board" }}
                                                         </button>
@@ -353,13 +402,18 @@ pub fn DashboardHome() -> impl IntoView {
                                     save_layout,
                                     dismiss_action,
                                     note_action,
+                                    placement_target,
+                                    set_picker_open,
                                 )
                             }}
                             <Show when=move || layout.get().nodes.is_empty()>
                                 <div class=BOARD_EMPTY_BOARD>
                                     <h2 class=BOARD_EMPTY_BOARD_TITLE>"Empty board"</h2>
                                     <p>"Add widgets or containers to start designing your workspace."</p>
-                                    <button type="button" class=BTN_PRIMARY on:click=move |_| set_picker_open.set(true)>"Browse catalog"</button>
+                                    <button type="button" class=BTN_PRIMARY on:click=move |_| {
+                                        placement_target.set(None);
+                                        set_picker_open.set(true);
+                                    }>"Browse catalog"</button>
                                 </div>
                             </Show>
                         </div>
