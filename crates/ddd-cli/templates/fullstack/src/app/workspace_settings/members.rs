@@ -22,7 +22,7 @@ use crate::ui::classes::{
     VAULT_MODAL_HEAD, VAULT_MODAL_HEAD_P, VAULT_MODAL_HEAD_TITLE, WS_DANGER_BUTTON, WS_EMPTY,
     WS_MEMBER_ACTIONS, WS_MEMBER_EMAIL, WS_MODAL_ACTIONS, WS_REMOVE_BUTTON, WS_SELECT,
     WS_SELECT_LABEL, WS_SELF_REMOVE_HINT, WS_STEP_UP, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TH,
-    WS_THEAD, WS_TRANSFER_BAR, WS_TRANSFER_MODAL, WS_TR, WS_YOU_BADGE, with_extra,
+    WS_THEAD, WS_TRANSFER_BAR, WS_TRANSFER_MODAL_BODY, WS_TR, WS_YOU_BADGE, with_extra,
 };
 use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
@@ -447,7 +447,7 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
                             "Close"
                         </button>
                     </header>
-                    <div class=with_extra(VAULT_MODAL_BODY, Some(WS_TRANSFER_MODAL))>
+                    <div class=WS_TRANSFER_MODAL_BODY>
                         <label class=FIELD>
                             <span>"New owner"</span>
                             <select

@@ -646,7 +646,8 @@ pub const WS_THEAD: &str = "max-[720px]:absolute max-[720px]:m-[-1px] max-[720px
 pub const WS_TR: &str = "max-[720px]:grid max-[720px]:w-full max-[720px]:gap-0 max-[720px]:rounded-xl max-[720px]:border max-[720px]:border-border-subtle max-[720px]:bg-[color-mix(in_srgb,var(--bg-surface)_92%,var(--bg-canvas))] max-[720px]:px-[0.85rem] max-[720px]:pb-[0.55rem] max-[720px]:pt-[0.35rem] max-[720px]:shadow-[0_1px_2px_rgba(15,23,42,0.04)]";
 pub const WS_TH: &str = "box-border border-b border-border-subtle px-[0.9rem] pb-[0.7rem] pt-[0.85rem] text-left align-middle text-[11px] font-[650] uppercase tracking-[0.04em] text-secondary whitespace-nowrap";
 /// Body cell — desktop table + mobile card row with `data-label` pseudo.
-pub const WS_TD: &str = "box-border border-b border-border-subtle px-[0.9rem] py-[0.85rem] pb-4 text-left align-middle max-[720px]:flex max-[720px]:min-w-0 max-[720px]:items-start max-[720px]:justify-between max-[720px]:gap-[0.85rem] max-[720px]:whitespace-normal max-[720px]:border-b max-[720px]:border-[color-mix(in_srgb,var(--border-subtle)_80%,transparent)] max-[720px]:px-0 max-[720px]:py-[0.65rem] max-[720px]:last:border-b-0 max-[720px]:before:content-[attr(data-label)] max-[720px]:before:flex-none max-[720px]:before:max-w-[38%] max-[720px]:before:pt-[0.15rem] max-[720px]:before:text-[0.72rem] max-[720px]:before:font-[650] max-[720px]:before:uppercase max-[720px]:before:tracking-[0.04em] max-[720px]:before:leading-snug max-[720px]:before:text-secondary max-[720px]:[&>*]:min-w-0 max-[720px]:[&>*]:text-right";
+/// Desktop padding is explicit `pt`/`px`/`pb` (no conflicting `py` + `pb`).
+pub const WS_TD: &str = "box-border border-b border-border-subtle px-[0.9rem] pt-[0.85rem] pb-4 text-left align-middle max-[720px]:flex max-[720px]:min-w-0 max-[720px]:items-start max-[720px]:justify-between max-[720px]:gap-[0.85rem] max-[720px]:whitespace-normal max-[720px]:border-b max-[720px]:border-[color-mix(in_srgb,var(--border-subtle)_80%,transparent)] max-[720px]:px-0 max-[720px]:pt-[0.65rem] max-[720px]:pb-[0.65rem] max-[720px]:last:border-b-0 max-[720px]:before:content-[attr(data-label)] max-[720px]:before:flex-none max-[720px]:before:max-w-[38%] max-[720px]:before:pt-[0.15rem] max-[720px]:before:text-[0.72rem] max-[720px]:before:font-[650] max-[720px]:before:uppercase max-[720px]:before:tracking-[0.04em] max-[720px]:before:leading-snug max-[720px]:before:text-secondary max-[720px]:[&>*]:min-w-0 max-[720px]:[&>*]:text-right";
 
 pub const WS_MEMBER_EMAIL: &str = "mr-2";
 pub const WS_YOU_BADGE: &str = "inline-block rounded-full bg-[color-mix(in_srgb,var(--text-primary)_10%,transparent)] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.02em] text-secondary";
@@ -673,13 +674,19 @@ pub const WS_DANGER_CARD: &str = "flex flex-col items-start gap-3 rounded-[10px]
 pub const WS_DANGER_CONFIRM: &str = "flex w-full max-w-[28rem] flex-col items-start gap-3 [&_label]:w-full";
 
 pub const WS_TRANSFER_BAR: &str = "mb-[1.35rem] mt-0 flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-border-subtle bg-surface px-4 py-[0.85rem] max-[720px]:flex-col max-[720px]:items-stretch [&_p]:m-0 [&_p]:flex-[1_1_16rem] max-[720px]:[&_button]:w-full";
-pub const WS_TRANSFER_MODAL: &str = "flex flex-col gap-[0.85rem]";
+/// Transfer ownership modal body (standalone — do not compose with `VAULT_MODAL_BODY`).
+pub const WS_TRANSFER_MODAL_BODY: &str =
+    "flex min-h-0 flex-col gap-[0.85rem] overflow-auto overscroll-contain";
 
 pub const WS_INVITE_FORM: &str = "mb-5 mt-[0.15rem] grid max-w-[36rem] gap-[0.85rem]";
 pub const WS_INVITE_ACTIONS: &str = "flex items-center gap-3";
 pub const WS_INVITATION_ACTIONS: &str = "flex flex-wrap items-center gap-2 max-[720px]:justify-end";
 
-pub const WS_STATUS_PILL: &str = "inline-flex items-center rounded-full bg-[color-mix(in_srgb,var(--border-subtle)_70%,transparent)] px-2 py-[0.1rem] text-xs font-semibold lowercase text-primary";
+/// Status pill layout/type only — colors live on `WS_STATUS_*` variants (no color clash with `with_extra`).
+pub const WS_STATUS_PILL: &str =
+    "inline-flex items-center rounded-full px-2 py-[0.1rem] text-xs font-semibold lowercase";
+pub const WS_STATUS_NEUTRAL: &str =
+    "bg-[color-mix(in_srgb,var(--border-subtle)_70%,transparent)] text-primary";
 pub const WS_STATUS_PENDING: &str =
     "bg-[color-mix(in_srgb,#2563eb_16%,transparent)] text-[#1d4ed8]";
 pub const WS_STATUS_MUTED: &str =
@@ -691,15 +698,14 @@ pub const WS_STATUS_FAIL: &str =
 
 /// Invitation / audit status pill from raw status string.
 pub fn ws_status_pill(status: &str) -> String {
-    let variant = match status {
-        "pending" => Some(WS_STATUS_PENDING),
-        "revoked" | "expired" => Some(WS_STATUS_MUTED),
-        "accepted" => Some(WS_STATUS_ACCEPTED),
-        "succeeded" | "allowed" => Some(WS_STATUS_ACCEPTED),
-        "failed" | "denied" => Some(WS_STATUS_FAIL),
-        _ => None,
+    let colors = match status {
+        "pending" => WS_STATUS_PENDING,
+        "revoked" | "expired" => WS_STATUS_MUTED,
+        "accepted" | "succeeded" | "allowed" => WS_STATUS_ACCEPTED,
+        "failed" | "denied" => WS_STATUS_FAIL,
+        _ => WS_STATUS_NEUTRAL,
     };
-    with_extra(WS_STATUS_PILL, variant)
+    with_extra(WS_STATUS_PILL, Some(colors))
 }
 
 pub const WS_ROLES_TOOLBAR: &str = "mb-5 mt-0 flex w-full flex-wrap justify-start gap-3";
@@ -713,7 +719,7 @@ pub const WS_ROLE_BADGE_CUSTOM: &str =
 pub const WS_ROLE_ACTIONS: &str = "flex flex-wrap items-center gap-2 max-[720px]:justify-end";
 
 pub const WS_ROLE_FORM: &str =
-    "mb-5 mt-0 grid max-w-[48rem] gap-[0.9rem] rounded-xl border border-border-subtle px-[1.1rem] py-4 pb-[1.15rem]";
+    "mb-5 mt-0 grid max-w-[48rem] gap-[0.9rem] rounded-xl border border-border-subtle px-[1.1rem] pt-4 pb-[1.15rem]";
 pub const WS_ROLE_FORM_HEAD_H2: &str = "mb-1 mt-0 text-[1.05rem]";
 pub const WS_ROLE_FORM_HEAD_P: &str = "m-0";
 pub const WS_PERMISSION_FIELDSET: &str = "m-0 min-w-0 border-0 p-0";
@@ -775,8 +781,8 @@ pub fn ws_outcome_icon(kind: &str) -> String {
 pub const WS_AUDIT_ICON_BUTTON: &str = "inline-flex h-8 w-8 cursor-pointer appearance-none items-center justify-center rounded-full border border-border-subtle bg-surface p-0 text-secondary transition-[background-color,border-color,color] duration-150 hover:border-border-strong hover:bg-surface-hover hover:text-primary";
 pub const WS_AUDIT_EYE: &str = "block";
 
-pub const WS_AUDIT_DETAIL_MODAL: &str =
-    "max-w-[min(36rem,96vw)] w-[min(36rem,calc(100vw-32px))]";
+/// Complete audit detail dialog shell (wider than `VAULT_MODAL_CONFIRM`; do not compose widths).
+pub const WS_AUDIT_DETAIL_MODAL: &str = "grid max-h-[min(84dvh,720px)] w-[min(36rem,calc(100vw-32px))] max-w-[min(36rem,96vw)] grid-rows-[auto_minmax(0,1fr)] gap-[18px] overflow-hidden rounded-[18px] border border-border-subtle bg-surface p-5 shadow-[0_24px_64px_rgba(0,0,0,0.22)]";
 pub const WS_AUDIT_DETAIL_LIST: &str = "mb-[1.1rem] mt-0 grid gap-3";
 pub const WS_AUDIT_DETAIL_ROW: &str = "grid gap-[0.15rem]";
 pub const WS_AUDIT_DETAIL_DT: &str =

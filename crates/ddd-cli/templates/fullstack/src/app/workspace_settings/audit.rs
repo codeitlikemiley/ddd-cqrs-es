@@ -16,7 +16,7 @@ use crate::app::{
 use crate::contracts::AuditEventSummary;
 use crate::ui::classes::{
     BANNER_ERROR, BTN_SECONDARY, INPUT, MUTED, RESULT_LINE, SR_ONLY, VAULT_MODAL_BACKDROP,
-    VAULT_MODAL_BODY, VAULT_MODAL_CLOSE, VAULT_MODAL_CONFIRM, VAULT_MODAL_HEAD, VAULT_MODAL_HEAD_P,
+    VAULT_MODAL_BODY, VAULT_MODAL_CLOSE, VAULT_MODAL_HEAD, VAULT_MODAL_HEAD_P,
     VAULT_MODAL_HEAD_TITLE, WS_AUDIT_COL_ACTION, WS_AUDIT_COL_ACTOR, WS_AUDIT_COL_DETAILS,
     WS_AUDIT_COL_OUTCOME, WS_AUDIT_COL_TARGET, WS_AUDIT_COL_WHEN, WS_AUDIT_DETAIL_DD,
     WS_AUDIT_DETAIL_DT, WS_AUDIT_DETAIL_LIST, WS_AUDIT_DETAIL_MODAL, WS_AUDIT_DETAIL_ROW,
@@ -388,7 +388,7 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
                 on:click=move |_| set_selected.set(None)
             >
                 <div
-                    class=with_extra(VAULT_MODAL_CONFIRM, Some(WS_AUDIT_DETAIL_MODAL))
+                    class=WS_AUDIT_DETAIL_MODAL
                     role="dialog"
                     aria-modal="true"
                     aria-labelledby="workspace-audit-detail-title"

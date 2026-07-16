@@ -1403,7 +1403,7 @@ html[data-sidebar-pref="mini"] .workspace-shell .org-switcher-trigger {
 
 /* ── Widget dashboard board ─────────────────────────────────────────────── */
 
-/* Shared board modal + muted (still used by org create + workspace settings) */
+/* Shared board modal + muted residual (org create; settings domain uses VAULT_MODAL_* utilities) */
 .board-modal-backdrop {
   align-items: center;
   /* Shared scrim token — black-based in both themes (never --bg-inverse). */
