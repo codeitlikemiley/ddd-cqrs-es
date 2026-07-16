@@ -619,7 +619,6 @@ pub fn PublicProfileCard(handle: String) -> impl IntoView {
                                 }}
                             </div>
                             <div class="min-w-0">
-                                <p class="hidden">"Public profile"</p>
                                 <h2 class=PUBLIC_PROFILE_META_TITLE>{display}</h2>
                                 <p class=PROFILE_HANDLE_PREVIEW>{handle_label}</p>
                                 {legal_name.map(|name| view! {

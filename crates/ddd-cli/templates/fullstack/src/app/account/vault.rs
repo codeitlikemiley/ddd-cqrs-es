@@ -278,7 +278,7 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
                                 <th scope="col" class=VAULT_TH>"Label"</th>
                                 <th scope="col" class=VAULT_TH>"Scope"</th>
                                 <th scope="col" class=VAULT_TH>"Value"</th>
-                                <th scope="col" class=format!("{} {}", VAULT_TH, VAULT_TH_ACTIONS)><span class=SR_ONLY>"Actions"</span></th>
+                                <th scope="col" class=VAULT_TH_ACTIONS><span class=SR_ONLY>"Actions"</span></th>
                             </tr>
                         </thead>
                         <tbody>
@@ -398,7 +398,7 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
                             </div>
                             <button type="button" class=VAULT_MODAL_CLOSE on:click=move |_| create_open.set(false)>"Close"</button>
                         </header>
-                        <div class=format!("{} {}", VAULT_MODAL_BODY, "gap-4")>
+                        <div class=VAULT_MODAL_BODY>
                             <div class=VAULT_FORM>
                                 <label class=FIELD>
                                     <span>"Key"</span>

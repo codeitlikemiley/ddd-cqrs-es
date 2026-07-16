@@ -190,7 +190,8 @@ pub const STATUS_HEAD: &str =
 /// Session list + card chrome.
 pub const SESSION_LIST: &str = "grid gap-3.5 p-0 pb-1 m-0";
 pub const SESSION_CARD: &str = "grid gap-2.5";
-pub const SESSION_CARD_CURRENT: &str = "grid gap-2.5 !border-border-strong";
+/// Extra for the current-session card only (compose with `SESSION_CARD`).
+pub const SESSION_CARD_CURRENT: &str = "!border-border-strong";
 pub const SESSION_CARD_HEAD: &str = "flex items-center justify-between gap-2.5";
 pub const SESSION_ASSURANCE: &str = "whitespace-nowrap rounded-full border border-border-subtle bg-surface-subtle px-2.5 py-1.5 font-mono text-[11px] font-semibold tracking-wide text-secondary";
 
@@ -271,8 +272,9 @@ pub const VAULT_TABLE: &str =
 pub const VAULT_TH: &str = "border-b border-border-subtle px-2.5 py-3 text-left align-middle text-[11px] font-semibold uppercase tracking-wide text-secondary";
 pub const VAULT_TD: &str = "border-b border-border-subtle px-2.5 py-3 text-left align-middle";
 pub const VAULT_TD_ELLIPSIS: &str = "border-b border-border-subtle px-2.5 py-3 text-left align-middle overflow-hidden text-ellipsis whitespace-nowrap";
-pub const VAULT_TH_ACTIONS: &str =
-    "border-b border-border-subtle px-2.5 py-3 text-right align-middle w-[10%]";
+/// Full actions-column header (do not compose with `VAULT_TH` — avoids text-left/right conflict).
+pub const VAULT_TH_ACTIONS: &str = "border-b border-border-subtle px-2.5 py-3 text-right align-middle w-[10%] text-[11px] font-semibold uppercase tracking-wide text-secondary";
+/// Full actions-column body cell (standalone; do not compose with `VAULT_TD`).
 pub const VAULT_TD_ACTIONS: &str =
     "border-b border-border-subtle px-2.5 py-3 text-right align-middle w-[10%]";
 pub const VAULT_EMPTY: &str = "whitespace-normal px-2 py-5";

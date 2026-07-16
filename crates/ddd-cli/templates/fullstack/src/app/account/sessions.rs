@@ -117,7 +117,10 @@ pub fn AccountSessionManager() -> impl IntoView {
                                             let expires = session.expires_at_ms;
                                             view! {
                                                 <article class=if is_current {
-                                                    with_extra(PANEL_COMPACT, Some(SESSION_CARD_CURRENT))
+                                                    format!(
+                                                        "{} {} {}",
+                                                        PANEL_COMPACT, SESSION_CARD, SESSION_CARD_CURRENT
+                                                    )
                                                 } else {
                                                     with_extra(PANEL_COMPACT, Some(SESSION_CARD))
                                                 }>
