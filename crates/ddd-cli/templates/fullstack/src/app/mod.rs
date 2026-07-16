@@ -599,6 +599,7 @@ pub mod path;
 pub mod router;
 pub mod server_fns;
 pub mod workspace;
+pub mod workspace_settings;
 
 pub use account::*;
 pub use admin::*;
@@ -612,6 +613,7 @@ pub use router::App;
 pub use router::shell;
 pub use server_fns::*;
 pub use workspace::{AppLayout, WorkspaceOnboardingGate, WorkspaceOnboardingPage, WorkspaceShell};
+// workspace_settings is scaffolded in PR0; public re-exports land when routes ship (PR2).
 
 use crate::app::helpers::{
     action_result_text, current_browser_pathname, has_permission, next_url, optional_text,

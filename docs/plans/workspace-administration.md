@@ -8,10 +8,10 @@
 
 | Field | Value |
 |-------|--------|
-| Run ID | _(set by orchestrator)_ |
-| Current PR | — |
-| Phase | not_started |
-| Branch base | `codex/fullstack-verification-flow` (or main when stacking) |
+| Run ID | `07aef382` |
+| Current PR | PR0 |
+| Phase | awaiting_approval |
+| Branch base | `codex/fullstack-verification-flow` |
 
 ## Locked defaults
 
@@ -23,7 +23,7 @@
 
 ## Milestones
 
-- [ ] **M0** Baseline & module split (PR0)
+- [x] **M0** Baseline & module split (PR0)
 - [ ] **M1** Access model (PR1)
 - [ ] **M2** Settings shell & routes (PR2)
 - [ ] **M3** Read models & transport (PR3)
@@ -35,7 +35,7 @@
 
 | ID | Title | Depends | Status |
 |----|-------|---------|--------|
-| PR0 | Tracker + org UI module split + template sync | — | pending |
+| PR0 | Tracker + org UI module split + template sync | — | done (code; awaiting orchestrator advance) |
 | PR1 | OrganizationAccessModel + deps + error fidelity | — (∥ PR0) | pending |
 | PR2 | Settings shell + slug routes + legacy redirects | PR0 | pending |
 | PR3 | Settings DTOs + slug-scoped reads + assign/remove/update fns | PR2 (+PR1 preferred) | pending |
@@ -52,12 +52,17 @@ Default order: `PR0 → PR1 → PR2 → PR3 → PR4a → PR4b → PR4c → PR4d 
 
 ### PR0 — M0 Baseline
 
-- [ ] Living tracker present (this file)
-- [ ] Split `src/app/organizations/mod.rs` (switcher / create_modal / legacy links)
-- [ ] Scaffold `src/app/workspace_settings/` modules (can be stubs)
-- [ ] `bash examples/fullstack-app/scripts/sync_fullstack_template.sh`
-- [ ] `… check` + `make check` + `check_loc.sh`
+- [x] Living tracker present (this file)
+- [x] Split `src/app/organizations/mod.rs` (switcher / create_modal / legacy links)
+- [x] Scaffold `src/app/workspace_settings/` modules (can be stubs)
+- [x] `bash examples/fullstack-app/scripts/sync_fullstack_template.sh`
+- [x] `… check` + `make check` + `check_loc.sh`
 - Evidence:
+  - `cd examples/fullstack-app && make check` — green (ssr/wasm32-wasip2)
+  - `cd examples/fullstack-app && bash scripts/check_loc.sh` — LOC budget OK (max 1200)
+  - `bash examples/fullstack-app/scripts/sync_fullstack_template.sh` + `… check` — template in sync
+  - Split: `organizations/{mod,home,create_modal,links,legacy_pages}.rs`
+  - Scaffold: `workspace_settings/{mod,shell,general,members,invitations,roles,audit,danger,shared}.rs` (no routes yet)
 
 ### PR1 — M1 Access model (wasi-auth)
 
