@@ -22,7 +22,8 @@ jq -r '.navigation.groups[].pages[]' "$DOCS_JSON" | sort | grep -v '^README$' > 
   # only, so obsolete multi-crate guidance cannot silently re-enter nav.
   find docs -type f -name '*.md' \
     | grep -v '^docs/README\.md$' \
-    | grep -v '^docs/prd/'
+    | grep -v '^docs/prd/' \
+    | grep -v '^docs/plans/'
   printf '%s\n' docs/prd/README.md
 } | sed 's#^docs/##' \
   | sed 's#\.md$##' \
