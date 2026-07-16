@@ -697,43 +697,20 @@ pub fn AppLayout() -> impl IntoView {
     }
 }
 
-/// Primary sidebar nav: product rail or workspace-settings sections (permission-filtered).
-///
-/// **Must be an island.** Plain shell components are SSR-only; `browser_load` /
-/// Effects never run there, which left settings stuck on “Loading settings…”.
-/// Islands hydrate outside the Router — use `current_browser_pathname()`, not
-/// `use_location()`.
-#[island]
-pub fn WorkspacePrimaryNav() -> impl IntoView {
-    let session = browser_load(get_current_session);
-    let orgs = browser_load(list_organizations);
-    // Path signal: islands have no Router context; follow SPA navigations via
-    // the same `workspace-nav-mark` event as `WorkspaceNavActive`.
-    let path = RwSignal::new(current_browser_pathname());
-
-    #[cfg(feature = "hydrate")]
-    Effect::new(move |_| {
-        use wasm_bindgen::JsCast;
-        use wasm_bindgen::closure::Closure;
-
-        path.set(current_browser_pathname());
-        let on_nav = Closure::wrap(Box::new(move |_event: web_sys::Event| {
-            path.set(current_browser_pathname());
-        }) as Box<dyn FnMut(_)>);
-        if let Some(window) = window() {
-            let _ = window.add_event_listener_with_callback(
-                "workspace-nav-mark",
-                on_nav.as_ref().unchecked_ref(),
-            );
-            on_nav.forget();
-        }
-    });
+/// Primary sidebar nav chrome (SSR). Capability-filtered **settings links** live in
+/// [`WorkspaceSettingsNavLinks`] (island) so `browser_load` runs without hydrating
+/// the whole rail (a full-nav island caused tachys hydration panics and left every
+/// other island stuck on “Loading…”).
+#[component]
+fn WorkspacePrimaryNav() -> impl IntoView {
+    let location = use_location();
+    let settings_mode = Memo::new(move |_| is_workspace_settings_path(&location.pathname.get()));
 
     view! {
         <nav
             class=WS_NAV
             aria-label=move || {
-                if is_workspace_settings_path(&path.get()) {
+                if settings_mode.get() {
                     "Workspace settings"
                 } else {
                     "Authenticated workspace"
@@ -741,42 +718,7 @@ pub fn WorkspacePrimaryNav() -> impl IntoView {
             }
         >
             {move || {
-                let pathname = path.get();
-                let settings_mode = is_workspace_settings_path(&pathname);
-                let slug = settings_slug_from_path(&pathname);
-                if settings_mode {
-                    let orgs_state = orgs.get();
-                    let loaded = orgs_state.is_some();
-                    let load_failed = matches!(&orgs_state, Some(Err(_)));
-                    let ctx = match (session.get(), orgs_state.as_ref()) {
-                        (Some(Ok(view)), Some(Ok(list))) if view.authenticated => {
-                            let caps = list
-                                .organizations
-                                .iter()
-                                .find(|org| !slug.is_empty() && org.slug == slug)
-                                .map(|org| org.permissions.as_slice())
-                                .unwrap_or(&[]);
-                            AccessContext::from_permissions(
-                                true,
-                                caps.iter().map(String::as_str),
-                                &view.assurance,
-                                view.system_administrator,
-                            )
-                        }
-                        (Some(Ok(view)), _) if view.authenticated => {
-                            AccessContext::from_permissions(
-                                true,
-                                std::iter::empty::<&str>(),
-                                &view.assurance,
-                                view.system_administrator,
-                            )
-                        }
-                        _ => AccessContext::anonymous(),
-                    };
-                    let items: Vec<_> = nav_settings_items()
-                        .iter()
-                        .filter(|item| item.requirement.is_satisfied_by(&ctx))
-                        .collect();
+                if settings_mode.get() {
                     view! {
                         <p class=WS_NAV_LABEL>"Settings"</p>
                         <a
@@ -788,75 +730,15 @@ pub fn WorkspacePrimaryNav() -> impl IntoView {
                             {nav_icon("overview")}
                             <span class=WS_NAV_TEXT>"Overview"</span>
                         </a>
-                        {if !loaded {
-                            view! {
-                                <p class=WS_NAV_LABEL_SECONDARY>"Loading settings…"</p>
-                            }
-                            .into_any()
-                        } else if load_failed {
-                            view! {
-                                <p class=WS_NAV_LABEL_SECONDARY>
-                                    "Could not load workspace permissions."
-                                </p>
-                            }
-                            .into_any()
-                        } else if items.is_empty() {
-                            view! {
-                                <p class=WS_NAV_LABEL_SECONDARY>
-                                    "No settings available for your role."
-                                </p>
-                            }
-                            .into_any()
-                        } else {
-                            items
-                                .into_iter()
-                                .map(|item| {
-                                    let href = match &item.href {
-                                        NavHref::Static(path) => (*path).to_owned(),
-                                        NavHref::SettingsSection(segment) => {
-                                            if slug.is_empty() {
-                                                "/organizations".to_owned()
-                                            } else {
-                                                format!("/org/{slug}/settings/{segment}")
-                                            }
-                                        }
-                                    };
-                                    let label = item.label;
-                                    let data_nav = item.id;
-                                    let disabled = slug.is_empty()
-                                        && matches!(item.href, NavHref::SettingsSection(_));
-                                    let icon = item.icon;
-                                    view! {
-                                        <a
-                                            class=WS_NAV_LINK
-                                            href=href
-                                            data-nav=data_nav
-                                            title=label
-                                            class:is-disabled=disabled
-                                            aria-disabled=disabled
-                                        >
-                                            {icon.map(|kind| nav_icon(kind).into_any())}
-                                            <span class=WS_NAV_TEXT>{label}</span>
-                                        </a>
-                                    }
-                                })
-                                .collect_view()
-                                .into_any()
-                        }}
+                        <WorkspaceSettingsNavLinks />
                     }
                     .into_any()
                 } else {
-                    let ctx = match session.get() {
-                        Some(Ok(view)) if view.authenticated => AccessContext::from_session(&view),
-                        _ => AccessContext::anonymous(),
-                    };
-                    let product: Vec<_> = nav_product_items()
-                        .iter()
-                        .filter(|item| item.requirement.is_satisfied_by(&ctx))
-                        .collect();
+                    // Product rail: auth-gated by the server shell; no client RBAC needed.
+                    let product = nav_product_items();
                     view! {
                         {product
-                            .into_iter()
+                            .iter()
                             .map(|item| {
                                 let href = match &item.href {
                                     NavHref::Static(path) => *path,
@@ -884,5 +766,108 @@ pub fn WorkspacePrimaryNav() -> impl IntoView {
                 }
             }}
         </nav>
+    }
+}
+
+/// Island: load org membership capabilities and render settings section links.
+///
+/// Islands have no Router context — slug comes from `current_browser_pathname()`.
+#[island]
+pub fn WorkspaceSettingsNavLinks() -> impl IntoView {
+    let session = browser_load(get_current_session);
+    let orgs = browser_load(list_organizations);
+
+    view! {
+        <div data-testid="workspace-settings-nav-links">
+            {move || {
+                let slug = settings_slug_from_path(&current_browser_pathname());
+                let orgs_state = orgs.get();
+                let loaded = orgs_state.is_some();
+                let load_failed = matches!(&orgs_state, Some(Err(_)));
+                let ctx = match (session.get(), orgs_state.as_ref()) {
+                    (Some(Ok(view)), Some(Ok(list))) if view.authenticated => {
+                        let caps = list
+                            .organizations
+                            .iter()
+                            .find(|org| !slug.is_empty() && org.slug == slug)
+                            .map(|org| org.permissions.as_slice())
+                            .unwrap_or(&[]);
+                        AccessContext::from_permissions(
+                            true,
+                            caps.iter().map(String::as_str),
+                            &view.assurance,
+                            view.system_administrator,
+                        )
+                    }
+                    (Some(Ok(view)), _) if view.authenticated => AccessContext::from_permissions(
+                        true,
+                        std::iter::empty::<&str>(),
+                        &view.assurance,
+                        view.system_administrator,
+                    ),
+                    _ => AccessContext::anonymous(),
+                };
+                let items: Vec<_> = nav_settings_items()
+                    .iter()
+                    .filter(|item| item.requirement.is_satisfied_by(&ctx))
+                    .collect();
+
+                if !loaded {
+                    view! {
+                        <p class=WS_NAV_LABEL_SECONDARY>"Loading settings…"</p>
+                    }
+                    .into_any()
+                } else if load_failed {
+                    view! {
+                        <p class=WS_NAV_LABEL_SECONDARY>
+                            "Could not load workspace permissions."
+                        </p>
+                    }
+                    .into_any()
+                } else if items.is_empty() {
+                    view! {
+                        <p class=WS_NAV_LABEL_SECONDARY>
+                            "No settings available for your role."
+                        </p>
+                    }
+                    .into_any()
+                } else {
+                    items
+                        .into_iter()
+                        .map(|item| {
+                            let href = match &item.href {
+                                NavHref::Static(path) => (*path).to_owned(),
+                                NavHref::SettingsSection(segment) => {
+                                    if slug.is_empty() {
+                                        "/organizations".to_owned()
+                                    } else {
+                                        format!("/org/{slug}/settings/{segment}")
+                                    }
+                                }
+                            };
+                            let label = item.label;
+                            let data_nav = item.id;
+                            let disabled =
+                                slug.is_empty() && matches!(item.href, NavHref::SettingsSection(_));
+                            let icon = item.icon;
+                            view! {
+                                <a
+                                    class=WS_NAV_LINK
+                                    href=href
+                                    data-nav=data_nav
+                                    title=label
+                                    class:is-disabled=disabled
+                                    aria-disabled=disabled
+                                >
+                                    {icon.map(|kind| nav_icon(kind).into_any())}
+                                    <span class=WS_NAV_TEXT>{label}</span>
+                                </a>
+                            }
+                        })
+                        .collect_view()
+                        .into_any()
+                }
+            }}
+        </div>
     }
 }
