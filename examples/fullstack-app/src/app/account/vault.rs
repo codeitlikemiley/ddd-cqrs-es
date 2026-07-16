@@ -10,6 +10,18 @@ use crate::app::{
     resolve_workspace_vault_target, reveal_dashboard_secret, seed_dashboard_demos,
 };
 use crate::contracts::{SecretCreateRequest, SecretSummary};
+use crate::ui::classes::{
+    ACCOUNT_PANEL, BANNER_ERROR, BANNER_OK, BTN_PRIMARY, BTN_SECONDARY, FIELD, INPUT, MONO_VALUE,
+    MUTED, PANEL, RESULT_LINE, SECTION_LABEL, SR_ONLY, VAULT_ACTIONS, VAULT_ADD_INLINE,
+    VAULT_COL_ACTIONS, VAULT_COL_KEY, VAULT_COL_LABEL, VAULT_COL_SCOPE, VAULT_COL_VALUE,
+    VAULT_DANGER_BUTTON, VAULT_EMPTY, VAULT_EYE, VAULT_FIELD_WIDE, VAULT_FORM, VAULT_LEDE,
+    VAULT_MASKED, VAULT_MODAL, VAULT_MODAL_ACTIONS, VAULT_MODAL_BACKDROP, VAULT_MODAL_BODY,
+    VAULT_MODAL_CLOSE, VAULT_MODAL_CONFIRM, VAULT_MODAL_HEAD, VAULT_MODAL_HEAD_P,
+    VAULT_MODAL_HEAD_TITLE, VAULT_PAGE, VAULT_PANEL_HEAD, VAULT_PANEL_HEAD_META,
+    VAULT_PANEL_HEAD_TITLE, VAULT_REVEALED, VAULT_SCOPE, VAULT_TABLE, VAULT_TABLE_WRAP, VAULT_TD,
+    VAULT_TD_ACTIONS, VAULT_TD_ELLIPSIS, VAULT_TD_VALUE, VAULT_TH, VAULT_TH_ACTIONS, VAULT_TRASH,
+    VAULT_TRASH_ICON, VAULT_VALUE_INNER, VAULT_VALUE_INPUT_ROW, with_extra,
+};
 use crate::ui::{account_page_shell, page_shell};
 use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
@@ -20,10 +32,6 @@ use server_fn::ServerFnError;
 use wasm_bindgen::prelude::*;
 #[cfg(feature = "hydrate")]
 use web_sys::window;
-use crate::ui::classes::{
-    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
-    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
-};
 
 /// Legacy `/account/vault` → selected org vault or onboarding.
 #[component]
@@ -50,7 +58,7 @@ pub fn AccountVaultRedirect() -> impl IntoView {
     view! {
         <section class=PANEL>
             <p class=RESULT_LINE>"Redirecting to your workspace vault…"</p>
-            <p class="board-muted">
+            <p class=MUTED>
                 <a href="/onboarding/workspace">"Create a workspace"</a>
                 " if you do not have one yet."
             </p>
@@ -218,14 +226,14 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
     };
 
     view! {
-        <div class="vault-page">
-            <section class=format!("{}{}", PANEL, " vault-intro")>
+        <div class=VAULT_PAGE>
+            <section class=ACCOUNT_PANEL>
                 <p class=SECTION_LABEL>"Connectors · Integrations"</p>
-                <p class="vault-lede">
+                <p class=VAULT_LEDE>
                     "Store API keys and passwords for REST, Postgres, and future integrations. "
                     "Resource pickers reference keys by id — plaintext never appears in list APIs."
                 </p>
-                <div class="vault-actions">
+                <div class=VAULT_ACTIONS>
                     <a class=BTN_SECONDARY href="/dashboard">"Back to dashboard"</a>
                     <button
                         type="button"
@@ -241,36 +249,36 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
             <p class=BANNER_ERROR hidden=move || form_error.get().is_none()>
                 {move || form_error.get().unwrap_or_default()}
             </p>
-            <p class="success-banner" hidden=move || form_ok.get().is_none()>
+            <p class=BANNER_OK hidden=move || form_ok.get().is_none()>
                 {move || form_ok.get().unwrap_or_default()}
             </p>
 
-            <section class=format!("{}{}", PANEL, " vault-list-panel")>
-                <header class="vault-panel-head">
-                    <h2>"Secrets"</h2>
-                    <div class="vault-panel-head-meta">
-                        <span class="board-muted">{move || format!("{} stored", secrets.get().len())}</span>
-                        <button type="button" class=format!("{}{}", BTN_SECONDARY, " vault-add-inline") on:click=move |_| open_create_modal()>
+            <section class=ACCOUNT_PANEL>
+                <header class=VAULT_PANEL_HEAD>
+                    <h2 class=VAULT_PANEL_HEAD_TITLE>"Secrets"</h2>
+                    <div class=VAULT_PANEL_HEAD_META>
+                        <span class=MUTED>{move || format!("{} stored", secrets.get().len())}</span>
+                        <button type="button" class=with_extra(BTN_SECONDARY, Some(VAULT_ADD_INLINE)) on:click=move |_| open_create_modal()>
                             "Add secret"
                         </button>
                     </div>
                 </header>
-                <div class="vault-table-wrap">
-                    <table class="vault-table">
+                <div class=VAULT_TABLE_WRAP>
+                    <table class=VAULT_TABLE>
                         <colgroup>
-                            <col class="vault-col-key" />
-                            <col class="vault-col-label" />
-                            <col class="vault-col-scope" />
-                            <col class="vault-col-value" />
-                            <col class="vault-col-actions" />
+                            <col class=VAULT_COL_KEY />
+                            <col class=VAULT_COL_LABEL />
+                            <col class=VAULT_COL_SCOPE />
+                            <col class=VAULT_COL_VALUE />
+                            <col class=VAULT_COL_ACTIONS />
                         </colgroup>
                         <thead>
                             <tr>
-                                <th scope="col">"Key"</th>
-                                <th scope="col">"Label"</th>
-                                <th scope="col">"Scope"</th>
-                                <th scope="col">"Value"</th>
-                                <th scope="col" class="vault-th-actions"><span class="sr-only">"Actions"</span></th>
+                                <th scope="col" class=VAULT_TH>"Key"</th>
+                                <th scope="col" class=VAULT_TH>"Label"</th>
+                                <th scope="col" class=VAULT_TH>"Scope"</th>
+                                <th scope="col" class=VAULT_TH>"Value"</th>
+                                <th scope="col" class=format!("{} {}", VAULT_TH, VAULT_TH_ACTIONS)><span class=SR_ONLY>"Actions"</span></th>
                             </tr>
                         </thead>
                         <tbody>
@@ -279,7 +287,7 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
                                 if list.is_empty() {
                                     return view! {
                                         <tr>
-                                            <td colspan="5" class="board-muted vault-empty">
+                                            <td colspan="5" class=format!("{} {}", MUTED, VAULT_EMPTY)>
                                                 "No secrets yet. Use Add secret above."
                                             </td>
                                         </tr>
@@ -297,27 +305,27 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
                                     let masked = sec.masked_value.clone();
                                     view! {
                                         <tr>
-                                            <td class="mono-value vault-td-key">{key_label}</td>
-                                            <td class="vault-td-label">{label_text}</td>
-                                            <td class="vault-td-scope"><span class="vault-scope">{scope}</span></td>
-                                            <td class="vault-td-value">
-                                                <div class="vault-value-inner">
+                                            <td class=format!("{} {}", MONO_VALUE, VAULT_TD_ELLIPSIS)>{key_label}</td>
+                                            <td class=VAULT_TD_ELLIPSIS>{label_text}</td>
+                                            <td class=VAULT_TD><span class=VAULT_SCOPE>{scope}</span></td>
+                                            <td class=VAULT_TD_VALUE>
+                                                <div class=VAULT_VALUE_INNER>
                                                     {move || {
                                                         let id_check = id.clone();
                                                         let revealed_map = revealed.get();
                                                         if let Some(plain) = revealed_map.get(&id_check).cloned() {
                                                             view! {
-                                                                <code class="vault-revealed">{plain}</code>
+                                                                <code class=VAULT_REVEALED>{plain}</code>
                                                             }.into_any()
                                                         } else {
                                                             let id_click = id_for_reveal.clone();
                                                             let id_pend = id_for_pending.clone();
                                                             let masked_show = masked.clone();
                                                             view! {
-                                                                <span class="vault-masked">{masked_show}</span>
+                                                                <span class=VAULT_MASKED>{masked_show}</span>
                                                                 <button
                                                                     type="button"
-                                                                    class="vault-eye"
+                                                                    class=VAULT_EYE
                                                                     aria-label="Reveal secret"
                                                                     disabled={
                                                                         let id_pend = id_pend.clone();
@@ -339,10 +347,10 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
                                                     }}
                                                 </div>
                                             </td>
-                                            <td class="vault-td-actions">
+                                            <td class=VAULT_TD_ACTIONS>
                                                 <button
                                                     type="button"
-                                                    class="vault-trash"
+                                                    class=VAULT_TRASH
                                                     aria-label=format!("Delete secret {key_for_delete}")
                                                     title="Delete secret"
                                                     on:click=move |_| {
@@ -350,7 +358,7 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
                                                         delete_target.set(Some((id_del.clone(), key_for_delete.clone())));
                                                     }
                                                 >
-                                                    <svg class="vault-trash-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                                                    <svg class=VAULT_TRASH_ICON viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
                                                         <path d="M3 6h18" />
                                                         <path d="M8 6V4h8v2" />
                                                         <path d="M19 6l-1 14H6L5 6" />
@@ -371,31 +379,31 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
             // Create secret modal
             <Show when=move || create_open.get()>
                 <div
-                    class="board-modal-backdrop vault-modal-backdrop"
+                    class=VAULT_MODAL_BACKDROP
                     role="presentation"
                     on:click=move |_| create_open.set(false)
                     on:wheel=move |e| e.stop_propagation()
                 >
                     <div
-                        class="board-modal vault-modal"
+                        class=VAULT_MODAL
                         role="dialog"
                         aria-modal="true"
                         aria-labelledby="vault-create-title"
                         on:click=move |e| e.stop_propagation()
                     >
-                        <header class="board-modal-head">
+                        <header class=VAULT_MODAL_HEAD>
                             <div>
-                                <h2 id="vault-create-title">"Add secret"</h2>
-                                <p>"Keys look like environment variables. Values are encrypted with AUTH_VAULT_KEY before storage."</p>
+                                <h2 id="vault-create-title" class=VAULT_MODAL_HEAD_TITLE>"Add secret"</h2>
+                                <p class=VAULT_MODAL_HEAD_P>"Keys look like environment variables. Values are encrypted with AUTH_VAULT_KEY before storage."</p>
                             </div>
-                            <button type="button" class="board-modal-close" on:click=move |_| create_open.set(false)>"Close"</button>
+                            <button type="button" class=VAULT_MODAL_CLOSE on:click=move |_| create_open.set(false)>"Close"</button>
                         </header>
-                        <div class="board-modal-body vault-modal-body">
-                            <div class="vault-form vault-form-modal">
+                        <div class=format!("{} {}", VAULT_MODAL_BODY, "gap-4")>
+                            <div class=VAULT_FORM>
                                 <label class=FIELD>
                                     <span>"Key"</span>
                                     <input
-                                        class=format!("{}{}", INPUT, " mono-value")
+                                        class=with_extra(INPUT, Some(MONO_VALUE))
                                         placeholder="STRIPE_SECRET_KEY"
                                         prop:value=move || key.get()
                                         on:input=move |e| key.set(event_target_value(&e).to_ascii_uppercase())
@@ -410,7 +418,7 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
                                         on:input=move |e| label.set(event_target_value(&e))
                                     />
                                 </label>
-                                <label class=format!("{}{}", FIELD, " vault-field-wide")>
+                                <label class=with_extra(FIELD, Some(VAULT_FIELD_WIDE))>
                                     <span>"Description (optional)"</span>
                                     <input
                                         class=INPUT
@@ -418,9 +426,9 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
                                         on:input=move |e| description.set(event_target_value(&e))
                                     />
                                 </label>
-                                <label class=format!("{}{}", FIELD, " vault-field-wide")>
+                                <label class=with_extra(FIELD, Some(VAULT_FIELD_WIDE))>
                                     <span>"Value"</span>
-                                    <div class="vault-value-input-row">
+                                    <div class=VAULT_VALUE_INPUT_ROW>
                                         <input
                                             class=INPUT
                                             type=move || if show_value.get() { "text" } else { "password" }
@@ -438,7 +446,7 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
                                     </div>
                                 </label>
                             </div>
-                            <div class="vault-modal-actions">
+                            <div class=VAULT_MODAL_ACTIONS>
                                 <button type="button" class=BTN_SECONDARY on:click=move |_| create_open.set(false)>"Cancel"</button>
                                 <button
                                     type="button"
@@ -471,35 +479,35 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
             // Delete confirmation modal
             <Show when=move || delete_target.get().is_some()>
                 <div
-                    class="board-modal-backdrop vault-modal-backdrop"
+                    class=VAULT_MODAL_BACKDROP
                     role="presentation"
                     on:click=move |_| delete_target.set(None)
                     on:wheel=move |e| e.stop_propagation()
                 >
                     <div
-                        class="board-modal vault-modal vault-modal-confirm"
+                        class=VAULT_MODAL_CONFIRM
                         role="dialog"
                         aria-modal="true"
                         aria-labelledby="vault-delete-title"
                         on:click=move |e| e.stop_propagation()
                     >
-                        <header class="board-modal-head">
+                        <header class=VAULT_MODAL_HEAD>
                             <div>
-                                <h2 id="vault-delete-title">"Delete secret?"</h2>
-                                <p>
+                                <h2 id="vault-delete-title" class=VAULT_MODAL_HEAD_TITLE>"Delete secret?"</h2>
+                                <p class=VAULT_MODAL_HEAD_P>
                                     "This cannot be undone. Resources using "
-                                    <strong class="mono-value">{move || delete_target.get().map(|(_, k)| k).unwrap_or_default()}</strong>
+                                    <strong class=MONO_VALUE>{move || delete_target.get().map(|(_, k)| k).unwrap_or_default()}</strong>
                                     " will fail until reconfigured."
                                 </p>
                             </div>
-                            <button type="button" class="board-modal-close" on:click=move |_| delete_target.set(None)>"Close"</button>
+                            <button type="button" class=VAULT_MODAL_CLOSE on:click=move |_| delete_target.set(None)>"Close"</button>
                         </header>
-                        <div class="board-modal-body">
-                            <div class="vault-modal-actions">
+                        <div class=VAULT_MODAL_BODY>
+                            <div class=VAULT_MODAL_ACTIONS>
                                 <button type="button" class=BTN_SECONDARY on:click=move |_| delete_target.set(None)>"Cancel"</button>
                                 <button
                                     type="button"
-                                    class=format!("{}{}", BTN_PRIMARY, " vault-danger-button")
+                                    class=with_extra(BTN_PRIMARY, Some(VAULT_DANGER_BUTTON))
                                     disabled=move || delete_action.pending().get()
                                     on:click=move |_| {
                                         if let Some((id, _)) = delete_target.get_untracked() {

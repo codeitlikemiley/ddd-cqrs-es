@@ -310,8 +310,7 @@ pub async fn get_workspace_settings_context(
     auth: RequestAuth,
 ) -> AuthStackResult<WorkspaceSettingsContext> {
     let (context, _) = verified_context_and_permissions(auth, false).await?;
-    let requires_step_up =
-        !assurance_satisfies(context.assurance(), AssuranceRequirement::Aal2);
+    let requires_step_up = !assurance_satisfies(context.assurance(), AssuranceRequirement::Aal2);
     let resolved = resolve_workspace_by_slug_with_context(&context, &slug).await?;
     let org = &resolved.organization;
     let session_id = context.session_id().as_str();
@@ -612,10 +611,7 @@ pub async fn transfer_workspace_ownership(
 }
 
 /// Leave the workspace (self-remove). Fails if last owner.
-pub async fn leave_workspace(
-    slug: String,
-    auth: RequestAuth,
-) -> AuthStackResult<AcceptedResponse> {
+pub async fn leave_workspace(slug: String, auth: RequestAuth) -> AuthStackResult<AcceptedResponse> {
     let (context, _) = verified_context_and_permissions(auth, false).await?;
     let resolved = resolve_workspace_by_slug_with_context(&context, &slug).await?;
     crate::auth_product::leave_organization(

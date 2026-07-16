@@ -6,12 +6,14 @@ use crate::app::helpers::server_error_text;
 use crate::app::{ListAuthProviders, browser_load, list_auth_providers};
 use crate::contracts::AuthProviderSummary;
 use crate::ui::account_page_shell;
+use crate::ui::classes::{
+    ACCOUNT_LEDE_FLUSH, ACCOUNT_PANEL, ACCOUNT_PANEL_HEAD, ACCOUNT_PANEL_TITLE, PROVIDER_CARD,
+    PROVIDER_CARD_BODY, PROVIDER_CARD_OFF, PROVIDER_CARD_ON, PROVIDER_CATALOG_GRID, PROVIDER_LOGO,
+    PROVIDER_LOGO_OFF, PROVIDER_NAME, PROVIDER_STATUS, PROVIDER_STATUS_ON, PROVIDERS_NOTE,
+    SECTION_LABEL,
+};
 use leptos::prelude::*;
 use server_fn::ServerFnError;
-use crate::ui::classes::{
-    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
-    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
-};
 
 /// Known OAuth brands for the account Providers tab (always shown; greyed when off).
 #[derive(Clone, Copy)]
@@ -50,18 +52,18 @@ pub fn AccountProvidersPanel() -> impl IntoView {
     let providers = browser_load(list_auth_providers);
 
     view! {
-        <section class=format!("{}{}", PANEL, " providers-panel")>
-            <div class="session-panel-head">
+        <section class=ACCOUNT_PANEL>
+            <div class=ACCOUNT_PANEL_HEAD>
                 <div>
                     <p class=SECTION_LABEL>"Social login"</p>
-                    <h2>"Identity providers"</h2>
+                    <h2 class=ACCOUNT_PANEL_TITLE>"Identity providers"</h2>
                 </div>
             </div>
-            <p class="passkey-lede">
+            <p class=ACCOUNT_LEDE_FLUSH>
                 "These providers appear on the sign-in page when credentials are configured and OAuth is enabled. Greyed tiles are available but not active on this deployment."
             </p>
 
-            <div class="provider-catalog">
+            <div class=PROVIDER_CATALOG_GRID>
                 {PROVIDER_CATALOG
                     .iter()
                     .copied()
@@ -73,7 +75,7 @@ pub fn AccountProvidersPanel() -> impl IntoView {
                     .collect_view()}
             </div>
 
-            <p class="providers-empty-note">
+            <p class=PROVIDERS_NOTE>
                 {move || match providers.get() {
                     None => "Loading provider status…".to_string(),
                     Some(Ok(list)) if list.is_empty() => {
@@ -113,15 +115,17 @@ pub fn ProviderCatalogCard(
 
     view! {
         <div
-            class="provider-card"
-            class:is-enabled=move || is_enabled()
-            class:is-disabled=move || !is_enabled()
+            class=move || format!("{} {}", PROVIDER_CARD, if is_enabled() { PROVIDER_CARD_ON } else { PROVIDER_CARD_OFF })
             data-provider=brand_id
         >
-            <span class="provider-logo" aria-hidden="true" inner_html=provider_logo_svg(brand_id)></span>
-            <span class="provider-card-body">
-                <span class="provider-name">{brand_name}</span>
-                <span class="provider-status">
+            <span
+                class=move || if is_enabled() { PROVIDER_LOGO } else { PROVIDER_LOGO_OFF }
+                aria-hidden="true"
+                inner_html=provider_logo_svg(brand_id)
+            ></span>
+            <span class=PROVIDER_CARD_BODY>
+                <span class=PROVIDER_NAME>{brand_name}</span>
+                <span class=move || if is_enabled() { PROVIDER_STATUS_ON } else { PROVIDER_STATUS }>
                     {move || if is_enabled() { "Enabled" } else { "Not configured" }}
                 </span>
             </span>

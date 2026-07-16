@@ -12,11 +12,11 @@ use crate::app::{
     ListOrganizations, SelectOrganization, browser_load, get_current_session, list_organizations,
     select_organization,
 };
-use leptos::prelude::*;
 use crate::ui::classes::{
     AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
     BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
 };
+use leptos::prelude::*;
 
 #[island]
 pub fn OrganizationsHome() -> impl IntoView {

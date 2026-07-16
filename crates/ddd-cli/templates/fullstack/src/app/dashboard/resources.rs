@@ -8,13 +8,13 @@ use crate::contracts::{
 use leptos::prelude::*;
 
 use crate::app::helpers::server_error_text;
-use crate::ui::classes::{
-    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
-    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
-};
 use crate::app::{
     DeleteDashboardQuery, DeleteDashboardResource, RunDashboardQuery, SeedDashboardDemos,
     UpsertDashboardQuery, UpsertDashboardResource,
+};
+use crate::ui::classes::{
+    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
+    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
 };
 
 fn event_target_value(event: &leptos::ev::Event) -> String {

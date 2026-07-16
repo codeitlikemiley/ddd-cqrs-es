@@ -4,19 +4,17 @@
 #![allow(clippy::unused_unit)]
 #![allow(clippy::unit_arg)]
 
-use super::shared::{
-    settings_page_stub, slug_from_settings_pathname,
-};
+use super::shared::{settings_page_stub, slug_from_settings_pathname};
 use crate::app::helpers::{current_browser_pathname, redirect_browser, server_error_text};
 use crate::app::{
-    DeactivateWorkspace, LeaveWorkspace, deactivate_workspace, get_workspace_settings_context,
-    leave_workspace, browser_load,
+    DeactivateWorkspace, LeaveWorkspace, browser_load, deactivate_workspace,
+    get_workspace_settings_context, leave_workspace,
 };
-use leptos::prelude::*;
 use crate::ui::classes::{
     AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
     BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
 };
+use leptos::prelude::*;
 
 #[component]
 pub fn WorkspaceSettingsDangerPage() -> impl IntoView {

@@ -9,14 +9,16 @@ use crate::app::{
 };
 use crate::contracts::AccountSessionSummary;
 use crate::ui::account_page_shell;
+use crate::ui::classes::{
+    ACCOUNT_LEDE_FLUSH, ACCOUNT_PANEL, ACCOUNT_PANEL_HEAD, ACCOUNT_PANEL_TITLE, BANNER_ERROR,
+    BANNER_SUCCESS, BTN_PRIMARY, BTN_SECONDARY, CLIENT_DATA_SLOT, PANEL_COMPACT, RESULT_LINE,
+    SECTION_LABEL, SESSION_ASSURANCE, SESSION_CARD, SESSION_CARD_CURRENT, SESSION_CARD_HEAD,
+    SESSION_LIST, with_extra,
+};
 use leptos::prelude::*;
 use server_fn::ServerFnError;
 #[cfg(feature = "hydrate")]
 use web_sys::window;
-use crate::ui::classes::{
-    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
-    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
-};
 
 #[component]
 pub fn AccountSessionsPage() -> impl IntoView {
@@ -83,17 +85,17 @@ pub fn AccountSessionManager() -> impl IntoView {
     });
 
     view! {
-        <section class=PANEL>
-            <div class="session-panel-head">
+        <section class=ACCOUNT_PANEL>
+            <div class=ACCOUNT_PANEL_HEAD>
                 <div>
                     <p class=SECTION_LABEL>"Devices"</p>
-                    <h2>"Active sessions"</h2>
+                    <h2 class=ACCOUNT_PANEL_TITLE>"Active sessions"</h2>
                 </div>
             </div>
-            <p class="passkey-lede">
+            <p class=ACCOUNT_LEDE_FLUSH>
                 "Revoking ends access for that browser or device. Signing out this browser leaves the page immediately."
             </p>
-            <div class="client-data-slot">
+            <div class=CLIENT_DATA_SLOT>
                 {move || match sessions.get() {
                     Some(Ok(_)) => {
                         let list = rows.get();
@@ -101,7 +103,7 @@ pub fn AccountSessionManager() -> impl IntoView {
                             view! { <p class=RESULT_LINE>"No active sessions"</p> }.into_any()
                         } else {
                             view! {
-                                <div class="session-list">
+                                <div class=SESSION_LIST>
                                     <For
                                         each=move || rows.get()
                                         key=|session| session.session_id.clone()
@@ -115,13 +117,13 @@ pub fn AccountSessionManager() -> impl IntoView {
                                             let expires = session.expires_at_ms;
                                             view! {
                                                 <article class=if is_current {
-                                                    "compact-panel session-card session-card-current"
+                                                    with_extra(PANEL_COMPACT, Some(SESSION_CARD_CURRENT))
                                                 } else {
-                                                    "compact-panel session-card"
+                                                    with_extra(PANEL_COMPACT, Some(SESSION_CARD))
                                                 }>
-                                                    <div class="session-card-head">
-                                                        <h3>{if is_current { "This browser" } else { "Other device" }}</h3>
-                                                        <span class="session-assurance">{assurance.to_uppercase()}</span>
+                                                    <div class=SESSION_CARD_HEAD>
+                                                        <h3 class="m-0 text-sm font-semibold">{if is_current { "This browser" } else { "Other device" }}</h3>
+                                                        <span class=SESSION_ASSURANCE>{assurance.to_uppercase()}</span>
                                                     </div>
                                                     <p class=RESULT_LINE>
                                                         {format!("Expires at {expires}")}

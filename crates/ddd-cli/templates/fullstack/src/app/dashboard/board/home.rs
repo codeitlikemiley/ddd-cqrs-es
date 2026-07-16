@@ -16,15 +16,15 @@ use crate::contracts::{
     BoardContainerKind, BoardNode, DashboardLayout, DashboardNotification, DashboardSnapshot,
     DashboardWidgetKind, HttpDisplayMode, HttpQueryResult, QueryResult, QuerySummary, WidgetBind,
 };
+use crate::ui::classes::{
+    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
+    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+};
 use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
 use leptos::task::spawn_local;
 #[cfg(feature = "hydrate")]
 use wasm_bindgen::JsCast;
-use crate::ui::classes::{
-    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
-    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
-};
 
 #[component]
 pub fn DashboardPage() -> impl IntoView {

@@ -4,16 +4,18 @@
 #![allow(clippy::unused_unit)]
 #![allow(clippy::unit_arg)]
 
-use super::shared::{format_settings_timestamp_ms, settings_page_stub, slug_from_settings_pathname};
+use super::shared::{
+    format_settings_timestamp_ms, settings_page_stub, slug_from_settings_pathname,
+};
 use crate::app::helpers::{current_browser_pathname, server_error_text};
 use crate::app::{
     UpdateWorkspaceName, browser_load, get_workspace_settings_context, update_workspace_name,
 };
-use leptos::prelude::*;
 use crate::ui::classes::{
     AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
     BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
 };
+use leptos::prelude::*;
 
 #[component]
 pub fn WorkspaceSettingsGeneralPage() -> impl IntoView {
@@ -87,13 +89,10 @@ pub fn WorkspaceSettingsGeneralBody() -> impl IntoView {
             .unwrap_or(false)
     });
 
-    let name_dirty = Memo::new(move |_| {
-        name.get().trim() != original_name.get().trim()
-    });
+    let name_dirty = Memo::new(move |_| name.get().trim() != original_name.get().trim());
 
-    let can_save = Memo::new(move |_| {
-        !pending.get() && !name.get().trim().is_empty() && name_dirty.get()
-    });
+    let can_save =
+        Memo::new(move |_| !pending.get() && !name.get().trim().is_empty() && name_dirty.get());
 
     view! {
         <Show when=move || context.get().is_none()>

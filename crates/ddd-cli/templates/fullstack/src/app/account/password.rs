@@ -4,16 +4,16 @@
 
 use crate::app::helpers::action_result_text;
 use crate::app::{ChangePassword, change_password};
+use crate::ui::classes::{
+    ACCOUNT_CARD_ACTIONS, ACCOUNT_LEDE_FLUSH, ACCOUNT_PANEL, ACCOUNT_PANEL_HEAD,
+    ACCOUNT_PANEL_TITLE, AUTH_TEXT_LINK, RESULT_LINE,
+};
 use crate::ui::{
-    ErrorBanner, Field, FieldGroup, Panel, PrimaryButton, SectionLabel, SuccessBanner, TextInput,
+    ErrorBanner, Field, FieldGroup, PrimaryButton, SectionLabel, SuccessBanner, TextInput,
     account_page_shell,
 };
 use leptos::prelude::*;
 use server_fn::ServerFnError;
-use crate::ui::classes::{
-    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
-    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
-};
 
 #[component]
 pub fn AccountPasswordPage() -> impl IntoView {
@@ -56,14 +56,14 @@ pub fn ChangePasswordForm() -> impl IntoView {
     });
 
     view! {
-        <Panel class="password-change-panel".to_owned()>
-            <div class="session-panel-head">
+        <section class=ACCOUNT_PANEL>
+            <div class=ACCOUNT_PANEL_HEAD>
                 <div>
                     <SectionLabel>"Credential"</SectionLabel>
-                    <h2>"Change password"</h2>
+                    <h2 class=ACCOUNT_PANEL_TITLE>"Change password"</h2>
                 </div>
             </div>
-            <p class="passkey-lede">
+            <p class=ACCOUNT_LEDE_FLUSH>
                 "Enter your current password to confirm it's you. Use at least 15 characters for the new password. Other signed-in sessions will be signed out."
             </p>
             <FieldGroup>
@@ -101,7 +101,7 @@ pub fn ChangePasswordForm() -> impl IntoView {
                     />
                 </Field>
             </FieldGroup>
-            <div class="account-card-actions">
+            <div class=ACCOUNT_CARD_ACTIONS>
                 <PrimaryButton
                     disabled=disabled
                     on_click=Callback::new(move |_| {
@@ -136,6 +136,6 @@ pub fn ChangePasswordForm() -> impl IntoView {
                 <SuccessBanner message=success_msg />
                 <a class=AUTH_TEXT_LINK href="/forgot-password">"Forgot password? Use email reset"</a>
             </div>
-        </Panel>
+        </section>
     }
 }

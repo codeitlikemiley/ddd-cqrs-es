@@ -21,7 +21,7 @@
 | 2 | `src/ui/*` primitives emit utilities (`classes.rs`) | **done** |
 | 3.1 | Auth surfaces (pages + forms → constants) | **done** (legacy CSS still present until unused) |
 | 3.2 | Public / error shells | **done** |
-| 3.3–3.5 | Account shared primitives bulk-swapped | **partial** (domain-specific CSS remains) |
+| 3.3–3.5 | Account domain (MFA/passkeys/vault/profile/sessions/providers) → utilities | **done** (account CSS deleted; shared mono/kv/modal CSS remains for other domains) |
 | 3.6 | Organizations shared buttons/fields | **partial** |
 | 3.7–3.8 | Dashboard board + resources shared primitives | **partial** |
 | 3.9 | Workspace settings shared primitives | **partial** |
@@ -33,7 +33,8 @@
 
 - 2026-07-16: Phase 0–2 landed. Tailwind v4 `@import`, `@theme inline` color bridge, base layer, `src/ui/classes.rs`, primitives + shells rewrite.
 - 2026-07-16: Auth pages/forms + bulk shared-class swap across account/dashboard/settings/admin. `make check` green. Dual-sync after foundation.
-- Next: finish domain-specific class strings (board-*, workspace-*, mfa-*, vault-*, org-*), then delete matching CSS blocks from `input.css`.
+- 2026-07-16: Account domain pure Tailwind — MFA/passkeys/vault/profile/sessions/providers markup → `classes.rs` utilities; deleted matching account CSS. Left `.vault-modal-confirm` stub + shared `.mono-value`/`.kv`/board-modal for other domains.
+- Next: finish domain-specific class strings (board-*, workspace-*, org-*), then delete matching CSS blocks from `input.css`.
 
 ## Residual CSS allowlist
 

@@ -342,14 +342,9 @@ pub async fn invite_workspace_member(
 ) -> Result<crate::contracts::InvitationSummary, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
-        crate::application::invite_workspace_member(
-            slug,
-            email,
-            role_id,
-            server_fn_request_auth(),
-        )
-        .await
-        .map_err(server_fn_error)
+        crate::application::invite_workspace_member(slug, email, role_id, server_fn_request_auth())
+            .await
+            .map_err(server_fn_error)
     }
     #[cfg(not(feature = "ssr"))]
     {

@@ -16,14 +16,19 @@ use crate::app::{
 use crate::app::{create_passkey_credential, passkey_supported};
 use crate::contracts::{AuthCapabilities, SessionView};
 use crate::ui::account_page_shell;
+use crate::ui::classes::{
+    ACCOUNT_LEDE, ACCOUNT_PANEL, ACCOUNT_PANEL_TITLE, BADGE, BADGE_OFF, BADGE_ON, BANNER_ERROR,
+    BTN_PRIMARY, BTN_SECONDARY, BUTTON_ROW, KV_DD, KV_DT, MFA_STATUS_KV, PASSKEY_BUTTON_MT,
+    PASSKEY_DEVICE_BAR, PASSKEY_DEVICE_BAR_SHORT, PASSKEY_DEVICE_CARD, PASSKEY_DEVICE_CARD_P,
+    PASSKEY_DEVICE_ICON, PASSKEY_FLOW, PASSKEY_FOCUS_PANEL, PASSKEY_FOCUS_WRAP, PASSKEY_HINT,
+    PASSKEY_OVERVIEW, PASSKEY_ROW_MT, RESULT_LINE, SECTION_LABEL, STATUS_HEAD, STEPS_PREVIEW,
+    STEPS_PREVIEW_STRONG, WIZARD_LINE, WIZARD_LINE_DONE, WIZARD_PROGRESS, WIZARD_STEP,
+    WIZARD_STEP_ACTIVE, with_extra,
+};
 use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
 use leptos::task::spawn_local;
 use server_fn::ServerFnError;
-use crate::ui::classes::{
-    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
-    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
-};
 
 #[component]
 pub fn AccountPasskeysPage() -> impl IntoView {
@@ -93,7 +98,7 @@ pub fn PasskeyManager() -> impl IntoView {
     });
 
     view! {
-        <div class="passkey-flow">
+        <div class=PASSKEY_FLOW>
             {move || {
                 // Stay on ceremony surface for prompt, save, OR error (do not flash back).
                 let ceremony_active = start_pending.get()
@@ -114,17 +119,17 @@ pub fn PasskeyManager() -> impl IntoView {
                 // Exclusive focus while OS/browser passkey sheet is active
                 if ceremony_active && !registered_ok {
                     return view! {
-                        <div class="passkey-focus-wrap">
-                            <section class=format!("{}{}", PANEL, " passkey-ceremony-panel")>
-                                <div class="passkey-wizard-progress" aria-hidden="true">
-                                    <span class="passkey-wizard-step is-done">"1"</span>
-                                    <span class="passkey-wizard-line is-done"></span>
-                                    <span class="passkey-wizard-step is-active">"2"</span>
-                                    <span class="passkey-wizard-line"></span>
-                                    <span class="passkey-wizard-step">"3"</span>
+                        <div class=PASSKEY_FOCUS_WRAP>
+                            <section class=PASSKEY_FOCUS_PANEL>
+                                <div class=WIZARD_PROGRESS aria-hidden="true">
+                                    <span class=WIZARD_STEP_ACTIVE>"1"</span>
+                                    <span class=WIZARD_LINE_DONE></span>
+                                    <span class=WIZARD_STEP_ACTIVE>"2"</span>
+                                    <span class=WIZARD_LINE></span>
+                                    <span class=WIZARD_STEP>"3"</span>
                                 </div>
                                 <p class=SECTION_LABEL>"Creating passkey"</p>
-                                <h2>
+                                <h2 class=ACCOUNT_PANEL_TITLE>
                                     {move || if ceremony_cancelled {
                                         "Passkey not created"
                                     } else if ceremony_failed {
@@ -133,7 +138,7 @@ pub fn PasskeyManager() -> impl IntoView {
                                         "Confirm with your device"
                                     }}
                                 </h2>
-                                <p class="passkey-lede">
+                                <p class=ACCOUNT_LEDE>
                                     {move || if ceremony_cancelled {
                                         "You closed the browser prompt. Try again when you're ready, or use a different device / security key."
                                     } else if ceremony_failed {
@@ -142,12 +147,12 @@ pub fn PasskeyManager() -> impl IntoView {
                                         "Use Face ID, Touch ID, Windows Hello, a phone QR passkey, or a security key. Keep this tab open until the prompt finishes."
                                     }}
                                 </p>
-                                <div class="passkey-device-card" aria-hidden="true" hidden=move || ceremony_failed>
-                                    <div class="passkey-device-icon">
-                                        <span></span>
-                                        <span></span>
+                                <div class=PASSKEY_DEVICE_CARD aria-hidden="true" hidden=move || ceremony_failed>
+                                    <div class=PASSKEY_DEVICE_ICON>
+                                        <span class=PASSKEY_DEVICE_BAR></span>
+                                        <span class=PASSKEY_DEVICE_BAR_SHORT></span>
                                     </div>
-                                    <p>"Waiting for authenticator…"</p>
+                                    <p class=PASSKEY_DEVICE_CARD_P>"Waiting for authenticator…"</p>
                                 </div>
                                 <p class=RESULT_LINE hidden=move || ceremony_failed>
                                     {move || if verify_pending.get() {
@@ -185,7 +190,7 @@ pub fn PasskeyManager() -> impl IntoView {
                                         _ => String::new(),
                                     }}
                                 </p>
-                                <div class=BUTTON_ROW>
+                                <div class=with_extra(BUTTON_ROW, Some(PASSKEY_ROW_MT))>
                                     <button
                                         type="button"
                                         class=BTN_PRIMARY
@@ -218,14 +223,14 @@ pub fn PasskeyManager() -> impl IntoView {
 
                 if registered_ok {
                     return view! {
-                        <div class="passkey-focus-wrap">
-                            <section class=format!("{}{}", PANEL, " passkey-success-panel")>
-                                <span class="mfa-badge mfa-badge-on">"Passkey registered"</span>
-                                <h2>"You can sign in without a password"</h2>
-                                <p class="passkey-lede">
+                        <div class=PASSKEY_FOCUS_WRAP>
+                            <section class=PASSKEY_FOCUS_PANEL>
+                                <span class=format!("{} {}", BADGE, BADGE_ON)>"Passkey registered"</span>
+                                <h2 class=ACCOUNT_PANEL_TITLE>"You can sign in without a password"</h2>
+                                <p class=ACCOUNT_LEDE>
                                     "Next time, choose passkey on the sign-in page and approve with this device. Your session assurance is elevated for phishing-resistant sign-in."
                                 </p>
-                                <div class=BUTTON_ROW>
+                                <div class=with_extra(BUTTON_ROW, Some(PASSKEY_ROW_MT))>
                                     <a class=BTN_PRIMARY href="/account/sessions">"Review sessions"</a>
                                     <a class=BTN_SECONDARY href="/account/profile">"Back to profile"</a>
                                 </div>
@@ -274,50 +279,50 @@ pub fn PasskeyManager() -> impl IntoView {
                 };
 
                 view! {
-                    <div class="passkey-overview">
-                        <section class=format!("{}{}", PANEL, " passkey-status-panel")>
-                            <div class="mfa-status-head">
+                    <div class=PASSKEY_OVERVIEW>
+                        <section class=ACCOUNT_PANEL>
+                            <div class=STATUS_HEAD>
                                 <div>
                                     <p class=SECTION_LABEL>"Phishing-resistant sign-in"</p>
-                                    <h2>"Passkeys"</h2>
-                                    <p class="passkey-lede">
+                                    <h2 class=ACCOUNT_PANEL_TITLE>"Passkeys"</h2>
+                                    <p class=ACCOUNT_LEDE>
                                         "A passkey lets you sign in with the biometrics or PIN already on this device. It cannot be phished like a password."
                                     </p>
                                 </div>
                                 {if badge_on {
-                                    view! { <span class="mfa-badge mfa-badge-on">{badge}</span> }.into_any()
+                                    view! { <span class=format!("{} {}", BADGE, BADGE_ON)>{badge}</span> }.into_any()
                                 } else {
-                                    view! { <span class="mfa-badge mfa-badge-off">{badge}</span> }.into_any()
+                                    view! { <span class=format!("{} {}", BADGE, BADGE_OFF)>{badge}</span> }.into_any()
                                 }}
                             </div>
-                            <dl class="kv mfa-status-kv">
-                                <dt>"Account"</dt>
-                                <dd>{session_email.clone()}</dd>
-                                <dt>"Deployment"</dt>
-                                <dd>{deployment_label}</dd>
-                                <dt>"This browser"</dt>
-                                <dd>{if device_ok { "Supports WebAuthn" } else { "No passkey API" }}</dd>
+                            <dl class=MFA_STATUS_KV>
+                                <dt class=KV_DT>"Account"</dt>
+                                <dd class=KV_DD>{session_email.clone()}</dd>
+                                <dt class=KV_DT>"Deployment"</dt>
+                                <dd class=KV_DD>{deployment_label}</dd>
+                                <dt class=KV_DT>"This browser"</dt>
+                                <dd class=KV_DD>{if device_ok { "Supports WebAuthn" } else { "No passkey API" }}</dd>
                             </dl>
                         </section>
 
                         {if !caps_loaded {
                             view! {
-                                <section class=PANEL>
+                                <section class=ACCOUNT_PANEL>
                                     <p class=RESULT_LINE>"Loading passkey settings…"</p>
                                 </section>
                             }.into_any()
                         } else if !passkeys_on {
                             view! {
-                                <section class=PANEL>
+                                <section class=ACCOUNT_PANEL>
                                     <p class=SECTION_LABEL>"Operator note"</p>
-                                    <h2>"Passkeys are off for this deployment"</h2>
-                                    <p class="passkey-lede">
+                                    <h2 class=ACCOUNT_PANEL_TITLE>"Passkeys are off for this deployment"</h2>
+                                    <p class=ACCOUNT_LEDE>
                                         "Turn them on with AUTH_ENABLE_PASSKEYS=true, then set AUTH_PASSKEY_RP_ID and AUTH_PASSKEY_ORIGIN to match your public site origin (for local: localhost and http://localhost:3008 — not 127.0.0.1)."
                                     </p>
-                                    <ol class="mfa-steps-preview">
-                                        <li><strong>"RP ID"</strong>" must match the site host (no port). Use localhost, never an IP address."</li>
-                                        <li><strong>"Origin"</strong>" must match the exact browser origin including scheme and port."</li>
-                                        <li><strong>"HTTPS"</strong>" is required outside localhost."</li>
+                                    <ol class=STEPS_PREVIEW>
+                                        <li><strong class=STEPS_PREVIEW_STRONG>"RP ID"</strong>" must match the site host (no port). Use localhost, never an IP address."</li>
+                                        <li><strong class=STEPS_PREVIEW_STRONG>"Origin"</strong>" must match the exact browser origin including scheme and port."</li>
+                                        <li><strong class=STEPS_PREVIEW_STRONG>"HTTPS"</strong>" is required outside localhost."</li>
                                     </ol>
                                     <div class=BUTTON_ROW>
                                         <a class=BTN_SECONDARY href="/account/mfa">"Use authenticator app instead"</a>
@@ -327,10 +332,10 @@ pub fn PasskeyManager() -> impl IntoView {
                             }.into_any()
                         } else if !device_ok {
                             view! {
-                                <section class=PANEL>
+                                <section class=ACCOUNT_PANEL>
                                     <p class=SECTION_LABEL>"Device"</p>
-                                    <h2>"This browser cannot create passkeys"</h2>
-                                    <p class="passkey-lede">
+                                    <h2 class=ACCOUNT_PANEL_TITLE>"This browser cannot create passkeys"</h2>
+                                    <p class=ACCOUNT_LEDE>
                                         "Try a current Chrome, Safari, Edge, or Firefox build, or open this page on a phone that supports platform authenticators."
                                     </p>
                                     <div class=BUTTON_ROW>
@@ -341,17 +346,17 @@ pub fn PasskeyManager() -> impl IntoView {
                             }.into_any()
                         } else {
                             view! {
-                                <section class=PANEL>
+                                <section class=ACCOUNT_PANEL>
                                     <p class=SECTION_LABEL>"Add to this account"</p>
-                                    <h2>"Create a passkey"</h2>
-                                    <ol class="mfa-steps-preview">
-                                        <li><strong>"Start"</strong>" registration for "{session_email.clone()}"."</li>
-                                        <li><strong>"Approve"</strong>" the system prompt (biometrics or security key)."</li>
-                                        <li><strong>"Done"</strong>" — use passkey next time you sign in."</li>
+                                    <h2 class=ACCOUNT_PANEL_TITLE>"Create a passkey"</h2>
+                                    <ol class=STEPS_PREVIEW>
+                                        <li><strong class=STEPS_PREVIEW_STRONG>"Start"</strong>" registration for "{session_email.clone()}"."</li>
+                                        <li><strong class=STEPS_PREVIEW_STRONG>"Approve"</strong>" the system prompt (biometrics or security key)."</li>
+                                        <li><strong class=STEPS_PREVIEW_STRONG>"Done"</strong>" — use passkey next time you sign in."</li>
                                     </ol>
                                     <button
                                         type="button"
-                                        class=BTN_PRIMARY
+                                        class=with_extra(BTN_PRIMARY, Some(PASSKEY_BUTTON_MT))
                                         disabled=move || start_pending.get() || verify_pending.get() || !can_register
                                         on:click=move |_| {
                                             set_client_error.set(None);
@@ -361,7 +366,7 @@ pub fn PasskeyManager() -> impl IntoView {
                                             });
                                         }
                                     >"Create a passkey"</button>
-                                    <p class="passkey-hint">
+                                    <p class=PASSKEY_HINT>
                                         "Works with iCloud Keychain, Google Password Manager, 1Password, and hardware keys (YubiKey, etc.)."
                                     </p>
                                     <p class=BANNER_ERROR hidden=move || client_error.get().is_none()>

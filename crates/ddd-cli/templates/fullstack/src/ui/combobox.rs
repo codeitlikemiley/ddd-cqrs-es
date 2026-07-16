@@ -32,10 +32,8 @@ pub fn FilterCombobox(
     options: Signal<Vec<ComboboxOption>>,
     /// Currently selected raw value (`""` means “all”).
     value: RwSignal<String>,
-    #[prop(optional, into)]
-    disabled: Signal<bool>,
-    #[prop(optional, into)]
-    placeholder: Option<String>,
+    #[prop(optional, into)] disabled: Signal<bool>,
+    #[prop(optional, into)] placeholder: Option<String>,
 ) -> impl IntoView {
     let (open, set_open) = signal(false);
     let (query, set_query) = signal(String::new());

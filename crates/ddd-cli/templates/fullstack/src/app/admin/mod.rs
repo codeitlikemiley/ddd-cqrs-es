@@ -16,13 +16,13 @@ use crate::contracts::{
     AdminUserListResponse, AuthorizationCapabilitiesResponse, HealthStatusResponse,
     PolicyVersionListResponse, SigningKeyListResponse, SigningKeyRotateResponse,
 };
-use crate::ui::page_shell;
-use leptos::prelude::*;
-use server_fn::ServerFnError;
 use crate::ui::classes::{
     AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
     BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
 };
+use crate::ui::page_shell;
+use leptos::prelude::*;
+use server_fn::ServerFnError;
 
 #[component]
 pub fn AuthProviderAdminPage() -> impl IntoView {

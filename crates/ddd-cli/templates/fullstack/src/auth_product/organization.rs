@@ -444,10 +444,7 @@ pub async fn transfer_ownership(
         .map_err(map_management_error)
 }
 
-pub async fn leave_organization(
-    session_id: &str,
-    organization_id: &str,
-) -> AuthStackResult<()> {
+pub async fn leave_organization(session_id: &str, organization_id: &str) -> AuthStackResult<()> {
     let session_id = bounded_session_id(session_id)?;
     management_service()
         .await?

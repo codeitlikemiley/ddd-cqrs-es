@@ -11,17 +11,18 @@ use super::shared::{
 use crate::app::helpers::{current_browser_pathname, server_error_text};
 use crate::app::{
     AssignWorkspaceMemberRole, RemoveWorkspaceMember, TransferWorkspaceOwnership,
-    assign_workspace_member_role, browser_load, get_current_session, get_workspace_settings_context,
-    list_workspace_members, remove_workspace_member, transfer_workspace_ownership,
+    assign_workspace_member_role, browser_load, get_current_session,
+    get_workspace_settings_context, list_workspace_members, remove_workspace_member,
+    transfer_workspace_ownership,
 };
 use crate::contracts::{MembershipSummary, WorkspaceRoleOption};
-use leptos::prelude::*;
-#[cfg(feature = "hydrate")]
-use leptos::task::spawn_local;
 use crate::ui::classes::{
     AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
     BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
 };
+use leptos::prelude::*;
+#[cfg(feature = "hydrate")]
+use leptos::task::spawn_local;
 
 #[component]
 pub fn WorkspaceSettingsMembersPage() -> impl IntoView {
@@ -158,7 +159,9 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
             set_transfer_confirm.set(String::new());
             set_busy_user_id.set(None);
             set_action_error.set(None);
-            set_action_ok.set(Some("Ownership transferred. You are now an admin.".to_owned()));
+            set_action_ok.set(Some(
+                "Ownership transferred. You are now an admin.".to_owned(),
+            ));
             set_can_transfer_ownership.set(false);
             reload_members_list(slug.get_untracked(), set_rows, set_action_error);
         }
@@ -177,9 +180,8 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
         })
     });
 
-    let any_busy = Memo::new(move |_| {
-        assign_pending.get() || remove_pending.get() || transfer_pending.get()
-    });
+    let any_busy =
+        Memo::new(move |_| assign_pending.get() || remove_pending.get() || transfer_pending.get());
 
     let transfer_candidates = Memo::new(move |_| {
         let me = current_user_id.get();

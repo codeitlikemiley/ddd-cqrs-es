@@ -14,13 +14,13 @@ use crate::app::{
     get_workspace_settings_context, list_workspace_invitations,
 };
 use crate::contracts::{InvitationSummary, WorkspaceRoleOption};
-use leptos::prelude::*;
-#[cfg(feature = "hydrate")]
-use leptos::task::spawn_local;
 use crate::ui::classes::{
     AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
     BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
 };
+use leptos::prelude::*;
+#[cfg(feature = "hydrate")]
+use leptos::task::spawn_local;
 
 #[component]
 pub fn WorkspaceSettingsInvitationsPage() -> impl IntoView {
@@ -100,7 +100,9 @@ pub fn WorkspaceSettingsInvitationsBody() -> impl IntoView {
         Some(Ok(created)) => {
             set_rows.update(|list| {
                 list.retain(|row| {
-                    !(row.email == created.email && row.status == "pending" && row.invitation_id != created.invitation_id)
+                    !(row.email == created.email
+                        && row.status == "pending"
+                        && row.invitation_id != created.invitation_id)
                 });
                 if let Some(existing) = list
                     .iter_mut()
@@ -176,9 +178,8 @@ pub fn WorkspaceSettingsInvitationsBody() -> impl IntoView {
         })
     });
 
-    let any_busy = Memo::new(move |_| {
-        invite_pending.get() || resend_pending.get() || revoke_pending.get()
-    });
+    let any_busy =
+        Memo::new(move |_| invite_pending.get() || resend_pending.get() || revoke_pending.get());
 
     let can_invite = Memo::new(move |_| {
         !any_busy.get()

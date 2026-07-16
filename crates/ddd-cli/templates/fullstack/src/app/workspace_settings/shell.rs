@@ -9,13 +9,13 @@ use crate::app::helpers::{
     current_browser_pathname, org_monogram, org_tone_index, server_error_text,
 };
 use crate::app::{browser_load, get_workspace_settings_context, list_organizations};
-use leptos::prelude::*;
-use leptos_router::components::Outlet;
-use leptos_router::hooks::{use_location, use_params_map};
 use crate::ui::classes::{
     AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
     BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
 };
+use leptos::prelude::*;
+use leptos_router::components::Outlet;
+use leptos_router::hooks::{use_location, use_params_map};
 
 /// Resolve workspace slug for settings: route param first, pathname fallback.
 ///
@@ -106,8 +106,9 @@ pub fn WorkspaceSettingsSidebar(
     active: Memo<SettingsSection>,
 ) -> impl IntoView {
     // Load once slug is non-empty (params available under nested ParentRoute).
-    let (settings_ctx, set_settings_ctx) =
-        signal(None::<Result<crate::contracts::WorkspaceSettingsContext, server_fn::ServerFnError>>);
+    let (settings_ctx, set_settings_ctx) = signal(
+        None::<Result<crate::contracts::WorkspaceSettingsContext, server_fn::ServerFnError>>,
+    );
     Effect::new(move |_| {
         let slug_now = slug.get();
         if slug_now.is_empty() {

@@ -22,8 +22,20 @@ use web_sys::window;
 #[cfg(feature = "hydrate")]
 use crate::app::pick_image_data_url;
 use crate::ui::classes::{
-    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
-    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+    BANNER_ERROR, BANNER_SUCCESS, BTN_PRIMARY, BTN_SECONDARY, FIELD, FIELD_GROUP, INPUT, PANEL,
+    PROFILE_AVATAR_CAMERA, PROFILE_AVATAR_CLEAR, PROFILE_AVATAR_CONTROL, PROFILE_AVATAR_DISK,
+    PROFILE_AVATAR_FALLBACK, PROFILE_AVATAR_IMG, PROFILE_AVATAR_VEIL, PROFILE_AVATAR_WRAP,
+    PROFILE_DISPLAY_PREVIEW, PROFILE_EDITOR, PROFILE_EDITOR_BODY, PROFILE_EMAIL_LINE,
+    PROFILE_FIELD_SPAN, PROFILE_FILE_INPUT, PROFILE_FOOTER, PROFILE_FORM_GRID,
+    PROFILE_HANDLE_PREVIEW, PROFILE_IDENTITY_COPY, PROFILE_IDENTITY_STRIP, PROFILE_LOADING,
+    PROFILE_PUBLIC_LINK, PROFILE_PUBLIC_LINK_LABEL, PROFILE_PUBLIC_LINK_URL, PROFILE_SAVE_OK,
+    PROFILE_SECTION, PROFILE_SECTION_HEAD_H3, PROFILE_SECTION_HEAD_P, PROFILE_SECTIONS,
+    PROFILE_SKELETON_AVATAR, PROFILE_SKELETON_LINE, PROFILE_SKELETON_LINES, PROFILE_SWITCH,
+    PROFILE_SWITCH_COPY, PROFILE_SWITCH_COPY_SMALL, PROFILE_SWITCH_COPY_STRONG,
+    PROFILE_SWITCH_INPUT, PROFILE_SWITCH_THUMB, PROFILE_SWITCH_TRACK, PROFILE_USERNAME_AT,
+    PROFILE_USERNAME_FIELD, PROFILE_USERNAME_INPUT, PUBLIC_PROFILE_AVATAR, PUBLIC_PROFILE_EMPTY,
+    PUBLIC_PROFILE_EMPTY_AVATAR, PUBLIC_PROFILE_HERO, PUBLIC_PROFILE_META_TITLE,
+    PUBLIC_PROFILE_PANEL, RESULT_LINE, with_extra,
 };
 
 #[component]
@@ -168,32 +180,26 @@ pub fn AccountProfileCard() -> impl IntoView {
     };
 
     view! {
-        <section class=format!("{}{}", PANEL, " profile-editor")>
+        <section class=PROFILE_EDITOR>
             {move || match profile.get() {
                 Some(Err(error)) => view! {
                     <p class=BANNER_ERROR>{server_error_text(error)}</p>
                 }.into_any(),
                 None if !seeded.get() => view! {
-                    <div class="profile-loading" aria-busy="true">
-                        <div class="profile-skeleton-avatar"></div>
-                        <div class="profile-skeleton-lines">
-                            <span></span><span></span><span></span>
+                    <div class=PROFILE_LOADING aria-busy="true">
+                        <div class=PROFILE_SKELETON_AVATAR></div>
+                        <div class=PROFILE_SKELETON_LINES>
+                            <span class=format!("{} w-[42%]", PROFILE_SKELETON_LINE)></span>
+                            <span class=format!("{} w-[58%]", PROFILE_SKELETON_LINE)></span>
+                            <span class=format!("{} w-[34%]", PROFILE_SKELETON_LINE)></span>
                         </div>
                     </div>
                 }.into_any(),
                 _ => view! {
-                    <div class="profile-editor-body">
+                    <div class=PROFILE_EDITOR_BODY>
                         // Centered identity: avatar + one primary line + optional handle
-                        <header class="profile-identity-strip">
-                            <div
-                                class="profile-avatar-wrap"
-                                class:has-photo=move || {
-                                    avatar_data_url
-                                        .get()
-                                        .as_ref()
-                                        .is_some_and(|url| !url.is_empty())
-                                }
-                            >
+                        <header class=PROFILE_IDENTITY_STRIP>
+                            <div class=PROFILE_AVATAR_WRAP>
                                 <Show when=move || {
                                     avatar_data_url
                                         .get()
@@ -202,7 +208,7 @@ pub fn AccountProfileCard() -> impl IntoView {
                                 }>
                                     <button
                                         type="button"
-                                        class="profile-avatar-clear"
+                                        class=PROFILE_AVATAR_CLEAR
                                         aria-label="Remove photo"
                                         title="Remove photo"
                                         on:click=move |ev| {
@@ -221,25 +227,25 @@ pub fn AccountProfileCard() -> impl IntoView {
                                         </svg>
                                     </button>
                                 </Show>
-                                <label class="profile-avatar-control" title="Change photo">
+                                <label class=PROFILE_AVATAR_CONTROL title="Change photo">
                                     <input
                                         type="file"
                                         accept="image/png,image/jpeg,image/webp,image/gif"
-                                        class="profile-file-input"
+                                        class=PROFILE_FILE_INPUT
                                         aria-label="Upload profile photo"
                                         on:change=on_avatar_file
                                     />
-                                    <span class="profile-avatar-disk" aria-hidden="true">
+                                    <span class=PROFILE_AVATAR_DISK aria-hidden="true">
                                         {move || match avatar_data_url.get() {
                                             Some(url) if !url.is_empty() => view! {
-                                                <img class="profile-avatar-img" src=url alt="" />
+                                                <img class=PROFILE_AVATAR_IMG src=url alt="" />
                                             }.into_any(),
                                             _ => view! {
-                                                <span class="profile-avatar-fallback">{preview_initials()}</span>
+                                                <span class=PROFILE_AVATAR_FALLBACK>{preview_initials()}</span>
                                             }.into_any(),
                                         }}
-                                        <span class="profile-avatar-veil">
-                                            <svg class="profile-avatar-camera" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                                        <span class=PROFILE_AVATAR_VEIL>
+                                            <svg class=PROFILE_AVATAR_CAMERA viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
                                                 <path
                                                     fill="currentColor"
                                                     d="M9 3.75A1.75 1.75 0 0 1 10.53 2.5h2.94A1.75 1.75 0 0 1 15 3.75V5h2.25A2.75 2.75 0 0 1 20 7.75v9.5A2.75 2.75 0 0 1 17.25 20H6.75A2.75 2.75 0 0 1 4 17.25v-9.5A2.75 2.75 0 0 1 6.75 5H9V3.75Zm1.5 1.5V5h3V5.25h-3ZM12 9a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0 1.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Z"
@@ -249,8 +255,8 @@ pub fn AccountProfileCard() -> impl IntoView {
                                     </span>
                                 </label>
                             </div>
-                            <div class="profile-identity-copy">
-                                <h2 class="profile-display-preview">
+                            <div class=PROFILE_IDENTITY_COPY>
+                                <h2 class=PROFILE_DISPLAY_PREVIEW>
                                     {move || {
                                         let display = display_name.get();
                                         let first = first_name.get();
@@ -274,7 +280,7 @@ pub fn AccountProfileCard() -> impl IntoView {
                                 </h2>
                                 // Handle only when set — never show a placeholder @handle.
                                 <Show when=move || !username.get().trim().is_empty()>
-                                    <p class="profile-handle-preview">
+                                    <p class=PROFILE_HANDLE_PREVIEW>
                                         {move || format!("@{}", username.get().trim().to_ascii_lowercase())}
                                     </p>
                                 </Show>
@@ -287,7 +293,7 @@ pub fn AccountProfileCard() -> impl IntoView {
                                     let has_name = !display.trim().is_empty() || !composed.is_empty();
                                     has_name && profile.get().and_then(Result::ok).and_then(|p| p.email).is_some()
                                 }>
-                                    <p class="profile-email-line">
+                                    <p class=PROFILE_EMAIL_LINE>
                                         {move || profile
                                             .get()
                                             .and_then(Result::ok)
@@ -298,13 +304,13 @@ pub fn AccountProfileCard() -> impl IntoView {
                             </div>
                         </header>
 
-                        <div class="profile-sections">
-                            <section class="profile-section">
-                                <div class="profile-section-head">
-                                    <h3>"Name"</h3>
-                                    <p>"Legal name stays private unless you publish your profile."</p>
+                        <div class=PROFILE_SECTIONS>
+                            <section class=PROFILE_SECTION>
+                                <div class="min-w-0">
+                                    <h3 class=PROFILE_SECTION_HEAD_H3>"Name"</h3>
+                                    <p class=PROFILE_SECTION_HEAD_P>"Legal name stays private unless you publish your profile."</p>
                                 </div>
-                                <div class=format!("{}{}", FIELD, "s profile-form-grid")>
+                                <div class=PROFILE_FORM_GRID>
                                     <label class=FIELD>
                                         <span>"First name"</span>
                                         <input
@@ -333,7 +339,7 @@ pub fn AccountProfileCard() -> impl IntoView {
                                             }
                                         />
                                     </label>
-                                    <label class=format!("{}{}", FIELD, " profile-field-span")>
+                                    <label class=with_extra(FIELD, Some(PROFILE_FIELD_SPAN))>
                                         <span>"Display name"</span>
                                         <input
                                             class=INPUT
@@ -351,18 +357,18 @@ pub fn AccountProfileCard() -> impl IntoView {
                                 </div>
                             </section>
 
-                            <section class="profile-section">
-                                <div class="profile-section-head">
-                                    <h3>"Handle"</h3>
-                                    <p>"Your unique @username. Required for a public profile link."</p>
+                            <section class=PROFILE_SECTION>
+                                <div class="min-w-0">
+                                    <h3 class=PROFILE_SECTION_HEAD_H3>"Handle"</h3>
+                                    <p class=PROFILE_SECTION_HEAD_P>"Your unique @username. Required for a public profile link."</p>
                                 </div>
                                 <div class=FIELD_GROUP>
                                     <label class=FIELD>
                                         <span>"Username"</span>
-                                        <div class="profile-username-field">
-                                            <span class="profile-username-at" aria-hidden="true">"@"</span>
+                                        <div class=PROFILE_USERNAME_FIELD>
+                                            <span class=PROFILE_USERNAME_AT aria-hidden="true">"@"</span>
                                             <input
-                                                class=format!("{}{}", INPUT, " profile-username-input")
+                                                class=with_extra(INPUT, Some(PROFILE_USERNAME_INPUT))
                                                 type="text"
                                                 autocomplete="username"
                                                 spellcheck="false"
@@ -385,27 +391,28 @@ pub fn AccountProfileCard() -> impl IntoView {
                                 </div>
                             </section>
 
-                            <section class="profile-section profile-section-privacy">
-                                <div class="profile-section-head">
-                                    <h3>"Visibility"</h3>
-                                    <p>"Profiles are private until you choose to publish."</p>
+                            <section class=PROFILE_SECTION>
+                                <div class="min-w-0">
+                                    <h3 class=PROFILE_SECTION_HEAD_H3>"Visibility"</h3>
+                                    <p class=PROFILE_SECTION_HEAD_P>"Profiles are private until you choose to publish."</p>
                                 </div>
-                                <label class="profile-switch">
+                                <label class=PROFILE_SWITCH>
                                     <input
                                         type="checkbox"
                                         role="switch"
+                                        class=PROFILE_SWITCH_INPUT
                                         prop:checked=move || is_public.get()
                                         on:change=move |event| {
                                             set_client_error.set(None);
                                             set_is_public.set(event_target_checked(&event));
                                         }
                                     />
-                                    <span class="profile-switch-track" aria-hidden="true">
-                                        <span class="profile-switch-thumb"></span>
+                                    <span class=PROFILE_SWITCH_TRACK aria-hidden="true">
+                                        <span class=PROFILE_SWITCH_THUMB></span>
                                     </span>
-                                    <span class="profile-switch-copy">
-                                        <strong>"Public profile"</strong>
-                                        <small>
+                                    <span class=PROFILE_SWITCH_COPY>
+                                        <strong class=PROFILE_SWITCH_COPY_STRONG>"Public profile"</strong>
+                                        <small class=PROFILE_SWITCH_COPY_SMALL>
                                             {move || if is_public.get() {
                                                 "Anyone with your link can see your name, @handle, and photo."
                                             } else {
@@ -417,10 +424,10 @@ pub fn AccountProfileCard() -> impl IntoView {
                                 <Show when=move || {
                                     is_public.get() && !username.get().trim().is_empty()
                                 }>
-                                    <p class="profile-public-link">
-                                        <span class="profile-public-link-label">"Live at"</span>
+                                    <p class=PROFILE_PUBLIC_LINK>
+                                        <span class=PROFILE_PUBLIC_LINK_LABEL>"Live at"</span>
                                         <a
-                                            class="profile-public-link-url"
+                                            class=PROFILE_PUBLIC_LINK_URL
                                             href=move || format!(
                                                 "/u/{}",
                                                 username.get().trim().to_ascii_lowercase()
@@ -436,7 +443,7 @@ pub fn AccountProfileCard() -> impl IntoView {
                             </section>
                         </div>
 
-                        <footer class="profile-footer">
+                        <footer class=PROFILE_FOOTER>
                             <button
                                 type="button"
                                 class=BTN_PRIMARY
@@ -483,7 +490,7 @@ pub fn AccountProfileCard() -> impl IntoView {
                                 </p>
                             </Show>
                             <Show when=move || matches!(value.get(), Some(Ok(_)))>
-                                <p class=format!("{} profile-save-ok", BANNER_SUCCESS)>
+                                <p class=with_extra(BANNER_SUCCESS, Some(PROFILE_SAVE_OK))>
                                     <span>"Saved"</span>
                                 </p>
                             </Show>
@@ -555,13 +562,13 @@ pub fn PublicProfileCard(handle: String) -> impl IntoView {
     };
 
     view! {
-        <section class=format!("{}{}", PANEL, " public-profile-panel")>
+        <section class=with_extra(PANEL, Some(PUBLIC_PROFILE_PANEL))>
             {move || match profile.get() {
                 None => view! { <p class=RESULT_LINE>"Loading profile…"</p> }.into_any(),
                 Some(Err(_)) => view! {
-                    <div class="public-profile-empty">
-                        <div class="profile-avatar-fallback public-profile-empty-avatar" aria-hidden="true">"?"</div>
-                        <h2>"Profile unavailable"</h2>
+                    <div class=PUBLIC_PROFILE_EMPTY>
+                        <div class=PUBLIC_PROFILE_EMPTY_AVATAR aria-hidden="true">"?"</div>
+                        <h2 class=PUBLIC_PROFILE_META_TITLE>"Profile unavailable"</h2>
                         <p class=RESULT_LINE>
                             "This @handle is private or does not exist."
                         </p>
@@ -600,23 +607,23 @@ pub fn PublicProfileCard(handle: String) -> impl IntoView {
                         }
                     };
                     view! {
-                        <div class="public-profile-hero">
-                            <div class="public-profile-avatar" aria-hidden="true">
+                        <div class=PUBLIC_PROFILE_HERO>
+                            <div class=PUBLIC_PROFILE_AVATAR aria-hidden="true">
                                 {match avatar {
                                     Some(url) if !url.is_empty() => view! {
-                                        <img class="profile-avatar-img" src=url alt="" />
+                                        <img class=PROFILE_AVATAR_IMG src=url alt="" />
                                     }.into_any(),
                                     _ => view! {
-                                        <span class="profile-avatar-fallback">{initials}</span>
+                                        <span class=PROFILE_AVATAR_FALLBACK>{initials}</span>
                                     }.into_any(),
                                 }}
                             </div>
-                            <div class="public-profile-meta">
-                                <p class="profile-kicker">"Public profile"</p>
-                                <h2>{display}</h2>
-                                <p class="profile-handle-preview">{handle_label}</p>
+                            <div class="min-w-0">
+                                <p class="hidden">"Public profile"</p>
+                                <h2 class=PUBLIC_PROFILE_META_TITLE>{display}</h2>
+                                <p class=PROFILE_HANDLE_PREVIEW>{handle_label}</p>
                                 {legal_name.map(|name| view! {
-                                    <p class="profile-email-line">{name}</p>
+                                    <p class=PROFILE_EMAIL_LINE>{name}</p>
                                 })}
                             </div>
                         </div>

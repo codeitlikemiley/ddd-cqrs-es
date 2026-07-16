@@ -6,12 +6,12 @@
 use crate::app::helpers::redirect_browser;
 use crate::app::{browser_load, get_current_session, list_organizations};
 use crate::contracts::OrganizationSummary;
-use leptos::prelude::*;
-use leptos_router::hooks::use_params_map;
 use crate::ui::classes::{
     AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
     BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
 };
+use leptos::prelude::*;
+use leptos_router::hooks::use_params_map;
 
 /// Route param `slug` for `/org/:slug/settings/…`.
 pub(crate) fn settings_slug_from_params() -> Memo<String> {
@@ -317,10 +317,7 @@ pub fn LegacySettingsRedirect(section: String) -> impl IntoView {
                 redirect_browser("/organizations");
             }
             Ok(list) => {
-                match resolve_workspace_settings_slug(
-                    &list.organizations,
-                    tenant_id.as_deref(),
-                ) {
+                match resolve_workspace_settings_slug(&list.organizations, tenant_id.as_deref()) {
                     Some(slug) => {
                         let section = section.get_value();
                         redirect_browser(&format!("/org/{slug}/settings/{section}"));

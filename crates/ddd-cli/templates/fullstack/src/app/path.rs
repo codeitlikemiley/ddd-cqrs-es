@@ -74,7 +74,10 @@ mod tests {
             workspace_topbar_title("/org/acme/settings/general"),
             "Workspace settings"
         );
-        assert_eq!(workspace_topbar_title("/org/acme/settings/members"), "Members");
+        assert_eq!(
+            workspace_topbar_title("/org/acme/settings/members"),
+            "Members"
+        );
         assert_eq!(
             workspace_topbar_title("/org/acme/settings/invitations"),
             "Invitations"
