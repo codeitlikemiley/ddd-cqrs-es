@@ -625,6 +625,10 @@ use crate::app::helpers::{
     server_error_text, short_id_label, validate_email_only, validate_login_form,
 };
 use crate::app::path::{is_workspace_path, workspace_topbar_title};
+use crate::ui::classes::{
+    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
+    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+};
 
 #[component]
 pub fn HomePage() -> impl IntoView {
@@ -638,13 +642,13 @@ pub fn HomePage() -> impl IntoView {
                 <p class="home-copy">
                     "Create an account, verify your email, then move between the Leptos UI, REST endpoints, and authenticated gRPC services without changing the application boundary."
                 </p>
-                <div class="actions">
+                <div class=BUTTON_ROW>
                     <a class="link-button link-button-primary" href="/register">"Create account"</a>
-                    <a class="link-button" href="/login">"Sign in"</a>
+                    <a class=BTN_SECONDARY href="/login">"Sign in"</a>
                 </div>
             </section>
             <section class="home-steps">
-                <p class="section-label">"Start here"</p>
+                <p class=SECTION_LABEL>"Start here"</p>
                 <ol class="steps-list">
                     <li>
                         <span class="step-index">"01"</span>
@@ -702,11 +706,11 @@ pub fn NotFoundRecoveryLink() -> impl IntoView {
         <div class="client-data-slot">
             {move || match session.get() {
                 Some(Ok(view)) if view.authenticated => view! {
-                    <a class="link-button" href="/dashboard">"Go to dashboard"</a>
+                    <a class=BTN_SECONDARY href="/dashboard">"Go to dashboard"</a>
                 }
                 .into_any(),
                 _ => view! {
-                    <a class="link-button" href="/login">"Return to sign in"</a>
+                    <a class=BTN_SECONDARY href="/login">"Return to sign in"</a>
                 }
                 .into_any(),
             }}

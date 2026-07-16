@@ -18,6 +18,10 @@ use crate::contracts::{MembershipSummary, WorkspaceRoleOption};
 use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
 use leptos::task::spawn_local;
+use crate::ui::classes::{
+    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
+    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+};
 
 #[component]
 pub fn WorkspaceSettingsMembersPage() -> impl IntoView {
@@ -210,11 +214,11 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
 
     view! {
         <Show when=move || members.get().is_none()>
-            <p class="result-line" aria-busy="true">"Loading members…"</p>
+            <p class=RESULT_LINE aria-busy="true">"Loading members…"</p>
         </Show>
 
         <Show when=move || load_error.get().is_some()>
-            <p class="error-banner">{move || load_error.get().unwrap_or_default()}</p>
+            <p class=BANNER_ERROR>{move || load_error.get().unwrap_or_default()}</p>
         </Show>
 
         <Show when=move || requires_step_up.get()>
@@ -226,11 +230,11 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
         </Show>
 
         <Show when=move || action_error.get().is_some()>
-            <p class="error-banner">{move || action_error.get().unwrap_or_default()}</p>
+            <p class=BANNER_ERROR>{move || action_error.get().unwrap_or_default()}</p>
         </Show>
 
         <Show when=move || action_ok.get().is_some()>
-            <p class="result-line" role="status">{move || action_ok.get().unwrap_or_default()}</p>
+            <p class=RESULT_LINE role="status">{move || action_ok.get().unwrap_or_default()}</p>
         </Show>
 
         <Show when=move || can_transfer_ownership.get() && list_ready.get()>
@@ -241,7 +245,7 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
                 </p>
                 <button
                     type="button"
-                    class="secondary-button"
+                    class=BTN_SECONDARY
                     disabled=move || any_busy.get() || transfer_candidates.get().is_empty()
                     on:click=move |_| {
                         set_action_error.set(None);
@@ -359,7 +363,7 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
                         <div class="workspace-settings-modal-actions">
                             <button
                                 type="button"
-                                class="secondary-button"
+                                class=BTN_SECONDARY
                                 disabled=move || remove_pending.get()
                                 on:click=move |_| set_remove_target.set(None)
                             >
@@ -367,7 +371,7 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
                             </button>
                             <button
                                 type="button"
-                                class="primary-button workspace-settings-danger-button"
+                                class=format!("{}{}", BTN_PRIMARY, " workspace-settings-danger-button")
                                 disabled=move || remove_pending.get()
                                 on:click=move |_| {
                                     let Some((user_id, _)) = remove_target.get_untracked() else {
@@ -438,7 +442,7 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
                         </button>
                     </header>
                     <div class="board-modal-body workspace-settings-transfer-modal">
-                        <label class="auth-field">
+                        <label class=FIELD>
                             <span>"New owner"</span>
                             <select
                                 class="workspace-settings-role-select"
@@ -475,7 +479,7 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
                                 }}
                             </select>
                         </label>
-                        <label class="auth-field">
+                        <label class=FIELD>
                             <span>
                                 "Type the new owner's email to confirm"
                                 {move || {
@@ -502,7 +506,7 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
                         <div class="workspace-settings-modal-actions">
                             <button
                                 type="button"
-                                class="secondary-button"
+                                class=BTN_SECONDARY
                                 disabled=move || transfer_pending.get()
                                 on:click=move |_| set_transfer_open.set(false)
                             >
@@ -510,7 +514,7 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
                             </button>
                             <button
                                 type="button"
-                                class="primary-button workspace-settings-danger-button"
+                                class=format!("{}{}", BTN_PRIMARY, " workspace-settings-danger-button")
                                 disabled=move || {
                                     !transfer_confirm_ok.get() || transfer_pending.get()
                                 }
@@ -683,7 +687,7 @@ fn member_row(
                     view! {
                         <button
                             type="button"
-                            class="secondary-button workspace-settings-remove-button"
+                            class=format!("{}{}", BTN_SECONDARY, " workspace-settings-remove-button")
                             disabled=disabled
                             on:click=move |_| {
                                 set_action_error.set(None);

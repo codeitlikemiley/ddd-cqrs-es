@@ -15,6 +15,10 @@ use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
 use leptos::task::spawn_local;
 use std::collections::{BTreeMap, BTreeSet};
+use crate::ui::classes::{
+    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
+    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+};
 
 #[component]
 pub fn WorkspaceSettingsRolesPage() -> impl IntoView {
@@ -199,11 +203,11 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
 
     view! {
         <Show when=move || roles.get().is_none()>
-            <p class="result-line" aria-busy="true">"Loading roles…"</p>
+            <p class=RESULT_LINE aria-busy="true">"Loading roles…"</p>
         </Show>
 
         <Show when=move || load_error.get().is_some()>
-            <p class="error-banner">{move || load_error.get().unwrap_or_default()}</p>
+            <p class=BANNER_ERROR>{move || load_error.get().unwrap_or_default()}</p>
         </Show>
 
         <Show when=move || requires_step_up.get()>
@@ -215,17 +219,17 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
         </Show>
 
         <Show when=move || action_error.get().is_some()>
-            <p class="error-banner">{move || action_error.get().unwrap_or_default()}</p>
+            <p class=BANNER_ERROR>{move || action_error.get().unwrap_or_default()}</p>
         </Show>
 
         <Show when=move || action_ok.get().is_some()>
-            <p class="result-line" role="status">{move || action_ok.get().unwrap_or_default()}</p>
+            <p class=RESULT_LINE role="status">{move || action_ok.get().unwrap_or_default()}</p>
         </Show>
 
         <div class="workspace-settings-roles-toolbar">
             <button
                 type="button"
-                class="primary-button"
+                class=BTN_PRIMARY
                 disabled=move || any_busy.get() || editor_open.get()
                 on:click=move |_| {
                     set_action_error.set(None);
@@ -305,10 +309,10 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
                         "Permissions expand with required dependencies on save. Built-in roles stay immutable."
                     </p>
                 </div>
-                <label class="auth-field">
+                <label class=FIELD>
                     <span>"Name"</span>
                     <input
-                        class="auth-input"
+                        class=INPUT
                         type="text"
                         maxlength="80"
                         prop:value=move || role_name.get()
@@ -325,10 +329,10 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
                         disabled=move || any_busy.get()
                     />
                 </label>
-                <label class="auth-field">
+                <label class=FIELD>
                     <span>"Role id"</span>
                     <input
-                        class="auth-input"
+                        class=INPUT
                         type="text"
                         maxlength="128"
                         prop:value=move || role_id_input.get()
@@ -408,7 +412,7 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
                 <div class="workspace-settings-role-form-actions">
                     <button
                         type="button"
-                        class="secondary-button"
+                        class=BTN_SECONDARY
                         disabled=move || any_busy.get()
                         on:click=move |_| {
                             close_editor(
@@ -425,7 +429,7 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
                     </button>
                     <button
                         type="submit"
-                        class="primary-button"
+                        class=BTN_PRIMARY
                         disabled=move || !can_save.get()
                     >
                         {move || {
@@ -545,7 +549,7 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
                         <div class="workspace-settings-modal-actions">
                             <button
                                 type="button"
-                                class="secondary-button"
+                                class=BTN_SECONDARY
                                 disabled=move || delete_pending.get()
                                 on:click=move |_| set_delete_target.set(None)
                             >
@@ -553,7 +557,7 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
                             </button>
                             <button
                                 type="button"
-                                class="primary-button workspace-settings-danger-button"
+                                class=format!("{}{}", BTN_PRIMARY, " workspace-settings-danger-button")
                                 disabled=move || delete_pending.get()
                                 on:click=move |_| {
                                     let Some((role_id, _)) = delete_target.get_untracked() else {
@@ -662,7 +666,7 @@ fn role_row(
                         <div class="workspace-settings-role-actions">
                             <button
                                 type="button"
-                                class="secondary-button"
+                                class=BTN_SECONDARY
                                 disabled=disabled
                                 on:click=move |_| {
                                     set_action_error.set(None);
@@ -679,7 +683,7 @@ fn role_row(
                             </button>
                             <button
                                 type="button"
-                                class="secondary-button workspace-settings-remove-button"
+                                class=format!("{}{}", BTN_SECONDARY, " workspace-settings-remove-button")
                                 disabled=disabled
                                 on:click=move |_| {
                                     set_action_error.set(None);

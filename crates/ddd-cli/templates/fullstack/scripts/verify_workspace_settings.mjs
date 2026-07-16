@@ -259,7 +259,7 @@ async function assertSettingsPage(page, path, expectedH1) {
 
   const state = await page.evaluate(() => {
     const shell = document.querySelector(
-      ".workspace-settings-shell, #workspace-settings-shell",
+      "[data-testid='workspace-settings-shell'], .workspace-settings-shell, #workspace-settings-shell",
     );
     const h1 = document.querySelector("h1")?.textContent?.trim() || "";
     return { hasShell: Boolean(shell), h1 };
@@ -267,7 +267,7 @@ async function assertSettingsPage(page, path, expectedH1) {
 
   if (!state.hasShell) {
     throw new Error(
-      `${path}: expected .workspace-settings-shell (got h1="${state.h1}" url=${page.url()})`,
+      `${path}: expected workspace-settings-shell (got h1="${state.h1}" url=${page.url()})`,
     );
   }
   if (state.h1 !== expectedH1) {
@@ -392,7 +392,7 @@ async function main() {
     if (!rootPath.includes(`/org/${org.slug}/settings`)) {
       throw new Error(`settings root left settings tree: ${page.url()}`);
     }
-    const rootShell = await page.locator(".workspace-settings-shell").count();
+    const rootShell = await page.locator("[data-testid='workspace-settings-shell'], .workspace-settings-shell, #workspace-settings-shell").count();
     if (!rootShell) {
       throw new Error(`settings root missing shell at ${page.url()}`);
     }

@@ -10,6 +10,10 @@ use crate::app::{
     UpdateWorkspaceName, browser_load, get_workspace_settings_context, update_workspace_name,
 };
 use leptos::prelude::*;
+use crate::ui::classes::{
+    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
+    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+};
 
 #[component]
 pub fn WorkspaceSettingsGeneralPage() -> impl IntoView {
@@ -93,11 +97,11 @@ pub fn WorkspaceSettingsGeneralBody() -> impl IntoView {
 
     view! {
         <Show when=move || context.get().is_none()>
-            <p class="result-line" aria-busy="true">"Loading workspace…"</p>
+            <p class=RESULT_LINE aria-busy="true">"Loading workspace…"</p>
         </Show>
 
         <Show when=move || load_error.get().is_some()>
-            <p class="error-banner">{move || load_error.get().unwrap_or_default()}</p>
+            <p class=BANNER_ERROR>{move || load_error.get().unwrap_or_default()}</p>
         </Show>
 
         <Show when=move || context.get().and_then(|r| r.ok()).is_some()>
@@ -123,10 +127,10 @@ pub fn WorkspaceSettingsGeneralBody() -> impl IntoView {
                     });
                 }
             >
-                <label class="auth-field">
+                <label class=FIELD>
                     <span>"Display name"</span>
                     <input
-                        class="auth-input"
+                        class=INPUT
                         type="text"
                         maxlength="120"
                         autocomplete="organization"
@@ -188,14 +192,14 @@ pub fn WorkspaceSettingsGeneralBody() -> impl IntoView {
                 </Show>
 
                 <Show when=move || client_error.get().is_some()>
-                    <p class="error-banner">{move || client_error.get().unwrap_or_default()}</p>
+                    <p class=BANNER_ERROR>{move || client_error.get().unwrap_or_default()}</p>
                 </Show>
 
                 <Show when=move || show_success.get()>
-                    <p class="result-line" role="status">"Workspace name saved."</p>
+                    <p class=RESULT_LINE role="status">"Workspace name saved."</p>
                 </Show>
 
-                <div class="actions">
+                <div class=BUTTON_ROW>
                     <button
                         type="submit"
                         class="link-button link-button-primary"

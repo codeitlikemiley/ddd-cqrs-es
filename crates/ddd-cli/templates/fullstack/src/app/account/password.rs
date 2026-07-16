@@ -10,6 +10,10 @@ use crate::ui::{
 };
 use leptos::prelude::*;
 use server_fn::ServerFnError;
+use crate::ui::classes::{
+    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
+    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+};
 
 #[component]
 pub fn AccountPasswordPage() -> impl IntoView {
@@ -127,10 +131,10 @@ pub fn ChangePasswordForm() -> impl IntoView {
                 </PrimaryButton>
                 <ErrorBanner message=client_error />
                 <Show when=move || value.get().is_some()>
-                    <p class="result-line">{move || action_result_text(value.get())}</p>
+                    <p class=RESULT_LINE>{move || action_result_text(value.get())}</p>
                 </Show>
                 <SuccessBanner message=success_msg />
-                <a class="auth-text-link" href="/forgot-password">"Forgot password? Use email reset"</a>
+                <a class=AUTH_TEXT_LINK href="/forgot-password">"Forgot password? Use email reset"</a>
             </div>
         </Panel>
     }

@@ -21,6 +21,10 @@ use web_sys::window;
 
 #[cfg(feature = "hydrate")]
 use crate::app::pick_image_data_url;
+use crate::ui::classes::{
+    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
+    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+};
 
 #[component]
 pub fn AccountProfilePage() -> impl IntoView {
@@ -164,10 +168,10 @@ pub fn AccountProfileCard() -> impl IntoView {
     };
 
     view! {
-        <section class="panel profile-editor">
+        <section class=format!("{}{}", PANEL, " profile-editor")>
             {move || match profile.get() {
                 Some(Err(error)) => view! {
-                    <p class="error-banner">{server_error_text(error)}</p>
+                    <p class=BANNER_ERROR>{server_error_text(error)}</p>
                 }.into_any(),
                 None if !seeded.get() => view! {
                     <div class="profile-loading" aria-busy="true">
@@ -300,11 +304,11 @@ pub fn AccountProfileCard() -> impl IntoView {
                                     <h3>"Name"</h3>
                                     <p>"Legal name stays private unless you publish your profile."</p>
                                 </div>
-                                <div class="auth-fields profile-form-grid">
-                                    <label class="auth-field">
+                                <div class=format!("{}{}", FIELD, "s profile-form-grid")>
+                                    <label class=FIELD>
                                         <span>"First name"</span>
                                         <input
-                                            class="auth-input"
+                                            class=INPUT
                                             type="text"
                                             autocomplete="given-name"
                                             maxlength="60"
@@ -315,10 +319,10 @@ pub fn AccountProfileCard() -> impl IntoView {
                                             }
                                         />
                                     </label>
-                                    <label class="auth-field">
+                                    <label class=FIELD>
                                         <span>"Last name"</span>
                                         <input
-                                            class="auth-input"
+                                            class=INPUT
                                             type="text"
                                             autocomplete="family-name"
                                             maxlength="60"
@@ -329,10 +333,10 @@ pub fn AccountProfileCard() -> impl IntoView {
                                             }
                                         />
                                     </label>
-                                    <label class="auth-field profile-field-span">
+                                    <label class=format!("{}{}", FIELD, " profile-field-span")>
                                         <span>"Display name"</span>
                                         <input
-                                            class="auth-input"
+                                            class=INPUT
                                             type="text"
                                             autocomplete="nickname"
                                             maxlength="80"
@@ -352,13 +356,13 @@ pub fn AccountProfileCard() -> impl IntoView {
                                     <h3>"Handle"</h3>
                                     <p>"Your unique @username. Required for a public profile link."</p>
                                 </div>
-                                <div class="auth-fields">
-                                    <label class="auth-field">
+                                <div class=FIELD_GROUP>
+                                    <label class=FIELD>
                                         <span>"Username"</span>
                                         <div class="profile-username-field">
                                             <span class="profile-username-at" aria-hidden="true">"@"</span>
                                             <input
-                                                class="auth-input profile-username-input"
+                                                class=format!("{}{}", INPUT, " profile-username-input")
                                                 type="text"
                                                 autocomplete="username"
                                                 spellcheck="false"
@@ -435,7 +439,7 @@ pub fn AccountProfileCard() -> impl IntoView {
                         <footer class="profile-footer">
                             <button
                                 type="button"
-                                class="primary-button"
+                                class=BTN_PRIMARY
                                 disabled=move || pending.get()
                                 on:click=move |_| {
                                     set_client_error.set(None);
@@ -468,18 +472,18 @@ pub fn AccountProfileCard() -> impl IntoView {
                             >
                                 {move || if pending.get() { "Saving…" } else { "Save changes" }}
                             </button>
-                            <p class="error-banner" hidden=move || client_error.get().is_none()>
+                            <p class=BANNER_ERROR hidden=move || client_error.get().is_none()>
                                 {move || client_error.get().unwrap_or_default()}
                             </p>
                             <Show when=move || {
                                 value.get().is_some_and(|result| result.is_err())
                             }>
-                                <p class="error-banner">
+                                <p class=BANNER_ERROR>
                                     {move || action_result_text(value.get())}
                                 </p>
                             </Show>
                             <Show when=move || matches!(value.get(), Some(Ok(_)))>
-                                <p class="auth-success profile-save-ok">
+                                <p class=format!("{} profile-save-ok", BANNER_SUCCESS)>
                                     <span>"Saved"</span>
                                 </p>
                             </Show>
@@ -551,17 +555,17 @@ pub fn PublicProfileCard(handle: String) -> impl IntoView {
     };
 
     view! {
-        <section class="panel public-profile-panel">
+        <section class=format!("{}{}", PANEL, " public-profile-panel")>
             {move || match profile.get() {
-                None => view! { <p class="result-line">"Loading profile…"</p> }.into_any(),
+                None => view! { <p class=RESULT_LINE>"Loading profile…"</p> }.into_any(),
                 Some(Err(_)) => view! {
                     <div class="public-profile-empty">
                         <div class="profile-avatar-fallback public-profile-empty-avatar" aria-hidden="true">"?"</div>
                         <h2>"Profile unavailable"</h2>
-                        <p class="result-line">
+                        <p class=RESULT_LINE>
                             "This @handle is private or does not exist."
                         </p>
-                        <a class="link-button" href="/">"Back home"</a>
+                        <a class=BTN_SECONDARY href="/">"Back home"</a>
                     </div>
                 }.into_any(),
                 Some(Ok(view)) => {

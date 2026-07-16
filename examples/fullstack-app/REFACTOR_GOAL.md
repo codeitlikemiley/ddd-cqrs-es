@@ -34,10 +34,12 @@ Finish structural cleanup of `examples/fullstack-app` (and dual-sync template) s
 
 ### Next work unit (update after each run)
 
-**Goal complete.** Optional follow-ups (out of scope for this goal unless reopened):
-1. Thin remaining near-budget files further if desired (e.g. `app/auth/forms.rs` ~1175).
-2. Tailwind utility rewrite (explicitly deferred until after this goal).
-3. Cancel the durable 30m scheduler if no further modularization units remain.
+**Modularization complete.** Tailwind rewrite is the active follow-on — see `TAILWIND_MIGRATION.md`.
+
+Optional leftovers from modularization:
+1. Thin remaining near-budget files further if desired (e.g. `app/auth/forms.rs`).
+2. Complete pure Tailwind migration (in progress).
+3. Durable modularization scheduler already cancelled.
 
 LOC allowlist is now only `mod.rs` (barrel modules; not a monolith).
 

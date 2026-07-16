@@ -7,6 +7,11 @@ use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
 use web_sys::KeyboardEvent;
 
+use super::classes::{
+    COMBOBOX, COMBOBOX_CHEVRON, COMBOBOX_CONTROL, COMBOBOX_EMPTY, COMBOBOX_INPUT, COMBOBOX_LABEL,
+    COMBOBOX_LIST, COMBOBOX_OPTION, COMBOBOX_OPTION_ACTIVE, COMBOBOX_OPTION_SELECTED,
+};
+
 /// One option in a filter combobox (`value` is the stored key; `label` is shown).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ComboboxOption {
@@ -120,13 +125,13 @@ pub fn FilterCombobox(
     );
 
     view! {
-        <div class="filter-combobox" data-open=move || open.get().to_string()>
-            <label class="filter-combobox-label">
+        <div class=COMBOBOX data-open=move || open.get().to_string()>
+            <label class=COMBOBOX_LABEL>
                 <span>{label.clone()}</span>
-                <div class="filter-combobox-control">
+                <div class=COMBOBOX_CONTROL>
                     <input
                         type="text"
-                        class="filter-combobox-input"
+                        class=COMBOBOX_INPUT
                         role="combobox"
                         aria-autocomplete="list"
                         aria-expanded=move || open.get().to_string()
@@ -238,16 +243,16 @@ pub fn FilterCombobox(
                             }
                         }
                     />
-                    <span class="filter-combobox-chevron" aria-hidden="true"></span>
+                    <span class=COMBOBOX_CHEVRON aria-hidden="true"></span>
                 </div>
             </label>
             <Show when=move || open.get()>
-                <ul class="filter-combobox-list" id=list_id.clone() role="listbox">
+                <ul class=COMBOBOX_LIST id=list_id.clone() role="listbox">
                     {move || {
                         let items = filtered.get();
                         if items.is_empty() {
                             return view! {
-                                <li class="filter-combobox-empty" role="presentation">
+                                <li class=COMBOBOX_EMPTY role="presentation">
                                     "No matches"
                                 </li>
                             }
@@ -262,13 +267,22 @@ pub fn FilterCombobox(
                                 let active = idx == hi;
                                 let opt_value = opt.value.clone();
                                 let opt_label = opt.label.clone();
+                                let option_class = format!(
+                                    "{COMBOBOX_OPTION}{}{}",
+                                    if active {
+                                        format!(" {COMBOBOX_OPTION_ACTIVE}")
+                                    } else {
+                                        String::new()
+                                    },
+                                    if selected {
+                                        format!(" {COMBOBOX_OPTION_SELECTED}")
+                                    } else {
+                                        String::new()
+                                    },
+                                );
                                 view! {
                                     <li
-                                        class=format!(
-                                            "filter-combobox-option{}{}",
-                                            if active { " is-active" } else { "" },
-                                            if selected { " is-selected" } else { "" },
-                                        )
+                                        class=option_class
                                         role="option"
                                         aria-selected=selected.to_string()
                                         on:mousedown=move |event| {

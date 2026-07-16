@@ -19,6 +19,10 @@ use crate::contracts::{
 use crate::ui::page_shell;
 use leptos::prelude::*;
 use server_fn::ServerFnError;
+use crate::ui::classes::{
+    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
+    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+};
 
 #[component]
 pub fn AuthProviderAdminPage() -> impl IntoView {
@@ -54,7 +58,7 @@ pub fn AuthorizationPolicyPage() -> impl IntoView {
         "Authorization policy",
         "Inspect the active embedded Cedar provider. Policy publication is restricted to MFA-authenticated system administrators.",
         view! {
-            <section class="panel">
+            <section class=PANEL>
                 <h2>"Active provider"</h2>
                 <div class="client-data-slot">
                     {move || capabilities.get().map(|result| match result {
@@ -67,7 +71,7 @@ pub fn AuthorizationPolicyPage() -> impl IntoView {
                             </dl>
                         }.into_any(),
                         Err(error) => view! {
-                            <p class="result-line">{server_error_text(error)}</p>
+                            <p class=RESULT_LINE>{server_error_text(error)}</p>
                         }.into_any(),
                     })}
                 </div>
@@ -82,13 +86,13 @@ pub fn AdminUsersPage() -> impl IntoView {
     page_shell(
         "System users",
         "Disable or recover users without deleting immutable audit history.",
-        view! { <section class="panel"><div class="client-data-slot">
+        view! { <section class=PANEL><div class="client-data-slot">
             {move || match users.get() {
                 Some(Ok(response)) => view! { <dl class="kv"><For each=move || response.users.clone() key=|user| user.user_id.clone() children=move |user| view! {
                     <dt>{user.primary_email}</dt><dd>{if user.disabled { "disabled" } else if user.email_verified { "active / verified" } else { "pending verification" }}</dd>
                 } /></dl> }.into_any(),
-                Some(Err(error)) => view! { <p class="error-banner">{server_error_text(error)}</p> }.into_any(),
-                None => view! { <p class="result-line">"Loading users"</p> }.into_any(),
+                Some(Err(error)) => view! { <p class=BANNER_ERROR>{server_error_text(error)}</p> }.into_any(),
+                None => view! { <p class=RESULT_LINE>"Loading users"</p> }.into_any(),
             }}
         </div></section> },
     )
@@ -100,7 +104,7 @@ pub fn AdminHealthPage() -> impl IntoView {
     page_shell(
         "Configuration health",
         "Verify the active storage, mail, and authorization profile.",
-        view! { <section class="panel"><div class="client-data-slot">
+        view! { <section class=PANEL><div class="client-data-slot">
             {move || match health.get() {
                 Some(Ok(value)) => view! { <dl class="kv">
                     <dt>"Status"</dt><dd>{value.status}</dd>
@@ -108,8 +112,8 @@ pub fn AdminHealthPage() -> impl IntoView {
                     <dt>"Mail"</dt><dd>{value.mail_transport}</dd>
                     <dt>"Authorization"</dt><dd>{value.authorization_provider}</dd>
                 </dl> }.into_any(),
-                Some(Err(error)) => view! { <p class="error-banner">{server_error_text(error)}</p> }.into_any(),
-                None => view! { <p class="result-line">"Loading health"</p> }.into_any(),
+                Some(Err(error)) => view! { <p class=BANNER_ERROR>{server_error_text(error)}</p> }.into_any(),
+                None => view! { <p class=RESULT_LINE>"Loading health"</p> }.into_any(),
             }}
         </div></section> },
     )
@@ -125,25 +129,25 @@ pub fn AdminPoliciesPage() -> impl IntoView {
         "Cedar policy versions",
         "Validate and publish a versioned policy bundle with MFA step-up.",
         view! {
-            <section class="panel"><h2>"Published versions"</h2><div class="client-data-slot">
+            <section class=PANEL><h2>"Published versions"</h2><div class="client-data-slot">
                 {move || match versions.get() {
                     Some(Ok(response)) => view! { <dl class="kv"><For each=move || response.versions.clone() key=|version| version.version_id.clone() children=move |version| view! {
                         <dt>{version.version_id}</dt><dd>{format!("{} / {}", version.status, version.policy_hash)}</dd>
                     } /></dl> }.into_any(),
-                    Some(Err(error)) => view! { <p class="error-banner">{server_error_text(error)}</p> }.into_any(),
-                    None => view! { <p class="result-line">"Loading versions"</p> }.into_any(),
+                    Some(Err(error)) => view! { <p class=BANNER_ERROR>{server_error_text(error)}</p> }.into_any(),
+                    None => view! { <p class=RESULT_LINE>"Loading versions"</p> }.into_any(),
                 }}
             </div></section>
-            <section class="panel"><h2>"Publish candidate"</h2>
+            <section class=PANEL><h2>"Publish candidate"</h2>
                 <label><span>"Cedar policy"</span><textarea prop:value=move || policy_text.get() on:input=move |event| set_policy_text.set(event_target_value(&event)) /></label>
                 <label><span>"Cedar schema JSON"</span><textarea prop:value=move || schema_text.get() on:input=move |event| set_schema_text.set(event_target_value(&event)) /></label>
-                <button type="button" class="primary-button" on:click=move |_| {
+                <button type="button" class=BTN_PRIMARY on:click=move |_| {
                     publish_action.dispatch(PublishPolicyVersion {
                         policy_text: policy_text.get_untracked(),
                         schema_text: schema_text.get_untracked(),
                     });
                 }>"Validate and publish"</button>
-                <Show when=move || publish_action.value().get().is_some()><p class="result-line">{move || action_result_text(publish_action.value().get())}</p></Show>
+                <Show when=move || publish_action.value().get().is_some()><p class=RESULT_LINE>{move || action_result_text(publish_action.value().get())}</p></Show>
             </section>
         },
     )
@@ -165,7 +169,7 @@ pub fn ProviderConfigForm() -> impl IntoView {
     };
 
     view! {
-        <section class="panel">
+        <section class=PANEL>
             <h2>"Provider"</h2>
             <label>
                 <span>"Provider id"</span>
@@ -183,11 +187,11 @@ pub fn ProviderConfigForm() -> impl IntoView {
                 />
                 <span>"Enabled"</span>
             </label>
-            <button type="button" class="secondary-button" disabled=move || pending.get() on:click=submit>
+            <button type="button" class=BTN_SECONDARY disabled=move || pending.get() on:click=submit>
                 "Save provider"
             </button>
             <Show when=move || value.get().is_some()>
-                <p class="result-line">{move || action_result_text(value.get())}</p>
+                <p class=RESULT_LINE>{move || action_result_text(value.get())}</p>
             </Show>
         </section>
     }
@@ -210,13 +214,13 @@ pub fn SigningKeyRotationForm() -> impl IntoView {
     };
 
     view! {
-        <section class="panel">
+        <section class=PANEL>
             <h2>"Signing key rotation"</h2>
             <p class="muted">"Requires a system-administrator session with MFA step-up."</p>
             <div class="client-data-slot">
                 {move || match keys.get() {
                     Some(Ok(response)) if response.keys.is_empty() => view! {
-                        <p class="result-line">"No signing keys are configured."</p>
+                        <p class=RESULT_LINE>"No signing keys are configured."</p>
                     }.into_any(),
                     Some(Ok(response)) => view! {
                         <dl class="kv">
@@ -231,9 +235,9 @@ pub fn SigningKeyRotationForm() -> impl IntoView {
                         </dl>
                     }.into_any(),
                     Some(Err(error)) => view! {
-                        <p class="result-line">{server_error_text(error)}</p>
+                        <p class=RESULT_LINE>{server_error_text(error)}</p>
                     }.into_any(),
-                    None => view! { <p class="result-line">"Loading keys"</p> }.into_any(),
+                    None => view! { <p class=RESULT_LINE>"Loading keys"</p> }.into_any(),
                 }}
             </div>
             <label>
@@ -252,11 +256,11 @@ pub fn SigningKeyRotationForm() -> impl IntoView {
                 />
                 <span>"Retire previous active key"</span>
             </label>
-            <button type="button" class="secondary-button" disabled=move || pending.get() on:click=submit>
+            <button type="button" class=BTN_SECONDARY disabled=move || pending.get() on:click=submit>
                 "Rotate key"
             </button>
             <Show when=move || value.get().is_some()>
-                <p class="result-line">{move || action_result_text(value.get())}</p>
+                <p class=RESULT_LINE>{move || action_result_text(value.get())}</p>
             </Show>
         </section>
     }
@@ -276,18 +280,18 @@ pub fn RedirectAllowlistForm() -> impl IntoView {
     };
 
     view! {
-        <section class="panel">
+        <section class=PANEL>
             <h2>"Allowed redirects"</h2>
             <textarea
                 rows="5"
                 prop:value=move || redirects_json.get()
                 on:input=move |event| set_redirects_json.set(event_target_value(&event))
             />
-            <button type="button" class="secondary-button" disabled=move || pending.get() on:click=submit>
+            <button type="button" class=BTN_SECONDARY disabled=move || pending.get() on:click=submit>
                 "Save allowlist"
             </button>
             <Show when=move || value.get().is_some()>
-                <p class="result-line">{move || action_result_text(value.get())}</p>
+                <p class=RESULT_LINE>{move || action_result_text(value.get())}</p>
             </Show>
         </section>
     }

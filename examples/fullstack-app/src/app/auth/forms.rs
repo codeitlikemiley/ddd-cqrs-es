@@ -27,6 +27,13 @@ use crate::contracts::{
     AuthCapabilities, AuthProviderSummary, CapturedMailResponse, LoginCompletionResponse,
     OrganizationSummary, PasswordResetStartResponse, SessionView,
 };
+use crate::ui::classes::{
+    AUTH_ALT_BUTTON, AUTH_ALT_STACK, AUTH_BUTTON_SPINNER, AUTH_COPY, AUTH_DIVIDER, AUTH_FORM,
+    AUTH_INLINE_ERROR, AUTH_MODE_BUTTON, AUTH_MODE_BUTTON_ACTIVE, AUTH_MODE_SWITCH, AUTH_SECONDARY,
+    AUTH_TEXT_LINK, AUTH_TITLE, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY,
+    BTN_SECONDARY, BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE,
+    SECTION_LABEL,
+};
 use crate::ui::error_page_shell;
 use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
@@ -274,13 +281,13 @@ pub fn EmailPasswordAuthForm(register_default: bool) -> impl IntoView {
     };
 
     view! {
-        <section class="auth-form">
+        <section class=AUTH_FORM>
             <div>
-                <p class="auth-kicker">"Authentication"</p>
-                <h1 class="auth-title">
+                <p class=SECTION_LABEL>"Authentication"</p>
+                <h1 class=AUTH_TITLE>
                     {move || if register_mode.get() { "Create your workspace" } else { "Welcome back" }}
                 </h1>
-                <p class="auth-copy">
+                <p class=AUTH_COPY>
                     {move || if register_mode.get() {
                         "Set up a password-backed workspace session."
                     } else if password_step.get() {
@@ -292,13 +299,13 @@ pub fn EmailPasswordAuthForm(register_default: bool) -> impl IntoView {
             </div>
 
             <Show when=move || registration_complete.get()>
-                <div class="auth-success">
+                <div class=BANNER_SUCCESS>
                     <p><strong>"Account created."</strong> " Check your inbox for the one-time verification link."</p>
                     <Show when=move || matches!(capture_enabled.get(), Some(Ok(true)))>
                         <p>"Capture mode does not send internet email. The local worker stores the message for this example."</p>
                         <button
                             type="button"
-                            class="auth-secondary"
+                            class=AUTH_SECONDARY
                             disabled=move || capture_pending.get()
                             on:click=move |_| {
                                 capture_action.dispatch(LatestDevelopmentMail {
@@ -310,7 +317,7 @@ pub fn EmailPasswordAuthForm(register_default: bool) -> impl IntoView {
                             {move || if capture_pending.get() { "Looking for message" } else { "Open captured verification link" }}
                         </button>
                         <Show when=move || selected_action_error(capture_value.get()).is_some()>
-                            <p class="auth-inline-error">
+                            <p class=AUTH_INLINE_ERROR>
                                 {move || selected_action_error(capture_value.get()).unwrap_or_default()}
                             </p>
                         </Show>
@@ -318,13 +325,13 @@ pub fn EmailPasswordAuthForm(register_default: bool) -> impl IntoView {
                 </div>
             </Show>
 
-            <div class="auth-mode-switch" role="tablist" aria-label="Authentication mode" hidden=move || registration_complete.get()>
+            <div class=AUTH_MODE_SWITCH role="tablist" aria-label="Authentication mode" hidden=move || registration_complete.get()>
                 <button
                     type="button"
                     class=move || if register_mode.get() {
-                        "auth-mode-button"
+                        AUTH_MODE_BUTTON
                     } else {
-                        "auth-mode-button auth-mode-button-active"
+                        AUTH_MODE_BUTTON_ACTIVE
                     }
                     on:click=move |_| {
                         set_register_mode.set(false);
@@ -339,9 +346,9 @@ pub fn EmailPasswordAuthForm(register_default: bool) -> impl IntoView {
                 <button
                     type="button"
                     class=move || if register_mode.get() {
-                        "auth-mode-button auth-mode-button-active"
+                        AUTH_MODE_BUTTON_ACTIVE
                     } else {
-                        "auth-mode-button"
+                        AUTH_MODE_BUTTON
                     }
                     on:click=move |_| {
                         set_register_mode.set(true);
@@ -354,14 +361,14 @@ pub fn EmailPasswordAuthForm(register_default: bool) -> impl IntoView {
                 </button>
             </div>
 
-            <form class="auth-fields" hidden=move || registration_complete.get() on:submit=move |event| {
+            <form class=FIELD_GROUP hidden=move || registration_complete.get() on:submit=move |event| {
                 event.prevent_default();
                 submit_credentials();
             }>
-                <label class="auth-field">
+                <label class=FIELD>
                     <span>"Email"</span>
                     <input
-                        class="auth-input"
+                        class=INPUT
                         type="email"
                         name="email"
                         // webauthn enables Conditional UI passkey rows in supporting browsers
@@ -378,12 +385,12 @@ pub fn EmailPasswordAuthForm(register_default: bool) -> impl IntoView {
                     />
                 </label>
                 <label
-                    class="auth-field"
+                    class=FIELD
                     hidden=move || !register_mode.get() && !password_step.get()
                 >
                     <span>"Password"</span>
                     <input
-                        class="auth-input"
+                        class=INPUT
                         type="password"
                         name="password"
                         autocomplete=move || if register_mode.get() { "new-password" } else { "current-password" }
@@ -402,7 +409,7 @@ pub fn EmailPasswordAuthForm(register_default: bool) -> impl IntoView {
 
                 // One error banner only: client validation + passkey + password/register server errors.
                 <p
-                    class="auth-error"
+                    class=BANNER_ERROR
                     hidden=move || {
                         client_error.get().is_none()
                             && selected_auth_error(
@@ -429,7 +436,7 @@ pub fn EmailPasswordAuthForm(register_default: bool) -> impl IntoView {
 
                 <button
                     type="submit"
-                    class="auth-submit"
+                    class=BTN_AUTH_SUBMIT
                     disabled=move || {
                         login_pending.get()
                             || register_pending.get()
@@ -445,7 +452,7 @@ pub fn EmailPasswordAuthForm(register_default: bool) -> impl IntoView {
                     }
                 >
                     <span
-                        class="auth-button-spinner"
+                        class=AUTH_BUTTON_SPINNER
                         aria-hidden="true"
                         hidden=move || !(login_pending.get() || register_pending.get())
                     ></span>
@@ -462,7 +469,7 @@ pub fn EmailPasswordAuthForm(register_default: bool) -> impl IntoView {
                     </span>
                 </button>
                 <a
-                    class="auth-text-link"
+                    class=AUTH_TEXT_LINK
                     href="/forgot-password"
                     hidden=move || register_mode.get() || !password_step.get()
                 >
@@ -470,7 +477,7 @@ pub fn EmailPasswordAuthForm(register_default: bool) -> impl IntoView {
                 </a>
                 <button
                     type="button"
-                    class="auth-text-link auth-text-button"
+                    class=AUTH_TEXT_LINK
                     hidden=move || register_mode.get() || !password_step.get()
                     on:click=move |_| {
                         set_password_step.set(false);
@@ -484,7 +491,7 @@ pub fn EmailPasswordAuthForm(register_default: bool) -> impl IntoView {
             </form>
 
             <div
-                class="auth-alt-methods"
+                class=AUTH_ALT_STACK
                 hidden=move || registration_complete.get()
                     || !capabilities.get().is_some_and(|result| {
                         result.is_ok_and(|caps| {
@@ -493,11 +500,11 @@ pub fn EmailPasswordAuthForm(register_default: bool) -> impl IntoView {
                         })
                     })
             >
-                <div class="auth-divider" aria-hidden="true">
+                <div class=AUTH_DIVIDER aria-hidden="true">
                     <span>"or"</span>
                 </div>
                 <div
-                    class="auth-alt-stack"
+                    class=AUTH_ALT_STACK
                     hidden=move || !capabilities.get().is_some_and(|result| {
                         result.is_ok_and(|caps| caps.oauth_enabled && !caps.providers.is_empty())
                     })
@@ -506,7 +513,7 @@ pub fn EmailPasswordAuthForm(register_default: bool) -> impl IntoView {
                 </div>
                 <button
                     type="button"
-                    class="auth-alt-button"
+                    class=AUTH_ALT_BUTTON
                     hidden=move || !capabilities.get().is_some_and(|result| {
                         result.is_ok_and(|caps| caps.passkeys_enabled)
                     })
@@ -526,7 +533,7 @@ pub fn EmailPasswordAuthForm(register_default: bool) -> impl IntoView {
                 </button>
             </div>
 
-            <p class="auth-trust-copy">
+            <p class="mt-2 text-xs leading-normal text-tertiary">
                 "Protected by server-side validation, httpOnly session cookies, and tenant-scoped authorization checks."
             </p>
         </section>
@@ -558,22 +565,22 @@ pub fn EmailVerificationForm() -> impl IntoView {
     });
 
     view! {
-        <section class="auth-form">
+        <section class=AUTH_FORM>
             <div>
-                <p class="auth-kicker">"Email verification"</p>
-                <h1 class="auth-title">"Verify your email"</h1>
-                <p class="auth-copy">"The one-time link is hashed at rest and can be used once."</p>
+                <p class=SECTION_LABEL>"Email verification"</p>
+                <h1 class=AUTH_TITLE>"Verify your email"</h1>
+                <p class=AUTH_COPY>"The one-time link is hashed at rest and can be used once."</p>
             </div>
             <Show when=move || pending.get()>
-                <p class="result-line">"Verifying email"</p>
+                <p class=RESULT_LINE>"Verifying email"</p>
             </Show>
             <Show when=move || selected_action_error(value.get()).is_some()>
-                <p class="auth-error">{move || selected_action_error(value.get()).unwrap_or_default()}</p>
+                <p class=BANNER_ERROR>{move || selected_action_error(value.get()).unwrap_or_default()}</p>
             </Show>
             <Show when=move || one_time_token_from_url().is_none()>
-                <p class="auth-notice">"Open this page from the one-time link in your verification message."</p>
+                <p class=BANNER_SUCCESS>"Open this page from the one-time link in your verification message."</p>
             </Show>
-            <a class="auth-text-link" href="/verify-email/resend">"Request another message"</a>
+            <a class=AUTH_TEXT_LINK href="/verify-email/resend">"Request another message"</a>
         </section>
     }
 }
@@ -600,40 +607,40 @@ pub fn ResendVerificationForm() -> impl IntoView {
     });
 
     view! {
-        <section class="auth-form">
+        <section class=AUTH_FORM>
             <div>
-                <p class="auth-kicker">"Email verification"</p>
-                <h1 class="auth-title">"Send a fresh link"</h1>
-                <p class="auth-copy">"The response is generic whether or not the account exists."</p>
+                <p class=SECTION_LABEL>"Email verification"</p>
+                <h1 class=AUTH_TITLE>"Send a fresh link"</h1>
+                <p class=AUTH_COPY>"The response is generic whether or not the account exists."</p>
             </div>
-            <form class="auth-fields" on:submit=move |event| {
+            <form class=FIELD_GROUP on:submit=move |event| {
                 event.prevent_default();
                 action.dispatch(ResendEmailVerification {
                     email: email.get_untracked(),
                     redirect_url: Some("/dashboard".to_string()),
                 });
             }>
-                <label class="auth-field">
+                <label class=FIELD>
                     <span>"Email"</span>
                     <input
-                        class="auth-input"
+                        class=INPUT
                         type="email"
                         autocomplete="email"
                         prop:value=move || email.get()
                         on:input=move |event| set_email.set(event_target_value(&event))
                     />
                 </label>
-                <button type="submit" class="auth-submit" disabled=move || pending.get()>
+                <button type="submit" class=BTN_AUTH_SUBMIT disabled=move || pending.get()>
                     "Send verification link"
                 </button>
                 <Show when=move || value.get().is_some()>
-                    <p class="result-line">{move || action_result_text(value.get())}</p>
+                    <p class=RESULT_LINE>{move || action_result_text(value.get())}</p>
                 </Show>
                 <Show when=move || value.get().is_some() && matches!(capture_enabled.get(), Some(Ok(true)))>
-                    <p class="auth-notice">"Capture mode stores this message locally; it will not arrive in an external inbox."</p>
+                    <p class=BANNER_SUCCESS>"Capture mode stores this message locally; it will not arrive in an external inbox."</p>
                     <button
                         type="button"
-                        class="auth-secondary"
+                        class=AUTH_SECONDARY
                         disabled=move || capture_pending.get()
                         on:click=move |_| {
                             capture_action.dispatch(LatestDevelopmentMail {
@@ -645,7 +652,7 @@ pub fn ResendVerificationForm() -> impl IntoView {
                         {move || if capture_pending.get() { "Looking for message" } else { "Open captured verification link" }}
                     </button>
                     <Show when=move || selected_action_error(capture_value.get()).is_some()>
-                        <p class="auth-inline-error">{move || selected_action_error(capture_value.get()).unwrap_or_default()}</p>
+                        <p class=AUTH_INLINE_ERROR>{move || selected_action_error(capture_value.get()).unwrap_or_default()}</p>
                     </Show>
                 </Show>
             </form>
@@ -675,22 +682,22 @@ pub fn ForgotPasswordForm() -> impl IntoView {
     };
 
     view! {
-        <section class="auth-form">
+        <section class=AUTH_FORM>
             <div>
-                <p class="auth-kicker">"Password reset"</p>
-                <h1 class="auth-title">"Recover access"</h1>
-                <p class="auth-copy">
+                <p class=SECTION_LABEL>"Password reset"</p>
+                <h1 class=AUTH_TITLE>"Recover access"</h1>
+                <p class=AUTH_COPY>
                     "Enter your email and we will send reset instructions if an account exists."
                 </p>
             </div>
-            <form class="auth-fields" on:submit=move |event| {
+            <form class=FIELD_GROUP on:submit=move |event| {
                 event.prevent_default();
                 submit();
             }>
-                <label class="auth-field">
+                <label class=FIELD>
                     <span>"Email"</span>
                     <input
-                        class="auth-input"
+                        class=INPUT
                         type="email"
                         name="email"
                         autocomplete="username"
@@ -705,7 +712,7 @@ pub fn ForgotPasswordForm() -> impl IntoView {
                     <small>"For privacy, the response is the same even if no account exists."</small>
                 </label>
                 <p
-                    class="auth-error"
+                    class=BANNER_ERROR
                     hidden=move || client_error.get().is_none()
                 >
                     {move || client_error.get().unwrap_or_default()}
@@ -715,18 +722,18 @@ pub fn ForgotPasswordForm() -> impl IntoView {
                 </div>
                 <button
                     type="submit"
-                    class="auth-submit"
+                    class=BTN_AUTH_SUBMIT
                     disabled=move || pending.get()
                     aria-busy=move || if pending.get() { "true" } else { "false" }
                 >
                     <span
-                        class="auth-button-spinner"
+                        class=AUTH_BUTTON_SPINNER
                         aria-hidden="true"
                         hidden=move || !pending.get()
                     ></span>
                     <span>{move || if pending.get() { "Sending reset link" } else { "Send reset link" }}</span>
                 </button>
-                <a class="auth-text-link" href="/login">"Return to sign in"</a>
+                <a class=AUTH_TEXT_LINK href="/login">"Return to sign in"</a>
             </form>
         </section>
     }
@@ -744,12 +751,12 @@ pub fn PasswordResetStartResult(
             Some(Ok(response)) => {
                 let _ = response;
                 view! {
-                    <div class="auth-success">
+                    <div class=BANNER_SUCCESS>
                         <p>"If an account exists, reset instructions are ready to send."</p>
                     </div>
                 }.into_any()
             }
-            Some(Err(error)) => view! { <p class="auth-error">{server_error_text(error)}</p> }.into_any(),
+            Some(Err(error)) => view! { <p class=BANNER_ERROR>{server_error_text(error)}</p> }.into_any(),
             None => view! {}.into_any(),
         }}
     }
@@ -791,22 +798,22 @@ pub fn ResetPasswordForm() -> impl IntoView {
     };
 
     view! {
-        <section class="auth-form">
+        <section class=AUTH_FORM>
             <div>
-                <p class="auth-kicker">"Password reset"</p>
-                <h1 class="auth-title">"Choose a new password"</h1>
-                <p class="auth-copy">
+                <p class=SECTION_LABEL>"Password reset"</p>
+                <h1 class=AUTH_TITLE>"Choose a new password"</h1>
+                <p class=AUTH_COPY>
                     "Use the reset link once. After the password changes, a new session is issued."
                 </p>
             </div>
-            <form class="auth-fields" on:submit=move |event| {
+            <form class=FIELD_GROUP on:submit=move |event| {
                 event.prevent_default();
                 submit();
             }>
-                <label class="auth-field">
+                <label class=FIELD>
                     <span>"New password"</span>
                     <input
-                        class="auth-input"
+                        class=INPUT
                         type="password"
                         name="password"
                         autocomplete="new-password"
@@ -821,31 +828,31 @@ pub fn ResetPasswordForm() -> impl IntoView {
                     <small>"Use 15 to 128 characters. Existing sessions should be reviewed after reset."</small>
                 </label>
                 <p
-                    class="auth-error"
+                    class=BANNER_ERROR
                     hidden=move || client_error.get().is_none()
                 >
                     {move || client_error.get().unwrap_or_default()}
                 </p>
                 <p
-                    class="auth-error"
+                    class=BANNER_ERROR
                     hidden=move || selected_action_error(value.get()).is_none()
                 >
                     {move || selected_action_error(value.get()).unwrap_or_default()}
                 </p>
                 <button
                     type="submit"
-                    class="auth-submit"
+                    class=BTN_AUTH_SUBMIT
                     disabled=move || pending.get()
                     aria-busy=move || if pending.get() { "true" } else { "false" }
                 >
                     <span
-                        class="auth-button-spinner"
+                        class=AUTH_BUTTON_SPINNER
                         aria-hidden="true"
                         hidden=move || !pending.get()
                     ></span>
                     <span>{move || if pending.get() { "Updating password" } else { "Reset password" }}</span>
                 </button>
-                <a class="auth-text-link" href="/login">"Return to sign in"</a>
+                <a class=AUTH_TEXT_LINK href="/login">"Return to sign in"</a>
             </form>
         </section>
     }
@@ -885,44 +892,44 @@ pub fn InvitationAcceptForm() -> impl IntoView {
     };
 
     view! {
-        <section class="auth-form">
+        <section class=AUTH_FORM>
             <div>
-                <p class="auth-kicker">"Organization invite"</p>
-                <h1 class="auth-title">"Accept invitation"</h1>
-                <p class="auth-copy">
+                <p class=SECTION_LABEL>"Organization invite"</p>
+                <h1 class=AUTH_TITLE>"Accept invitation"</h1>
+                <p class=AUTH_COPY>
                     "Join the organization with the account you are signed in as. The invite email must match this account."
                 </p>
             </div>
             <Show
                 when=move || accepted_org.get().is_some()
                 fallback=move || view! {
-                    <div class="auth-fields">
+                    <div class=FIELD_GROUP>
                         <p
-                            class="auth-error"
+                            class=BANNER_ERROR
                             hidden=move || client_error.get().is_none()
                         >
                             {move || client_error.get().unwrap_or_default()}
                         </p>
                         <p
-                            class="auth-error"
+                            class=BANNER_ERROR
                             hidden=move || selected_action_error(value.get()).is_none()
                         >
                             {move || selected_action_error(value.get()).unwrap_or_default()}
                         </p>
                         <Show when=move || invitation_token.get().is_none()>
-                            <p class="auth-error">
+                            <p class=BANNER_ERROR>
                                 "Open this page from the invitation email so the one-time token is present."
                             </p>
                         </Show>
                         <button
                             type="button"
-                            class="auth-submit"
+                            class=BTN_AUTH_SUBMIT
                             disabled=move || pending.get() || invitation_token.get().is_none()
                             aria-busy=move || if pending.get() { "true" } else { "false" }
                             on:click=move |_| submit()
                         >
                             <span
-                                class="auth-button-spinner"
+                                class=AUTH_BUTTON_SPINNER
                                 aria-hidden="true"
                                 hidden=move || !pending.get()
                             ></span>
@@ -936,11 +943,11 @@ pub fn InvitationAcceptForm() -> impl IntoView {
                                 }}
                             </span>
                         </button>
-                        <a class="auth-text-link" href="/organizations">"Back to organizations"</a>
+                        <a class=AUTH_TEXT_LINK href="/organizations">"Back to organizations"</a>
                     </div>
                 }
             >
-                <div class="auth-success">
+                <div class=BANNER_SUCCESS>
                     <p>
                         {move || {
                             accepted_org
@@ -954,11 +961,11 @@ pub fn InvitationAcceptForm() -> impl IntoView {
                                 .unwrap_or_default()
                         }}
                     </p>
-                    <div class="actions">
-                        <a class="link-button link-button-primary" href="/organizations">
+                    <div class=BUTTON_ROW>
+                        <a class=BTN_PRIMARY href="/organizations">
                             "Open organizations"
                         </a>
-                        <a class="link-button" href="/dashboard">"Dashboard"</a>
+                        <a class=BTN_SECONDARY href="/dashboard">"Dashboard"</a>
                     </div>
                 </div>
             </Show>
@@ -972,7 +979,7 @@ pub fn OAuthProviderButtons() -> impl IntoView {
     let providers = browser_load(list_auth_providers);
 
     view! {
-        <div class="auth-alt-stack">
+        <div class=AUTH_ALT_STACK>
             <For
                 each=move || match providers.get() {
                     Some(Ok(providers)) => providers,
@@ -993,7 +1000,7 @@ pub fn OAuthProviderButtons() -> impl IntoView {
 #[component]
 pub fn OAuthProviderList() -> impl IntoView {
     view! {
-        <section class="panel compact-panel">
+        <section class=PANEL_COMPACT>
             <h2>"Sign in with a provider"</h2>
             <OAuthProviderButtons />
         </section>
@@ -1024,7 +1031,7 @@ pub fn ProviderLoginButton(provider_id: String, label: String) -> impl IntoView 
     view! {
         <button
             type="button"
-            class="auth-alt-button"
+            class=AUTH_ALT_BUTTON
             disabled=move || pending.get()
             on:click=submit
         >
@@ -1035,7 +1042,7 @@ pub fn ProviderLoginButton(provider_id: String, label: String) -> impl IntoView 
             }}
         </button>
         <Show when=move || matches!(value.get(), Some(Err(_)))>
-            <p class="auth-inline-error">{move || action_result_text(value.get())}</p>
+            <p class=AUTH_INLINE_ERROR>{move || action_result_text(value.get())}</p>
         </Show>
     }
 }
@@ -1059,10 +1066,10 @@ pub fn LogoutForm() -> impl IntoView {
     });
 
     view! {
-        <div class="action-stack">
+        <div class=AUTH_ALT_STACK>
             <button
                 type="button"
-                class="secondary-button"
+                class=BTN_SECONDARY
                 disabled=move || pending.get()
                 on:click=move |_| {
                     action.dispatch(LogoutCurrentSession {});
@@ -1071,7 +1078,7 @@ pub fn LogoutForm() -> impl IntoView {
                 "Log out"
             </button>
             <Show when=move || value.get().is_some()>
-                <p class="result-line">{move || action_result_text(value.get())}</p>
+                <p class=RESULT_LINE>{move || action_result_text(value.get())}</p>
             </Show>
         </div>
     }
@@ -1092,7 +1099,7 @@ pub fn LogoutButton() -> impl IntoView {
     view! {
         <button
             type="button"
-            class="user-menu-signout"
+            class=BTN_SECONDARY
             disabled=move || pending.get()
             on:click=move |_| {
                 action.dispatch(LogoutCurrentSession {});
@@ -1108,14 +1115,14 @@ pub fn SessionSummary() -> impl IntoView {
     let session = browser_load(get_current_session);
 
     view! {
-        <section class="panel session-panel">
-            <div class="session-panel-head">
+        <section class=PANEL>
+            <div class="flex items-center justify-between gap-2">
                 <div>
-                    <p class="section-label">"Identity"</p>
+                    <p class=SECTION_LABEL>"Identity"</p>
                     <h2>"Current session"</h2>
                 </div>
                 <span
-                    class="session-assurance"
+                    class="text-xs text-secondary"
                     hidden=move || !matches!(session.get(), Some(Ok(view)) if view.authenticated)
                 >
                     {move || {
@@ -1128,18 +1135,18 @@ pub fn SessionSummary() -> impl IntoView {
                 </span>
             </div>
             <dl
-                class="kv"
+                class="grid gap-1 text-[13px]"
                 hidden=move || !matches!(session.get(), Some(Ok(view)) if view.authenticated)
             >
                 <dt>"Tenant"</dt>
-                <dd class="mono-value">{move || session.get().and_then(Result::ok).and_then(|view| view.tenant_id).unwrap_or_else(|| "—".to_string())}</dd>
+                <dd class="font-mono text-[12px] text-secondary">{move || session.get().and_then(Result::ok).and_then(|view| view.tenant_id).unwrap_or_else(|| "—".to_string())}</dd>
                 <dt>"User"</dt>
-                <dd class="mono-value">{move || session.get().and_then(Result::ok).and_then(|view| view.user_id).unwrap_or_else(|| "—".to_string())}</dd>
+                <dd class="font-mono text-[12px] text-secondary">{move || session.get().and_then(Result::ok).and_then(|view| view.user_id).unwrap_or_else(|| "—".to_string())}</dd>
                 <dt>"Email"</dt>
                 <dd>{move || session.get().and_then(Result::ok).and_then(|view| view.primary_email).unwrap_or_else(|| "—".to_string())}</dd>
             </dl>
             <p
-                class="result-line"
+                class=RESULT_LINE
                 hidden=move || matches!(session.get(), Some(Ok(view)) if view.authenticated)
             >
                 {move || match session.get() {
@@ -1159,10 +1166,10 @@ pub fn OAuthCallbackStatus() -> impl IntoView {
     let value = action.value();
 
     view! {
-        <section class="panel">
+        <section class=PANEL>
             <button
                 type="button"
-                class="secondary-button"
+                class=BTN_SECONDARY
                 disabled=move || pending.get()
                 on:click=move |_| {
                     action.dispatch(CompleteOauthCallback {
@@ -1176,7 +1183,7 @@ pub fn OAuthCallbackStatus() -> impl IntoView {
                 "Complete callback"
             </button>
             <Show when=move || value.get().is_some()>
-                <p class="result-line">{move || action_result_text(value.get())}</p>
+                <p class=RESULT_LINE>{move || action_result_text(value.get())}</p>
             </Show>
         </section>
     }

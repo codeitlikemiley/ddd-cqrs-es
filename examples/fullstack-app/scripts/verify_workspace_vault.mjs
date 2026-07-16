@@ -62,7 +62,7 @@ async function main() {
     // Onboarding or dashboard
     const path = new URL(page.url()).pathname;
     if (path.includes("onboarding") || (await page.locator("text=Create your workspace").count())) {
-      if (await page.locator(".workspace-shell").count()) {
+      if (await page.locator("[data-testid='workspace-shell'], .workspace-shell, #workspace-shell").count()) {
         throw new Error("first-workspace onboarding must not render workspace navigation");
       }
       await page.goto(url("/dashboard"), { waitUntil: "domcontentloaded" });

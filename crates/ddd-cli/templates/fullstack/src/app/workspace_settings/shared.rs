@@ -8,6 +8,10 @@ use crate::app::{browser_load, get_current_session, list_organizations};
 use crate::contracts::OrganizationSummary;
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
+use crate::ui::classes::{
+    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
+    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+};
 
 /// Route param `slug` for `/org/:slug/settings/…`.
 pub(crate) fn settings_slug_from_params() -> Memo<String> {
@@ -333,8 +337,8 @@ pub fn LegacySettingsRedirect(section: String) -> impl IntoView {
     });
 
     view! {
-        <section class="panel workspace-settings-redirect">
-            <p class="result-line">"Opening workspace settings…"</p>
+        <section class=format!("{}{}", PANEL, " workspace-settings-redirect")>
+            <p class=RESULT_LINE>"Opening workspace settings…"</p>
             <p class="board-muted">
                 <a href="/organizations">"Back to workspaces"</a>
                 " if this takes too long."
@@ -356,8 +360,8 @@ pub(crate) fn settings_page_stub(
                 <h1>{title}</h1>
                 <p class="workspace-settings-page-sub">{subtitle}</p>
             </header>
-            <section class="panel workspace-settings-stub">
-                <p class="result-line">{permission_hint}</p>
+            <section class=format!("{}{}", PANEL, " workspace-settings-stub")>
+                <p class=RESULT_LINE>{permission_hint}</p>
                 {children}
             </section>
         </div>

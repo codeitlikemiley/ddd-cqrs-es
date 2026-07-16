@@ -8,6 +8,10 @@ use crate::contracts::AuthProviderSummary;
 use crate::ui::account_page_shell;
 use leptos::prelude::*;
 use server_fn::ServerFnError;
+use crate::ui::classes::{
+    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
+    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+};
 
 /// Known OAuth brands for the account Providers tab (always shown; greyed when off).
 #[derive(Clone, Copy)]
@@ -46,10 +50,10 @@ pub fn AccountProvidersPanel() -> impl IntoView {
     let providers = browser_load(list_auth_providers);
 
     view! {
-        <section class="panel providers-panel">
+        <section class=format!("{}{}", PANEL, " providers-panel")>
             <div class="session-panel-head">
                 <div>
-                    <p class="section-label">"Social login"</p>
+                    <p class=SECTION_LABEL>"Social login"</p>
                     <h2>"Identity providers"</h2>
                 </div>
             </div>

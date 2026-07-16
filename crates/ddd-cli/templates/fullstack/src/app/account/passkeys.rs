@@ -20,6 +20,10 @@ use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
 use leptos::task::spawn_local;
 use server_fn::ServerFnError;
+use crate::ui::classes::{
+    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
+    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+};
 
 #[component]
 pub fn AccountPasskeysPage() -> impl IntoView {
@@ -111,7 +115,7 @@ pub fn PasskeyManager() -> impl IntoView {
                 if ceremony_active && !registered_ok {
                     return view! {
                         <div class="passkey-focus-wrap">
-                            <section class="panel passkey-ceremony-panel">
+                            <section class=format!("{}{}", PANEL, " passkey-ceremony-panel")>
                                 <div class="passkey-wizard-progress" aria-hidden="true">
                                     <span class="passkey-wizard-step is-done">"1"</span>
                                     <span class="passkey-wizard-line is-done"></span>
@@ -119,7 +123,7 @@ pub fn PasskeyManager() -> impl IntoView {
                                     <span class="passkey-wizard-line"></span>
                                     <span class="passkey-wizard-step">"3"</span>
                                 </div>
-                                <p class="section-label">"Creating passkey"</p>
+                                <p class=SECTION_LABEL>"Creating passkey"</p>
                                 <h2>
                                     {move || if ceremony_cancelled {
                                         "Passkey not created"
@@ -145,7 +149,7 @@ pub fn PasskeyManager() -> impl IntoView {
                                     </div>
                                     <p>"Waiting for authenticator…"</p>
                                 </div>
-                                <p class="result-line" hidden=move || ceremony_failed>
+                                <p class=RESULT_LINE hidden=move || ceremony_failed>
                                     {move || if verify_pending.get() {
                                         "Saving passkey to your account…"
                                     } else if start_pending.get() {
@@ -155,7 +159,7 @@ pub fn PasskeyManager() -> impl IntoView {
                                     }}
                                 </p>
                                 <p
-                                    class="error-banner"
+                                    class=BANNER_ERROR
                                     hidden=move || {
                                         match client_error.get() {
                                             None => true,
@@ -169,22 +173,22 @@ pub fn PasskeyManager() -> impl IntoView {
                                 >
                                     {move || client_error.get().unwrap_or_default()}
                                 </p>
-                                <p class="error-banner" hidden=move || !matches!(start_value.get(), Some(Err(_)))>
+                                <p class=BANNER_ERROR hidden=move || !matches!(start_value.get(), Some(Err(_)))>
                                     {move || match start_value.get() {
                                         Some(Err(error)) => server_error_text(error),
                                         _ => String::new(),
                                     }}
                                 </p>
-                                <p class="error-banner" hidden=move || !matches!(verify_value.get(), Some(Err(_)))>
+                                <p class=BANNER_ERROR hidden=move || !matches!(verify_value.get(), Some(Err(_)))>
                                     {move || match verify_value.get() {
                                         Some(Err(error)) => server_error_text(error),
                                         _ => String::new(),
                                     }}
                                 </p>
-                                <div class="button-row">
+                                <div class=BUTTON_ROW>
                                     <button
                                         type="button"
-                                        class="primary-button"
+                                        class=BTN_PRIMARY
                                         disabled=move || start_pending.get() || verify_pending.get()
                                         on:click=move |_| {
                                             set_client_error.set(None);
@@ -200,7 +204,7 @@ pub fn PasskeyManager() -> impl IntoView {
                                     >"Try again"</button>
                                     <button
                                         type="button"
-                                        class="secondary-button"
+                                        class=BTN_SECONDARY
                                         on:click=move |_| {
                                             set_client_error.set(None);
                                             redirect_browser("/account/passkeys");
@@ -215,15 +219,15 @@ pub fn PasskeyManager() -> impl IntoView {
                 if registered_ok {
                     return view! {
                         <div class="passkey-focus-wrap">
-                            <section class="panel passkey-success-panel">
+                            <section class=format!("{}{}", PANEL, " passkey-success-panel")>
                                 <span class="mfa-badge mfa-badge-on">"Passkey registered"</span>
                                 <h2>"You can sign in without a password"</h2>
                                 <p class="passkey-lede">
                                     "Next time, choose passkey on the sign-in page and approve with this device. Your session assurance is elevated for phishing-resistant sign-in."
                                 </p>
-                                <div class="button-row">
-                                    <a class="primary-button" href="/account/sessions">"Review sessions"</a>
-                                    <a class="secondary-button" href="/account/profile">"Back to profile"</a>
+                                <div class=BUTTON_ROW>
+                                    <a class=BTN_PRIMARY href="/account/sessions">"Review sessions"</a>
+                                    <a class=BTN_SECONDARY href="/account/profile">"Back to profile"</a>
                                 </div>
                             </section>
                         </div>
@@ -271,10 +275,10 @@ pub fn PasskeyManager() -> impl IntoView {
 
                 view! {
                     <div class="passkey-overview">
-                        <section class="panel passkey-status-panel">
+                        <section class=format!("{}{}", PANEL, " passkey-status-panel")>
                             <div class="mfa-status-head">
                                 <div>
-                                    <p class="section-label">"Phishing-resistant sign-in"</p>
+                                    <p class=SECTION_LABEL>"Phishing-resistant sign-in"</p>
                                     <h2>"Passkeys"</h2>
                                     <p class="passkey-lede">
                                         "A passkey lets you sign in with the biometrics or PIN already on this device. It cannot be phished like a password."
@@ -298,14 +302,14 @@ pub fn PasskeyManager() -> impl IntoView {
 
                         {if !caps_loaded {
                             view! {
-                                <section class="panel">
-                                    <p class="result-line">"Loading passkey settings…"</p>
+                                <section class=PANEL>
+                                    <p class=RESULT_LINE>"Loading passkey settings…"</p>
                                 </section>
                             }.into_any()
                         } else if !passkeys_on {
                             view! {
-                                <section class="panel">
-                                    <p class="section-label">"Operator note"</p>
+                                <section class=PANEL>
+                                    <p class=SECTION_LABEL>"Operator note"</p>
                                     <h2>"Passkeys are off for this deployment"</h2>
                                     <p class="passkey-lede">
                                         "Turn them on with AUTH_ENABLE_PASSKEYS=true, then set AUTH_PASSKEY_RP_ID and AUTH_PASSKEY_ORIGIN to match your public site origin (for local: localhost and http://localhost:3008 — not 127.0.0.1)."
@@ -315,30 +319,30 @@ pub fn PasskeyManager() -> impl IntoView {
                                         <li><strong>"Origin"</strong>" must match the exact browser origin including scheme and port."</li>
                                         <li><strong>"HTTPS"</strong>" is required outside localhost."</li>
                                     </ol>
-                                    <div class="button-row">
-                                        <a class="secondary-button" href="/account/mfa">"Use authenticator app instead"</a>
-                                        <a class="secondary-button" href="/account/password">"Password settings"</a>
+                                    <div class=BUTTON_ROW>
+                                        <a class=BTN_SECONDARY href="/account/mfa">"Use authenticator app instead"</a>
+                                        <a class=BTN_SECONDARY href="/account/password">"Password settings"</a>
                                     </div>
                                 </section>
                             }.into_any()
                         } else if !device_ok {
                             view! {
-                                <section class="panel">
-                                    <p class="section-label">"Device"</p>
+                                <section class=PANEL>
+                                    <p class=SECTION_LABEL>"Device"</p>
                                     <h2>"This browser cannot create passkeys"</h2>
                                     <p class="passkey-lede">
                                         "Try a current Chrome, Safari, Edge, or Firefox build, or open this page on a phone that supports platform authenticators."
                                     </p>
-                                    <div class="button-row">
-                                        <a class="secondary-button" href="/account/mfa">"Set up authenticator app"</a>
-                                        <a class="secondary-button" href="/login">"Password sign-in"</a>
+                                    <div class=BUTTON_ROW>
+                                        <a class=BTN_SECONDARY href="/account/mfa">"Set up authenticator app"</a>
+                                        <a class=BTN_SECONDARY href="/login">"Password sign-in"</a>
                                     </div>
                                 </section>
                             }.into_any()
                         } else {
                             view! {
-                                <section class="panel">
-                                    <p class="section-label">"Add to this account"</p>
+                                <section class=PANEL>
+                                    <p class=SECTION_LABEL>"Add to this account"</p>
                                     <h2>"Create a passkey"</h2>
                                     <ol class="mfa-steps-preview">
                                         <li><strong>"Start"</strong>" registration for "{session_email.clone()}"."</li>
@@ -347,7 +351,7 @@ pub fn PasskeyManager() -> impl IntoView {
                                     </ol>
                                     <button
                                         type="button"
-                                        class="primary-button"
+                                        class=BTN_PRIMARY
                                         disabled=move || start_pending.get() || verify_pending.get() || !can_register
                                         on:click=move |_| {
                                             set_client_error.set(None);
@@ -360,10 +364,10 @@ pub fn PasskeyManager() -> impl IntoView {
                                     <p class="passkey-hint">
                                         "Works with iCloud Keychain, Google Password Manager, 1Password, and hardware keys (YubiKey, etc.)."
                                     </p>
-                                    <p class="error-banner" hidden=move || client_error.get().is_none()>
+                                    <p class=BANNER_ERROR hidden=move || client_error.get().is_none()>
                                         {move || client_error.get().unwrap_or_default()}
                                     </p>
-                                    <p class="error-banner" hidden=move || !matches!(start_value.get(), Some(Err(_)))>
+                                    <p class=BANNER_ERROR hidden=move || !matches!(start_value.get(), Some(Err(_)))>
                                         {move || match start_value.get() {
                                             Some(Err(error)) => server_error_text(error),
                                             _ => String::new(),

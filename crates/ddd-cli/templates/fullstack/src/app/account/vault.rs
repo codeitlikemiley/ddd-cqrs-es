@@ -20,6 +20,10 @@ use server_fn::ServerFnError;
 use wasm_bindgen::prelude::*;
 #[cfg(feature = "hydrate")]
 use web_sys::window;
+use crate::ui::classes::{
+    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
+    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+};
 
 /// Legacy `/account/vault` → selected org vault or onboarding.
 #[component]
@@ -44,8 +48,8 @@ pub fn AccountVaultRedirect() -> impl IntoView {
         None => {}
     });
     view! {
-        <section class="panel">
-            <p class="result-line">"Redirecting to your workspace vault…"</p>
+        <section class=PANEL>
+            <p class=RESULT_LINE>"Redirecting to your workspace vault…"</p>
             <p class="board-muted">
                 <a href="/onboarding/workspace">"Create a workspace"</a>
                 " if you do not have one yet."
@@ -215,17 +219,17 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
 
     view! {
         <div class="vault-page">
-            <section class="panel vault-intro">
-                <p class="section-label">"Connectors · Integrations"</p>
+            <section class=format!("{}{}", PANEL, " vault-intro")>
+                <p class=SECTION_LABEL>"Connectors · Integrations"</p>
                 <p class="vault-lede">
                     "Store API keys and passwords for REST, Postgres, and future integrations. "
                     "Resource pickers reference keys by id — plaintext never appears in list APIs."
                 </p>
                 <div class="vault-actions">
-                    <a class="secondary-button" href="/dashboard">"Back to dashboard"</a>
+                    <a class=BTN_SECONDARY href="/dashboard">"Back to dashboard"</a>
                     <button
                         type="button"
-                        class="secondary-button"
+                        class=BTN_SECONDARY
                         disabled=move || seed_action.pending().get()
                         on:click=move |_| { seed_action.dispatch(SeedDashboardDemos {}); }
                     >
@@ -234,19 +238,19 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
                 </div>
             </section>
 
-            <p class="error-banner" hidden=move || form_error.get().is_none()>
+            <p class=BANNER_ERROR hidden=move || form_error.get().is_none()>
                 {move || form_error.get().unwrap_or_default()}
             </p>
             <p class="success-banner" hidden=move || form_ok.get().is_none()>
                 {move || form_ok.get().unwrap_or_default()}
             </p>
 
-            <section class="panel vault-list-panel">
+            <section class=format!("{}{}", PANEL, " vault-list-panel")>
                 <header class="vault-panel-head">
                     <h2>"Secrets"</h2>
                     <div class="vault-panel-head-meta">
                         <span class="board-muted">{move || format!("{} stored", secrets.get().len())}</span>
-                        <button type="button" class="secondary-button vault-add-inline" on:click=move |_| open_create_modal()>
+                        <button type="button" class=format!("{}{}", BTN_SECONDARY, " vault-add-inline") on:click=move |_| open_create_modal()>
                             "Add secret"
                         </button>
                     </div>
@@ -388,37 +392,37 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
                         </header>
                         <div class="board-modal-body vault-modal-body">
                             <div class="vault-form vault-form-modal">
-                                <label class="auth-field">
+                                <label class=FIELD>
                                     <span>"Key"</span>
                                     <input
-                                        class="auth-input mono-value"
+                                        class=format!("{}{}", INPUT, " mono-value")
                                         placeholder="STRIPE_SECRET_KEY"
                                         prop:value=move || key.get()
                                         on:input=move |e| key.set(event_target_value(&e).to_ascii_uppercase())
                                     />
                                 </label>
-                                <label class="auth-field">
+                                <label class=FIELD>
                                     <span>"Label"</span>
                                     <input
-                                        class="auth-input"
+                                        class=INPUT
                                         placeholder="Stripe live secret"
                                         prop:value=move || label.get()
                                         on:input=move |e| label.set(event_target_value(&e))
                                     />
                                 </label>
-                                <label class="auth-field vault-field-wide">
+                                <label class=format!("{}{}", FIELD, " vault-field-wide")>
                                     <span>"Description (optional)"</span>
                                     <input
-                                        class="auth-input"
+                                        class=INPUT
                                         prop:value=move || description.get()
                                         on:input=move |e| description.set(event_target_value(&e))
                                     />
                                 </label>
-                                <label class="auth-field vault-field-wide">
+                                <label class=format!("{}{}", FIELD, " vault-field-wide")>
                                     <span>"Value"</span>
                                     <div class="vault-value-input-row">
                                         <input
-                                            class="auth-input"
+                                            class=INPUT
                                             type=move || if show_value.get() { "text" } else { "password" }
                                             autocomplete="new-password"
                                             prop:value=move || value.get()
@@ -426,7 +430,7 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
                                         />
                                         <button
                                             type="button"
-                                            class="secondary-button"
+                                            class=BTN_SECONDARY
                                             on:click=move |_| show_value.update(|v| *v = !*v)
                                         >
                                             {move || if show_value.get() { "Hide" } else { "Show" }}
@@ -435,10 +439,10 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
                                 </label>
                             </div>
                             <div class="vault-modal-actions">
-                                <button type="button" class="secondary-button" on:click=move |_| create_open.set(false)>"Cancel"</button>
+                                <button type="button" class=BTN_SECONDARY on:click=move |_| create_open.set(false)>"Cancel"</button>
                                 <button
                                     type="button"
-                                    class="primary-button"
+                                    class=BTN_PRIMARY
                                     disabled=move || create_action.pending().get()
                                     on:click=move |_| {
                                         form_ok.set(None);
@@ -492,10 +496,10 @@ pub fn AccountVaultPanel(org_slug: String) -> impl IntoView {
                         </header>
                         <div class="board-modal-body">
                             <div class="vault-modal-actions">
-                                <button type="button" class="secondary-button" on:click=move |_| delete_target.set(None)>"Cancel"</button>
+                                <button type="button" class=BTN_SECONDARY on:click=move |_| delete_target.set(None)>"Cancel"</button>
                                 <button
                                     type="button"
-                                    class="primary-button vault-danger-button"
+                                    class=format!("{}{}", BTN_PRIMARY, " vault-danger-button")
                                     disabled=move || delete_action.pending().get()
                                     on:click=move |_| {
                                         if let Some((id, _)) = delete_target.get_untracked() {

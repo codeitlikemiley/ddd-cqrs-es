@@ -7,6 +7,10 @@
 use crate::app::helpers::action_result_text;
 use crate::app::{CreateOrganization, create_organization};
 use leptos::prelude::*;
+use crate::ui::classes::{
+    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
+    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+};
 
 /// Modal dialog for creating a new organization (workspace).
 ///
@@ -145,10 +149,10 @@ pub fn CreateOrganizationModal(
                             }
                         >
                             <div class="orgs-create-fields">
-                                <label class="auth-field">
+                                <label class=FIELD>
                                     <span>"Organization name"</span>
                                     <input
-                                        class="auth-input"
+                                        class=INPUT
                                         type="text"
                                         maxlength="120"
                                         autocomplete="organization"
@@ -165,12 +169,12 @@ pub fn CreateOrganizationModal(
                                     />
                                     <small>"Use the name teammates will recognize in the workspace switcher."</small>
                                 </label>
-                                <label class="auth-field">
+                                <label class=FIELD>
                                     <span>"Workspace URL"</span>
                                     <div class="slug-input-group" role="group" aria-label="Workspace URL">
                                         <span class="slug-input-prefix" aria-hidden="true">"/org/"</span>
                                         <input
-                                            class="auth-input slug-input-field mono-value"
+                                            class=format!("{}{}", INPUT, " slug-input-field mono-value")
                                             type="text"
                                             maxlength="48"
                                             autocomplete="off"
@@ -188,12 +192,12 @@ pub fn CreateOrganizationModal(
                             <Show when=move || {
                                 create_value.get().is_some_and(|result| result.is_err())
                             }>
-                                <p class="error-banner">{move || action_result_text(create_value.get())}</p>
+                                <p class=BANNER_ERROR>{move || action_result_text(create_value.get())}</p>
                             </Show>
                             <div class="orgs-create-actions">
                                 <button
                                     type="button"
-                                    class="secondary-button"
+                                    class=BTN_SECONDARY
                                     disabled=move || create_pending.get()
                                     on:click=move |_| set_open.set(false)
                                 >
@@ -201,7 +205,7 @@ pub fn CreateOrganizationModal(
                                 </button>
                                 <button
                                     type="submit"
-                                    class="primary-button"
+                                    class=BTN_PRIMARY
                                     disabled=move || {
                                         create_pending.get()
                                             || name.get().trim().is_empty()

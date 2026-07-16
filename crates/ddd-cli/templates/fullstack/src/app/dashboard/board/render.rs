@@ -14,6 +14,10 @@ use crate::contracts::{
 use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
 use wasm_bindgen::JsCast;
+use crate::ui::classes::{
+    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
+    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+};
 
 pub(crate) fn render_node_list(
     nodes: Vec<BoardNode>,
@@ -471,7 +475,7 @@ pub(crate) fn bind_fields_editor(
             <label class="board-bind-field">
                 <span>"Query"</span>
                 <select
-                    class="auth-input"
+                    class=INPUT
                     prop:value=selected.clone()
                     on:change={
                         let wid = wid.clone();
@@ -494,7 +498,7 @@ pub(crate) fn bind_fields_editor(
             <label class="board-bind-field">
                 <span>"Display"</span>
                 <select
-                    class="auth-input"
+                    class=INPUT
                     prop:value=match mode {
                         HttpDisplayMode::Metric => "metric",
                         HttpDisplayMode::List => "list",
@@ -524,7 +528,7 @@ pub(crate) fn bind_fields_editor(
             </label>
             <label class="board-bind-field">
                 <span>"Items path"</span>
-                <input class="auth-input" prop:value=items_path placeholder="e.g. data.items"
+                <input class=INPUT prop:value=items_path placeholder="e.g. data.items"
                     on:change={
                         let wid = wid.clone();
                         move |e| {
@@ -539,7 +543,7 @@ pub(crate) fn bind_fields_editor(
             <div class="board-bind-row">
                 <label class="board-bind-field">
                     <span>"Value / title path"</span>
-                    <input class="auth-input" prop:value=if matches!(mode, HttpDisplayMode::Metric) { value_path.clone() } else { title_path.clone() }
+                    <input class=INPUT prop:value=if matches!(mode, HttpDisplayMode::Metric) { value_path.clone() } else { title_path.clone() }
                         placeholder=if matches!(mode, HttpDisplayMode::Metric) { "value" } else { "name" }
                         on:change={
                             let wid = wid.clone();
@@ -559,7 +563,7 @@ pub(crate) fn bind_fields_editor(
                 </label>
                 <label class="board-bind-field">
                     <span>"Label / subtitle path"</span>
-                    <input class="auth-input" prop:value=if matches!(mode, HttpDisplayMode::Metric) { label_path } else { subtitle_path }
+                    <input class=INPUT prop:value=if matches!(mode, HttpDisplayMode::Metric) { label_path } else { subtitle_path }
                         placeholder=if matches!(mode, HttpDisplayMode::Metric) { "label" } else { "id" }
                         on:change={
                             let wid = wid.clone();
@@ -580,7 +584,7 @@ pub(crate) fn bind_fields_editor(
             </div>
             <label class="board-bind-field">
                 <span>"Meta path"</span>
-                <input class="auth-input" prop:value=meta_path placeholder="optional"
+                <input class=INPUT prop:value=meta_path placeholder="optional"
                     on:change={
                         let wid = wid.clone();
                         move |e| {
@@ -865,7 +869,7 @@ pub(crate) fn render_bound_widget(
     if !ok {
         return view! {
             <div class="board-empty-tile">
-                <p class="error-banner">{error.unwrap_or_else(|| "Query failed".into())}</p>
+                <p class=BANNER_ERROR>{error.unwrap_or_else(|| "Query failed".into())}</p>
             </div>
         }
         .into_any();

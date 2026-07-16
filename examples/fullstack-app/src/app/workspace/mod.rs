@@ -24,6 +24,10 @@ use web_sys::window;
 
 #[cfg(feature = "hydrate")]
 use crate::app::{bind_user_menu_dismiss, bind_workspace_nav_active, init_workspace_sidebar};
+use crate::ui::classes::{
+    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
+    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+};
 
 /// Persistent workspace chrome. Children render in the main content outlet.
 #[component]
@@ -34,7 +38,7 @@ pub fn WorkspaceShell(children: Children) -> impl IntoView {
 
     view! {
         <WorkspaceOnboardingGate />
-        <div class="workspace-shell" id="workspace-shell" data-sidebar="full">
+        <div class="workspace-shell" id="workspace-shell" data-testid="workspace-shell" data-sidebar="full">
             <script>
                 {r#"(function(){try{var s=document.getElementById("workspace-shell");if(!s)return;var m=localStorage.getItem("workspace-sidebar-mode");if(m==="mini"||m==="hidden"||m==="full"){s.setAttribute("data-sidebar",m);}}catch(e){}})();"#}
             </script>
@@ -232,18 +236,18 @@ pub fn WorkspaceOnboardingPanel() -> impl IntoView {
     };
 
     view! {
-        <section class="panel onboarding-card">
-            <p class="section-label">"Welcome"</p>
+        <section class=format!("{}{}", PANEL, " onboarding-card")>
+            <p class=SECTION_LABEL>"Welcome"</p>
             <h1 class="onboarding-title">"Create your workspace"</h1>
             <p class="onboarding-lede">
                 "Workspaces hold your team, secret vault, and connectors. "
                 "Pick a name and a short URL — you can invite others later."
             </p>
             <div class="onboarding-form">
-                <label class="auth-field">
+                <label class=FIELD>
                     <span>"Workspace name"</span>
                     <input
-                        class="auth-input"
+                        class=INPUT
                         type="text"
                         maxlength="120"
                         placeholder="Acme Inc"
@@ -258,12 +262,12 @@ pub fn WorkspaceOnboardingPanel() -> impl IntoView {
                         }
                     />
                 </label>
-                <label class="auth-field">
+                <label class=FIELD>
                     <span>"Workspace URL"</span>
                     <div class="slug-input-group" role="group" aria-label="Workspace URL">
                         <span class="slug-input-prefix" aria-hidden="true">"/org/"</span>
                         <input
-                            class="auth-input slug-input-field mono-value"
+                            class=format!("{}{}", INPUT, " slug-input-field mono-value")
                             type="text"
                             maxlength="48"
                             placeholder="acme"
@@ -279,7 +283,7 @@ pub fn WorkspaceOnboardingPanel() -> impl IntoView {
                 </label>
                 <button
                     type="button"
-                    class="primary-button"
+                    class=BTN_PRIMARY
                     disabled=move || pending.get() || name.get().trim().is_empty() || slug.get().trim().len() < 2
                     on:click=move |_| {
                         create_action.dispatch(CreateOrganization {
@@ -290,7 +294,7 @@ pub fn WorkspaceOnboardingPanel() -> impl IntoView {
                 >
                     {move || if pending.get() { "Creating…" } else { "Create workspace" }}
                 </button>
-                <p class="error-banner" hidden=move || client_error.get().is_none()>
+                <p class=BANNER_ERROR hidden=move || client_error.get().is_none()>
                     {move || client_error.get().unwrap_or_default()}
                 </p>
             </div>
@@ -594,7 +598,7 @@ pub fn AppLayout() -> impl IntoView {
             }
             .into_any(),
             _ => view! {
-                <main class="auth-shell">
+                <main class="block min-h-dvh w-full box-border">
                     <Outlet />
                 </main>
             }

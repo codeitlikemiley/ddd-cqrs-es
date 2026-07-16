@@ -12,6 +12,10 @@ use crate::app::{browser_load, get_workspace_settings_context, list_organization
 use leptos::prelude::*;
 use leptos_router::components::Outlet;
 use leptos_router::hooks::{use_location, use_params_map};
+use crate::ui::classes::{
+    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
+    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+};
 
 /// Resolve workspace slug for settings: route param first, pathname fallback.
 ///
@@ -49,7 +53,7 @@ pub fn WorkspaceSettingsShell() -> impl IntoView {
     });
 
     view! {
-        <div class="workspace-settings-shell" id="workspace-settings-shell">
+        <div class="workspace-settings-shell" id="workspace-settings-shell" data-testid="workspace-settings-shell">
             <input
                 type="checkbox"
                 id="workspace-settings-nav-toggle"
@@ -247,7 +251,7 @@ pub fn WorkspaceSettingsSidebar(
             </div>
 
             <Show when=move || list_error.get().is_some()>
-                <p class="error-banner workspace-settings-sidebar-error">
+                <p class=format!("{} workspace-settings-sidebar-error", BANNER_ERROR)>
                     {move || list_error.get().unwrap_or_default()}
                 </p>
             </Show>
@@ -304,8 +308,8 @@ pub fn WorkspaceSettingsIndexRedirect() -> impl IntoView {
         crate::app::helpers::redirect_browser(&format!("/org/{slug}/settings/general"));
     });
     view! {
-        <section class="panel workspace-settings-redirect">
-            <p class="result-line">"Opening general settings…"</p>
+        <section class=format!("{}{}", PANEL, " workspace-settings-redirect")>
+            <p class=RESULT_LINE>"Opening general settings…"</p>
         </section>
     }
 }

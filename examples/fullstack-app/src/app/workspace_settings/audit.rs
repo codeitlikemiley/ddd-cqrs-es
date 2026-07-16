@@ -19,6 +19,10 @@ use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
 use leptos::task::spawn_local;
 use std::collections::{BTreeMap, BTreeSet};
+use crate::ui::classes::{
+    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
+    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+};
 
 const PAGE_LIMIT: u32 = 50;
 
@@ -210,11 +214,11 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
 
     view! {
         <Show when=move || !list_ready.get() && load_error.get().is_none()>
-            <p class="result-line" aria-busy="true">"Loading audit events…"</p>
+            <p class=RESULT_LINE aria-busy="true">"Loading audit events…"</p>
         </Show>
 
         <Show when=move || load_error.get().is_some()>
-            <p class="error-banner">{move || load_error.get().unwrap_or_default()}</p>
+            <p class=BANNER_ERROR>{move || load_error.get().unwrap_or_default()}</p>
         </Show>
 
         <Show when=move || list_ready.get()>
@@ -237,7 +241,7 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
                     <label class="workspace-settings-audit-filter workspace-settings-audit-filter-actor">
                         <span>"Actor"</span>
                         <input
-                            class="auth-input"
+                            class=INPUT
                             type="search"
                             placeholder="Email"
                             prop:value=move || filter_actor.get()
@@ -335,7 +339,7 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
                 <Show when=move || has_more.get()>
                     <button
                         type="button"
-                        class="secondary-button"
+                        class=BTN_SECONDARY
                         disabled=move || busy.get() || slug.get().is_empty()
                         on:click=move |_| {
                             let slug_value = slug.get_untracked();
@@ -499,7 +503,7 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
                                 <div class="workspace-settings-modal-actions">
                                     <button
                                         type="button"
-                                        class="secondary-button"
+                                        class=BTN_SECONDARY
                                         on:click=move |_| set_selected.set(None)
                                     >
                                         "Close"

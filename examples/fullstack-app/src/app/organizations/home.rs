@@ -13,6 +13,10 @@ use crate::app::{
     select_organization,
 };
 use leptos::prelude::*;
+use crate::ui::classes::{
+    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
+    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+};
 
 #[island]
 pub fn OrganizationsHome() -> impl IntoView {
@@ -46,7 +50,7 @@ pub fn OrganizationsHome() -> impl IntoView {
                 </div>
                 <button
                     type="button"
-                    class="primary-button"
+                    class=BTN_PRIMARY
                     on:click=move |_| set_create_open.set(true)
                 >
                     "New workspace"
@@ -54,7 +58,7 @@ pub fn OrganizationsHome() -> impl IntoView {
             </header>
 
             <Show when=move || select_value.get().is_some_and(|result| result.is_err())>
-                <p class="error-banner">{move || action_result_text(select_value.get())}</p>
+                <p class=BANNER_ERROR>{move || action_result_text(select_value.get())}</p>
             </Show>
 
             <section class="orgs-list-panel" aria-label="Workspace list">
@@ -72,7 +76,7 @@ pub fn OrganizationsHome() -> impl IntoView {
                                 <p>"Create your first workspace to invite teammates and manage roles."</p>
                                 <button
                                     type="button"
-                                    class="primary-button"
+                                    class=BTN_PRIMARY
                                     on:click=move |_| set_create_open.set(true)
                                 >
                                     "Create workspace"
@@ -107,18 +111,18 @@ pub fn OrganizationsHome() -> impl IntoView {
                                         };
                                         let action = if is_active {
                                             view! {
-                                                <a class="secondary-button" href=vault_href.clone()>"Vault"</a>
-                                                <a class="secondary-button" href=settings_href.clone()>
+                                                <a class=BTN_SECONDARY href=vault_href.clone()>"Vault"</a>
+                                                <a class=BTN_SECONDARY href=settings_href.clone()>
                                                     "Settings"
                                                 </a>
                                             }
                                             .into_any()
                                         } else {
                                             view! {
-                                                <a class="secondary-button" href=vault_href.clone()>"Vault"</a>
+                                                <a class=BTN_SECONDARY href=vault_href.clone()>"Vault"</a>
                                                 <button
                                                     type="button"
-                                                    class="secondary-button"
+                                                    class=BTN_SECONDARY
                                                     disabled=move || select_pending.get()
                                                     on:click=move |_| {
                                                         select_action.dispatch(SelectOrganization {
@@ -178,7 +182,7 @@ pub fn OrganizationsHome() -> impl IntoView {
                             </ul>
                         }.into_any(),
                         Some(Err(error)) => view! {
-                            <p class="error-banner">{server_error_text(error)}</p>
+                            <p class=BANNER_ERROR>{server_error_text(error)}</p>
                         }.into_any(),
                         None => view! {
                             <div class="orgs-skeleton" aria-busy="true">
@@ -190,7 +194,7 @@ pub fn OrganizationsHome() -> impl IntoView {
                 <Show when=move || {
                     select_value.get().is_some_and(|result| result.is_err())
                 }>
-                    <p class="error-banner">{move || action_result_text(select_value.get())}</p>
+                    <p class=BANNER_ERROR>{move || action_result_text(select_value.get())}</p>
                 </Show>
             </section>
 

@@ -18,6 +18,10 @@ use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
 use leptos::task::spawn_local;
 use server_fn::ServerFnError;
+use crate::ui::classes::{
+    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
+    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+};
 
 #[component]
 pub fn AccountMfaPage() -> impl IntoView {
@@ -55,7 +59,7 @@ pub fn MfaManager() -> impl IntoView {
                     let codes_for_copy = codes.join("\n");
                     return view! {
                         <div class="mfa-flow-focus-wrap">
-                            <section class="panel mfa-recovery-panel">
+                            <section class=format!("{}{}", PANEL, " mfa-recovery-panel")>
                                 <div class="mfa-wizard-progress" aria-hidden="true">
                                     <span class="mfa-wizard-step is-done">"1"</span>
                                     <span class="mfa-wizard-line is-done"></span>
@@ -75,10 +79,10 @@ pub fn MfaManager() -> impl IntoView {
                                         children=move |code| view! { <li><code>{code}</code></li> }
                                     />
                                 </ul>
-                                <div class="button-row">
+                                <div class=BUTTON_ROW>
                                     <button
                                         type="button"
-                                        class="secondary-button"
+                                        class=BTN_SECONDARY
                                         on:click=move |_| {
                                             let value = codes_for_copy.clone();
                                             #[cfg(feature = "hydrate")]
@@ -109,7 +113,7 @@ pub fn MfaManager() -> impl IntoView {
                                     {move || copy_feedback.get()}
                                 </p>
                                 <a
-                                    class="primary-button"
+                                    class=BTN_PRIMARY
                                     href="/account/mfa"
                                     class:is-disabled=move || !recovery_saved.get()
                                     on:click=move |ev| {
@@ -128,7 +132,7 @@ pub fn MfaManager() -> impl IntoView {
                 if start.pending().get() {
                     return view! {
                         <div class="mfa-flow-focus-wrap">
-                            <section class="panel mfa-enroll-panel mfa-enroll-loading">
+                            <section class=format!("{}{}", PANEL, " mfa-enroll-panel mfa-enroll-loading")>
                                 <div class="mfa-wizard-progress" aria-hidden="true">
                                     <span class="mfa-wizard-step is-active">"1"</span>
                                     <span class="mfa-wizard-line"></span>
@@ -136,10 +140,10 @@ pub fn MfaManager() -> impl IntoView {
                                     <span class="mfa-wizard-line"></span>
                                     <span class="mfa-wizard-step">"3"</span>
                                 </div>
-                                <p class="section-label">"Step 1 of 3"</p>
+                                <p class=SECTION_LABEL>"Step 1 of 3"</p>
                                 <h2>"Preparing your authenticator setup"</h2>
                                 <p class="mfa-lede">"Generating a one-time secret and QR code. Keep this tab open."</p>
-                                <p class="result-line">"Preparing QR code…"</p>
+                                <p class=RESULT_LINE>"Preparing QR code…"</p>
                             </section>
                         </div>
                     }.into_any();
@@ -153,7 +157,7 @@ pub fn MfaManager() -> impl IntoView {
                     let secret_for_copy = secret.clone();
                     return view! {
                         <div class="mfa-flow-focus-wrap">
-                            <section class="panel mfa-enroll-panel mfa-enroll-focus">
+                            <section class=format!("{}{}", PANEL, " mfa-enroll-panel mfa-enroll-focus")>
                                 <div class="mfa-wizard-progress" aria-hidden="true">
                                     <span class="mfa-wizard-step is-done">"1"</span>
                                     <span class="mfa-wizard-line is-done"></span>
@@ -161,7 +165,7 @@ pub fn MfaManager() -> impl IntoView {
                                     <span class="mfa-wizard-line"></span>
                                     <span class="mfa-wizard-step">"3"</span>
                                 </div>
-                                <p class="section-label">"Step 2 of 3 · Setup only"</p>
+                                <p class=SECTION_LABEL>"Step 2 of 3 · Setup only"</p>
                                 <h2>"Scan this QR code"</h2>
                                 <p class="mfa-lede">
                                     "Open your authenticator app, choose add account, then point the camera at this code."
@@ -190,7 +194,7 @@ pub fn MfaManager() -> impl IntoView {
                                                     <code class="mfa-secret">{secret.clone()}</code>
                                                     <button
                                                         type="button"
-                                                        class="secondary-button"
+                                                        class=BTN_SECONDARY
                                                         on:click=move |_| {
                                                             let value = secret_for_copy.clone();
                                                             #[cfg(feature = "hydrate")]
@@ -215,13 +219,13 @@ pub fn MfaManager() -> impl IntoView {
                                             </div>
                                         </div>
                                         <div class="mfa-verify-block">
-                                            <p class="section-label">"Step 3 of 3"</p>
+                                            <p class=SECTION_LABEL>"Step 3 of 3"</p>
                                             <h3>"Enter the 6-digit code"</h3>
                                             <p class="mfa-hint">"Your app refreshes a new code about every 30 seconds."</p>
-                                            <label class="auth-field">
+                                            <label class=FIELD>
                                                 <span>"Authentication code"</span>
                                                 <input
-                                                    class="auth-input mfa-code-input"
+                                                    class=format!("{}{}", INPUT, " mfa-code-input")
                                                     inputmode="numeric"
                                                     autocomplete="one-time-code"
                                                     maxlength="8"
@@ -236,7 +240,7 @@ pub fn MfaManager() -> impl IntoView {
                                             </label>
                                             <button
                                                 type="button"
-                                                class="primary-button"
+                                                class=BTN_PRIMARY
                                                 disabled=move || confirm.pending().get() || enroll_code.get().len() < 6
                                                 on:click=move |_| {
                                                     confirm.dispatch(ConfirmTotpEnrollment {
@@ -246,7 +250,7 @@ pub fn MfaManager() -> impl IntoView {
                                             >
                                                 {move || if confirm.pending().get() { "Verifying…" } else { "Confirm and enable" }}
                                             </button>
-                                            <p class="error-banner" hidden=move || !matches!(confirm.value().get(), Some(Err(_)))>
+                                            <p class=BANNER_ERROR hidden=move || !matches!(confirm.value().get(), Some(Err(_)))>
                                                 {move || match confirm.value().get() {
                                                     Some(Err(error)) => server_error_text(error),
                                                     _ => String::new(),
@@ -269,10 +273,10 @@ pub fn MfaManager() -> impl IntoView {
                 if enrolled {
                     return view! {
                         <div class="mfa-overview">
-                            <section class="panel mfa-status-panel">
+                            <section class=format!("{}{}", PANEL, " mfa-status-panel")>
                                 <div class="mfa-status-head">
                                     <div>
-                                        <p class="section-label">"Security factor"</p>
+                                        <p class=SECTION_LABEL>"Security factor"</p>
                                         <h2>"Authenticator app (TOTP)"</h2>
                                         <p class="mfa-lede">
                                             "Time-based codes from your authenticator app protect sensitive account actions."
@@ -289,16 +293,16 @@ pub fn MfaManager() -> impl IntoView {
                                     <dd class="mono-value">{move || status.get().and_then(Result::ok).map(|value| value.assurance.to_uppercase()).unwrap_or_default()}</dd>
                                 </dl>
                             </section>
-                            <section class="panel">
-                                <p class="section-label">"This session"</p>
+                            <section class=PANEL>
+                                <p class=SECTION_LABEL>"This session"</p>
                                 <h2>"Step up to AAL2"</h2>
                                 <p class="mfa-lede">
                                     "Sensitive actions (like changing your password) may require a fresh authenticator code for this browser session."
                                 </p>
-                                <label class="auth-field">
+                                <label class=FIELD>
                                     <span>"Authentication code"</span>
                                     <input
-                                        class="auth-input mfa-code-input"
+                                        class=format!("{}{}", INPUT, " mfa-code-input")
                                         inputmode="numeric"
                                         autocomplete="one-time-code"
                                         maxlength="8"
@@ -312,7 +316,7 @@ pub fn MfaManager() -> impl IntoView {
                                 </label>
                                 <button
                                     type="button"
-                                    class="primary-button"
+                                    class=BTN_PRIMARY
                                     disabled=move || verify.pending().get() || step_up_code.get().len() < 6
                                     on:click=move |_| {
                                         verify.dispatch(VerifyTotpStepUp {
@@ -322,20 +326,20 @@ pub fn MfaManager() -> impl IntoView {
                                 >
                                     {move || if verify.pending().get() { "Verifying…" } else { "Verify code" }}
                                 </button>
-                                <p class="result-line" hidden=move || verify.value().get().is_none()>
+                                <p class=RESULT_LINE hidden=move || verify.value().get().is_none()>
                                     {move || action_result_text(verify.value().get())}
                                 </p>
                             </section>
-                            <section class="panel">
-                                <p class="section-label">"Backup"</p>
+                            <section class=PANEL>
+                                <p class=SECTION_LABEL>"Backup"</p>
                                 <h2>"Use a recovery code"</h2>
                                 <p class="mfa-lede">
                                     "If you cannot open your authenticator app, enter one unused recovery code. That code will be consumed."
                                 </p>
-                                <label class="auth-field">
+                                <label class=FIELD>
                                     <span>"Recovery code"</span>
                                     <input
-                                        class="auth-input"
+                                        class=INPUT
                                         autocomplete="one-time-code"
                                         maxlength="32"
                                         prop:value=move || recovery_code.get()
@@ -344,7 +348,7 @@ pub fn MfaManager() -> impl IntoView {
                                 </label>
                                 <button
                                     type="button"
-                                    class="secondary-button"
+                                    class=BTN_SECONDARY
                                     disabled=move || recover.pending().get() || recovery_code.get().is_empty()
                                     on:click=move |_| {
                                         recover.dispatch(VerifyRecoveryCode {
@@ -352,7 +356,7 @@ pub fn MfaManager() -> impl IntoView {
                                         });
                                     }
                                 >"Use recovery code"</button>
-                                <p class="result-line" hidden=move || recover.value().get().is_none()>
+                                <p class=RESULT_LINE hidden=move || recover.value().get().is_none()>
                                     {move || action_result_text(recover.value().get())}
                                 </p>
                             </section>
@@ -363,10 +367,10 @@ pub fn MfaManager() -> impl IntoView {
                 // Default overview: status + setup CTA only
                 view! {
                     <div class="mfa-overview">
-                        <section class="panel mfa-status-panel">
+                        <section class=format!("{}{}", PANEL, " mfa-status-panel")>
                             <div class="mfa-status-head">
                                 <div>
-                                    <p class="section-label">"Security factor"</p>
+                                    <p class=SECTION_LABEL>"Security factor"</p>
                                     <h2>"Authenticator app (TOTP)"</h2>
                                     <p class="mfa-lede">
                                         "Use Google Authenticator, 1Password, Authy, or any app that supports time-based one-time passwords."
@@ -395,15 +399,15 @@ pub fn MfaManager() -> impl IntoView {
                                 <dt>"Session assurance"</dt>
                                 <dd class="mono-value">{move || status.get().and_then(Result::ok).map(|value| value.assurance.to_uppercase()).unwrap_or_default()}</dd>
                             </dl>
-                            <p class="error-banner" hidden=move || !matches!(status.get(), Some(Err(_)))>
+                            <p class=BANNER_ERROR hidden=move || !matches!(status.get(), Some(Err(_)))>
                                 {move || match status.get() {
                                     Some(Err(error)) => server_error_text(error),
                                     _ => String::new(),
                                 }}
                             </p>
                         </section>
-                        <section class="panel">
-                            <p class="section-label">"Set up"</p>
+                        <section class=PANEL>
+                            <p class=SECTION_LABEL>"Set up"</p>
                             <h2>"Add an authenticator"</h2>
                             <ol class="mfa-steps-preview">
                                 <li><strong>"Install"</strong>" an authenticator app on your phone."</li>
@@ -413,7 +417,7 @@ pub fn MfaManager() -> impl IntoView {
                             </ol>
                             <button
                                 type="button"
-                                class="primary-button"
+                                class=BTN_PRIMARY
                                 disabled=move || start.pending().get()
                                 on:click=move |_| {
                                     set_show_manual_secret.set(false);
@@ -422,7 +426,7 @@ pub fn MfaManager() -> impl IntoView {
                                     start.dispatch(StartTotpEnrollment {});
                                 }
                             >"Set up authenticator"</button>
-                            <p class="error-banner" hidden=move || !matches!(start.value().get(), Some(Err(_)))>
+                            <p class=BANNER_ERROR hidden=move || !matches!(start.value().get(), Some(Err(_)))>
                                 {move || match start.value().get() {
                                     Some(Err(error)) => server_error_text(error),
                                     _ => String::new(),

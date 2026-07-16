@@ -1,14 +1,16 @@
 use leptos::prelude::*;
 
-/// Auth / error card brand mark (matches existing `.auth-brand` CSS).
+use super::classes::{AUTH_BRAND, AUTH_BRAND_META, AUTH_BRAND_NAME, AUTH_LOGO};
+
+/// Auth / error card brand mark.
 #[component]
 pub fn AuthBrand() -> impl IntoView {
     view! {
-        <div class="auth-brand">
-            <span class="auth-logo" aria-hidden="true">"d"</span>
+        <div class=AUTH_BRAND>
+            <span class=AUTH_LOGO aria-hidden="true">"d"</span>
             <div>
-                <p class="auth-brand-name">"wasi-auth"</p>
-                <p class="auth-brand-meta">"Secure workspace access"</p>
+                <p class=AUTH_BRAND_NAME>"wasi-auth"</p>
+                <p class=AUTH_BRAND_META>"Secure workspace access"</p>
             </div>
         </div>
     }

@@ -11,6 +11,9 @@ use super::forms::{
 };
 use crate::app::helpers::{next_url, percent_encode_component, redirect_browser, set_page_status};
 use crate::app::{browser_load, get_current_session};
+use crate::ui::classes::{
+    AUTH_CARD, AUTH_PAGE, BANNER_SUCCESS, BTN_SECONDARY, BUTTON_ROW, SECTION_LABEL,
+};
 use crate::ui::{AuthBrand, error_page_shell, page_shell};
 use leptos::prelude::*;
 use leptos_meta::*;
@@ -18,9 +21,9 @@ use leptos_meta::*;
 #[component]
 pub fn LoginPage() -> impl IntoView {
     view! {
-        <div class="auth-page">
+        <div class=AUTH_PAGE data-testid="auth-page">
             <ExistingSessionRedirect />
-            <section class="auth-card">
+            <section class=AUTH_CARD data-testid="auth-card">
                 <AuthBrand />
                 <EmailPasswordAuthForm register_default=false />
             </section>
@@ -31,9 +34,9 @@ pub fn LoginPage() -> impl IntoView {
 #[component]
 pub fn RegisterPage() -> impl IntoView {
     view! {
-        <div class="auth-page">
+        <div class=AUTH_PAGE data-testid="auth-page">
             <ExistingSessionRedirect />
-            <section class="auth-card">
+            <section class=AUTH_CARD data-testid="auth-card">
                 <AuthBrand />
                 <EmailPasswordAuthForm register_default=true />
             </section>
@@ -44,9 +47,9 @@ pub fn RegisterPage() -> impl IntoView {
 #[component]
 pub fn ForgotPasswordPage() -> impl IntoView {
     view! {
-        <div class="auth-page">
+        <div class=AUTH_PAGE data-testid="auth-page">
             <ExistingSessionRedirect />
-            <section class="auth-card">
+            <section class=AUTH_CARD data-testid="auth-card">
                 <AuthBrand />
                 <ForgotPasswordForm />
             </section>
@@ -59,8 +62,8 @@ pub fn ResetPasswordPage() -> impl IntoView {
     // Do not mount ExistingSessionRedirect here. Tokenized reset links must
     // render the form even when a stale session cookie is still present.
     view! {
-        <div class="auth-page">
-            <section class="auth-card">
+        <div class=AUTH_PAGE data-testid="auth-page">
+            <section class=AUTH_CARD data-testid="auth-card">
                 <AuthBrand />
                 <ResetPasswordForm />
             </section>
@@ -73,8 +76,8 @@ pub fn InvitationAcceptPage() -> impl IntoView {
     // Authenticated document shell; unauthenticated browsers are redirected by
     // protected_ui_redirect with next= preserving ?token=.
     view! {
-        <div class="auth-page">
-            <section class="auth-card">
+        <div class=AUTH_PAGE data-testid="auth-page">
+            <section class=AUTH_CARD data-testid="auth-card">
                 <AuthBrand />
                 <InvitationAcceptForm />
             </section>
@@ -85,8 +88,8 @@ pub fn InvitationAcceptPage() -> impl IntoView {
 #[component]
 pub fn VerifyEmailPage() -> impl IntoView {
     view! {
-        <div class="auth-page">
-            <section class="auth-card">
+        <div class=AUTH_PAGE data-testid="auth-page">
+            <section class=AUTH_CARD data-testid="auth-card">
                 <AuthBrand />
                 <EmailVerificationForm />
             </section>
@@ -97,21 +100,21 @@ pub fn VerifyEmailPage() -> impl IntoView {
 #[component]
 pub fn VerificationPendingPage() -> impl IntoView {
     view! {
-        <div class="auth-page">
-            <section class="auth-card">
+        <div class=AUTH_PAGE data-testid="auth-page">
+            <section class=AUTH_CARD data-testid="auth-card">
                 <AuthBrand />
-                <section class="auth-form">
+                <section class="grid gap-7">
                     <div>
-                        <p class="auth-kicker">"Email verification"</p>
-                        <h1 class="auth-title">"Check your inbox"</h1>
-                        <p class="auth-copy">
+                        <p class=SECTION_LABEL>"Email verification"</p>
+                        <h1 class="mt-3 mb-0 text-[32px] font-semibold leading-[1.05] tracking-tight">"Check your inbox"</h1>
+                        <p class="mt-3 mb-0 max-w-[34ch] text-[15px] leading-relaxed text-secondary">
                             "Your account is pending. Open the one-time verification link before signing in."
                         </p>
                     </div>
-                    <p class="auth-notice">
+                    <p class=BANNER_SUCCESS>
                         "Local capture mode keeps messages on this machine. Start the app with `make dev` to run delivery automatically."
                     </p>
-                    <a class="auth-text-link" href="/verify-email/resend">"Send another verification link"</a>
+                    <a class="inline-flex justify-center no-underline text-primary" href="/verify-email/resend">"Send another verification link"</a>
                 </section>
             </section>
         </div>
@@ -121,8 +124,8 @@ pub fn VerificationPendingPage() -> impl IntoView {
 #[component]
 pub fn ResendVerificationPage() -> impl IntoView {
     view! {
-        <div class="auth-page">
-            <section class="auth-card">
+        <div class=AUTH_PAGE data-testid="auth-page">
+            <section class=AUTH_CARD data-testid="auth-card">
                 <AuthBrand />
                 <ResendVerificationForm />
             </section>
@@ -184,8 +187,8 @@ pub fn ForbiddenPage() -> impl IntoView {
         "Access denied",
         "The current account cannot open this page.",
         view! {
-            <div class="actions">
-                <a class="link-button" href="/account/sessions">"Sessions"</a>
+            <div class=BUTTON_ROW>
+                <a class=BTN_SECONDARY href="/account/sessions">"Sessions"</a>
                 <LogoutForm />
             </div>
         },
@@ -215,7 +218,7 @@ pub fn PasskeyUnsupportedPage() -> impl IntoView {
 pub fn LoginRedirectLink() -> impl IntoView {
     view! {
         <a
-            class="link-button"
+            class=BTN_SECONDARY
             href=move || format!("/login?next={}", percent_encode_component(&next_url()))
         >
             "Sign in"
@@ -225,5 +228,5 @@ pub fn LoginRedirectLink() -> impl IntoView {
 
 #[component]
 pub fn ReturnToLoginLink() -> impl IntoView {
-    view! { <a class="link-button" href="/login">"Return to sign in"</a> }
+    view! { <a class=BTN_SECONDARY href="/login">"Return to sign in"</a> }
 }

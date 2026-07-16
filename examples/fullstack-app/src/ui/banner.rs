@@ -1,29 +1,31 @@
 use leptos::prelude::*;
 
-/// Error banner (`.error-banner`). Hidden when `message` is empty.
+use super::classes::{BANNER_ERROR, BANNER_SUCCESS, RESULT_LINE};
+
+/// Error banner. Hidden when `message` is empty.
 #[component]
 pub fn ErrorBanner(#[prop(into)] message: Signal<Option<String>>) -> impl IntoView {
     view! {
-        <p class="error-banner" hidden=move || message.get().as_ref().is_none_or(|m| m.is_empty())>
+        <p class=BANNER_ERROR hidden=move || message.get().as_ref().is_none_or(|m| m.is_empty())>
             {move || message.get().unwrap_or_default()}
         </p>
     }
 }
 
-/// Success banner (`.auth-success`).
+/// Success / notice banner.
 #[component]
 pub fn SuccessBanner(#[prop(into)] message: Signal<Option<String>>) -> impl IntoView {
     view! {
-        <p class="auth-success" hidden=move || message.get().as_ref().is_none_or(|m| m.is_empty())>
+        <p class=BANNER_SUCCESS hidden=move || message.get().as_ref().is_none_or(|m| m.is_empty())>
             <span>{move || message.get().unwrap_or_default()}</span>
         </p>
     }
 }
 
-/// Muted result / status line (`.result-line`).
+/// Muted result / status line.
 #[component]
 pub fn ResultLine(children: Children) -> impl IntoView {
     view! {
-        <p class="result-line">{children()}</p>
+        <p class=RESULT_LINE>{children()}</p>
     }
 }

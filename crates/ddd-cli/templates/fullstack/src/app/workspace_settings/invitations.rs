@@ -17,6 +17,10 @@ use crate::contracts::{InvitationSummary, WorkspaceRoleOption};
 use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
 use leptos::task::spawn_local;
+use crate::ui::classes::{
+    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
+    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+};
 
 #[component]
 pub fn WorkspaceSettingsInvitationsPage() -> impl IntoView {
@@ -185,11 +189,11 @@ pub fn WorkspaceSettingsInvitationsBody() -> impl IntoView {
 
     view! {
         <Show when=move || invitations.get().is_none()>
-            <p class="result-line" aria-busy="true">"Loading invitations…"</p>
+            <p class=RESULT_LINE aria-busy="true">"Loading invitations…"</p>
         </Show>
 
         <Show when=move || load_error.get().is_some()>
-            <p class="error-banner">{move || load_error.get().unwrap_or_default()}</p>
+            <p class=BANNER_ERROR>{move || load_error.get().unwrap_or_default()}</p>
         </Show>
 
         <Show when=move || requires_step_up.get()>
@@ -201,11 +205,11 @@ pub fn WorkspaceSettingsInvitationsBody() -> impl IntoView {
         </Show>
 
         <Show when=move || action_error.get().is_some()>
-            <p class="error-banner">{move || action_error.get().unwrap_or_default()}</p>
+            <p class=BANNER_ERROR>{move || action_error.get().unwrap_or_default()}</p>
         </Show>
 
         <Show when=move || action_ok.get().is_some()>
-            <p class="result-line" role="status">{move || action_ok.get().unwrap_or_default()}</p>
+            <p class=RESULT_LINE role="status">{move || action_ok.get().unwrap_or_default()}</p>
         </Show>
 
         <form
@@ -239,10 +243,10 @@ pub fn WorkspaceSettingsInvitationsBody() -> impl IntoView {
                 });
             }
         >
-            <label class="auth-field">
+            <label class=FIELD>
                 <span>"Email"</span>
                 <input
-                    class="auth-input"
+                    class=INPUT
                     type="email"
                     autocomplete="email"
                     maxlength="320"
@@ -254,7 +258,7 @@ pub fn WorkspaceSettingsInvitationsBody() -> impl IntoView {
                     disabled=move || any_busy.get()
                 />
             </label>
-            <label class="auth-field">
+            <label class=FIELD>
                 <span>"Role"</span>
                 <select
                     class="workspace-settings-role-select"
@@ -290,7 +294,7 @@ pub fn WorkspaceSettingsInvitationsBody() -> impl IntoView {
             <div class="workspace-settings-invite-actions">
                 <button
                     type="submit"
-                    class="primary-button"
+                    class=BTN_PRIMARY
                     disabled=move || !can_invite.get()
                 >
                     {move || {
@@ -411,7 +415,7 @@ fn invitation_row(
                         <div class="workspace-settings-invitation-actions">
                             <button
                                 type="button"
-                                class="secondary-button"
+                                class=BTN_SECONDARY
                                 disabled=disabled
                                 on:click=move |_| {
                                     let slug_value = slug.get_untracked();
@@ -438,7 +442,7 @@ fn invitation_row(
                             </button>
                             <button
                                 type="button"
-                                class="secondary-button workspace-settings-remove-button"
+                                class=format!("{}{}", BTN_SECONDARY, " workspace-settings-remove-button")
                                 disabled=disabled
                                 on:click=move |_| {
                                     let slug_value = slug.get_untracked();

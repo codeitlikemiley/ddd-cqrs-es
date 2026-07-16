@@ -21,6 +21,10 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 #[cfg(feature = "hydrate")]
 use wasm_bindgen::JsCast;
+use crate::ui::classes::{
+    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
+    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+};
 
 #[component]
 pub fn DashboardPage() -> impl IntoView {
@@ -118,7 +122,7 @@ pub fn DashboardHome() -> impl IntoView {
                 }.into_any(),
                 Some(Err(error)) => view! {
                     <section class="board-empty">
-                        <p class="error-banner">{server_error_text(error)}</p>
+                        <p class=BANNER_ERROR>{server_error_text(error)}</p>
                     </section>
                 }.into_any(),
                 Some(Ok(_)) => {
@@ -168,7 +172,7 @@ pub fn DashboardHome() -> impl IntoView {
                                 </p>
                             </div>
                             <div class="board-top-actions">
-                                <button type="button" class="secondary-button" class:is-active=move || editing.get()
+                                <button type="button" class=BTN_SECONDARY class:is-active=move || editing.get()
                                     disabled=board_actions_disabled
                                     on:click=move |_| {
                                         set_editing.update(|v| *v = !*v);
@@ -178,12 +182,12 @@ pub fn DashboardHome() -> impl IntoView {
                                 >
                                     {move || if editing.get() { "Done" } else { "Edit board" }}
                                 </button>
-                                <button type="button" class="secondary-button" on:click=move |_| set_sources_open.set(true)
+                                <button type="button" class=BTN_SECONDARY on:click=move |_| set_sources_open.set(true)
                                     disabled=move || !http_enabled || board_actions_disabled
                                 >
                                     "Resources"
                                 </button>
-                                <button type="button" class="primary-button" on:click=move |_| set_picker_open.set(true)
+                                <button type="button" class=BTN_PRIMARY on:click=move |_| set_picker_open.set(true)
                                     disabled=board_actions_disabled
                                 >
                                     "Add widget"
@@ -196,7 +200,7 @@ pub fn DashboardHome() -> impl IntoView {
                                 "Drag tiles to reorder. Size chips use a 12-column grid (3=¼, 4=⅓, 6=½, 12=full). Add a Row/Stack container to group tiles."
                             </p>
                         </Show>
-                        <p class="error-banner" hidden=move || save_error.get().is_none()>
+                        <p class=BANNER_ERROR hidden=move || save_error.get().is_none()>
                             {move || save_error.get().unwrap_or_default()}
                         </p>
 
@@ -222,7 +226,7 @@ pub fn DashboardHome() -> impl IntoView {
                                                 <strong>"Row container"</strong>
                                                 <p>"Horizontal group for child tiles (12-col)."</p>
                                             </div>
-                                            <button type="button" class="primary-button" on:click=move |_| {
+                                            <button type="button" class=BTN_PRIMARY on:click=move |_| {
                                                 let mut next = layout.get_untracked();
                                                 next.nodes.push(BoardNode::Container {
                                                     id: format!("c-row-{}", next.total_nodes() + 1),
@@ -239,7 +243,7 @@ pub fn DashboardHome() -> impl IntoView {
                                                 <strong>"Stack container"</strong>
                                                 <p>"Vertical stack for child tiles."</p>
                                             </div>
-                                            <button type="button" class="primary-button" on:click=move |_| {
+                                            <button type="button" class=BTN_PRIMARY on:click=move |_| {
                                                 let mut next = layout.get_untracked();
                                                 next.nodes.push(BoardNode::Container {
                                                     id: format!("c-stack-{}", next.total_nodes() + 1),
@@ -268,7 +272,7 @@ pub fn DashboardHome() -> impl IntoView {
                                                                 <span class="board-picker-badge">"Multiple allowed"</span>
                                                             </Show>
                                                         </div>
-                                                        <button type="button" class="primary-button" disabled=already on:click=move |_| {
+                                                        <button type="button" class=BTN_PRIMARY disabled=already on:click=move |_| {
                                                             if already { return; }
                                                             let mut next = layout.get_untracked();
                                                             let id = next_node_id(kind_add.as_str(), &next);
@@ -344,7 +348,7 @@ pub fn DashboardHome() -> impl IntoView {
                                 <div class="board-empty-board">
                                     <h2>"Empty board"</h2>
                                     <p>"Add widgets or containers to start designing your workspace."</p>
-                                    <button type="button" class="primary-button" on:click=move |_| set_picker_open.set(true)>"Browse catalog"</button>
+                                    <button type="button" class=BTN_PRIMARY on:click=move |_| set_picker_open.set(true)>"Browse catalog"</button>
                                 </div>
                             </Show>
                         </div>

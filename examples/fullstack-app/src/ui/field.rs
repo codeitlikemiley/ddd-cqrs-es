@@ -1,16 +1,18 @@
 use leptos::prelude::*;
 
-/// Vertical stack of fields (`.auth-fields`).
+use super::classes::{FIELD, FIELD_GROUP, FIELD_HINT, INPUT, with_extra};
+
+/// Vertical stack of fields (legacy `.auth-fields`).
 #[component]
 pub fn FieldGroup(children: Children) -> impl IntoView {
     view! {
-        <div class="auth-fields">
+        <div class=FIELD_GROUP>
             {children()}
         </div>
     }
 }
 
-/// Labeled field shell (`.auth-field`). Label text + control + optional hint.
+/// Labeled field shell (legacy `.auth-field`). Label text + control + optional hint.
 #[component]
 pub fn Field(
     label: &'static str,
@@ -18,15 +20,15 @@ pub fn Field(
     children: Children,
 ) -> impl IntoView {
     view! {
-        <label class="auth-field">
+        <label class=FIELD>
             <span>{label}</span>
             {children()}
-            {hint.map(|text| view! { <small>{text}</small> })}
+            {hint.map(|text| view! { <small class=FIELD_HINT>{text}</small> })}
         </label>
     }
 }
 
-/// Text input with `.auth-input` (value + on_input provided by caller via props).
+/// Text input with shared input chrome (legacy `.auth-input`).
 #[component]
 pub fn TextInput(
     #[prop(optional)] input_type: Option<&'static str>,
@@ -40,10 +42,7 @@ pub fn TextInput(
     on_input: Callback<String>,
 ) -> impl IntoView {
     let ty = input_type.unwrap_or("text");
-    let class_name = match class {
-        Some(extra) if !extra.is_empty() => format!("auth-input {extra}"),
-        _ => "auth-input".to_owned(),
-    };
+    let class_name = with_extra(INPUT, class);
     view! {
         <input
             class=class_name

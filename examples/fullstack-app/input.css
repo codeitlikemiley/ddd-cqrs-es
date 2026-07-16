@@ -1,15 +1,60 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-@source "./src/**/*.rs";
-@source "./public/**/*.html";
+/*
+ * Fullstack Tailwind entry (v4).
+ *
+ * Migration mode: theme tokens + Preflight live here; legacy semantic CSS
+ * remains below until domain-by-domain pure-utility rewrites delete it.
+ * Tracker: TAILWIND_MIGRATION.md
+ */
+@import "tailwindcss";
+@source "./src/**/*.{rs,html,css}";
+@source "./public/**/*.{html,js}";
+
+/* Dark mode follows OS preference (matches historical :root media query). */
+@custom-variant dark (@media (prefers-color-scheme: dark));
+
+/*
+ * Theme colors bridge to CSS custom properties so:
+ * - new Tailwind utilities: bg-canvas, text-secondary, border-subtle, …
+ * - legacy semantic CSS: var(--bg-canvas), var(--text-primary), …
+ * stay pixel-aligned during migration.
+ */
+@theme inline {
+  --color-canvas: var(--bg-canvas);
+  --color-sidebar: var(--bg-sidebar);
+  --color-surface: var(--bg-surface);
+  --color-surface-subtle: var(--bg-surface-subtle);
+  --color-surface-hover: var(--bg-surface-hover);
+  --color-surface-active: var(--bg-surface-active);
+  --color-elevated: var(--bg-elevated);
+  --color-inverse: var(--bg-inverse);
+  --color-primary: var(--text-primary);
+  --color-secondary: var(--text-secondary);
+  --color-tertiary: var(--text-tertiary);
+  --color-disabled: var(--text-disabled);
+  --color-on-inverse: var(--text-inverse);
+  --color-border-subtle: var(--border-subtle);
+  --color-border-strong: var(--border-strong);
+  --color-focus: var(--focus-ring);
+  --color-accent: var(--accent);
+  --color-accent-contrast: var(--accent-contrast);
+  --color-accent-subtle: var(--accent-subtle);
+  --color-danger: var(--danger);
+  --color-warning: var(--warning);
+  --color-success: var(--success);
+  --color-code: var(--code-bg);
+  --color-overlay-scrim: var(--overlay-scrim);
+  --color-overlay-scrim-strong: var(--overlay-scrim-strong);
+  --shadow-soft: var(--shadow-soft);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
 
 /*
  * Fullstack example visual system
  *
- * Based on the ChatGPT-Inspired Neutral DESIGN.md brief: a content-first,
- * content-first surface. The tokens stay semantic so the example can add a
- * user-selected accent later without rewriting every component.
+ * Based on the ChatGPT-Inspired Neutral DESIGN.md brief: a content-first
+ * surface. Tokens stay semantic so a user-selected accent can land later
+ * without rewriting every component.
  */
 
 :root {
@@ -83,47 +128,58 @@
   }
 }
 
-* {
-  box-sizing: border-box;
+/*
+ * Base layer: Preflight covers most resets. Keep app canvas + focus + form
+ * inheritance so legacy semantic CSS and new utilities share one baseline.
+ */
+@layer base {
+  html {
+    background: var(--bg-canvas);
+    font-family: var(--font-sans);
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    background: var(--bg-canvas);
+    color: var(--text-primary);
+    margin: 0;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    color: inherit;
+    font: inherit;
+  }
+
+  a {
+    color: inherit;
+  }
+
+  button,
+  a {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 3px;
+  }
+
+  /* Class rules must not override the HTML hidden attribute. */
+  [hidden] {
+    display: none !important;
+  }
 }
 
-html {
-  background: var(--bg-canvas);
-  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  text-rendering: optimizeLegibility;
-}
-
-body {
-  background: var(--bg-canvas);
-  color: var(--text-primary);
-  margin: 0;
-}
-
-button,
-input,
-textarea,
-select {
-  color: inherit;
-  font: inherit;
-}
-
-a {
-  color: inherit;
-}
-
-button,
-a {
-  -webkit-tap-highlight-color: transparent;
-}
-
-button:focus-visible,
-a:focus-visible,
-input:focus-visible,
-textarea:focus-visible,
-select:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 3px;
-}
+/* ==========================================================================
+ * LEGACY SEMANTIC CSS (ALLOWLIST — delete domain-by-domain; see tracker)
+ * ========================================================================== */
 
 .auth-shell {
   box-sizing: border-box;
@@ -5330,11 +5386,6 @@ html.board-modal-open body {
   background: var(--bg-surface);
   box-shadow: var(--shadow-soft);
   color: var(--text-primary);
-}
-
-/* Class rules must not override the HTML hidden attribute (Apple-style steps). */
-[hidden] {
-  display: none !important;
 }
 
 .auth-fields {

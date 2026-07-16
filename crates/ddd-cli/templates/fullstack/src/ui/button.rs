@@ -1,10 +1,12 @@
 use leptos::ev::MouseEvent;
 use leptos::prelude::*;
 
-/// Primary action button (existing `.primary-button` styles).
+use super::classes::{BTN_PRIMARY, BTN_SECONDARY, with_extra};
+
+/// Primary action button (Tailwind utilities; legacy `.primary-button`).
 #[component]
 pub fn PrimaryButton(
-    /// Extra classes appended after `primary-button` (e.g. modifiers).
+    /// Extra classes appended after the primary button utilities.
     #[prop(optional, into)]
     class: Option<String>,
     #[prop(optional, into)] disabled: Signal<bool>,
@@ -12,10 +14,7 @@ pub fn PrimaryButton(
     #[prop(optional)] on_click: Option<Callback<MouseEvent>>,
     children: Children,
 ) -> impl IntoView {
-    let class_name = move || match class.clone() {
-        Some(extra) if !extra.trim().is_empty() => format!("primary-button {extra}"),
-        _ => "primary-button".to_owned(),
-    };
+    let class_name = move || with_extra(BTN_PRIMARY, class.as_deref());
     let ty = button_type.unwrap_or("button");
     view! {
         <button
@@ -33,7 +32,7 @@ pub fn PrimaryButton(
     }
 }
 
-/// Secondary action button (existing `.secondary-button` styles).
+/// Secondary action button (Tailwind utilities; legacy `.secondary-button`).
 #[component]
 pub fn SecondaryButton(
     #[prop(optional, into)] class: Option<String>,
@@ -42,10 +41,7 @@ pub fn SecondaryButton(
     #[prop(optional)] on_click: Option<Callback<MouseEvent>>,
     children: Children,
 ) -> impl IntoView {
-    let class_name = move || match class.clone() {
-        Some(extra) if !extra.trim().is_empty() => format!("secondary-button {extra}"),
-        _ => "secondary-button".to_owned(),
-    };
+    let class_name = move || with_extra(BTN_SECONDARY, class.as_deref());
     let ty = button_type.unwrap_or("button");
     view! {
         <button
@@ -63,17 +59,14 @@ pub fn SecondaryButton(
     }
 }
 
-/// Text-style control rendered as an anchor (existing `.link-button`).
+/// Text-style control rendered as an anchor (secondary chrome).
 #[component]
 pub fn LinkButton(
     href: &'static str,
     #[prop(optional, into)] class: Option<String>,
     children: Children,
 ) -> impl IntoView {
-    let class_name = match class {
-        Some(extra) if !extra.trim().is_empty() => format!("link-button {extra}"),
-        _ => "link-button".to_owned(),
-    };
+    let class_name = with_extra(BTN_SECONDARY, class.as_deref());
     view! {
         <a class=class_name href=href>
             {children()}

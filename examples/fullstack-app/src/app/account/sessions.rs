@@ -13,6 +13,10 @@ use leptos::prelude::*;
 use server_fn::ServerFnError;
 #[cfg(feature = "hydrate")]
 use web_sys::window;
+use crate::ui::classes::{
+    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
+    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+};
 
 #[component]
 pub fn AccountSessionsPage() -> impl IntoView {
@@ -79,10 +83,10 @@ pub fn AccountSessionManager() -> impl IntoView {
     });
 
     view! {
-        <section class="panel">
+        <section class=PANEL>
             <div class="session-panel-head">
                 <div>
-                    <p class="section-label">"Devices"</p>
+                    <p class=SECTION_LABEL>"Devices"</p>
                     <h2>"Active sessions"</h2>
                 </div>
             </div>
@@ -94,7 +98,7 @@ pub fn AccountSessionManager() -> impl IntoView {
                     Some(Ok(_)) => {
                         let list = rows.get();
                         if list.is_empty() {
-                            view! { <p class="result-line">"No active sessions"</p> }.into_any()
+                            view! { <p class=RESULT_LINE>"No active sessions"</p> }.into_any()
                         } else {
                             view! {
                                 <div class="session-list">
@@ -119,12 +123,12 @@ pub fn AccountSessionManager() -> impl IntoView {
                                                         <h3>{if is_current { "This browser" } else { "Other device" }}</h3>
                                                         <span class="session-assurance">{assurance.to_uppercase()}</span>
                                                     </div>
-                                                    <p class="result-line">
+                                                    <p class=RESULT_LINE>
                                                         {format!("Expires at {expires}")}
                                                     </p>
                                                     <button
                                                         type="button"
-                                                        class=if is_current { "primary-button" } else { "secondary-button" }
+                                                        class=if is_current { BTN_PRIMARY } else { BTN_SECONDARY }
                                                         disabled=move || {
                                                             revoke_pending.get()
                                                                 || signing_out.get()
@@ -168,14 +172,14 @@ pub fn AccountSessionManager() -> impl IntoView {
                             }.into_any()
                         }
                     }
-                    Some(Err(error)) => view! { <p class="error-banner">{server_error_text(error)}</p> }.into_any(),
-                    None => view! { <p class="result-line">"Loading sessions"</p> }.into_any(),
+                    Some(Err(error)) => view! { <p class=BANNER_ERROR>{server_error_text(error)}</p> }.into_any(),
+                    None => view! { <p class=RESULT_LINE>"Loading sessions"</p> }.into_any(),
                 }}
             </div>
-            <p class="auth-success" hidden=move || status_message.get().is_none() || error_message.get().is_some()>
+            <p class=BANNER_SUCCESS hidden=move || status_message.get().is_none() || error_message.get().is_some()>
                 {move || status_message.get().unwrap_or_default()}
             </p>
-            <p class="error-banner" hidden=move || error_message.get().is_none()>
+            <p class=BANNER_ERROR hidden=move || error_message.get().is_none()>
                 {move || error_message.get().unwrap_or_default()}
             </p>
         </section>

@@ -8,6 +8,10 @@ use crate::contracts::{
 use leptos::prelude::*;
 
 use crate::app::helpers::server_error_text;
+use crate::ui::classes::{
+    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
+    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+};
 use crate::app::{
     DeleteDashboardQuery, DeleteDashboardResource, RunDashboardQuery, SeedDashboardDemos,
     UpsertDashboardQuery, UpsertDashboardResource,
@@ -220,7 +224,7 @@ pub fn resources_queries_modal(
                                 on:click=move |_| tab.set("query".into())>"Query"</button>
                         </div>
 
-                        <p class="error-banner" hidden=move || form_error.get().is_none()>
+                        <p class=BANNER_ERROR hidden=move || form_error.get().is_none()>
                             {move || form_error.get().unwrap_or_default()}
                         </p>
                         <p class="success-banner" hidden=move || form_ok.get().is_none()>
@@ -233,7 +237,7 @@ pub fn resources_queries_modal(
                                     <article class="board-rq-card" class:is-disabled=move || !http_enabled>
                                         <strong>"REST API"</strong>
                                         <p>"Base URL, Bearer / Basic / API key / OAuth2 client credentials, default headers."</p>
-                                        <button type="button" class="primary-button" disabled=move || !http_enabled
+                                        <button type="button" class=BTN_PRIMARY disabled=move || !http_enabled
                                             on:click=move |_| {
                                                 res_kind.set("rest".into());
                                                 tab.set("resource".into());
@@ -243,7 +247,7 @@ pub fn resources_queries_modal(
                                     <article class="board-rq-card" class:is-disabled=move || !postgres_enabled>
                                         <strong>"PostgreSQL"</strong>
                                         <p>"Host, database, user, password secret, and SSL settings. SELECT-only SQL."</p>
-                                        <button type="button" class="primary-button" disabled=move || !postgres_enabled
+                                        <button type="button" class=BTN_PRIMARY disabled=move || !postgres_enabled
                                             on:click=move |_| {
                                                 res_kind.set("postgres".into());
                                                 tab.set("resource".into());
@@ -255,7 +259,7 @@ pub fn resources_queries_modal(
                                         <p>"Unary via JSON gateway (grpc-gateway) today. Native Spin HTTP/2 gRPC is gated."
                                             {if grpc_enabled { " (AUTH_DASHBOARD_GRPC_ENABLED=on)" } else { "" }}
                                         </p>
-                                        <button type="button" class="primary-button"
+                                        <button type="button" class=BTN_PRIMARY
                                             on:click=move |_| {
                                                 res_kind.set("grpc".into());
                                                 tab.set("resource".into());
@@ -265,14 +269,14 @@ pub fn resources_queries_modal(
                                     <article class="board-rq-card">
                                         <strong>"App builtins"</strong>
                                         <p>"Session, orgs, audit, MFA — already on the board as widgets."</p>
-                                        <button type="button" class="secondary-button" disabled=true>"Built-in"</button>
+                                        <button type="button" class=BTN_SECONDARY disabled=true>"Built-in"</button>
                                     </article>
                                     <article class="board-rq-card">
                                         <strong>"Demo connectors"</strong>
                                         <p>"One-click REST + app Postgres resources, queries, and bound board widgets."</p>
                                         <button
                                             type="button"
-                                            class="primary-button"
+                                            class=BTN_PRIMARY
                                             disabled=move || seed_demos.pending().get()
                                             on:click=move |_| { seed_demos.dispatch(SeedDashboardDemos {}); }
                                         >
@@ -302,7 +306,7 @@ pub fn resources_queries_modal(
                                                                 <strong>{res.name.clone()}</strong>
                                                                 <span class="board-list-meta">{format!("{} · {} · auth={}", res.kind.label(), res.detail, res.auth_type)}</span>
                                                             </div>
-                                                            <button type="button" class="secondary-button" on:click=move |_| {
+                                                            <button type="button" class=BTN_SECONDARY on:click=move |_| {
                                                                 qry_resource_id.set(id.clone());
                                                                 tab.set("query".into());
                                                             }>"Query"</button>
@@ -333,7 +337,7 @@ pub fn resources_queries_modal(
                                                                 <strong>{q.name.clone()}</strong>
                                                                 <span class="board-list-meta">{q.detail.clone()}</span>
                                                             </div>
-                                                            <button type="button" class="secondary-button" on:click=move |_| {
+                                                            <button type="button" class=BTN_SECONDARY on:click=move |_| {
                                                                 run_query.dispatch(RunDashboardQuery { query_id: id.clone() });
                                                                 tab.set("query".into());
                                                             }>"Test"</button>
@@ -357,27 +361,27 @@ pub fn resources_queries_modal(
                                         "grpc" => "gRPC resource",
                                         _ => "REST resource",
                                     }}</h3>
-                                    <label class="auth-field"><span>"Kind"</span>
-                                        <select class="auth-input" prop:value=move || res_kind.get()
+                                    <label class=FIELD><span>"Kind"</span>
+                                        <select class=INPUT prop:value=move || res_kind.get()
                                             on:change=move |e| res_kind.set(event_target_value(&e))>
                                             <option value="rest">"REST API"</option>
                                             <option value="postgres">"PostgreSQL"</option>
                                             <option value="grpc">"gRPC"</option>
                                         </select>
                                     </label>
-                                    <label class="auth-field"><span>"Name"</span>
-                                        <input class="auth-input" prop:value=move || res_name.get()
+                                    <label class=FIELD><span>"Name"</span>
+                                        <input class=INPUT prop:value=move || res_name.get()
                                             on:input=move |e| res_name.set(event_target_value(&e)) />
                                     </label>
 
                                     <Show when=move || res_kind.get() == "rest">
-                                    <label class="auth-field"><span>"Base URL"</span>
-                                        <input class="auth-input" placeholder="https://api.example.com"
+                                    <label class=FIELD><span>"Base URL"</span>
+                                        <input class=INPUT placeholder="https://api.example.com"
                                             prop:value=move || res_base.get()
                                             on:input=move |e| res_base.set(event_target_value(&e)) />
                                     </label>
-                                    <label class="auth-field"><span>"Authentication"</span>
-                                        <select class="auth-input" prop:value=move || res_auth.get()
+                                    <label class=FIELD><span>"Authentication"</span>
+                                        <select class=INPUT prop:value=move || res_auth.get()
                                             on:change=move |e| res_auth.set(event_target_value(&e))>
                                             <option value="none">"None"</option>
                                             <option value="bearer">"Bearer token (secret)"</option>
@@ -388,8 +392,8 @@ pub fn resources_queries_modal(
                                     </label>
 
                                     <Show when=move || matches!(res_auth.get().as_str(), "bearer" | "api_key")>
-                                        <label class="auth-field"><span>"Secret"</span>
-                                            <select class="auth-input" prop:value=move || res_secret_id.get()
+                                        <label class=FIELD><span>"Secret"</span>
+                                            <select class=INPUT prop:value=move || res_secret_id.get()
                                                 on:change=move |e| res_secret_id.set(event_target_value(&e))>
                                                 <option value="">"— select vault secret —"</option>
                                                 {move || secrets.get().into_iter().map(|s| {
@@ -405,12 +409,12 @@ pub fn resources_queries_modal(
                                     </Show>
                                     <Show when=move || res_auth.get() == "api_key">
                                         <div class="board-rq-row">
-                                            <label class="auth-field"><span>"Key name"</span>
-                                                <input class="auth-input" prop:value=move || res_api_key_name.get()
+                                            <label class=FIELD><span>"Key name"</span>
+                                                <input class=INPUT prop:value=move || res_api_key_name.get()
                                                     on:input=move |e| res_api_key_name.set(event_target_value(&e)) />
                                             </label>
-                                            <label class="auth-field"><span>"Location"</span>
-                                                <select class="auth-input" prop:value=move || res_api_key_loc.get()
+                                            <label class=FIELD><span>"Location"</span>
+                                                <select class=INPUT prop:value=move || res_api_key_loc.get()
                                                     on:change=move |e| res_api_key_loc.set(event_target_value(&e))>
                                                     <option value="header">"Header"</option>
                                                     <option value="query">"Query param"</option>
@@ -419,12 +423,12 @@ pub fn resources_queries_modal(
                                         </div>
                                     </Show>
                                     <Show when=move || res_auth.get() == "basic">
-                                        <label class="auth-field"><span>"Username"</span>
-                                            <input class="auth-input" prop:value=move || res_username.get()
+                                        <label class=FIELD><span>"Username"</span>
+                                            <input class=INPUT prop:value=move || res_username.get()
                                                 on:input=move |e| res_username.set(event_target_value(&e)) />
                                         </label>
-                                        <label class="auth-field"><span>"Password secret"</span>
-                                            <select class="auth-input" prop:value=move || res_secret_id.get()
+                                        <label class=FIELD><span>"Password secret"</span>
+                                            <select class=INPUT prop:value=move || res_secret_id.get()
                                                 on:change=move |e| res_secret_id.set(event_target_value(&e))>
                                                 <option value="">"— select vault secret —"</option>
                                                 {move || secrets.get().into_iter().map(|s| {
@@ -436,16 +440,16 @@ pub fn resources_queries_modal(
                                         </label>
                                     </Show>
                                     <Show when=move || res_auth.get() == "oauth2_cc">
-                                        <label class="auth-field"><span>"Token URL"</span>
-                                            <input class="auth-input" prop:value=move || res_oauth_token_url.get()
+                                        <label class=FIELD><span>"Token URL"</span>
+                                            <input class=INPUT prop:value=move || res_oauth_token_url.get()
                                                 on:input=move |e| res_oauth_token_url.set(event_target_value(&e)) />
                                         </label>
-                                        <label class="auth-field"><span>"Client ID"</span>
-                                            <input class="auth-input" prop:value=move || res_oauth_client_id.get()
+                                        <label class=FIELD><span>"Client ID"</span>
+                                            <input class=INPUT prop:value=move || res_oauth_client_id.get()
                                                 on:input=move |e| res_oauth_client_id.set(event_target_value(&e)) />
                                         </label>
-                                        <label class="auth-field"><span>"Client secret"</span>
-                                            <select class="auth-input" prop:value=move || res_secret_id.get()
+                                        <label class=FIELD><span>"Client secret"</span>
+                                            <select class=INPUT prop:value=move || res_secret_id.get()
                                                 on:change=move |e| res_secret_id.set(event_target_value(&e))>
                                                 <option value="">"— select vault secret —"</option>
                                                 {move || secrets.get().into_iter().map(|s| {
@@ -455,12 +459,12 @@ pub fn resources_queries_modal(
                                                 }).collect_view()}
                                             </select>
                                         </label>
-                                        <label class="auth-field"><span>"Scopes (space-separated)"</span>
-                                            <input class="auth-input" prop:value=move || res_oauth_scopes.get()
+                                        <label class=FIELD><span>"Scopes (space-separated)"</span>
+                                            <input class=INPUT prop:value=move || res_oauth_scopes.get()
                                                 on:input=move |e| res_oauth_scopes.set(event_target_value(&e)) />
                                         </label>
-                                        <label class="auth-field"><span>"Audience (optional)"</span>
-                                            <input class="auth-input" prop:value=move || res_oauth_audience.get()
+                                        <label class=FIELD><span>"Audience (optional)"</span>
+                                            <input class=INPUT prop:value=move || res_oauth_audience.get()
                                                 on:input=move |e| res_oauth_audience.set(event_target_value(&e)) />
                                         </label>
                                     </Show>
@@ -483,12 +487,12 @@ pub fn resources_queries_modal(
                                         }).collect_view()}
                                     </ul>
                                     <div class="board-rq-row">
-                                        <label class="auth-field"><span>"Header name"</span>
-                                            <input class="auth-input" prop:value=move || hdr_name.get()
+                                        <label class=FIELD><span>"Header name"</span>
+                                            <input class=INPUT prop:value=move || hdr_name.get()
                                                 on:input=move |e| hdr_name.set(event_target_value(&e)) />
                                         </label>
-                                        <label class="auth-field"><span>"Value type"</span>
-                                            <select class="auth-input" prop:value=move || hdr_mode.get()
+                                        <label class=FIELD><span>"Value type"</span>
+                                            <select class=INPUT prop:value=move || hdr_mode.get()
                                                 on:change=move |e| hdr_mode.set(event_target_value(&e))>
                                                 <option value="literal">"Literal"</option>
                                                 <option value="secret">"Secret"</option>
@@ -496,14 +500,14 @@ pub fn resources_queries_modal(
                                         </label>
                                     </div>
                                     <Show when=move || hdr_mode.get() == "literal">
-                                        <label class="auth-field"><span>"Value"</span>
-                                            <input class="auth-input" prop:value=move || hdr_literal.get()
+                                        <label class=FIELD><span>"Value"</span>
+                                            <input class=INPUT prop:value=move || hdr_literal.get()
                                                 on:input=move |e| hdr_literal.set(event_target_value(&e)) />
                                         </label>
                                     </Show>
                                     <Show when=move || hdr_mode.get() == "secret">
-                                        <label class="auth-field"><span>"Vault secret"</span>
-                                            <select class="auth-input" prop:value=move || hdr_secret_id.get()
+                                        <label class=FIELD><span>"Vault secret"</span>
+                                            <select class=INPUT prop:value=move || hdr_secret_id.get()
                                                 on:change=move |e| hdr_secret_id.set(event_target_value(&e))>
                                                 <option value="">"— select vault secret —"</option>
                                                 {move || secrets.get().into_iter().map(|s| {
@@ -514,7 +518,7 @@ pub fn resources_queries_modal(
                                             </select>
                                         </label>
                                     </Show>
-                                    <button type="button" class="secondary-button" on:click=move |_| {
+                                    <button type="button" class=BTN_SECONDARY on:click=move |_| {
                                         let name = hdr_name.get_untracked().trim().to_owned();
                                         if name.is_empty() { return; }
                                         let value = if hdr_mode.get_untracked() == "secret" {
@@ -532,25 +536,25 @@ pub fn resources_queries_modal(
 
                                     <Show when=move || res_kind.get() == "postgres">
                                             <div class="board-rq-row">
-                                                <label class="auth-field"><span>"Host"</span>
-                                                    <input class="auth-input" prop:value=move || pg_host.get()
+                                                <label class=FIELD><span>"Host"</span>
+                                                    <input class=INPUT prop:value=move || pg_host.get()
                                                         on:input=move |e| pg_host.set(event_target_value(&e)) />
                                                 </label>
-                                                <label class="auth-field"><span>"Port"</span>
-                                                    <input class="auth-input" prop:value=move || pg_port.get()
+                                                <label class=FIELD><span>"Port"</span>
+                                                    <input class=INPUT prop:value=move || pg_port.get()
                                                         on:input=move |e| pg_port.set(event_target_value(&e)) />
                                                 </label>
                                             </div>
-                                            <label class="auth-field"><span>"Database"</span>
-                                                <input class="auth-input" prop:value=move || pg_database.get()
+                                            <label class=FIELD><span>"Database"</span>
+                                                <input class=INPUT prop:value=move || pg_database.get()
                                                     on:input=move |e| pg_database.set(event_target_value(&e)) />
                                             </label>
-                                            <label class="auth-field"><span>"User"</span>
-                                                <input class="auth-input" prop:value=move || pg_user.get()
+                                            <label class=FIELD><span>"User"</span>
+                                                <input class=INPUT prop:value=move || pg_user.get()
                                                     on:input=move |e| pg_user.set(event_target_value(&e)) />
                                             </label>
-                                            <label class="auth-field"><span>"Password secret"</span>
-                                                <select class="auth-input" prop:value=move || res_secret_id.get()
+                                            <label class=FIELD><span>"Password secret"</span>
+                                                <select class=INPUT prop:value=move || res_secret_id.get()
                                                     on:change=move |e| res_secret_id.set(event_target_value(&e))>
                                                     <option value="">"— select vault secret —"</option>
                                                     {move || secrets.get().into_iter().map(|s| {
@@ -560,8 +564,8 @@ pub fn resources_queries_modal(
                                                     }).collect_view()}
                                                 </select>
                                             </label>
-                                            <label class="auth-field"><span>"SSL mode"</span>
-                                                <select class="auth-input" prop:value=move || pg_ssl.get()
+                                            <label class=FIELD><span>"SSL mode"</span>
+                                                <select class=INPUT prop:value=move || pg_ssl.get()
                                                     on:change=move |e| pg_ssl.set(event_target_value(&e))>
                                                     <option value="disable">"disable"</option>
                                                     <option value="prefer">"prefer"</option>
@@ -573,12 +577,12 @@ pub fn resources_queries_modal(
 
                                     <Show when=move || res_kind.get() == "grpc">
                                         <div class="board-rq-row">
-                                            <label class="auth-field"><span>"Host"</span>
-                                                <input class="auth-input" prop:value=move || grpc_host.get()
+                                            <label class=FIELD><span>"Host"</span>
+                                                <input class=INPUT prop:value=move || grpc_host.get()
                                                     on:input=move |e| grpc_host.set(event_target_value(&e)) />
                                             </label>
-                                            <label class="auth-field"><span>"Port"</span>
-                                                <input class="auth-input" prop:value=move || grpc_port.get()
+                                            <label class=FIELD><span>"Port"</span>
+                                                <input class=INPUT prop:value=move || grpc_port.get()
                                                     on:input=move |e| grpc_port.set(event_target_value(&e)) />
                                             </label>
                                         </div>
@@ -598,13 +602,13 @@ pub fn resources_queries_modal(
                                             />
                                             <span>"TLS"</span>
                                         </label>
-                                        <label class="auth-field"><span>"JSON gateway base URL (recommended)"</span>
-                                            <input class="auth-input" placeholder="https://api.example.com"
+                                        <label class=FIELD><span>"JSON gateway base URL (recommended)"</span>
+                                            <input class=INPUT placeholder="https://api.example.com"
                                                 prop:value=move || grpc_gateway.get()
                                                 on:input=move |e| grpc_gateway.set(event_target_value(&e)) />
                                         </label>
-                                        <label class="auth-field"><span>"Auth (gateway / metadata)"</span>
-                                            <select class="auth-input" prop:value=move || res_auth.get()
+                                        <label class=FIELD><span>"Auth (gateway / metadata)"</span>
+                                            <select class=INPUT prop:value=move || res_auth.get()
                                                 on:change=move |e| res_auth.set(event_target_value(&e))>
                                                 <option value="none">"None"</option>
                                                 <option value="bearer">"Bearer secret"</option>
@@ -612,8 +616,8 @@ pub fn resources_queries_modal(
                                             </select>
                                         </label>
                                         <Show when=move || matches!(res_auth.get().as_str(), "bearer" | "api_key")>
-                                            <label class="auth-field"><span>"Vault secret"</span>
-                                                <select class="auth-input" prop:value=move || res_secret_id.get()
+                                            <label class=FIELD><span>"Vault secret"</span>
+                                                <select class=INPUT prop:value=move || res_secret_id.get()
                                                     on:change=move |e| res_secret_id.set(event_target_value(&e))>
                                                     <option value="">"— select vault secret —"</option>
                                                     {move || secrets.get().into_iter().map(|s| {
@@ -627,7 +631,7 @@ pub fn resources_queries_modal(
                                         <p class="board-muted">"Unary calls POST ProtoJSON to gateway_base_url/service/method. Without a gateway, execution returns a clear capability error."</p>
                                     </Show>
 
-                                    <button type="button" class="primary-button" on:click=move |_| {
+                                    <button type="button" class=BTN_PRIMARY on:click=move |_| {
                                         let name = res_name.get_untracked().trim().to_owned();
                                         if name.is_empty() {
                                             form_error.set(Some("Name is required".into()));
@@ -756,12 +760,12 @@ pub fn resources_queries_modal(
                             <Show when=move || tab.get() == "query">
                                 <section class="board-sources-form board-rq-form">
                                     <h3>"Query against a resource"</h3>
-                                    <label class="auth-field"><span>"Name"</span>
-                                        <input class="auth-input" prop:value=move || qry_name.get()
+                                    <label class=FIELD><span>"Name"</span>
+                                        <input class=INPUT prop:value=move || qry_name.get()
                                             on:input=move |e| qry_name.set(event_target_value(&e)) />
                                     </label>
-                                    <label class="auth-field"><span>"Resource"</span>
-                                        <select class="auth-input" prop:value=move || qry_resource_id.get()
+                                    <label class=FIELD><span>"Resource"</span>
+                                        <select class=INPUT prop:value=move || qry_resource_id.get()
                                             on:change=move |e| qry_resource_id.set(event_target_value(&e))>
                                             <option value="">"— select resource —"</option>
                                             {move || resources.get().into_iter().map(|r| {
@@ -782,8 +786,8 @@ pub fn resources_queries_modal(
                                         view! {
                                             <Show when=move || !is_pg() && !is_grpc()>
                                                 <div class="board-rq-row">
-                                                    <label class="auth-field"><span>"Method"</span>
-                                                        <select class="auth-input" prop:value=move || qry_method.get()
+                                                    <label class=FIELD><span>"Method"</span>
+                                                        <select class=INPUT prop:value=move || qry_method.get()
                                                             on:change=move |e| qry_method.set(event_target_value(&e))>
                                                             <option value="GET">"GET"</option>
                                                             <option value="POST">"POST"</option>
@@ -792,44 +796,44 @@ pub fn resources_queries_modal(
                                                             <option value="DELETE">"DELETE"</option>
                                                         </select>
                                                     </label>
-                                                    <label class="auth-field"><span>"Path"</span>
-                                                        <input class="auth-input" placeholder="/v1/items"
+                                                    <label class=FIELD><span>"Path"</span>
+                                                        <input class=INPUT placeholder="/v1/items"
                                                             prop:value=move || qry_path.get()
                                                             on:input=move |e| qry_path.set(event_target_value(&e)) />
                                                     </label>
                                                 </div>
-                                                <label class="auth-field"><span>"Body (POST/PUT/PATCH)"</span>
-                                                    <textarea class="auth-input board-rq-textarea" prop:value=move || qry_body.get()
+                                                <label class=FIELD><span>"Body (POST/PUT/PATCH)"</span>
+                                                    <textarea class=format!("{}{}", INPUT, " board-rq-textarea") prop:value=move || qry_body.get()
                                                         on:input=move |e| qry_body.set(event_target_value(&e))></textarea>
                                                 </label>
                                             </Show>
                                             <Show when=is_pg>
-                                                <label class="auth-field"><span>"SQL (SELECT only)"</span>
-                                                    <textarea class="auth-input board-rq-textarea" prop:value=move || qry_sql.get()
+                                                <label class=FIELD><span>"SQL (SELECT only)"</span>
+                                                    <textarea class=format!("{}{}", INPUT, " board-rq-textarea") prop:value=move || qry_sql.get()
                                                         on:input=move |e| qry_sql.set(event_target_value(&e))></textarea>
                                                 </label>
                                             </Show>
                                             <Show when=is_grpc>
-                                                <label class="auth-field"><span>"Service"</span>
-                                                    <input class="auth-input" placeholder="package.Service"
+                                                <label class=FIELD><span>"Service"</span>
+                                                    <input class=INPUT placeholder="package.Service"
                                                         prop:value=move || qry_grpc_service.get()
                                                         on:input=move |e| qry_grpc_service.set(event_target_value(&e)) />
                                                 </label>
-                                                <label class="auth-field"><span>"Method"</span>
-                                                    <input class="auth-input" placeholder="GetUser"
+                                                <label class=FIELD><span>"Method"</span>
+                                                    <input class=INPUT placeholder="GetUser"
                                                         prop:value=move || qry_grpc_method.get()
                                                         on:input=move |e| qry_grpc_method.set(event_target_value(&e)) />
                                                 </label>
-                                                <label class="auth-field"><span>"Request JSON (ProtoJSON)"</span>
-                                                    <textarea class="auth-input board-rq-textarea" prop:value=move || qry_grpc_request.get()
+                                                <label class=FIELD><span>"Request JSON (ProtoJSON)"</span>
+                                                    <textarea class=format!("{}{}", INPUT, " board-rq-textarea") prop:value=move || qry_grpc_request.get()
                                                         on:input=move |e| qry_grpc_request.set(event_target_value(&e))></textarea>
                                                 </label>
                                             </Show>
                                         }
                                     }
                                     <h3>"Transform"</h3>
-                                    <label class="auth-field"><span>"JSON path"</span>
-                                        <input class="auth-input" placeholder="data.items"
+                                    <label class=FIELD><span>"JSON path"</span>
+                                        <input class=INPUT placeholder="data.items"
                                             prop:value=move || qry_json_path.get()
                                             on:input=move |e| qry_json_path.set(event_target_value(&e)) />
                                     </label>
@@ -849,12 +853,12 @@ pub fn resources_queries_modal(
                                         />
                                         <span>"Normalize to array (as_array)"</span>
                                     </label>
-                                    <label class="auth-field"><span>"Limit rows"</span>
-                                        <input class="auth-input" prop:value=move || qry_limit.get()
+                                    <label class=FIELD><span>"Limit rows"</span>
+                                        <input class=INPUT prop:value=move || qry_limit.get()
                                             on:input=move |e| qry_limit.set(event_target_value(&e)) />
                                     </label>
                                     <div class="board-rq-actions">
-                                        <button type="button" class="primary-button" on:click=move |_| {
+                                        <button type="button" class=BTN_PRIMARY on:click=move |_| {
                                             let name = qry_name.get_untracked().trim().to_owned();
                                             let resource_id = qry_resource_id.get_untracked();
                                             if name.is_empty() || resource_id.is_empty() {
@@ -915,7 +919,7 @@ pub fn resources_queries_modal(
                                                 },
                                             });
                                         }>"Save query"</button>
-                                        <button type="button" class="secondary-button" on:click=move |_| {
+                                        <button type="button" class=BTN_SECONDARY on:click=move |_| {
                                             // Test last saved query with matching name+resource, or first selected resource's newest query
                                             let rid = qry_resource_id.get_untracked();
                                             let name = qry_name.get_untracked().trim().to_owned();

@@ -1,9 +1,11 @@
 use leptos::prelude::*;
 
-/// Uppercase section label (`.section-label`).
+use super::classes::SECTION_LABEL;
+
+/// Uppercase section kicker label.
 #[component]
 pub fn SectionLabel(children: Children) -> impl IntoView {
     view! {
-        <p class="section-label">{children()}</p>
+        <p class=SECTION_LABEL>{children()}</p>
     }
 }
