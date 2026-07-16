@@ -727,6 +727,11 @@ fn WorkspacePrimaryNav() -> impl IntoView {
         >
             {move || {
                 if settings_mode.get() {
+                    // Pass slug from Router (SSR-correct). Island must not rely on
+                    // current_browser_pathname() for first paint — on SSR it is "/"
+                    // which produced disabled /organizations links (pointer-events:none).
+                    let settings_slug =
+                        settings_slug_from_path(&location.pathname.get());
                     view! {
                         <p class=WS_NAV_LABEL>"Settings"</p>
                         <a
@@ -738,7 +743,7 @@ fn WorkspacePrimaryNav() -> impl IntoView {
                             {nav_icon("overview")}
                             <span class=WS_NAV_TEXT>"Overview"</span>
                         </a>
-                        <WorkspaceSettingsNavLinks />
+                        <WorkspaceSettingsNavLinks slug=settings_slug />
                     }
                     .into_any()
                 } else {
@@ -899,26 +904,48 @@ fn render_settings_nav_item_list(
 
 /// Island: load org membership capabilities and render settings section links.
 ///
-/// Strategy (no flash, no hydration panic):
-/// 1. SSR + first client paint always render the **full** settings catalog for the
-///    current slug (same markup both sides → no tachys mismatch).
-/// 2. After hydrate, restore cache immediately, then refresh from the network.
-/// 3. When capabilities arrive, filter to the caller's role (owners see no change).
-/// Never seed the signal from cache during island construction — that desynced
-/// SSR skeleton vs client links and panicked hydrate.
+/// `slug` comes from the parent Router path on SSR so hrefs are correct in HTML
+/// (never `current_browser_pathname()` on first paint — SSR returns "/" and used
+/// to disable every link with `pointer-events: none`).
+///
+/// After hydrate: keep slug live for SPA hops, restore cache, refresh RBAC, and
+/// re-run `mark_active_nav` so the focused section highlights.
 #[island]
-pub fn WorkspaceSettingsNavLinks() -> impl IntoView {
+pub fn WorkspaceSettingsNavLinks(slug: String) -> impl IntoView {
+    let slug = RwSignal::new(slug);
     // None = optimistic full catalog (SSR-safe). Some = role-filtered snapshot.
     let (snapshot, set_snapshot) = signal(None::<Result<SettingsNavSnapshot, ServerFnError>>);
 
     #[cfg(feature = "hydrate")]
     Effect::new(move |_| {
+        // Prefer live browser path after mount (SPA / soft navigations).
+        let live = settings_slug_from_path(&current_browser_pathname());
+        if !live.is_empty() {
+            slug.set(live);
+        }
+        use wasm_bindgen::JsCast;
+        use wasm_bindgen::closure::Closure;
+        let on_nav = Closure::wrap(Box::new(move |_event: web_sys::Event| {
+            let live = settings_slug_from_path(&current_browser_pathname());
+            if !live.is_empty() {
+                slug.set(live);
+            }
+            mark_active_nav(&current_browser_pathname());
+        }) as Box<dyn FnMut(_)>);
+        if let Some(window) = window() {
+            let _ = window.add_event_listener_with_callback(
+                "workspace-nav-mark",
+                on_nav.as_ref().unchecked_ref(),
+            );
+            on_nav.forget();
+        }
+
         spawn_local(async move {
-            // Wait until island hydration has finished, then apply cache/network.
             let _ = after_island_hydration().await;
             if let Some(cached) = read_settings_nav_cache() {
                 set_snapshot.set(Some(Ok(cached)));
             }
+            mark_active_nav(&current_browser_pathname());
             let session = get_current_session().await;
             let orgs = list_organizations().await;
             match (session, orgs) {
@@ -929,12 +956,10 @@ pub fn WorkspaceSettingsNavLinks() -> impl IntoView {
                     };
                     write_settings_nav_cache(&snap);
                     set_snapshot.set(Some(Ok(snap)));
+                    mark_active_nav(&current_browser_pathname());
                 }
                 (Err(err), _) | (_, Err(err)) => {
-                    // Keep optimistic / cached links; only surface error if we have nothing.
-                    if snapshot.get_untracked().is_none()
-                        && read_settings_nav_cache().is_none()
-                    {
+                    if snapshot.get_untracked().is_none() && read_settings_nav_cache().is_none() {
                         set_snapshot.set(Some(Err(err)));
                     }
                 }
@@ -947,12 +972,22 @@ pub fn WorkspaceSettingsNavLinks() -> impl IntoView {
         let _ = &set_snapshot;
     }
 
+    // Re-highlight when slug or filtered links change.
+    Effect::new(move |_| {
+        let _ = slug.get();
+        let _ = snapshot.get();
+        #[cfg(feature = "hydrate")]
+        {
+            mark_active_nav(&current_browser_pathname());
+        }
+    });
+
     view! {
         <div data-testid="workspace-settings-nav-links">
             {move || {
-                let slug = settings_slug_from_path(&current_browser_pathname());
+                let slug = slug.get();
                 match snapshot.get() {
-                    // Optimistic / SSR: full catalog — same markup both sides, zero flash.
+                    // Optimistic / SSR: full catalog with the Router-provided slug.
                     None => render_settings_nav_items_unfiltered(&slug),
                     Some(Err(_)) => settings_nav_skeleton(),
                     Some(Ok(snap)) => {
