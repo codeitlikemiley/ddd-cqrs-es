@@ -6209,6 +6209,54 @@ html.board-modal-open body {
   padding: 8px 10px;
 }
 
+.workspace-settings-invite-form {
+  display: grid;
+  gap: 0.85rem;
+  margin: 0 0 1.25rem;
+  max-width: 36rem;
+}
+
+.workspace-settings-invite-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.workspace-settings-invitation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.workspace-settings-status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: lowercase;
+  background: color-mix(in srgb, var(--border, #e2e8f0) 70%, transparent);
+  color: var(--text, #0f172a);
+}
+
+.workspace-settings-status-pill.is-pending {
+  background: color-mix(in srgb, #2563eb 16%, transparent);
+  color: #1d4ed8;
+}
+
+.workspace-settings-status-pill.is-revoked,
+.workspace-settings-status-pill.is-expired {
+  background: color-mix(in srgb, #94a3b8 22%, transparent);
+  color: #475569;
+}
+
+.workspace-settings-status-pill.is-accepted {
+  background: color-mix(in srgb, #0f7b58 16%, transparent);
+  color: #0f7b58;
+}
+
 @media (max-width: 900px) {
   .workspace-settings-shell {
     grid-template-columns: minmax(0, 1fr);

@@ -4,25 +4,28 @@ use leptos_wasi::wasip3::prelude::{Handler, HandlerConfig, init_wasip3_spawner};
 use wasip3::http::types::{ErrorCode, Request, Response};
 
 use crate::app::{
-    AcceptOrganizationInvitation, App, ChangePassword, CompleteEmailVerification,
-    CompleteOauthCallback, CompletePasswordReset, ConfirmTotpEnrollment, CreateDashboardSecret,
-    CreateOrganization, DeleteDashboardQuery, DeleteDashboardResource, DeleteDashboardSecret,
-    DeleteDashboardSource, DevelopmentMailCaptureEnabled, DismissDashboardNotification,
-    GetAccountProfile, GetAdminHealth, GetAuthCapabilities, GetAuthorizationCapabilities,
-    GetCurrentSession, GetDashboardSnapshot, GetMfaStatus, GetPublicProfile,
-    InviteCurrentOrganizationMember, LatestDevelopmentMail, ListAccountSessions, ListAdminUsers,
+    AcceptOrganizationInvitation, App, AssignWorkspaceMemberRole, ChangePassword,
+    CompleteEmailVerification, CompleteOauthCallback, CompletePasswordReset, ConfirmTotpEnrollment,
+    CreateDashboardSecret, CreateOrganization, DeleteDashboardQuery, DeleteDashboardResource,
+    DeleteDashboardSecret, DeleteDashboardSource, DevelopmentMailCaptureEnabled,
+    DismissDashboardNotification, GetAccountProfile, GetAdminHealth, GetAuthCapabilities,
+    GetAuthorizationCapabilities, GetCurrentSession, GetDashboardSnapshot, GetMfaStatus,
+    GetPublicProfile, GetWorkspaceSettingsContext, InviteCurrentOrganizationMember,
+    InviteWorkspaceMember, LatestDevelopmentMail, ListAccountSessions, ListAdminUsers,
     ListAuthProviders, ListCurrentOrganizationAudit, ListCurrentOrganizationInvitations,
     ListCurrentOrganizationMembers, ListCurrentOrganizationRoles, ListDashboardSecrets,
-    ListOrganizations, ListPolicyVersions, ListSigningKeys, LoginEmailPassword,
+    ListOrganizations, ListPolicyVersions, ListSigningKeys, ListWorkspaceAudit,
+    ListWorkspaceInvitations, ListWorkspaceMembers, ListWorkspaceRoles, LoginEmailPassword,
     LogoutCurrentSession, MigrateWorkspaceLegacyData, PublishPolicyVersion, RegisterEmailPassword,
-    RequireAuthenticatedRoute, RequireAuthorizedRoute, ResendEmailVerification,
-    ResolveWorkspaceVaultTarget, RevealDashboardSecret, RevokeAccountSession, RotateSigningKey,
+    RemoveWorkspaceMember, RequireAuthenticatedRoute, RequireAuthorizedRoute,
+    ResendEmailVerification, ResendWorkspaceInvitation, ResolveWorkspaceVaultTarget,
+    RevealDashboardSecret, RevokeAccountSession, RevokeWorkspaceInvitation, RotateSigningKey,
     RunDashboardQuery, SaveAuthProvider, SaveDashboardLayout, SaveRedirectAllowlist,
     SeedDashboardDemos, SelectOrganization, StartOauthLogin, StartPasskeyLogin,
     StartPasskeyRegistration, StartPasswordReset, StartTotpEnrollment, TestDashboardHttpSource,
-    UpdateAccountProfile, UpdateDashboardNote, UpsertCurrentOrganizationRole, UpsertDashboardQuery,
-    UpsertDashboardResource, UpsertDashboardSource, VerifyPasskeyLogin, VerifyPasskeyRegistration,
-    VerifyRecoveryCode, VerifyTotpStepUp, shell,
+    UpdateAccountProfile, UpdateDashboardNote, UpdateWorkspaceName, UpsertCurrentOrganizationRole,
+    UpsertDashboardQuery, UpsertDashboardResource, UpsertDashboardSource, UpsertWorkspaceRole,
+    VerifyPasskeyLogin, VerifyPasskeyRegistration, VerifyRecoveryCode, VerifyTotpStepUp, shell,
 };
 
 struct FullstackServer;
@@ -271,6 +274,18 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
             .with_server_fn::<ListCurrentOrganizationRoles>()
             .with_server_fn::<UpsertCurrentOrganizationRole>()
             .with_server_fn::<ListCurrentOrganizationAudit>()
+            .with_server_fn::<GetWorkspaceSettingsContext>()
+            .with_server_fn::<ListWorkspaceMembers>()
+            .with_server_fn::<ListWorkspaceInvitations>()
+            .with_server_fn::<ListWorkspaceRoles>()
+            .with_server_fn::<ListWorkspaceAudit>()
+            .with_server_fn::<UpdateWorkspaceName>()
+            .with_server_fn::<AssignWorkspaceMemberRole>()
+            .with_server_fn::<RemoveWorkspaceMember>()
+            .with_server_fn::<InviteWorkspaceMember>()
+            .with_server_fn::<RevokeWorkspaceInvitation>()
+            .with_server_fn::<ResendWorkspaceInvitation>()
+            .with_server_fn::<UpsertWorkspaceRole>()
             .with_server_fn::<ListAdminUsers>()
             .with_server_fn::<GetAdminHealth>()
             .with_server_fn::<ListPolicyVersions>()

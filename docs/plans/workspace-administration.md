@@ -9,7 +9,7 @@
 | Field | Value |
 |-------|--------|
 | Run ID | `07aef382` |
-| Current PR | PR4a (proposed) |
+| Current PR | PR4b (proposed) |
 | Phase | awaiting_approval |
 | Branch base | `codex/fullstack-verification-flow` |
 
@@ -40,7 +40,7 @@
 | PR2 | Settings shell + slug routes + legacy redirects | PR0 | done (code; awaiting orchestrator advance) |
 | PR3 | Settings DTOs + slug-scoped reads + assign/remove/update fns | PR2 (+PR1 preferred) | done (code; awaiting orchestrator advance) |
 | PR4a | General + Members UI | PR3 | done (code; awaiting orchestrator advance) |
-| PR4b | Invitations UI + revoke/resend | PR3 + wasi-auth | pending |
+| PR4b | Invitations UI + revoke/resend | PR3 + wasi-auth | done (code; awaiting orchestrator advance) |
 | PR4c | Roles UI + delete custom role | PR3 + wasi-auth | pending |
 | PR4d | Audit humanization | PR3 | pending |
 | PR4e | Ownership transfer + Danger zone | PR3 + wasi-auth | pending |
@@ -123,9 +123,14 @@ Default order: `PR0 → PR1 → PR2 → PR3 → PR4a → PR4b → PR4c → PR4d 
 
 ### PR4b — Invitations
 
-- [ ] Invite + list states
-- [ ] Resend / revoke (wasi-auth)
+- [x] Invite + list states
+- [x] Resend / revoke (wasi-auth)
 - Evidence:
+  - wasi-auth `ac2fcd73`: `InvitationService::{revoke,resend}` + `revoke_invitation.sql` / `resend_invitation.sql` (AAL2 + `member.invite`; audit `member.invite.revoke` / `member.invite.resend`; OTT consume on both; resend rotates token hash, extends TTL, new sealed outbox). Unit tests for invitation UUID validation + TTL; live SQL: `scripts/test-postgres-kernel-live.sh`
+  - ddd: `auth_product::{revoke,resend}_invitation`; application + server_fns `revoke_workspace_invitation` / `resend_workspace_invitation`; existing list/invite wired; registered workspace server fns in `server.rs` (incl. PR3/4a missed registrations)
+  - UI invitations: invite form (email + role_options default member); table email/role/status/expires; Resend/Revoke pending only; `server_error_text`; step-up hint; pending buttons
+  - `bash examples/fullstack-app/scripts/sync_fullstack_template.sh` + `check` — green
+  - `cd examples/fullstack-app && make check` — green; hydrate check green; `bash scripts/check_loc.sh` — OK
 
 ### PR4c — Roles
 

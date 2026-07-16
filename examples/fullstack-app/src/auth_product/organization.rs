@@ -283,6 +283,53 @@ pub async fn accept_invitation(
     .map_err(map_management_error)
 }
 
+pub async fn revoke_invitation(
+    session_id: &str,
+    organization_id: &str,
+    invitation_id: &str,
+) -> AuthStackResult<InvitationSummary> {
+    let session_id = bounded_session_id(session_id)?;
+    InvitationService::new(
+        store().await?,
+        RuntimeClock,
+        RuntimeRandom,
+        outbox_key().await?,
+    )
+    .revoke(
+        &session_id,
+        organization_id,
+        invitation_id,
+        &request_id("revoke-invitation")?,
+    )
+    .await
+    .map(invitation_summary)
+    .map_err(map_management_error)
+}
+
+pub async fn resend_invitation(
+    session_id: &str,
+    organization_id: &str,
+    invitation_id: &str,
+) -> AuthStackResult<InvitationSummary> {
+    let session_id = bounded_session_id(session_id)?;
+    InvitationService::new(
+        store().await?,
+        RuntimeClock,
+        RuntimeRandom,
+        outbox_key().await?,
+    )
+    .with_transactional_mail_config(transactional_mail_config().await?)
+    .resend(
+        &session_id,
+        organization_id,
+        invitation_id,
+        &request_id("resend-invitation")?,
+    )
+    .await
+    .map(invitation_summary)
+    .map_err(map_management_error)
+}
+
 pub async fn list_roles(
     session_id: &str,
     organization_id: &str,

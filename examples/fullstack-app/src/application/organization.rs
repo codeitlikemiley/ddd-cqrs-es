@@ -518,6 +518,38 @@ pub async fn invite_workspace_member(
     .await
 }
 
+pub async fn revoke_workspace_invitation(
+    slug: String,
+    invitation_id: String,
+    auth: RequestAuth,
+) -> AuthStackResult<InvitationSummary> {
+    validate_identifier("invitation_id", &invitation_id)?;
+    let (context, _) = verified_context_and_permissions(auth, true).await?;
+    let resolved = resolve_workspace_by_slug_with_context(&context, &slug).await?;
+    crate::auth_product::revoke_invitation(
+        context.session_id().as_str(),
+        &resolved.organization_id,
+        &invitation_id,
+    )
+    .await
+}
+
+pub async fn resend_workspace_invitation(
+    slug: String,
+    invitation_id: String,
+    auth: RequestAuth,
+) -> AuthStackResult<InvitationSummary> {
+    validate_identifier("invitation_id", &invitation_id)?;
+    let (context, _) = verified_context_and_permissions(auth, true).await?;
+    let resolved = resolve_workspace_by_slug_with_context(&context, &slug).await?;
+    crate::auth_product::resend_invitation(
+        context.session_id().as_str(),
+        &resolved.organization_id,
+        &invitation_id,
+    )
+    .await
+}
+
 pub async fn upsert_workspace_role(
     slug: String,
     role_id: String,
