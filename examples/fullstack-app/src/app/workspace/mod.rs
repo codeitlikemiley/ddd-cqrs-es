@@ -35,7 +35,7 @@ use web_sys::window;
 #[cfg(feature = "hydrate")]
 use crate::app::{
     after_island_hydration, bind_user_menu_dismiss, bind_workspace_nav_active,
-    init_workspace_sidebar,
+    init_workspace_chrome_persist, init_workspace_sidebar,
 };
 use crate::ui::classes::{
     BANNER_ERROR, BTN_PRIMARY, FIELD, INPUT, MONO_VALUE, MUTED, ONBOARDING_CARD, ONBOARDING_FORM,
@@ -56,7 +56,6 @@ use crate::ui::classes::{
     WS_SYSTEM_NAV, WS_TOPBAR, WS_TOPBAR_BRAND, WS_TOPBAR_ORG, WS_TOPBAR_PAGE, WS_TOPBAR_TITLE,
     with_extra,
 };
-use crate::ui::ChromeRowSkeleton;
 
 /// Inline stroke icon for workspace nav (replaces CSS mask icons).
 fn nav_icon(kind: &'static str) -> impl IntoView {
@@ -174,15 +173,24 @@ pub fn WorkspaceShell(children: Children) -> impl IntoView {
                         "Close"
                     </label>
                 </div>
-                <WorkspacePrimaryNav />
-                <div class=WS_SIDEBAR_FOOT>
+                // Primary nav can swap product ↔ settings; foot chrome islands
+                // stay outside that branch so islands-router preserves them.
+                <div id="workspace-primary-nav" data-workspace-region="primary-nav">
+                    <WorkspacePrimaryNav />
+                </div>
+                <div
+                    class=WS_SIDEBAR_FOOT
+                    id="workspace-chrome-foot"
+                    data-workspace-region="chrome-foot"
+                    data-chrome-persist="true"
+                >
                     <WorkspaceOrgSwitcher />
                     <WorkspaceUserMenu />
                     <ThemeToggle />
                 </div>
             </aside>
             <div class=WS_MAIN>
-                <header class=WS_TOPBAR>
+                <header class=WS_TOPBAR id="workspace-topbar" data-workspace-region="topbar">
                     <label
                         class=WS_MENU_BUTTON_MOBILE
                         for="workspace-nav-toggle"
@@ -198,10 +206,14 @@ pub fn WorkspaceShell(children: Children) -> impl IntoView {
                             <small>"workspace"</small>
                         </span>
                     </a>
-                    <div class=WS_TOPBAR_TITLE>
+                    <div class=WS_TOPBAR_TITLE id="workspace-topbar-title">
                         <span class=WS_TOPBAR_PAGE>{move || topbar_title.get()}</span>
                     </div>
-                    <div class=WS_TOPBAR_ORG data-org-placement="top">
+                    <div
+                        class=WS_TOPBAR_ORG
+                        data-org-placement="top"
+                        data-chrome-persist="true"
+                    >
                         <WorkspaceOrgSwitcher />
                     </div>
                     <button
@@ -216,7 +228,13 @@ pub fn WorkspaceShell(children: Children) -> impl IntoView {
                     <WorkspaceSidebarControls />
                     <WorkspaceNavActive />
                 </header>
-                <div class=WS_CONTENT>
+                // Soft-nav swaps page bodies here; chrome islands above are preserved.
+                <div
+                    class=WS_CONTENT
+                    id="workspace-content"
+                    data-workspace-region="content"
+                    data-testid="workspace-content"
+                >
                     {children()}
                 </div>
             </div>
@@ -418,12 +436,14 @@ pub fn WorkspaceNavActive() -> impl IntoView {
 }
 
 /// Desktop sidebar modes: full ↔ mini (rail toggle) and show ↔ hide (⌘/Ctrl+B).
+/// Also installs content-only soft-nav so chrome islands stay mounted (Option B).
 #[island]
 pub fn WorkspaceSidebarControls() -> impl IntoView {
     Effect::new(move |_| {
         #[cfg(feature = "hydrate")]
         {
             init_workspace_sidebar();
+            init_workspace_chrome_persist();
         }
     });
     view! { <span class=WS_HIDDEN_MARKER aria-hidden="true"></span> }
@@ -433,22 +453,41 @@ pub fn WorkspaceSidebarControls() -> impl IntoView {
 ///
 /// Click-away / Escape dismiss is shared with the account flyout via
 /// `bindUserMenuDismiss` (also installed from workspace sidebar init).
+///
+/// Cache-first (same snapshot as settings nav + account menu): islands remount on
+/// soft navigations — never flash a pulse skeleton when we already know the tenant.
 #[island]
 pub fn WorkspaceOrgSwitcher() -> impl IntoView {
-    let orgs = browser_load(list_organizations);
-    let session = browser_load(get_current_session);
+    let (snapshot, set_snapshot) =
+        signal(None::<Result<WorkspaceChromeSnapshot, ServerFnError>>);
     let select_action = ServerAction::<SelectOrganization>::new();
     let select_pending = select_action.pending();
 
     #[cfg(feature = "hydrate")]
     Effect::new(move |_| {
         bind_user_menu_dismiss();
+        spawn_local(async move {
+            let _ = after_island_hydration().await;
+            // Instant restore so route changes keep the trigger visible.
+            if let Some(cached) = read_workspace_chrome_cache() {
+                set_snapshot.set(Some(Ok(cached)));
+                mark_active_nav(&current_browser_pathname());
+            }
+            if let Some(fresh) = refresh_workspace_chrome_cache().await {
+                set_snapshot.set(Some(Ok(fresh)));
+                mark_active_nav(&current_browser_pathname());
+            } else if snapshot.get_untracked().is_none() {
+                // First paint, no cache, network failed — leave stable shell.
+            }
+        });
     });
 
     Effect::new(move |_| {
         if matches!(select_action.value().get(), Some(Ok(_))) {
             #[cfg(feature = "hydrate")]
             {
+                // Tenant change invalidates chrome labels; full reload is intentional.
+                clear_workspace_chrome_cache();
                 if let Some(window) = window() {
                     let _ = window.location().reload();
                 }
@@ -456,134 +495,197 @@ pub fn WorkspaceOrgSwitcher() -> impl IntoView {
         }
     });
 
-    view! {
-        <div class=ORG_SWITCHER>
-            {move || {
-                let session = session.get();
-                let orgs = orgs.get();
-                match (session, orgs) {
-                    (Some(Ok(sess)), Some(Ok(list))) if sess.authenticated => {
-                        let active_id = sess.tenant_id.clone().filter(|s| !s.trim().is_empty());
-                        let active = active_id.as_ref().and_then(|id| {
-                            list.organizations.iter().find(|o| o.organization_id == *id).cloned()
-                        });
-                        let label = active
-                            .as_ref()
-                            .map(|o| o.name.clone())
-                            .unwrap_or_else(|| {
-                                if list.organizations.is_empty() {
-                                    "No workspace".into()
-                                } else {
-                                    "Select workspace".into()
-                                }
-                            });
-                        let monogram = active
-                            .as_ref()
-                            .map(|o| org_monogram(&o.name))
-                            .unwrap_or_else(|| "W".into());
-                        let vault_href = active
-                            .as_ref()
-                            .map(|o| {
-                                if o.slug.is_empty() {
-                                    "/account/vault".into()
-                                } else {
-                                    format!("/org/{}/vault", o.slug)
-                                }
-                            })
-                            .unwrap_or_else(|| "/organizations".into());
-                        let settings_href = active
-                            .as_ref()
-                            .map(|o| {
-                                if o.slug.is_empty() {
-                                    "/organizations".into()
-                                } else {
-                                    format!("/org/{}/settings/general", o.slug)
-                                }
-                            })
-                            .unwrap_or_else(|| "/organizations".into());
-                        // Org RBAC lives on the membership, not session OAuth scopes.
-                        let show_settings = active
-                            .as_ref()
-                            .map(|org| {
-                                can_view_any_settings(&AccessContext::from_permissions(
-                                    true,
-                                    org.permissions.iter().map(String::as_str),
-                                    &sess.assurance,
-                                    sess.system_administrator,
-                                ))
-                            })
-                            .unwrap_or(false);
-                        let orgs_for_list = list.organizations.clone();
+    // Client path focus for flyout links after paint / snapshot swap.
+    Effect::new(move |_| {
+        let _ = snapshot.get();
+        #[cfg(feature = "hydrate")]
+        {
+            mark_active_nav(&current_browser_pathname());
+        }
+    });
 
-                        view! {
-                            <details class=ORG_SWITCHER_DETAILS data-flyout="org-switcher">
-                                <summary class=ORG_SWITCHER_TRIGGER aria-label="Switch workspace">
-                                    <span class=ORG_SWITCHER_AVATAR aria-hidden="true">{monogram}</span>
-                                    <span class=ORG_SWITCHER_META>
-                                        <span class=ORG_SWITCHER_LABEL>{label}</span>
-                                        <span class=ORG_SWITCHER_HINT>"Workspace"</span>
-                                    </span>
-                                    <span class=ORG_SWITCHER_CARET aria-hidden="true"></span>
-                                </summary>
-                                <div class=ORG_SWITCHER_PANEL role="menu">
-                                    <p class=ORG_SWITCHER_PANEL_LABEL>"Workspaces"</p>
-                                    <ul class=ORG_SWITCHER_LIST>
-                                        {orgs_for_list.into_iter().map(|org| {
-                                            let id = org.organization_id.clone();
-                                            let id_select = id.clone();
-                                            let is_active = active_id.as_ref().is_some_and(|a| a == &id);
-                                            let name = org.name.clone();
-                                            let slug_line = if org.slug.is_empty() {
-                                                String::new()
-                                            } else {
-                                                format!("/org/{}", org.slug)
-                                            };
-                                            view! {
-                                                <li>
-                                                    <button
-                                                        type="button"
-                                                        class=ORG_SWITCHER_ITEM
-                                                        class:is-active=is_active
-                                                        role="menuitem"
-                                                        disabled=move || select_pending.get() || is_active
-                                                        on:click=move |_| {
-                                                            if is_active { return; }
-                                                            select_action.dispatch(SelectOrganization {
-                                                                organization_id: id_select.clone(),
-                                                            });
-                                                        }
-                                                    >
-                                                        <span class=ORG_SWITCHER_ITEM_NAME>{name}</span>
-                                                        <span class=ORG_SWITCHER_ITEM_META>
-                                                            {if is_active { "Active".into() } else { slug_line }}
-                                                        </span>
-                                                    </button>
-                                                </li>
-                                            }
-                                        }).collect_view()}
-                                    </ul>
-                                    <div class=ORG_SWITCHER_DIVIDER aria-hidden="true"></div>
-                                    <a class=ORG_SWITCHER_LINK href="/organizations" role="menuitem">"Manage workspaces"</a>
-                                    <a class=ORG_SWITCHER_LINK href=vault_href role="menuitem">"Secret vault"</a>
-                                    <Show when=move || show_settings>
-                                        <a class=ORG_SWITCHER_LINK href=settings_href.clone() role="menuitem">
-                                            "Workspace settings"
-                                        </a>
-                                    </Show>
-                                </div>
-                            </details>
-                        }.into_any()
-                    }
-                    (Some(Ok(_)), _) | (None, _) => view! {
-                        <ChromeRowSkeleton label="Loading workspaces" />
-                    }.into_any(),
-                    _ => view! {
-                        <a class=ORG_SWITCHER_FALLBACK href="/organizations">"Workspaces"</a>
-                    }.into_any(),
+    view! {
+        <div class=ORG_SWITCHER data-testid="workspace-org-switcher">
+            {move || match snapshot.get() {
+                Some(Ok(snap)) if snap.session.authenticated => {
+                    render_org_switcher(&snap, select_action, select_pending)
                 }
+                Some(Ok(_)) => view! {
+                    <a class=ORG_SWITCHER_FALLBACK href="/organizations">"Workspaces"</a>
+                }
+                .into_any(),
+                Some(Err(_)) => view! {
+                    <a class=ORG_SWITCHER_FALLBACK href="/organizations">"Workspaces"</a>
+                }
+                .into_any(),
+                // SSR + first client frame: stable shell (ThemeToggle-style), never pulse.
+                None => org_switcher_stable_shell().into_any(),
             }}
         </div>
     }
+}
+
+/// Non-loading chrome for SSR / pre-cache frames (no animate-pulse).
+fn org_switcher_stable_shell() -> impl IntoView {
+    view! {
+        <div class=ORG_SWITCHER_DETAILS aria-hidden="true">
+            <div class=ORG_SWITCHER_TRIGGER>
+                <span class=ORG_SWITCHER_AVATAR aria-hidden="true">"W"</span>
+                <span class=ORG_SWITCHER_META>
+                    <span class=ORG_SWITCHER_LABEL>"Workspace"</span>
+                    <span class=ORG_SWITCHER_HINT>"Workspace"</span>
+                </span>
+                <span class=ORG_SWITCHER_CARET aria-hidden="true"></span>
+            </div>
+        </div>
+    }
+}
+
+fn render_org_switcher(
+    snap: &WorkspaceChromeSnapshot,
+    select_action: ServerAction<SelectOrganization>,
+    select_pending: Memo<bool>,
+) -> AnyView {
+    let sess = &snap.session;
+    let list = &snap.organizations;
+    let active_id = sess.tenant_id.clone().filter(|s| !s.trim().is_empty());
+    let active = active_id.as_ref().and_then(|id| {
+        list.organizations
+            .iter()
+            .find(|o| o.organization_id == *id)
+            .cloned()
+    });
+    let label = active.as_ref().map(|o| o.name.clone()).unwrap_or_else(|| {
+        if list.organizations.is_empty() {
+            "No workspace".into()
+        } else {
+            "Select workspace".into()
+        }
+    });
+    let monogram = active
+        .as_ref()
+        .map(|o| org_monogram(&o.name))
+        .unwrap_or_else(|| "W".into());
+    let vault_href = active
+        .as_ref()
+        .map(|o| {
+            if o.slug.is_empty() {
+                "/account/vault".into()
+            } else {
+                format!("/org/{}/vault", o.slug)
+            }
+        })
+        .unwrap_or_else(|| "/organizations".into());
+    let settings_href = active
+        .as_ref()
+        .map(|o| {
+            if o.slug.is_empty() {
+                "/organizations".into()
+            } else {
+                format!("/org/{}/settings/general", o.slug)
+            }
+        })
+        .unwrap_or_else(|| "/organizations".into());
+    let show_settings = active
+        .as_ref()
+        .map(|org| {
+            can_view_any_settings(&AccessContext::from_permissions(
+                true,
+                org.permissions.iter().map(String::as_str),
+                &sess.assurance,
+                sess.system_administrator,
+            ))
+        })
+        .unwrap_or(false);
+    let orgs_for_list = list.organizations.clone();
+
+    view! {
+        <details class=ORG_SWITCHER_DETAILS data-flyout="org-switcher">
+            <summary class=ORG_SWITCHER_TRIGGER aria-label="Switch workspace">
+                <span class=ORG_SWITCHER_AVATAR aria-hidden="true">{monogram}</span>
+                <span class=ORG_SWITCHER_META>
+                    <span class=ORG_SWITCHER_LABEL>{label}</span>
+                    <span class=ORG_SWITCHER_HINT>"Workspace"</span>
+                </span>
+                <span class=ORG_SWITCHER_CARET aria-hidden="true"></span>
+            </summary>
+            <div class=ORG_SWITCHER_PANEL role="menu">
+                <p class=ORG_SWITCHER_PANEL_LABEL>"Workspaces"</p>
+                <ul class=ORG_SWITCHER_LIST>
+                    {orgs_for_list
+                        .into_iter()
+                        .map(|org| {
+                            let id = org.organization_id.clone();
+                            let id_select = id.clone();
+                            let is_active = active_id.as_ref().is_some_and(|a| a == &id);
+                            let name = org.name.clone();
+                            let slug_line = if org.slug.is_empty() {
+                                String::new()
+                            } else {
+                                format!("/org/{}", org.slug)
+                            };
+                            view! {
+                                <li>
+                                    <button
+                                        type="button"
+                                        class=ORG_SWITCHER_ITEM
+                                        class:is-active=is_active
+                                        role="menuitem"
+                                        disabled=move || select_pending.get() || is_active
+                                        on:click=move |_| {
+                                            if is_active {
+                                                return;
+                                            }
+                                            select_action.dispatch(SelectOrganization {
+                                                organization_id: id_select.clone(),
+                                            });
+                                        }
+                                    >
+                                        <span class=ORG_SWITCHER_ITEM_NAME>{name}</span>
+                                        <span class=ORG_SWITCHER_ITEM_META>
+                                            {if is_active {
+                                                "Active".into()
+                                            } else {
+                                                slug_line
+                                            }}
+                                        </span>
+                                    </button>
+                                </li>
+                            }
+                        })
+                        .collect_view()}
+                </ul>
+                <div class=ORG_SWITCHER_DIVIDER aria-hidden="true"></div>
+                <a
+                    class=ORG_SWITCHER_LINK
+                    href="/organizations"
+                    role="menuitem"
+                    data-nav="organizations"
+                >
+                    "Manage workspaces"
+                </a>
+                <a
+                    class=ORG_SWITCHER_LINK
+                    href=vault_href
+                    role="menuitem"
+                    data-nav="account-vault"
+                >
+                    "Secret vault"
+                </a>
+                <Show when=move || show_settings>
+                    <a
+                        class=ORG_SWITCHER_LINK
+                        href=settings_href.clone()
+                        role="menuitem"
+                        data-nav="settings-general"
+                    >
+                        "Workspace settings"
+                    </a>
+                </Show>
+            </div>
+        </details>
+    }
+    .into_any()
 }
 
 #[island(lazy)]
@@ -613,67 +715,152 @@ pub fn WorkspaceSystemNav() -> impl IntoView {
 /// Lives in the left rail foot so the main top bar stays clean.
 /// Click-away / Escape dismiss is bound in `bindUserMenuDismiss` (also covers
 /// the workspace switcher flyout).
+///
+/// Cache-first like the org switcher: route changes remount this island but must
+/// not re-flash a skeleton. Flyout link focus is client-side via `data-nav`.
 #[island]
 pub fn WorkspaceUserMenu() -> impl IntoView {
-    let session = browser_load(get_current_session);
+    let (snapshot, set_snapshot) =
+        signal(None::<Result<WorkspaceChromeSnapshot, ServerFnError>>);
 
     #[cfg(feature = "hydrate")]
     Effect::new(move |_| {
         bind_user_menu_dismiss();
+        spawn_local(async move {
+            let _ = after_island_hydration().await;
+            if let Some(cached) = read_workspace_chrome_cache() {
+                set_snapshot.set(Some(Ok(cached)));
+                mark_active_nav(&current_browser_pathname());
+            }
+            if let Some(fresh) = refresh_workspace_chrome_cache().await {
+                set_snapshot.set(Some(Ok(fresh)));
+                mark_active_nav(&current_browser_pathname());
+            }
+        });
+    });
+
+    Effect::new(move |_| {
+        let _ = snapshot.get();
+        #[cfg(feature = "hydrate")]
+        {
+            mark_active_nav(&current_browser_pathname());
+        }
     });
 
     view! {
-        <div class=USER_MENU>
-            {move || match session.get() {
-                Some(Ok(session)) if session.authenticated => {
-                    let email = session
-                        .primary_email
-                        .clone()
-                        .or_else(|| session.user_id.clone())
-                        .unwrap_or_else(|| "Signed in".to_string());
-                    let initial = email
-                        .chars()
-                        .next()
-                        .map(|ch| ch.to_ascii_uppercase())
-                        .unwrap_or('U');
-                    view! {
-                        <details class=USER_MENU_DETAILS data-flyout="user-menu">
-                            <summary class=USER_MENU_TRIGGER aria-label="Account menu">
-                                <span class=USER_MENU_AVATAR aria-hidden="true">{initial.to_string()}</span>
-                                <span class=USER_MENU_META>
-                                    <span class=USER_MENU_EMAIL>{email.clone()}</span>
-                                    <span class=USER_MENU_HINT>"Account"</span>
-                                </span>
-                                <span class=USER_MENU_CARET aria-hidden="true"></span>
-                            </summary>
-                            <div class=USER_MENU_PANEL role="menu">
-                                <p class=USER_MENU_PANEL_LABEL>"Account"</p>
-                                <a class=USER_MENU_ITEM href="/account/profile" role="menuitem">"Profile"</a>
-                                <a class=USER_MENU_ITEM href="/account/password" role="menuitem">"Password"</a>
-                                <a class=USER_MENU_ITEM href="/account/mfa" role="menuitem">"Authenticator (MFA)"</a>
-                                <a class=USER_MENU_ITEM href="/account/passkeys" role="menuitem">"Passkeys"</a>
-                                <a class=USER_MENU_ITEM href="/account/sessions" role="menuitem">"Sessions"</a>
-                                <a class=USER_MENU_ITEM href="/account/providers" role="menuitem">"Providers"</a>
-                                <div class=USER_MENU_DIVIDER aria-hidden="true"></div>
-                                <div class=USER_MENU_LOGOUT>
-                                    <LogoutButton />
-                                </div>
-                            </div>
-                        </details>
-                    }.into_any()
+        <div class=USER_MENU data-testid="workspace-user-menu">
+            {move || match snapshot.get() {
+                Some(Ok(snap)) if snap.session.authenticated => {
+                    render_user_menu(&snap.session)
                 }
                 Some(Ok(_)) => view! {
                     <a class=USER_MENU_FALLBACK href="/login">"Sign in"</a>
-                }.into_any(),
+                }
+                .into_any(),
                 Some(Err(_)) => view! {
                     <span class=USER_MENU_FALLBACK>"Session unavailable"</span>
-                }.into_any(),
-                None => view! {
-                    <ChromeRowSkeleton label="Loading account" />
-                }.into_any(),
+                }
+                .into_any(),
+                None => user_menu_stable_shell().into_any(),
             }}
         </div>
     }
+}
+
+fn user_menu_stable_shell() -> impl IntoView {
+    view! {
+        <div class=USER_MENU_DETAILS aria-hidden="true">
+            <div class=USER_MENU_TRIGGER>
+                <span class=USER_MENU_AVATAR aria-hidden="true">"A"</span>
+                <span class=USER_MENU_META>
+                    <span class=USER_MENU_EMAIL>"Account"</span>
+                    <span class=USER_MENU_HINT>"Account"</span>
+                </span>
+                <span class=USER_MENU_CARET aria-hidden="true"></span>
+            </div>
+        </div>
+    }
+}
+
+fn render_user_menu(session: &SessionView) -> AnyView {
+    let email = session
+        .primary_email
+        .clone()
+        .or_else(|| session.user_id.clone())
+        .unwrap_or_else(|| "Signed in".to_string());
+    let initial = email
+        .chars()
+        .next()
+        .map(|ch| ch.to_ascii_uppercase())
+        .unwrap_or('U');
+    view! {
+        <details class=USER_MENU_DETAILS data-flyout="user-menu">
+            <summary class=USER_MENU_TRIGGER aria-label="Account menu">
+                <span class=USER_MENU_AVATAR aria-hidden="true">{initial.to_string()}</span>
+                <span class=USER_MENU_META>
+                    <span class=USER_MENU_EMAIL>{email.clone()}</span>
+                    <span class=USER_MENU_HINT>"Account"</span>
+                </span>
+                <span class=USER_MENU_CARET aria-hidden="true"></span>
+            </summary>
+            <div class=USER_MENU_PANEL role="menu">
+                <p class=USER_MENU_PANEL_LABEL>"Account"</p>
+                <a
+                    class=USER_MENU_ITEM
+                    href="/account/profile"
+                    role="menuitem"
+                    data-nav="account-profile"
+                >
+                    "Profile"
+                </a>
+                <a
+                    class=USER_MENU_ITEM
+                    href="/account/password"
+                    role="menuitem"
+                    data-nav="account-password"
+                >
+                    "Password"
+                </a>
+                <a
+                    class=USER_MENU_ITEM
+                    href="/account/mfa"
+                    role="menuitem"
+                    data-nav="account-mfa"
+                >
+                    "Authenticator (MFA)"
+                </a>
+                <a
+                    class=USER_MENU_ITEM
+                    href="/account/passkeys"
+                    role="menuitem"
+                    data-nav="account-passkeys"
+                >
+                    "Passkeys"
+                </a>
+                <a
+                    class=USER_MENU_ITEM
+                    href="/account/sessions"
+                    role="menuitem"
+                    data-nav="account-sessions"
+                >
+                    "Sessions"
+                </a>
+                <a
+                    class=USER_MENU_ITEM
+                    href="/account/providers"
+                    role="menuitem"
+                    data-nav="account-providers"
+                >
+                    "Providers"
+                </a>
+                <div class=USER_MENU_DIVIDER aria-hidden="true"></div>
+                <div class=USER_MENU_LOGOUT>
+                    <LogoutButton />
+                </div>
+            </div>
+        </details>
+    }
+    .into_any()
 }
 
 /// Root layout: keep shell chrome mounted across navigations within each mode.
@@ -783,51 +970,129 @@ fn WorkspacePrimaryNav() -> impl IntoView {
     }
 }
 
-/// Shared client cache so settings section links do not flash a loader on every
-/// `/org/{slug}/settings/*` navigation (island remounts, same membership).
+/// Shared client chrome cache: session + org membership.
+///
+/// Used by org switcher, account menu, and settings nav so islands can remount
+/// on soft navigations without re-flashing loaders (ThemeToggle-style stability).
 #[derive(Clone)]
-struct SettingsNavSnapshot {
+struct WorkspaceChromeSnapshot {
     session: SessionView,
     organizations: OrganizationListResponse,
 }
 
+/// Back-compat alias for settings nav rendering.
+type SettingsNavSnapshot = WorkspaceChromeSnapshot;
+
 #[cfg(feature = "hydrate")]
-const SETTINGS_NAV_CACHE_KEY: &str = "workspace-settings-nav-v1";
+const WORKSPACE_CHROME_CACHE_KEY: &str = "workspace-chrome-v1";
 
 #[cfg(feature = "hydrate")]
 thread_local! {
-    static SETTINGS_NAV_MEMORY: std::cell::RefCell<Option<SettingsNavSnapshot>> =
+    static WORKSPACE_CHROME_MEMORY: std::cell::RefCell<Option<WorkspaceChromeSnapshot>> =
         const { std::cell::RefCell::new(None) };
+    /// Coalesce parallel refreshes from multiple remounting islands.
+    static WORKSPACE_CHROME_REFRESHING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 #[cfg(feature = "hydrate")]
-fn read_settings_nav_cache() -> Option<SettingsNavSnapshot> {
-    if let Some(hit) = SETTINGS_NAV_MEMORY.with(|cell| cell.borrow().clone()) {
+fn read_workspace_chrome_cache() -> Option<WorkspaceChromeSnapshot> {
+    if let Some(hit) = WORKSPACE_CHROME_MEMORY.with(|cell| cell.borrow().clone()) {
         return Some(hit);
     }
     let window = window()?;
     let storage = window.session_storage().ok().flatten()?;
-    let raw = storage.get_item(SETTINGS_NAV_CACHE_KEY).ok().flatten()?;
+    let raw = storage.get_item(WORKSPACE_CHROME_CACHE_KEY).ok().flatten()?;
     let (session, organizations): (SessionView, OrganizationListResponse) =
         serde_json::from_str(&raw).ok()?;
-    let snap = SettingsNavSnapshot {
+    let snap = WorkspaceChromeSnapshot {
         session,
         organizations,
     };
-    SETTINGS_NAV_MEMORY.with(|cell| *cell.borrow_mut() = Some(snap.clone()));
+    WORKSPACE_CHROME_MEMORY.with(|cell| *cell.borrow_mut() = Some(snap.clone()));
     Some(snap)
 }
 
 #[cfg(feature = "hydrate")]
-fn write_settings_nav_cache(snap: &SettingsNavSnapshot) {
-    SETTINGS_NAV_MEMORY.with(|cell| *cell.borrow_mut() = Some(snap.clone()));
+fn write_workspace_chrome_cache(snap: &WorkspaceChromeSnapshot) {
+    WORKSPACE_CHROME_MEMORY.with(|cell| *cell.borrow_mut() = Some(snap.clone()));
     if let Some(window) = window() {
         if let Ok(Some(storage)) = window.session_storage() {
             if let Ok(raw) = serde_json::to_string(&(&snap.session, &snap.organizations)) {
-                let _ = storage.set_item(SETTINGS_NAV_CACHE_KEY, &raw);
+                let _ = storage.set_item(WORKSPACE_CHROME_CACHE_KEY, &raw);
             }
         }
     }
+}
+
+#[cfg(feature = "hydrate")]
+fn clear_workspace_chrome_cache() {
+    WORKSPACE_CHROME_MEMORY.with(|cell| *cell.borrow_mut() = None);
+    if let Some(window) = window() {
+        if let Ok(Some(storage)) = window.session_storage() {
+            let _ = storage.remove_item(WORKSPACE_CHROME_CACHE_KEY);
+        }
+    }
+}
+
+/// Fetch session+orgs once and populate the shared chrome cache.
+/// Returns `None` on failure (callers keep prior cache / stable shell).
+///
+/// Parallel island remounts (sidebar org switcher + topbar duplicate + user menu)
+/// share one in-flight refresh so we do not stampede `/api/ui/*`.
+#[cfg(feature = "hydrate")]
+async fn refresh_workspace_chrome_cache() -> Option<WorkspaceChromeSnapshot> {
+    // Wait for an in-flight refresh (poll memory).
+    if WORKSPACE_CHROME_REFRESHING.get() {
+        for _ in 0..100 {
+            chrome_sleep_ms(20).await;
+            if !WORKSPACE_CHROME_REFRESHING.get() {
+                break;
+            }
+        }
+        return read_workspace_chrome_cache();
+    }
+
+    WORKSPACE_CHROME_REFRESHING.set(true);
+    let result = async {
+        let session = get_current_session().await.ok()?;
+        let organizations = list_organizations().await.ok()?;
+        if !session.authenticated {
+            return None;
+        }
+        let snap = WorkspaceChromeSnapshot {
+            session,
+            organizations,
+        };
+        write_workspace_chrome_cache(&snap);
+        Some(snap)
+    }
+    .await;
+    WORKSPACE_CHROME_REFRESHING.set(false);
+    result
+}
+
+#[cfg(feature = "hydrate")]
+async fn chrome_sleep_ms(ms: i32) {
+    use js_sys::Promise;
+    use wasm_bindgen_futures::JsFuture;
+    let promise = Promise::new(&mut |resolve, _reject| {
+        if let Some(window) = web_sys::window() {
+            let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms);
+        } else {
+            let _ = resolve.call0(&JsValue::NULL);
+        }
+    });
+    let _ = JsFuture::from(promise).await;
+}
+
+#[cfg(feature = "hydrate")]
+fn read_settings_nav_cache() -> Option<SettingsNavSnapshot> {
+    read_workspace_chrome_cache()
+}
+
+#[cfg(feature = "hydrate")]
+fn write_settings_nav_cache(snap: &SettingsNavSnapshot) {
+    write_workspace_chrome_cache(snap);
 }
 
 fn settings_nav_skeleton() -> AnyView {
@@ -943,28 +1208,17 @@ pub fn WorkspaceSettingsNavLinks(slug: String) -> impl IntoView {
 
         spawn_local(async move {
             let _ = after_island_hydration().await;
-            if let Some(cached) = read_settings_nav_cache() {
+            if let Some(cached) = read_workspace_chrome_cache() {
                 set_snapshot.set(Some(Ok(cached)));
             }
             mark_active_nav(&current_browser_pathname());
-            let session = get_current_session().await;
-            let orgs = list_organizations().await;
-            match (session, orgs) {
-                (Ok(session), Ok(organizations)) if session.authenticated => {
-                    let snap = SettingsNavSnapshot {
-                        session,
-                        organizations,
-                    };
-                    write_settings_nav_cache(&snap);
-                    set_snapshot.set(Some(Ok(snap)));
-                    mark_active_nav(&current_browser_pathname());
-                }
-                (Err(err), _) | (_, Err(err)) => {
-                    if snapshot.get_untracked().is_none() && read_settings_nav_cache().is_none() {
-                        set_snapshot.set(Some(Err(err)));
-                    }
-                }
-                _ => {}
+            if let Some(fresh) = refresh_workspace_chrome_cache().await {
+                set_snapshot.set(Some(Ok(fresh)));
+                mark_active_nav(&current_browser_pathname());
+            } else if snapshot.get_untracked().is_none()
+                && read_workspace_chrome_cache().is_none()
+            {
+                // Leave optimistic unfiltered catalog (None) rather than skeleton.
             }
         });
     });

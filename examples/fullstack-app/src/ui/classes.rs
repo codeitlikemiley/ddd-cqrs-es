@@ -936,7 +936,7 @@ pub fn org_row_class(is_active: bool) -> &'static str {
 
 /// Root flex shell (not grid — main must grow when rail is display:none).
 pub const WS_SHELL: &str =
-    "group/shell flex min-h-dvh w-full flex-row items-stretch bg-canvas shell-mobile:flex-col";
+    "group/shell flex min-h-dvh w-full flex-row items-stretch bg-canvas shell-mobile:flex-col [view-transition-name:workspace-shell]";
 
 /// Checkbox peer for pure-CSS mobile drawer (no WASM required).
 pub const WS_NAV_TOGGLE: &str =
@@ -997,7 +997,7 @@ pub const WS_NAV_SKELETON_ROW: &str =
     "h-9 w-full animate-pulse rounded-[10px] bg-surface-subtle shell-mini:mx-auto shell-mini:h-9 shell-mini:w-9 shell-mini:rounded-full";
 
 pub const WS_SIDEBAR_FOOT: &str =
-    "relative mt-auto border-t border-border-subtle pt-2.5 shell-mini:relative shell-mini:z-[60] shell-mini:flex shell-mini:w-full shell-mini:justify-center shell-mini:!overflow-visible shell-mobile:block";
+    "relative mt-auto border-t border-border-subtle pt-2.5 shell-mini:relative shell-mini:z-[60] shell-mini:flex shell-mini:w-full shell-mini:justify-center shell-mini:!overflow-visible shell-mobile:block [view-transition-name:workspace-chrome-foot]";
 
 pub const WS_MAIN: &str =
     "flex min-w-0 w-auto flex-[1_1_auto] flex-col shell-hidden:!w-full shell-hidden:!max-w-none shell-hidden:!min-w-0 shell-hidden:!flex-[1_1_100%] shell-mobile:w-full shell-mobile:flex-[1_1_auto]";
@@ -1028,7 +1028,7 @@ pub const WS_TOPBAR_ORG: &str =
     "hidden max-w-[min(240px,42vw)] min-w-0 flex-[0_1_auto] shell-mobile:ml-auto shell-mobile:block";
 
 pub const WS_CONTENT: &str =
-    "mx-auto w-full max-w-[1280px] px-7 pb-20 pt-6 shell-hidden:mx-auto shell-hidden:w-full shell-hidden:max-w-[min(1120px,100%)] shell-mobile:max-w-none shell-mobile:px-4 shell-mobile:pb-14 shell-mobile:pt-5 max-[720px]:px-4 max-[720px]:pb-16 max-[720px]:pt-5";
+    "mx-auto w-full max-w-[1280px] px-7 pb-20 pt-6 shell-hidden:mx-auto shell-hidden:w-full shell-hidden:max-w-[min(1120px,100%)] shell-mobile:max-w-none shell-mobile:px-4 shell-mobile:pb-14 shell-mobile:pt-5 max-[720px]:px-4 max-[720px]:pb-16 max-[720px]:pt-5 [view-transition-name:workspace-content]";
 
 pub const WS_SYSTEM_NAV: &str = "contents";
 pub const WS_HIDDEN_MARKER: &str = "hidden";
@@ -1058,7 +1058,7 @@ pub const ORG_SWITCHER_ITEM_NAME: &str = "text-[13px] font-semibold";
 pub const ORG_SWITCHER_ITEM_META: &str = "font-mono text-[11px] text-secondary";
 pub const ORG_SWITCHER_DIVIDER: &str = "mx-1 my-2 h-px bg-border-subtle";
 pub const ORG_SWITCHER_LINK: &str =
-    "block rounded-lg px-2.5 py-2 text-[13px] text-primary no-underline hover:bg-[var(--bg-muted,#f4f4f5)]";
+    "block rounded-lg px-2.5 py-2 text-[13px] text-primary no-underline hover:bg-[var(--bg-muted,#f4f4f5)] [&.is-active]:bg-[color-mix(in_srgb,var(--accent,#6366f1)_10%,transparent)] [&.is-active]:font-semibold";
 pub const ORG_SWITCHER_FALLBACK: &str = "p-2 text-[13px] text-secondary";
 
 // ── Theme toggle (sidebar foot, below account flyout) ──────────────────────
@@ -1092,7 +1092,7 @@ pub const USER_MENU_PANEL: &str = "absolute bottom-[calc(100%+8px)] left-0 right
 pub const USER_MENU_PANEL_LABEL: &str =
     "m-0 px-2.5 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-tertiary";
 pub const USER_MENU_ITEM: &str =
-    "rounded-lg px-2.5 py-2.5 text-[13px] font-medium text-primary no-underline hover:bg-surface-hover";
+    "rounded-lg px-2.5 py-2.5 text-[13px] font-medium text-primary no-underline hover:bg-surface-hover [&.is-active]:bg-surface-active [&.is-active]:font-semibold";
 pub const USER_MENU_DIVIDER: &str = "mx-1.5 my-1 h-px bg-border-subtle";
 pub const USER_MENU_LOGOUT: &str = "p-0.5";
 pub const USER_MENU_FALLBACK: &str = "block p-2.5 text-[13px] text-secondary no-underline";

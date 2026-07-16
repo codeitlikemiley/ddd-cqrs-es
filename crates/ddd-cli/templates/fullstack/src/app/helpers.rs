@@ -92,6 +92,8 @@ pub(crate) fn mark_active_nav(pathname: &str) {
         return;
     };
 
+    let on_vault = pathname == "/account/vault"
+        || (pathname.starts_with("/org/") && pathname.contains("/vault"));
     let states = [
         ("[data-nav='overview']", pathname == "/dashboard"),
         (
@@ -128,6 +130,26 @@ pub(crate) fn mark_active_nav(pathname: &str) {
             "[data-nav='settings-danger']",
             pathname.ends_with("/settings/danger"),
         ),
+        // Account flyout (client-side focus; islands remount without Router)
+        ("[data-nav='account-profile']", pathname == "/account/profile"),
+        (
+            "[data-nav='account-password']",
+            pathname == "/account/password",
+        ),
+        ("[data-nav='account-mfa']", pathname == "/account/mfa"),
+        (
+            "[data-nav='account-passkeys']",
+            pathname == "/account/passkeys",
+        ),
+        (
+            "[data-nav='account-sessions']",
+            pathname == "/account/sessions",
+        ),
+        (
+            "[data-nav='account-providers']",
+            pathname == "/account/providers",
+        ),
+        ("[data-nav='account-vault']", on_vault),
     ];
 
     // Clear previous actives on all data-nav links, then set matches.

@@ -7,9 +7,23 @@ This project is a Spin fullstack authentication and authorization service with L
 - Runtime: `spin`
 - DB: `postgres`
 - Transport: `both`
-- UI: `leptos`
+- UI: `leptos` islands + **persistent workspace chrome** (soft-nav keeps org/account/theme mounted)
 - Auth: email/password enabled by default
 - OAuth and passkeys: feature-flagged until credentials are configured
+
+### UI chrome (important for contributors)
+
+In-app navigation between dashboard, organizations, account, and settings
+**must not remount** the sidebar foot menus. That behavior is implemented by:
+
+- `HydrationScripts { islands_router: true }` in `src/app/router.rs`
+- `initWorkspaceChromePersist()` in `src/app/mod.rs` (content/nav/title swap only)
+- Stable region ids on the shell (`#workspace-content`, `#workspace-chrome-foot`, …)
+
+Technique guide for reusing this pattern in other Leptos islands apps:
+
+- [Persistent chrome on Leptos islands](../../docs/tutorial/leptos-islands-persistent-chrome.md)
+- Product notes: [DESIGN.md § Workspace chrome persistence](./DESIGN.md)
 
 ## Quick start
 

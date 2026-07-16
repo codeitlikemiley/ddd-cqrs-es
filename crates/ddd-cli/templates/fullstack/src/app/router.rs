@@ -37,7 +37,15 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                     {r#"(function(){try{var m=localStorage.getItem("workspace-sidebar-mode");if(m==="mini"||m==="hidden"||m==="full"){document.documentElement.setAttribute("data-sidebar-pref",m);}var t=localStorage.getItem("app-theme");if(t==="light"||t==="dark"||t==="system"){document.documentElement.setAttribute("data-theme",t);}else{document.documentElement.setAttribute("data-theme","system");}}catch(e){try{document.documentElement.setAttribute("data-theme","system");}catch(_){}}})();"#}
                 </script>
                 <AutoReload options=options.clone() />
-                <HydrationScripts options=options.clone() islands=true root="" />
+                // islands_router: soft-nav diffs HTML and *preserves* already-hydrated
+                // <leptos-island> nodes (sidebar org/account/theme) instead of full reload.
+                // Requires leptos_wasi `islands-router` (Islands-Router request header).
+                <HydrationScripts
+                    options=options.clone()
+                    islands=true
+                    islands_router=true
+                    root=""
+                />
                 <MetaTags />
             </head>
             <body>

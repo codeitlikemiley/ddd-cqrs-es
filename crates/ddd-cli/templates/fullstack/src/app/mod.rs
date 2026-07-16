@@ -75,9 +75,230 @@ export function afterIslandHydration() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function isWorkspaceChromePath(pathname) {
+  const path = (pathname || "/").replace(/\/+$/, "") || "/";
+  if (path.startsWith("/onboarding")) {
+    return false;
+  }
+  return (
+    path === "/dashboard" ||
+    path.startsWith("/dashboard/") ||
+    path.startsWith("/account") ||
+    path.startsWith("/organizations") ||
+    path.startsWith("/org/") ||
+    path.startsWith("/admin") ||
+    path.startsWith("/invitations") ||
+    path.startsWith("/auth/callback")
+  );
+}
+
+function markWorkspaceNavActive() {
+  window.dispatchEvent(new CustomEvent("workspace-nav-mark"));
+}
+
+/**
+ * Option B: persistent workspace chrome.
+ * Soft-nav swaps only content + primary nav + topbar title.
+ * Sidebar foot islands (org switcher / account / theme) stay mounted.
+ */
+export function initWorkspaceChromePersist() {
+  if (window.__workspaceChromePersistBound) {
+    return;
+  }
+  window.__workspaceChromePersistBound = true;
+
+  let navToken = 0;
+
+  function hydrateNewIslands(root) {
+    if (typeof window.__hydrateIsland !== "function") {
+      return;
+    }
+    const scope = root || document;
+    const islands = scope.querySelectorAll
+      ? scope.querySelectorAll("leptos-island")
+      : [];
+    islands.forEach((island) => {
+      if (island.$$hydrated) {
+        return;
+      }
+      try {
+        window.__hydrateIsland(island, island.dataset.component);
+        island.$$hydrated = true;
+      } catch (err) {
+        console.error("chrome-persist hydrate failed", err);
+      }
+    });
+  }
+
+  function swapRegionById(doc, id) {
+    const next = doc.getElementById(id);
+    const current = document.getElementById(id);
+    if (!next || !current || !current.parentNode) {
+      return false;
+    }
+    const imported = document.importNode(next, true);
+    current.replaceWith(imported);
+    return true;
+  }
+
+  async function softNavigate(url, options) {
+    const replace = options && options.replace;
+    const token = ++navToken;
+    const req = new Request(url, {
+      headers: {
+        Accept: "text/html",
+        "Islands-Router": "true",
+      },
+      credentials: "same-origin",
+    });
+
+    let resp;
+    try {
+      resp = await fetch(req);
+    } catch (err) {
+      window.location.href = url;
+      return;
+    }
+
+    if (token !== navToken) {
+      return;
+    }
+
+    if (!resp.ok) {
+      window.location.href = url;
+      return;
+    }
+
+    const html = await resp.text();
+    if (token !== navToken) {
+      return;
+    }
+
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    if (!doc.getElementById("workspace-shell") || !document.getElementById("workspace-shell")) {
+      // Left the workspace chrome tree (login, etc.) — full navigation.
+      window.location.href = resp.redirected ? resp.url : url;
+      return;
+    }
+
+    const apply = () => {
+      // Never touch chrome-foot / theme / account / org switcher islands.
+      swapRegionById(doc, "workspace-content");
+      swapRegionById(doc, "workspace-primary-nav");
+      swapRegionById(doc, "workspace-topbar-title");
+      hydrateNewIslands(document.getElementById("workspace-content"));
+      hydrateNewIslands(document.getElementById("workspace-primary-nav"));
+      const titleEl = doc.querySelector("title");
+      if (titleEl && titleEl.textContent) {
+        document.title = titleEl.textContent;
+      }
+    };
+
+    try {
+      if (document.startViewTransition) {
+        await document.startViewTransition(apply).finished.catch(() => {});
+      } else {
+        apply();
+      }
+    } catch (err) {
+      console.error("chrome-persist soft nav failed", err);
+      window.location.href = url;
+      return;
+    }
+
+    const finalUrl = resp.redirected ? resp.url : url;
+    if (replace) {
+      window.history.replaceState(undefined, "", finalUrl);
+    } else {
+      window.history.pushState(undefined, "", finalUrl);
+    }
+    markWorkspaceNavActive();
+  }
+
+  document.addEventListener(
+    "click",
+    function (event) {
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.shiftKey
+      ) {
+        return;
+      }
+
+      const anchor = event
+        .composedPath()
+        .find((el) => el instanceof Node && el.nodeName === "A");
+      if (!anchor || !(anchor instanceof HTMLAnchorElement)) {
+        return;
+      }
+      if (anchor.target || anchor.hasAttribute("download")) {
+        return;
+      }
+      const rel = (anchor.getAttribute("rel") || "").split(/\s+/);
+      if (rel.includes("external")) {
+        return;
+      }
+
+      let url;
+      try {
+        url = new URL(anchor.href, document.baseURI);
+      } catch (_) {
+        return;
+      }
+      if (url.origin !== window.location.origin) {
+        return;
+      }
+      // Same-document hash only.
+      if (
+        url.pathname === window.location.pathname &&
+        url.search === window.location.search
+      ) {
+        return;
+      }
+
+      // Only intercept when both ends use workspace chrome.
+      if (
+        !isWorkspaceChromePath(window.location.pathname) ||
+        !isWorkspaceChromePath(url.pathname)
+      ) {
+        return;
+      }
+      if (!document.getElementById("workspace-shell")) {
+        return;
+      }
+
+      // Own the navigation so islands-router does not re-diff the whole tree
+      // (which still remounts chrome when branch markers diverge).
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      softNavigate(url.href, { replace: false });
+    },
+    true
+  );
+
+  window.addEventListener(
+    "popstate",
+    function (event) {
+      if (!isWorkspaceChromePath(window.location.pathname)) {
+        return;
+      }
+      if (!document.getElementById("workspace-shell")) {
+        return;
+      }
+      event.stopImmediatePropagation();
+      softNavigate(window.location.href, { replace: true });
+    },
+    true
+  );
+}
+
 export function bindWorkspaceNavActive() {
   function mark() {
-    window.dispatchEvent(new CustomEvent("workspace-nav-mark"));
+    markWorkspaceNavActive();
   }
   if (window.__workspaceNavActiveBound) {
     mark();
@@ -575,6 +796,9 @@ extern "C" {
 
     #[wasm_bindgen(js_name = initWorkspaceSidebar)]
     pub(crate) fn init_workspace_sidebar();
+
+    #[wasm_bindgen(js_name = initWorkspaceChromePersist)]
+    pub(crate) fn init_workspace_chrome_persist();
 
     #[wasm_bindgen(js_name = bindWorkspaceNavActive)]
     pub(crate) fn bind_workspace_nav_active();
