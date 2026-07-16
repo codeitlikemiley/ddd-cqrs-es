@@ -109,6 +109,8 @@
   --color-code: var(--code-bg);
   --color-overlay-scrim: var(--overlay-scrim);
   --color-overlay-scrim-strong: var(--overlay-scrim-strong);
+  /* Optional utility shade (Porzio hack); prefer semantic bg-canvas in product UI */
+  --color-zinc-25: oklch(99.2% 0 0);
   --shadow-soft: var(--shadow-soft);
   --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -120,17 +122,27 @@
  * Based on the ChatGPT-Inspired Neutral DESIGN.md brief: a content-first
  * surface. Tokens stay semantic so a user-selected accent can land later
  * without rewriting every component.
+ *
+ * Light elevation (zinc-25 pattern — Porzio / ChatGPT):
+ *   canvas  ≈ zinc-25  — airy page field (not pure white, not zinc-50 dingy)
+ *   sidebar ≈ zinc-50  — subtle chrome frame next to the field
+ *   surface / elevated = pure white — cards, inputs, modals float on canvas
+ *   surface-subtle     — inset wells only (not full-bleed backgrounds)
+ * Never paint large regions pure white or zinc-50; keep one pure-white layer.
  */
 
 :root,
 html[data-theme="light"] {
   color-scheme: light;
-  --bg-canvas: #ffffff;
-  --bg-sidebar: #f9f9f9;
+  /* Page field — “feels white” but pure-white cards still pop */
+  --bg-canvas: oklch(99.2% 0 0);
+  /* Shell rail — half-step greyer frame (≈ zinc-50), not dingy */
+  --bg-sidebar: oklch(98.5% 0 0);
+  /* Elevated UI — pure white over the airy canvas */
   --bg-surface: #ffffff;
-  --bg-surface-subtle: #f4f4f4;
-  --bg-surface-hover: #ececec;
-  --bg-surface-active: #e7e7e7;
+  --bg-surface-subtle: oklch(97.5% 0 0);
+  --bg-surface-hover: oklch(96% 0 0);
+  --bg-surface-active: oklch(94.5% 0 0);
   --bg-elevated: #ffffff;
   --bg-inverse: #0d0d0d;
   --text-primary: #0d0d0d;
@@ -138,18 +150,19 @@ html[data-theme="light"] {
   --text-tertiary: #8f8f8f;
   --text-disabled: #b4b4b4;
   --text-inverse: #ffffff;
-  --border-subtle: #e5e5e5;
-  --border-strong: #cdcdcd;
+  /* Soft edges so white cards read cleanly on canvas-25 */
+  --border-subtle: oklch(92% 0 0);
+  --border-strong: oklch(86% 0 0);
   --focus-ring: #737373;
   --accent: #0d0d0d;
   --accent-contrast: #ffffff;
-  --accent-subtle: #f4f4f4;
+  --accent-subtle: oklch(97.5% 0 0);
   --danger: #d00e17;
   --warning: #a05a00;
   --success: #0f7b58;
-  --code-bg: #f7f7f8;
-  --shadow: rgba(0, 0, 0, 0.1);
-  --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.1);
+  --code-bg: oklch(98% 0 0);
+  --shadow: rgba(0, 0, 0, 0.08);
+  --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.08);
   /*
    * Modal / drawer scrim — always near-black, never --bg-inverse.
    * Using inverse in dark mode made a milky white fog over the UI.
