@@ -26,9 +26,86 @@ use web_sys::window;
 use crate::app::{bind_user_menu_dismiss, bind_workspace_nav_active, init_workspace_sidebar};
 use crate::ui::classes::{
     BANNER_ERROR, BTN_PRIMARY, FIELD, INPUT, MONO_VALUE, MUTED, ONBOARDING_CARD, ONBOARDING_FORM,
-    ONBOARDING_LEDE, ONBOARDING_PAGE, ONBOARDING_TITLE, SECTION_LABEL, SLUG_INPUT_FIELD,
-    SLUG_INPUT_GROUP, SLUG_INPUT_PREFIX, with_extra,
+    ONBOARDING_LEDE, ONBOARDING_PAGE, ONBOARDING_TITLE, ORG_SWITCHER, ORG_SWITCHER_AVATAR,
+    ORG_SWITCHER_CARET, ORG_SWITCHER_DETAILS, ORG_SWITCHER_DIVIDER, ORG_SWITCHER_FALLBACK,
+    ORG_SWITCHER_HINT, ORG_SWITCHER_ITEM, ORG_SWITCHER_ITEM_META, ORG_SWITCHER_ITEM_NAME,
+    ORG_SWITCHER_LABEL, ORG_SWITCHER_LINK, ORG_SWITCHER_LIST, ORG_SWITCHER_META,
+    ORG_SWITCHER_PANEL, ORG_SWITCHER_PANEL_LABEL, ORG_SWITCHER_TRIGGER, PAGE_BRAND,
+    PAGE_BRAND_LINK, PAGE_BRAND_MARK, SECTION_LABEL, SLUG_INPUT_FIELD, SLUG_INPUT_GROUP,
+    SLUG_INPUT_PREFIX, USER_MENU, USER_MENU_AVATAR, USER_MENU_CARET, USER_MENU_DETAILS,
+    USER_MENU_DIVIDER, USER_MENU_EMAIL, USER_MENU_FALLBACK, USER_MENU_HINT, USER_MENU_ITEM,
+    USER_MENU_LOGOUT, USER_MENU_META, USER_MENU_PANEL, USER_MENU_PANEL_LABEL, USER_MENU_TRIGGER,
+    WS_BRAND, WS_BRAND_COPY, WS_BRAND_MARK, WS_CONTENT, WS_HIDDEN_MARKER, WS_MAIN, WS_MENU_BAR,
+    WS_MENU_BARS, WS_MENU_BUTTON_DESKTOP, WS_MENU_BUTTON_MOBILE, WS_NAV, WS_NAV_BACKDROP,
+    WS_NAV_ICON, WS_NAV_LABEL, WS_NAV_LABEL_SECONDARY, WS_NAV_LINK, WS_NAV_TEXT, WS_NAV_TOGGLE,
+    WS_RAIL_ICON, WS_RAIL_ICON_BAR, WS_RAIL_TOGGLE, WS_SHELL, WS_SIDEBAR, WS_SIDEBAR_CLOSE,
+    WS_SIDEBAR_FOOT, WS_SIDEBAR_TOP, WS_SYSTEM_NAV, WS_TOPBAR, WS_TOPBAR_BRAND, WS_TOPBAR_ORG,
+    WS_TOPBAR_PAGE, WS_TOPBAR_TITLE, with_extra,
 };
+
+/// Inline stroke icon for workspace nav (replaces CSS mask icons).
+fn nav_icon(kind: &'static str) -> impl IntoView {
+    let path = match kind {
+        "overview" => {
+            view! {
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M3 10.5 12 3l9 7.5"></path>
+                    <path d="M5 10v10h14V10"></path>
+                </svg>
+            }
+            .into_any()
+        }
+        "organizations" => {
+            view! {
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M3 21h18"></path>
+                    <path d="M5 21V7l7-4 7 4v14"></path>
+                    <path d="M9 21v-6h6v6"></path>
+                </svg>
+            }
+            .into_any()
+        }
+        "system" => {
+            view! {
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M12 2v4"></path>
+                    <path d="M12 18v4"></path>
+                    <path d="m4.9 4.9 2.8 2.8"></path>
+                    <path d="m16.3 16.3 2.8 2.8"></path>
+                    <path d="M2 12h4"></path>
+                    <path d="M18 12h4"></path>
+                    <path d="m4.9 19.1 2.8-2.8"></path>
+                    <path d="m16.3 7.7 2.8-2.8"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+            }
+            .into_any()
+        }
+        _ => {
+            view! {
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+            }
+            .into_any()
+        }
+    };
+    view! {
+        <span class=WS_NAV_ICON aria-hidden="true" data-icon=kind>
+            {path}
+        </span>
+    }
+}
+
+fn menu_bars() -> impl IntoView {
+    view! {
+        <span class=WS_MENU_BARS aria-hidden="true">
+            <span class=WS_MENU_BAR></span>
+            <span class=WS_MENU_BAR></span>
+            <span class=WS_MENU_BAR></span>
+        </span>
+    }
+}
 
 /// Persistent workspace chrome. Children render in the main content outlet.
 #[component]
@@ -39,107 +116,101 @@ pub fn WorkspaceShell(children: Children) -> impl IntoView {
 
     view! {
         <WorkspaceOnboardingGate />
-        <div class="workspace-shell" id="workspace-shell" data-testid="workspace-shell" data-sidebar="full">
-            <script>
+        <div class=WS_SHELL id="workspace-shell" data-testid="workspace-shell" data-sidebar="full">
+            <script class="hidden">
                 {r#"(function(){try{var s=document.getElementById("workspace-shell");if(!s)return;var m=localStorage.getItem("workspace-sidebar-mode");if(m==="mini"||m==="hidden"||m==="full"){s.setAttribute("data-sidebar",m);}}catch(e){}})();"#}
             </script>
             <input
                 type="checkbox"
                 id="workspace-nav-toggle"
-                class="workspace-nav-toggle"
+                class=WS_NAV_TOGGLE
                 aria-controls="workspace-sidebar"
             />
             <label
-                class="workspace-nav-backdrop"
+                class=WS_NAV_BACKDROP
                 for="workspace-nav-toggle"
                 aria-label="Close navigation"
             ></label>
-            <aside class="workspace-sidebar" id="workspace-sidebar" aria-label="Workspace">
-                <div class="workspace-sidebar-top">
-                    <a class="workspace-brand" href="/dashboard" aria-label="Workspace home">
-                        <span class="workspace-brand-mark" aria-hidden="true">"d"</span>
-                        <span class="workspace-brand-copy">
+            <aside class=WS_SIDEBAR id="workspace-sidebar" aria-label="Workspace">
+                <div class=WS_SIDEBAR_TOP>
+                    <a class=WS_BRAND href="/dashboard" aria-label="Workspace home">
+                        <span class=WS_BRAND_MARK aria-hidden="true">"d"</span>
+                        <span class=WS_BRAND_COPY>
                             <strong>"wasi-auth"</strong>
                             <small>"workspace"</small>
                         </span>
                     </a>
                     <button
                         type="button"
-                        class="workspace-sidebar-rail-toggle"
+                        class=WS_RAIL_TOGGLE
                         data-sidebar-action="toggle-mini"
                         aria-label="Toggle mini sidebar"
                         title="Toggle mini sidebar"
                     >
-                        <span class="workspace-sidebar-rail-icon" aria-hidden="true"></span>
+                        <span class=WS_RAIL_ICON aria-hidden="true">
+                            <span class=WS_RAIL_ICON_BAR></span>
+                        </span>
                     </button>
                     <label
-                        class="workspace-sidebar-close"
+                        class=WS_SIDEBAR_CLOSE
                         for="workspace-nav-toggle"
                         aria-label="Close navigation"
                     >
                         "Close"
                     </label>
                 </div>
-                <nav class="workspace-nav" aria-label="Authenticated workspace">
-                    <a class="workspace-nav-link" href="/dashboard" data-nav="overview" title="Overview">
-                        <span class="workspace-nav-icon" aria-hidden="true" data-icon="overview"></span>
-                        <span class="workspace-nav-text">"Overview"</span>
+                <nav class=WS_NAV aria-label="Authenticated workspace">
+                    <a class=WS_NAV_LINK href="/dashboard" data-nav="overview" title="Overview">
+                        {nav_icon("overview")}
+                        <span class=WS_NAV_TEXT>"Overview"</span>
                     </a>
-                    <a class="workspace-nav-link" href="/organizations" data-nav="organizations" title="Organizations">
-                        <span class="workspace-nav-icon" aria-hidden="true" data-icon="organizations"></span>
-                        <span class="workspace-nav-text">"Organizations"</span>
+                    <a class=WS_NAV_LINK href="/organizations" data-nav="organizations" title="Organizations">
+                        {nav_icon("organizations")}
+                        <span class=WS_NAV_TEXT>"Organizations"</span>
                     </a>
                     <WorkspaceSystemNav />
                 </nav>
-                <div class="workspace-sidebar-foot">
+                <div class=WS_SIDEBAR_FOOT>
                     <WorkspaceOrgSwitcher />
                     <WorkspaceUserMenu />
                 </div>
             </aside>
-            <div class="workspace-main">
-                <header class="workspace-topbar">
+            <div class=WS_MAIN>
+                <header class=WS_TOPBAR>
                     <label
-                        class="workspace-menu-button workspace-menu-button-mobile"
+                        class=WS_MENU_BUTTON_MOBILE
                         for="workspace-nav-toggle"
                         aria-label="Open navigation"
                         aria-controls="workspace-sidebar"
                     >
-                        <span class="workspace-menu-button-bars" aria-hidden="true">
-                            <span></span>
-                            <span></span>
-                            <span></span>
-                        </span>
+                        {menu_bars()}
                     </label>
-                    <a class="workspace-topbar-brand" href="/dashboard" aria-label="Workspace home">
-                        <span class="workspace-brand-mark" aria-hidden="true">"d"</span>
-                        <span class="workspace-brand-copy">
+                    <a class=WS_TOPBAR_BRAND href="/dashboard" aria-label="Workspace home">
+                        <span class=WS_BRAND_MARK aria-hidden="true">"d"</span>
+                        <span class=WS_BRAND_COPY>
                             <strong>"wasi-auth"</strong>
                             <small>"workspace"</small>
                         </span>
                     </a>
-                    <div class="workspace-topbar-title">
-                        <span class="workspace-topbar-page">{move || topbar_title.get()}</span>
+                    <div class=WS_TOPBAR_TITLE>
+                        <span class=WS_TOPBAR_PAGE>{move || topbar_title.get()}</span>
                     </div>
-                    <div class="workspace-topbar-org">
+                    <div class=WS_TOPBAR_ORG data-org-placement="top">
                         <WorkspaceOrgSwitcher />
                     </div>
                     <button
                         type="button"
-                        class="workspace-menu-button workspace-menu-button-desktop"
+                        class=WS_MENU_BUTTON_DESKTOP
                         data-sidebar-action="toggle-visibility"
                         aria-label="Show sidebar"
                         title="Show sidebar (⌘B)"
                     >
-                        <span class="workspace-menu-button-bars" aria-hidden="true">
-                            <span></span>
-                            <span></span>
-                            <span></span>
-                        </span>
+                        {menu_bars()}
                     </button>
                     <WorkspaceSidebarControls />
                     <WorkspaceNavActive />
                 </header>
-                <div class="workspace-content">
+                <div class=WS_CONTENT>
                     {children()}
                 </div>
             </div>
@@ -175,12 +246,12 @@ pub fn WorkspaceOnboardingGate() -> impl IntoView {
 
 #[component]
 pub fn WorkspaceOnboardingPage() -> impl IntoView {
-    // Minimal chrome — Linear-style focused create. Residual `.page` / `.page-brand*` shell CSS.
+    // Minimal chrome — Linear-style focused create.
     view! {
         <div class=format!("page {ONBOARDING_PAGE}")>
-            <header class="page-brand">
-                <a class="page-brand-link" href="/" aria-label="wasi-auth home">
-                    <span class="page-brand-mark" aria-hidden="true">"d"</span>
+            <header class=PAGE_BRAND>
+                <a class=PAGE_BRAND_LINK href="/" aria-label="wasi-auth home">
+                    <span class=PAGE_BRAND_MARK aria-hidden="true">"d"</span>
                     <span>
                         <strong>"wasi-auth"</strong>
                         <small>"Create your workspace"</small>
@@ -337,7 +408,7 @@ pub fn WorkspaceNavActive() -> impl IntoView {
             }
         }
     });
-    view! { <span class="workspace-nav-active-marker" aria-hidden="true"></span> }
+    view! { <span class=WS_HIDDEN_MARKER aria-hidden="true"></span> }
 }
 
 /// Desktop sidebar modes: full ↔ mini (rail toggle) and show ↔ hide (⌘/Ctrl+B).
@@ -349,7 +420,7 @@ pub fn WorkspaceSidebarControls() -> impl IntoView {
             init_workspace_sidebar();
         }
     });
-    view! { <span class="workspace-sidebar-controls" aria-hidden="true"></span> }
+    view! { <span class=WS_HIDDEN_MARKER aria-hidden="true"></span> }
 }
 
 /// Top-bar / sidebar workspace switcher: select org, jump to vault, create workspace.
@@ -380,7 +451,7 @@ pub fn WorkspaceOrgSwitcher() -> impl IntoView {
     });
 
     view! {
-        <div class="org-switcher">
+        <div class=ORG_SWITCHER>
             {move || {
                 let session = session.get();
                 let orgs = orgs.get();
@@ -417,18 +488,18 @@ pub fn WorkspaceOrgSwitcher() -> impl IntoView {
                         let orgs_for_list = list.organizations.clone();
 
                         view! {
-                            <details class="org-switcher-details">
-                                <summary class="org-switcher-trigger" aria-label="Switch workspace">
-                                    <span class="org-switcher-avatar" aria-hidden="true">{monogram}</span>
-                                    <span class="org-switcher-meta">
-                                        <span class="org-switcher-label">{label}</span>
-                                        <span class="org-switcher-hint">"Workspace"</span>
+                            <details class=ORG_SWITCHER_DETAILS>
+                                <summary class=ORG_SWITCHER_TRIGGER aria-label="Switch workspace">
+                                    <span class=ORG_SWITCHER_AVATAR aria-hidden="true">{monogram}</span>
+                                    <span class=ORG_SWITCHER_META>
+                                        <span class=ORG_SWITCHER_LABEL>{label}</span>
+                                        <span class=ORG_SWITCHER_HINT>"Workspace"</span>
                                     </span>
-                                    <span class="org-switcher-caret" aria-hidden="true"></span>
+                                    <span class=ORG_SWITCHER_CARET aria-hidden="true"></span>
                                 </summary>
-                                <div class="org-switcher-panel" role="menu">
-                                    <p class="org-switcher-panel-label">"Workspaces"</p>
-                                    <ul class="org-switcher-list">
+                                <div class=ORG_SWITCHER_PANEL role="menu">
+                                    <p class=ORG_SWITCHER_PANEL_LABEL>"Workspaces"</p>
+                                    <ul class=ORG_SWITCHER_LIST>
                                         {orgs_for_list.into_iter().map(|org| {
                                             let id = org.organization_id.clone();
                                             let id_select = id.clone();
@@ -443,7 +514,7 @@ pub fn WorkspaceOrgSwitcher() -> impl IntoView {
                                                 <li>
                                                     <button
                                                         type="button"
-                                                        class="org-switcher-item"
+                                                        class=ORG_SWITCHER_ITEM
                                                         class:is-active=is_active
                                                         role="menuitem"
                                                         disabled=move || select_pending.get() || is_active
@@ -454,8 +525,8 @@ pub fn WorkspaceOrgSwitcher() -> impl IntoView {
                                                             });
                                                         }
                                                     >
-                                                        <span class="org-switcher-item-name">{name}</span>
-                                                        <span class="org-switcher-item-meta">
+                                                        <span class=ORG_SWITCHER_ITEM_NAME>{name}</span>
+                                                        <span class=ORG_SWITCHER_ITEM_META>
                                                             {if is_active { "Active".into() } else { slug_line }}
                                                         </span>
                                                     </button>
@@ -463,18 +534,18 @@ pub fn WorkspaceOrgSwitcher() -> impl IntoView {
                                             }
                                         }).collect_view()}
                                     </ul>
-                                    <div class="org-switcher-divider" aria-hidden="true"></div>
-                                    <a class="org-switcher-link" href="/organizations" role="menuitem">"Manage workspaces"</a>
-                                    <a class="org-switcher-link" href=vault_href role="menuitem">"Secret vault"</a>
+                                    <div class=ORG_SWITCHER_DIVIDER aria-hidden="true"></div>
+                                    <a class=ORG_SWITCHER_LINK href="/organizations" role="menuitem">"Manage workspaces"</a>
+                                    <a class=ORG_SWITCHER_LINK href=vault_href role="menuitem">"Secret vault"</a>
                                 </div>
                             </details>
                         }.into_any()
                     }
                     (Some(Ok(_)), _) | (None, _) => view! {
-                        <span class="org-switcher-fallback">"…"</span>
+                        <span class=ORG_SWITCHER_FALLBACK>"…"</span>
                     }.into_any(),
                     _ => view! {
-                        <a class="org-switcher-fallback-link" href="/organizations">"Workspaces"</a>
+                        <a class=ORG_SWITCHER_FALLBACK href="/organizations">"Workspaces"</a>
                     }.into_any(),
                 }
             }}
@@ -485,16 +556,17 @@ pub fn WorkspaceOrgSwitcher() -> impl IntoView {
 #[island(lazy)]
 pub fn WorkspaceSystemNav() -> impl IntoView {
     let session = browser_load(get_current_session);
+    let label_class = with_extra(WS_NAV_LABEL, Some(WS_NAV_LABEL_SECONDARY));
 
     view! {
-        <div class="workspace-system-nav">
+        <div class=WS_SYSTEM_NAV>
             {move || match session.get() {
                 Some(Ok(session)) if session.authenticated && can_view_system_navigation(&session) => {
                     view! {
-                        <p class="workspace-nav-label workspace-nav-label-secondary">"System"</p>
-                        <a class="workspace-nav-link" href="/admin/health" data-nav="system" title="Health">
-                            <span class="workspace-nav-icon" aria-hidden="true" data-icon="system"></span>
-                            <span class="workspace-nav-text">"Health"</span>
+                        <p class=label_class.clone()>"System"</p>
+                        <a class=WS_NAV_LINK href="/admin/health" data-nav="system" title="Health">
+                            {nav_icon("system")}
+                            <span class=WS_NAV_TEXT>"Health"</span>
                         </a>
                     }.into_any()
                 }
@@ -518,7 +590,7 @@ pub fn WorkspaceUserMenu() -> impl IntoView {
     });
 
     view! {
-        <div class="user-menu">
+        <div class=USER_MENU>
             {move || match session.get() {
                 Some(Ok(session)) if session.authenticated => {
                     let email = session
@@ -532,25 +604,25 @@ pub fn WorkspaceUserMenu() -> impl IntoView {
                         .map(|ch| ch.to_ascii_uppercase())
                         .unwrap_or('U');
                     view! {
-                        <details class="user-menu-details">
-                            <summary class="user-menu-trigger" aria-label="Account menu">
-                                <span class="user-menu-avatar" aria-hidden="true">{initial.to_string()}</span>
-                                <span class="user-menu-meta">
-                                    <span class="user-menu-email">{email.clone()}</span>
-                                    <span class="user-menu-hint">"Account"</span>
+                        <details class=USER_MENU_DETAILS>
+                            <summary class=USER_MENU_TRIGGER aria-label="Account menu">
+                                <span class=USER_MENU_AVATAR aria-hidden="true">{initial.to_string()}</span>
+                                <span class=USER_MENU_META>
+                                    <span class=USER_MENU_EMAIL>{email.clone()}</span>
+                                    <span class=USER_MENU_HINT>"Account"</span>
                                 </span>
-                                <span class="user-menu-caret" aria-hidden="true"></span>
+                                <span class=USER_MENU_CARET aria-hidden="true"></span>
                             </summary>
-                            <div class="user-menu-panel" role="menu">
-                                <p class="user-menu-panel-label">"Account"</p>
-                                <a class="user-menu-item" href="/account/profile" role="menuitem">"Profile"</a>
-                                <a class="user-menu-item" href="/account/password" role="menuitem">"Password"</a>
-                                <a class="user-menu-item" href="/account/mfa" role="menuitem">"Authenticator (MFA)"</a>
-                                <a class="user-menu-item" href="/account/passkeys" role="menuitem">"Passkeys"</a>
-                                <a class="user-menu-item" href="/account/sessions" role="menuitem">"Sessions"</a>
-                                <a class="user-menu-item" href="/account/providers" role="menuitem">"Providers"</a>
-                                <div class="user-menu-divider" aria-hidden="true"></div>
-                                <div class="user-menu-logout">
+                            <div class=USER_MENU_PANEL role="menu">
+                                <p class=USER_MENU_PANEL_LABEL>"Account"</p>
+                                <a class=USER_MENU_ITEM href="/account/profile" role="menuitem">"Profile"</a>
+                                <a class=USER_MENU_ITEM href="/account/password" role="menuitem">"Password"</a>
+                                <a class=USER_MENU_ITEM href="/account/mfa" role="menuitem">"Authenticator (MFA)"</a>
+                                <a class=USER_MENU_ITEM href="/account/passkeys" role="menuitem">"Passkeys"</a>
+                                <a class=USER_MENU_ITEM href="/account/sessions" role="menuitem">"Sessions"</a>
+                                <a class=USER_MENU_ITEM href="/account/providers" role="menuitem">"Providers"</a>
+                                <div class=USER_MENU_DIVIDER aria-hidden="true"></div>
+                                <div class=USER_MENU_LOGOUT>
                                     <LogoutButton />
                                 </div>
                             </div>
@@ -558,13 +630,13 @@ pub fn WorkspaceUserMenu() -> impl IntoView {
                     }.into_any()
                 }
                 Some(Ok(_)) => view! {
-                    <a class="user-menu-signin" href="/login">"Sign in"</a>
+                    <a class=USER_MENU_FALLBACK href="/login">"Sign in"</a>
                 }.into_any(),
                 Some(Err(_)) => view! {
-                    <span class="user-menu-fallback">"Session unavailable"</span>
+                    <span class=USER_MENU_FALLBACK>"Session unavailable"</span>
                 }.into_any(),
                 None => view! {
-                    <span class="user-menu-fallback">"Loading…"</span>
+                    <span class=USER_MENU_FALLBACK>"Loading…"</span>
                 }.into_any(),
             }}
         </div>

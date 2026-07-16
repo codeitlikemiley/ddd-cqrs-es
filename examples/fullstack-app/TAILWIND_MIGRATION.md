@@ -26,7 +26,7 @@
 | 3.7–3.8 | Dashboard board + resources shared primitives | **done** (board/resources CSS deleted; scroll-lock class + `board-pulse` keyframes remain) |
 | 3.9 | Workspace settings shared primitives | **done** (domain pages pure Tailwind; shell chrome residual until Phase 4/5) |
 | 3.10–3.11 | Admin + onboarding | **done** (admin forms/KV/inline-field + onboarding/slug-input utilities; domain CSS deleted) |
-| 4 | Workspace shell (sidebar modes, drawer, flyouts) | pending |
+| 4 | Workspace shell (sidebar modes, drawer, flyouts) | **done** |
 | 5 | Closeout: delete residual CSS, update smokes, dual-sync, docs | pending |
 
 ## Progress notes
@@ -37,7 +37,8 @@
 - 2026-07-16: Dashboard board + resources pure Tailwind — `dashboard/board/*` + `resources.rs` → `BOARD_*` / shared constants; deleted board page/tile/rq CSS. Kept `.board-modal*` / `.board-muted` + `@keyframes board-pulse` for org-create residual + live-dot animation (settings later moved to `VAULT_MODAL_*`).
 - 2026-07-16: Workspace settings domain pure Tailwind — `workspace_settings/{general,members,invitations,roles,audit,danger,shared}` → `WS_*` / vault modal constants; mobile card tables + danger full-width via utilities; deleted domain settings CSS + filter-combobox residual. Kept settings shell chrome (sidebar/nav/topbar/content) + org `board-modal*`.
 - 2026-07-16: Organizations + admin + onboarding pure Tailwind — `organizations/**`, `admin/**`, onboarding panel/page, slug-input → `ORG_*` / `ONBOARDING_*` / `SLUG_INPUT_*` / shared `KV_LIST`/`INLINE_FIELD`/`TEXTAREA`; create modal off residual `board-modal*`; deleted orgs/admin/onboarding/dash/board-modal (except `html.board-modal-open` scroll lock + `@keyframes board-pulse`). Workspace shell residual remains for Phase 4.
-- Next: workspace shell chrome, then residual closeout.
+- 2026-07-16: Workspace shell pure Tailwind — `workspace/mod.rs` + org switcher + user menu → `WS_*` / `ORG_SWITCHER_*` / `USER_MENU_*` utilities; `@custom-variant shell-mini|shell-hidden|shell-animated` (desktop ≥961px + FOUC `html[data-sidebar-pref]`); peer/checkbox mobile drawer; inline SVG nav icons (no CSS masks); mini account flyout fixed `left:76px` via utilities; deleted workspace shell / org-switcher / user-menu CSS. Tiny residual: `body:has(#workspace-nav-toggle:checked){overflow:hidden}`. Settings shell chrome residual remains for Phase 5.
+- Next: residual closeout (settings shell, auth/page/home dead CSS, smokes → data-testid).
 
 ## Residual CSS allowlist
 

@@ -10,7 +10,8 @@ use crate::app::helpers::{
 };
 use crate::app::{browser_load, get_workspace_settings_context, list_organizations};
 use crate::ui::classes::{
-    BANNER_ERROR, MONO_VALUE, ORG_KICKER, PANEL, RESULT_LINE, WS_REDIRECT, with_extra,
+    BANNER_ERROR, MONO_VALUE, ORG_KICKER, PANEL, RESULT_LINE, WS_MENU_BAR, WS_MENU_BARS, WS_REDIRECT,
+    with_extra,
 };
 use leptos::prelude::*;
 use leptos_router::components::Outlet;
@@ -75,10 +76,10 @@ pub fn WorkspaceSettingsShell() -> impl IntoView {
                         aria-label="Open settings navigation"
                         aria-controls="workspace-settings-sidebar"
                     >
-                        <span class="workspace-menu-button-bars" aria-hidden="true">
-                            <span></span>
-                            <span></span>
-                            <span></span>
+                        <span class=WS_MENU_BARS aria-hidden="true">
+                            <span class=WS_MENU_BAR></span>
+                            <span class=WS_MENU_BAR></span>
+                            <span class=WS_MENU_BAR></span>
                         </span>
                     </label>
                     <div class="workspace-settings-topbar-title">
