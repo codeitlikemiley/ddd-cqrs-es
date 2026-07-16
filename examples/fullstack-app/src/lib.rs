@@ -4,6 +4,8 @@
 compile_error!("the fullstack server requires the PostgreSQL storage feature");
 
 #[cfg(any(feature = "ssr", feature = "hydrate"))]
+mod access;
+#[cfg(any(feature = "ssr", feature = "hydrate"))]
 mod app;
 #[cfg(any(feature = "ssr", feature = "hydrate"))]
 mod contracts;

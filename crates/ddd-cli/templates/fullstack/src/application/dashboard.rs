@@ -106,22 +106,16 @@ pub async fn get_dashboard_snapshot(auth: RequestAuth) -> AuthStackResult<Dashbo
         vault_org_id.as_deref().unwrap_or_default(),
     )
     .await?;
-    let can_view_resources = organization
-        .permissions
-        .iter()
-        .any(|permission| permission == "resource.view");
-    let can_view_queries = organization
-        .permissions
-        .iter()
-        .any(|permission| permission == "query.view");
-    let can_execute_queries = organization
-        .permissions
-        .iter()
-        .any(|permission| permission == "query.execute");
-    let can_view_vault = organization
-        .permissions
-        .iter()
-        .any(|permission| permission == "vault.view");
+    let access = crate::access::AccessContext::from_permissions(
+        true,
+        organization.permissions.iter().map(String::as_str),
+        session.assurance.as_str(),
+        session.system_administrator,
+    );
+    let can_view_resources = access.has(crate::access::PermissionId::RESOURCE_VIEW);
+    let can_view_queries = access.has(crate::access::PermissionId::QUERY_VIEW);
+    let can_execute_queries = access.has(crate::access::PermissionId::QUERY_EXECUTE);
+    let can_view_vault = access.has(crate::access::PermissionId::VAULT_VIEW);
     // Workspace-scoped board: layout/resources/queries/secrets require selected tenant.
     let layout = match vault_org_id.as_deref() {
         Some(org) => crate::store::load_dashboard_layout(org).await?,
