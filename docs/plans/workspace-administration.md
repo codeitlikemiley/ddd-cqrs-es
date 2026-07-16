@@ -9,7 +9,7 @@
 | Field | Value |
 |-------|--------|
 | Run ID | `07aef382` |
-| Current PR | PR0 |
+| Current PR | PR1 (proposed) |
 | Phase | awaiting_approval |
 | Branch base | `codex/fullstack-verification-flow` |
 
@@ -66,12 +66,15 @@ Default order: `PR0 → PR1 → PR2 → PR3 → PR4a → PR4b → PR4c → PR4d 
 
 ### PR1 — M1 Access model (wasi-auth)
 
-- [ ] `OrganizationAccessModel` (labels, groups, dependencies, risk, custom_role_eligible)
-- [ ] Core vs application permission split
-- [ ] Dependency enforcement on custom-role upsert
-- [ ] `SlugConflict` → product conflict/validation
-- [ ] Step-up error fidelity (prefer dedicated code)
+- [x] `OrganizationAccessModel` (labels, groups, dependencies, risk, custom_role_eligible)
+- [x] Core vs application permission split
+- [x] Dependency enforcement on custom-role upsert
+- [x] `SlugConflict` → product conflict/validation
+- [ ] Step-up error fidelity (prefer dedicated code) — **deferred**: SQL `NotAuthorized` still collapses AAL/assurance fails; dedicated `ManagementError::StepUpRequired` needs SQL outcome distinction (follow-up)
 - Evidence:
+  - wasi-auth: `src/postgres/access_model.rs` + `upsert_role` auto-expands deps then validates eligibility; `cargo test -p wasi-auth --lib --features postgres-kernel` — 45 passed
+  - ddd: `map_organization_error` maps `OrganizationError::SlugConflict` → product conflict (“workspace URL is already taken”)
+  - `bash examples/fullstack-app/scripts/sync_fullstack_template.sh` + `cd examples/fullstack-app && make check` — green
 
 ### PR2 — M2 Shell & routes
 

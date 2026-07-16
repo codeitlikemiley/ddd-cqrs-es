@@ -171,6 +171,9 @@ pub(crate) fn map_organization_error(
         OrganizationError::IdempotencyConflict => {
             AuthStackError::conflict("organization request conflicts with an earlier attempt")
         }
+        OrganizationError::SlugConflict => AuthStackError::conflict(
+            "That workspace URL is already taken. Choose a different slug.",
+        ),
         OrganizationError::RandomnessUnavailable
         | OrganizationError::Transport(_)
         | OrganizationError::Row(_)
