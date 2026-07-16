@@ -10,8 +10,7 @@ use crate::app::helpers::{
 };
 use crate::app::{browser_load, get_workspace_settings_context, list_organizations};
 use crate::ui::classes::{
-    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
-    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+    BANNER_ERROR, MONO_VALUE, PANEL, RESULT_LINE, WS_REDIRECT, with_extra,
 };
 use leptos::prelude::*;
 use leptos_router::components::Outlet;
@@ -213,7 +212,7 @@ pub fn WorkspaceSettingsSidebar(
                                     </div>
                                     <div class="workspace-settings-identity-copy">
                                         <strong>{name}</strong>
-                                        <small class="mono-value">{format!("/org/{slug_val}")}</small>
+                                        <small class=MONO_VALUE>{format!("/org/{slug_val}")}</small>
                                     </div>
                                 </div>
                             }
@@ -226,7 +225,7 @@ pub fn WorkspaceSettingsSidebar(
                                 </div>
                                 <div class="workspace-settings-identity-copy">
                                     <strong>"Workspace"</strong>
-                                    <small class="mono-value">
+                                    <small class=MONO_VALUE>
                                         {move || {
                                             let s = slug.get();
                                             if s.is_empty() {
@@ -252,7 +251,7 @@ pub fn WorkspaceSettingsSidebar(
             </div>
 
             <Show when=move || list_error.get().is_some()>
-                <p class=format!("{} workspace-settings-sidebar-error", BANNER_ERROR)>
+                <p class=with_extra(BANNER_ERROR, Some("mx-1 mb-2 mt-0 px-2.5 py-2 text-xs"))>
                     {move || list_error.get().unwrap_or_default()}
                 </p>
             </Show>
@@ -309,7 +308,7 @@ pub fn WorkspaceSettingsIndexRedirect() -> impl IntoView {
         crate::app::helpers::redirect_browser(&format!("/org/{slug}/settings/general"));
     });
     view! {
-        <section class=format!("{}{}", PANEL, " workspace-settings-redirect")>
+        <section class=with_extra(PANEL, Some(WS_REDIRECT))>
             <p class=RESULT_LINE>"Opening general settings…"</p>
         </section>
     }

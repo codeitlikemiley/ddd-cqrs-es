@@ -12,8 +12,14 @@ use crate::app::{
 };
 use crate::contracts::{PermissionOption, RoleSummary};
 use crate::ui::classes::{
-    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
-    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+    BANNER_ERROR, BTN_PRIMARY, BTN_SECONDARY, FIELD, INPUT, MUTED, RESULT_LINE,
+    VAULT_MODAL_BACKDROP, VAULT_MODAL_BODY, VAULT_MODAL_CLOSE, VAULT_MODAL_CONFIRM,
+    VAULT_MODAL_HEAD, VAULT_MODAL_HEAD_P, VAULT_MODAL_HEAD_TITLE, WS_DANGER_BUTTON, WS_EMPTY,
+    WS_MEMBER_ACTIONS, WS_MODAL_ACTIONS, WS_PERMISSION_FIELDSET, WS_PERMISSION_GRID,
+    WS_PERMISSION_GROUP, WS_PERMISSION_GROUP_H3, WS_PERMISSION_LEGEND, WS_PERMISSION_OPTION,
+    WS_REMOVE_BUTTON, WS_ROLE_ACTIONS, WS_ROLE_BADGE, WS_ROLE_BADGE_BUILTIN, WS_ROLE_BADGE_CUSTOM,
+    WS_ROLE_FORM, WS_ROLE_FORM_ACTIONS, WS_ROLE_FORM_HEAD_H2, WS_ROLE_FORM_HEAD_P, WS_ROLE_NAME,
+    WS_ROLES_TOOLBAR, WS_STEP_UP, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TH, WS_THEAD, WS_TR, with_extra,
 };
 use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
@@ -211,7 +217,7 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
         </Show>
 
         <Show when=move || requires_step_up.get()>
-            <p class="workspace-settings-step-up" role="status">
+            <p class=WS_STEP_UP role="status">
                 "Creating, editing, and deleting roles requires a step-up session (AAL2). "
                 <a href="/account/mfa">"Complete MFA"</a>
                 " if your session is not elevated."
@@ -226,7 +232,7 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
             <p class=RESULT_LINE role="status">{move || action_ok.get().unwrap_or_default()}</p>
         </Show>
 
-        <div class="workspace-settings-roles-toolbar">
+        <div class=WS_ROLES_TOOLBAR>
             <button
                 type="button"
                 class=BTN_PRIMARY
@@ -250,7 +256,7 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
 
         <Show when=move || editor_open.get()>
             <form
-                class="workspace-settings-role-form"
+                class=WS_ROLE_FORM
                 on:submit=move |event| {
                     event.prevent_default();
                     let slug_value = slug.get_untracked();
@@ -295,8 +301,8 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
                     });
                 }
             >
-                <div class="workspace-settings-role-form-head">
-                    <h2>
+                <div>
+                    <h2 class=WS_ROLE_FORM_HEAD_H2>
                         {move || {
                             if editing_role_id.get().is_some() {
                                 "Edit custom role"
@@ -305,7 +311,7 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
                             }
                         }}
                     </h2>
-                    <p class="board-muted">
+                    <p class=with_extra(MUTED, Some(WS_ROLE_FORM_HEAD_P))>
                         "Permissions expand with required dependencies on save. Built-in roles stay immutable."
                     </p>
                 </div>
@@ -344,13 +350,13 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
                         disabled=move || any_busy.get() || editing_role_id.get().is_some()
                     />
                 </label>
-                <fieldset class="workspace-settings-permission-fieldset">
-                    <legend>"Permissions"</legend>
+                <fieldset class=WS_PERMISSION_FIELDSET>
+                    <legend class=WS_PERMISSION_LEGEND>"Permissions"</legend>
                     {move || {
                         let options = catalog.get();
                         if options.is_empty() {
                             return view! {
-                                <p class="board-muted">
+                                <p class=MUTED>
                                     "Permission catalog is loading or unavailable."
                                 </p>
                             }
@@ -364,9 +370,9 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
                             .into_iter()
                             .map(|(group, items)| {
                                 view! {
-                                    <div class="workspace-settings-permission-group">
-                                        <h3>{group}</h3>
-                                        <div class="workspace-settings-permission-grid">
+                                    <div class=WS_PERMISSION_GROUP>
+                                        <h3 class=WS_PERMISSION_GROUP_H3>{group}</h3>
+                                        <div class=WS_PERMISSION_GRID>
                                             {items
                                                 .into_iter()
                                                 .map(|option| {
@@ -375,7 +381,7 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
                                                     let id_for_toggle = id.clone();
                                                     let label = option.label.clone();
                                                     view! {
-                                                        <label class="workspace-settings-permission-option">
+                                                        <label class=WS_PERMISSION_OPTION>
                                                             <input
                                                                 type="checkbox"
                                                                 prop:checked=move || {
@@ -395,7 +401,7 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
                                                             />
                                                             <span>
                                                                 <strong>{label}</strong>
-                                                                <small class="board-muted">{id}</small>
+                                                                <small class=MUTED>{id}</small>
                                                             </span>
                                                         </label>
                                                     }
@@ -409,7 +415,7 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
                             .into_any()
                     }}
                 </fieldset>
-                <div class="workspace-settings-role-form-actions">
+                <div class=WS_ROLE_FORM_ACTIONS>
                     <button
                         type="button"
                         class=BTN_SECONDARY
@@ -453,7 +459,7 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
             let list = rows.get();
             if list.is_empty() {
                 return view! {
-                    <div class="workspace-settings-empty" role="status">
+                    <div class=WS_EMPTY role="status">
                         <p>"No roles found."</p>
                     </div>
                 }
@@ -463,15 +469,15 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
             let busy = busy_role_id.get();
             let actions_locked = any_busy.get();
             view! {
-                <div class="table-wrap workspace-settings-table-wrap">
-                    <table class="data-table workspace-settings-roles-table">
-                        <thead>
+                <div class=WS_TABLE_WRAP>
+                    <table class=WS_TABLE>
+                        <thead class=WS_THEAD>
                             <tr>
-                                <th scope="col">"Role"</th>
-                                <th scope="col">"Type"</th>
-                                <th scope="col">"Permissions"</th>
-                                <th scope="col">"Members"</th>
-                                <th scope="col">"Actions"</th>
+                                <th scope="col" class=WS_TH>"Role"</th>
+                                <th scope="col" class=WS_TH>"Type"</th>
+                                <th scope="col" class=WS_TH>"Permissions"</th>
+                                <th scope="col" class=WS_TH>"Members"</th>
+                                <th scope="col" class=WS_TH>"Actions"</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -505,7 +511,7 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
 
         <Show when=move || delete_target.get().is_some()>
             <div
-                class="board-modal-backdrop"
+                class=VAULT_MODAL_BACKDROP
                 role="presentation"
                 on:click=move |_| {
                     if !delete_pending.get() {
@@ -514,16 +520,16 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
                 }
             >
                 <div
-                    class="board-modal vault-modal-confirm"
+                    class=VAULT_MODAL_CONFIRM
                     role="dialog"
                     aria-modal="true"
                     aria-labelledby="workspace-delete-role-title"
                     on:click=move |e| e.stop_propagation()
                 >
-                    <header class="board-modal-head">
+                    <header class=VAULT_MODAL_HEAD>
                         <div>
-                            <h2 id="workspace-delete-role-title">"Delete custom role?"</h2>
-                            <p>
+                            <h2 id="workspace-delete-role-title" class=VAULT_MODAL_HEAD_TITLE>"Delete custom role?"</h2>
+                            <p class=VAULT_MODAL_HEAD_P>
                                 "Delete "
                                 <strong>
                                     {move || {
@@ -538,15 +544,15 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
                         </div>
                         <button
                             type="button"
-                            class="board-modal-close"
+                            class=VAULT_MODAL_CLOSE
                             disabled=move || delete_pending.get()
                             on:click=move |_| set_delete_target.set(None)
                         >
                             "Close"
                         </button>
                     </header>
-                    <div class="board-modal-body">
-                        <div class="workspace-settings-modal-actions">
+                    <div class=VAULT_MODAL_BODY>
+                        <div class=WS_MODAL_ACTIONS>
                             <button
                                 type="button"
                                 class=BTN_SECONDARY
@@ -557,7 +563,7 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
                             </button>
                             <button
                                 type="button"
-                                class=format!("{}{}", BTN_PRIMARY, " workspace-settings-danger-button")
+                                class=with_extra(BTN_PRIMARY, Some(WS_DANGER_BUTTON))
                                 disabled=move || delete_pending.get()
                                 on:click=move |_| {
                                     let Some((role_id, _)) = delete_target.get_untracked() else {
@@ -635,35 +641,35 @@ fn role_row(
     let perms_for_edit = role.permissions.clone();
 
     view! {
-        <tr class="workspace-settings-role-row">
-            <td data-label="Role">
-                <div class="workspace-settings-role-name">
+        <tr class=WS_TR>
+            <td data-label="Role" class=WS_TD>
+                <div class=WS_ROLE_NAME>
                     <strong>{name}</strong>
-                    <small class="board-muted">{role_id.clone()}</small>
+                    <small class=MUTED>{role_id.clone()}</small>
                 </div>
             </td>
-            <td data-label="Type">
+            <td data-label="Type" class=WS_TD>
                 <span class=if built_in {
-                    "workspace-settings-role-badge is-built-in"
+                    format!("{} {}", WS_ROLE_BADGE, WS_ROLE_BADGE_BUILTIN)
                 } else {
-                    "workspace-settings-role-badge is-custom"
+                    format!("{} {}", WS_ROLE_BADGE, WS_ROLE_BADGE_CUSTOM)
                 }>
                     {if built_in { "Built-in" } else { "Custom" }}
                 </span>
             </td>
-            <td data-label="Permissions">{permission_count}</td>
-            <td data-label="Members">{members_label}</td>
-            <td class="workspace-settings-member-actions" data-label="Actions">
+            <td data-label="Permissions" class=WS_TD>{permission_count}</td>
+            <td data-label="Members" class=WS_TD>{members_label}</td>
+            <td class=format!("{} {}", WS_TD, WS_MEMBER_ACTIONS) data-label="Actions">
                 {if built_in {
                     view! {
-                        <span class="board-muted" title="Built-in roles are immutable">
+                        <span class=MUTED title="Built-in roles are immutable">
                             "Immutable"
                         </span>
                     }
                     .into_any()
                 } else {
                     view! {
-                        <div class="workspace-settings-role-actions">
+                        <div class=WS_ROLE_ACTIONS>
                             <button
                                 type="button"
                                 class=BTN_SECONDARY
@@ -683,7 +689,7 @@ fn role_row(
                             </button>
                             <button
                                 type="button"
-                                class=format!("{}{}", BTN_SECONDARY, " workspace-settings-remove-button")
+                                class=with_extra(BTN_SECONDARY, Some(WS_REMOVE_BUTTON))
                                 disabled=disabled
                                 on:click=move |_| {
                                     set_action_error.set(None);

@@ -15,8 +15,16 @@ use crate::app::{
 };
 use crate::contracts::AuditEventSummary;
 use crate::ui::classes::{
-    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
-    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+    BANNER_ERROR, BTN_SECONDARY, INPUT, MUTED, RESULT_LINE, SR_ONLY, VAULT_MODAL_BACKDROP,
+    VAULT_MODAL_BODY, VAULT_MODAL_CLOSE, VAULT_MODAL_CONFIRM, VAULT_MODAL_HEAD, VAULT_MODAL_HEAD_P,
+    VAULT_MODAL_HEAD_TITLE, WS_AUDIT_COL_ACTION, WS_AUDIT_COL_ACTOR, WS_AUDIT_COL_DETAILS,
+    WS_AUDIT_COL_OUTCOME, WS_AUDIT_COL_TARGET, WS_AUDIT_COL_WHEN, WS_AUDIT_DETAIL_DD,
+    WS_AUDIT_DETAIL_DT, WS_AUDIT_DETAIL_LIST, WS_AUDIT_DETAIL_MODAL, WS_AUDIT_DETAIL_ROW,
+    WS_AUDIT_ELLIPSIS, WS_AUDIT_EYE, WS_AUDIT_FILTER, WS_AUDIT_FILTER_ACTOR, WS_AUDIT_FILTER_LABEL,
+    WS_AUDIT_FILTERS, WS_AUDIT_FOOTER, WS_AUDIT_HINT, WS_AUDIT_ICON_BUTTON, WS_AUDIT_JSON,
+    WS_AUDIT_METADATA_H3, WS_AUDIT_METADATA_P, WS_AUDIT_TOOLBAR, WS_AUDIT_WHEN, WS_EMPTY,
+    WS_MODAL_ACTIONS, WS_MONO, WS_TABLE_AUDIT, WS_TABLE_WRAP, WS_TD, WS_TH, WS_THEAD, WS_TR,
+    ws_outcome_icon, ws_status_pill, with_extra,
 };
 use crate::ui::{ComboboxOption, FilterCombobox};
 use leptos::prelude::*;
@@ -222,8 +230,8 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
         </Show>
 
         <Show when=move || list_ready.get()>
-            <div class="workspace-settings-audit-toolbar">
-                <div class="workspace-settings-audit-filters">
+            <div class=WS_AUDIT_TOOLBAR data-settings-wide="">
+                <div class=WS_AUDIT_FILTERS>
                     <FilterCombobox
                         label="Action"
                         all_label="All actions"
@@ -238,8 +246,8 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
                         value=filter_outcome
                         disabled=Signal::derive(move || busy.get())
                     />
-                    <label class="workspace-settings-audit-filter workspace-settings-audit-filter-actor">
-                        <span>"Actor"</span>
+                    <label class=with_extra(WS_AUDIT_FILTER, Some(WS_AUDIT_FILTER_ACTOR))>
+                        <span class=WS_AUDIT_FILTER_LABEL>"Actor"</span>
                         <input
                             class=INPUT
                             type="search"
@@ -254,7 +262,7 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
                 </div>
             </div>
 
-            <p class="board-muted workspace-settings-audit-hint">
+            <p class=with_extra(MUTED, Some(WS_AUDIT_HINT))>
                 "Filters apply to loaded events. Use Load more to fetch older pages."
             </p>
 
@@ -263,9 +271,9 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
                 let total_loaded = events.get().len();
                 if total_loaded == 0 {
                     return view! {
-                        <div class="workspace-settings-empty" role="status">
+                        <div class=WS_EMPTY role="status">
                             <p>"No audit events yet."</p>
-                            <p class="board-muted">
+                            <p class=MUTED>
                                 "Workspace administration and security actions will appear here."
                             </p>
                         </div>
@@ -274,9 +282,9 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
                 }
                 if rows.is_empty() {
                     return view! {
-                        <div class="workspace-settings-empty" role="status">
+                        <div class=WS_EMPTY role="status">
                             <p>"No events match the current filters."</p>
-                            <p class="board-muted">
+                            <p class=MUTED>
                                 {format!(
                                     "{total_loaded} event(s) loaded. Clear filters or load more."
                                 )}
@@ -291,17 +299,17 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
                 let org_slug = workspace_slug.get();
                 let roles_map = role_names.get();
                 view! {
-                    <div class="table-wrap workspace-settings-table-wrap">
-                        <table class="data-table workspace-settings-audit-table">
-                            <thead>
+                    <div class=WS_TABLE_WRAP>
+                        <table class=WS_TABLE_AUDIT>
+                            <thead class=WS_THEAD>
                                 <tr>
-                                    <th scope="col" class="workspace-settings-audit-col-when">"When"</th>
-                                    <th scope="col" class="workspace-settings-audit-col-actor">"Actor"</th>
-                                    <th scope="col" class="workspace-settings-audit-col-action">"Action"</th>
-                                    <th scope="col" class="workspace-settings-audit-col-target">"Target"</th>
-                                    <th scope="col" class="workspace-settings-audit-col-outcome">"Outcome"</th>
-                                    <th scope="col" class="workspace-settings-audit-col-details">
-                                        <span class="sr-only">"Details"</span>
+                                    <th scope="col" class=format!("{} {}", WS_TH, WS_AUDIT_COL_WHEN)>"When"</th>
+                                    <th scope="col" class=format!("{} {}", WS_TH, WS_AUDIT_COL_ACTOR)>"Actor"</th>
+                                    <th scope="col" class=format!("{} {}", WS_TH, WS_AUDIT_COL_ACTION)>"Action"</th>
+                                    <th scope="col" class=format!("{} {}", WS_TH, WS_AUDIT_COL_TARGET)>"Target"</th>
+                                    <th scope="col" class=format!("{} {}", WS_TH, WS_AUDIT_COL_OUTCOME)>"Outcome"</th>
+                                    <th scope="col" class=format!("{} {}", WS_TH, WS_AUDIT_COL_DETAILS)>
+                                        <span class=SR_ONLY>"Details"</span>
                                     </th>
                                 </tr>
                             </thead>
@@ -326,8 +334,8 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
                 .into_any()
             }}
 
-            <div class="workspace-settings-audit-footer">
-                <p class="board-muted">
+            <div class=WS_AUDIT_FOOTER>
+                <p class=MUTED>
                     {move || {
                         format!(
                             "Showing {} of {} loaded",
@@ -375,21 +383,21 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
 
         <Show when=move || selected.get().is_some()>
             <div
-                class="board-modal-backdrop"
+                class=VAULT_MODAL_BACKDROP
                 role="presentation"
                 on:click=move |_| set_selected.set(None)
             >
                 <div
-                    class="board-modal vault-modal-confirm workspace-settings-audit-detail-modal"
+                    class=with_extra(VAULT_MODAL_CONFIRM, Some(WS_AUDIT_DETAIL_MODAL))
                     role="dialog"
                     aria-modal="true"
                     aria-labelledby="workspace-audit-detail-title"
                     on:click=move |e| e.stop_propagation()
                 >
-                    <header class="board-modal-head">
+                    <header class=VAULT_MODAL_HEAD>
                         <div>
-                            <h2 id="workspace-audit-detail-title">"Event details"</h2>
-                            <p>
+                            <h2 id="workspace-audit-detail-title" class=VAULT_MODAL_HEAD_TITLE>"Event details"</h2>
+                            <p class=VAULT_MODAL_HEAD_P>
                                 {move || {
                                     selected
                                         .get()
@@ -400,13 +408,13 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
                         </div>
                         <button
                             type="button"
-                            class="board-modal-close"
+                            class=VAULT_MODAL_CLOSE
                             on:click=move |_| set_selected.set(None)
                         >
                             "Close"
                         </button>
                     </header>
-                    <div class="board-modal-body">
+                    <div class=VAULT_MODAL_BODY>
                         {move || {
                             let Some(event) = selected.get() else {
                                 return view! { <></> }.into_any();
@@ -430,41 +438,41 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
                             );
                             let metadata_json = safe_event_metadata_json(&event);
                             view! {
-                                <dl class="workspace-settings-audit-detail-list">
-                                    <div>
-                                        <dt>"When"</dt>
-                                        <dd>
+                                <dl class=WS_AUDIT_DETAIL_LIST>
+                                    <div class=WS_AUDIT_DETAIL_ROW>
+                                        <dt class=WS_AUDIT_DETAIL_DT>"When"</dt>
+                                        <dd class=WS_AUDIT_DETAIL_DD>
                                             <span>{when}</span>
-                                            <small class="board-muted">{relative}</small>
+                                            <small class=MUTED>{relative}</small>
                                         </dd>
                                     </div>
-                                    <div>
-                                        <dt>"Sequence"</dt>
-                                        <dd class="workspace-settings-mono">{event.sequence.to_string()}</dd>
+                                    <div class=WS_AUDIT_DETAIL_ROW>
+                                        <dt class=WS_AUDIT_DETAIL_DT>"Sequence"</dt>
+                                        <dd class=format!("{} {}", WS_AUDIT_DETAIL_DD, WS_MONO)>{event.sequence.to_string()}</dd>
                                     </div>
-                                    <div>
-                                        <dt>"Actor"</dt>
-                                        <dd>
+                                    <div class=WS_AUDIT_DETAIL_ROW>
+                                        <dt class=WS_AUDIT_DETAIL_DT>"Actor"</dt>
+                                        <dd class=WS_AUDIT_DETAIL_DD>
                                             <span>{actor}</span>
-                                            <small class="board-muted workspace-settings-mono">
+                                            <small class=with_extra(MUTED, Some(WS_MONO))>
                                                 {event.actor_user_id.clone()}
                                             </small>
                                         </dd>
                                     </div>
-                                    <div>
-                                        <dt>"Action"</dt>
-                                        <dd>
+                                    <div class=WS_AUDIT_DETAIL_ROW>
+                                        <dt class=WS_AUDIT_DETAIL_DT>"Action"</dt>
+                                        <dd class=WS_AUDIT_DETAIL_DD>
                                             <strong>{humanize_audit_action(&event.action)}</strong>
-                                            <small class="board-muted workspace-settings-mono">
+                                            <small class=with_extra(MUTED, Some(WS_MONO))>
                                                 {event.action.clone()}
                                             </small>
                                         </dd>
                                     </div>
-                                    <div>
-                                        <dt>"Target"</dt>
-                                        <dd>
+                                    <div class=WS_AUDIT_DETAIL_ROW>
+                                        <dt class=WS_AUDIT_DETAIL_DT>"Target"</dt>
+                                        <dd class=WS_AUDIT_DETAIL_DD>
                                             <span>{target_label}</span>
-                                            <small class="board-muted">
+                                            <small class=MUTED>
                                                 {format!(
                                                     "{} · {}",
                                                     event.target_type,
@@ -477,30 +485,27 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
                                             </small>
                                         </dd>
                                     </div>
-                                    <div>
-                                        <dt>"Outcome"</dt>
-                                        <dd>
-                                            <span
-                                                class="workspace-settings-status-pill"
-                                                data-outcome=event.outcome.clone()
-                                            >
+                                    <div class=WS_AUDIT_DETAIL_ROW>
+                                        <dt class=WS_AUDIT_DETAIL_DT>"Outcome"</dt>
+                                        <dd class=WS_AUDIT_DETAIL_DD>
+                                            <span class=ws_status_pill(&event.outcome)>
                                                 {humanize_audit_outcome(&event.outcome)}
                                             </span>
                                         </dd>
                                     </div>
-                                    <div>
-                                        <dt>"Organization id"</dt>
-                                        <dd class="workspace-settings-mono">{org}</dd>
+                                    <div class=WS_AUDIT_DETAIL_ROW>
+                                        <dt class=WS_AUDIT_DETAIL_DT>"Organization id"</dt>
+                                        <dd class=format!("{} {}", WS_AUDIT_DETAIL_DD, WS_MONO)>{org}</dd>
                                     </div>
                                 </dl>
-                                <div class="workspace-settings-audit-metadata">
-                                    <h3>"Event payload"</h3>
-                                    <p class="board-muted">
+                                <div>
+                                    <h3 class=WS_AUDIT_METADATA_H3>"Event payload"</h3>
+                                    <p class=with_extra(MUTED, Some(WS_AUDIT_METADATA_P))>
                                         "Safe JSON of fields returned for this event (no secrets)."
                                     </p>
-                                    <pre class="workspace-settings-audit-json">{metadata_json}</pre>
+                                    <pre class=WS_AUDIT_JSON>{metadata_json}</pre>
                                 </div>
-                                <div class="workspace-settings-modal-actions">
+                                <div class=WS_MODAL_ACTIONS>
                                     <button
                                         type="button"
                                         class=BTN_SECONDARY
@@ -555,37 +560,34 @@ fn audit_row(
     let event_for_click = event.clone();
 
     view! {
-        <tr class="workspace-settings-audit-row">
-            <td data-label="When" class="workspace-settings-audit-col-when">
+        <tr class=WS_TR>
+            <td data-label="When" class=format!("{} {}", WS_TD, WS_AUDIT_COL_WHEN)>
                 <time
-                    class="workspace-settings-audit-when"
+                    class=WS_AUDIT_WHEN
                     datetime=when_iso
                     title=when_absolute
                 >
                     {when_relative}
                 </time>
             </td>
-            <td data-label="Actor" class="workspace-settings-audit-col-actor">
-                <span class="workspace-settings-audit-actor-email" title=actor_title>
+            <td data-label="Actor" class=format!("{} {}", WS_TD, WS_AUDIT_COL_ACTOR)>
+                <span class=WS_AUDIT_ELLIPSIS title=actor_title>
                     {actor}
                 </span>
             </td>
-            <td data-label="Action" class="workspace-settings-audit-col-action">
-                <span class="workspace-settings-audit-action-label" title=action_title>
+            <td data-label="Action" class=format!("{} {}", WS_TD, WS_AUDIT_COL_ACTION)>
+                <span class=WS_AUDIT_ELLIPSIS title=action_title>
                     {action_label}
                 </span>
             </td>
-            <td data-label="Target" class="workspace-settings-audit-col-target">
-                <span class="workspace-settings-audit-target" title=target_title>
+            <td data-label="Target" class=format!("{} {}", WS_TD, WS_AUDIT_COL_TARGET)>
+                <span class=WS_AUDIT_ELLIPSIS title=target_title>
                     {target}
                 </span>
             </td>
-            <td data-label="Outcome" class="workspace-settings-audit-col-outcome">
+            <td data-label="Outcome" class=format!("{} {}", WS_TD, WS_AUDIT_COL_OUTCOME)>
                 <span
-                    class=format!(
-                        "workspace-settings-audit-outcome-icon is-{}",
-                        outcome_class(&outcome)
-                    )
+                    class=ws_outcome_icon(&outcome_class(&outcome))
                     title=outcome_title
                     aria-label=outcome_label
                     role="img"
@@ -593,16 +595,16 @@ fn audit_row(
                     {outcome_icon}
                 </span>
             </td>
-            <td data-label="Details" class="workspace-settings-audit-col-details">
+            <td data-label="Details" class=format!("{} {}", WS_TD, WS_AUDIT_COL_DETAILS)>
                 <button
                     type="button"
-                    class="workspace-settings-audit-icon-button"
+                    class=WS_AUDIT_ICON_BUTTON
                     aria-label="View event details"
                     title="View details"
                     on:click=move |_| set_selected.set(Some(event_for_click.clone()))
                 >
                     <svg
-                        class="workspace-settings-audit-eye"
+                        class=WS_AUDIT_EYE
                         viewBox="0 0 24 24"
                         width="16"
                         height="16"

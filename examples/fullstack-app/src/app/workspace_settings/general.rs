@@ -12,8 +12,8 @@ use crate::app::{
     UpdateWorkspaceName, browser_load, get_workspace_settings_context, update_workspace_name,
 };
 use crate::ui::classes::{
-    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
-    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+    BANNER_ERROR, BTN_PRIMARY, BUTTON_ROW, FIELD, INPUT, KV_DD, KV_DT, MONO_VALUE, RESULT_LINE,
+    WS_GENERAL_FORM, WS_KV, WS_READONLY_TAG, WS_STEP_UP,
 };
 use leptos::prelude::*;
 
@@ -105,7 +105,8 @@ pub fn WorkspaceSettingsGeneralBody() -> impl IntoView {
 
         <Show when=move || context.get().and_then(|r| r.ok()).is_some()>
             <form
-                class="workspace-settings-general-form"
+                class=WS_GENERAL_FORM
+                data-testid="workspace-settings-general-form"
                 on:submit=move |event| {
                     event.prevent_default();
                     let slug_value = slug.get_untracked();
@@ -142,9 +143,9 @@ pub fn WorkspaceSettingsGeneralBody() -> impl IntoView {
                     />
                 </label>
 
-                <dl class="kv workspace-settings-kv">
-                    <dt>"Workspace URL"</dt>
-                    <dd class="mono-value">
+                <dl class=WS_KV>
+                    <dt class=KV_DT>"Workspace URL"</dt>
+                    <dd class=format!("{} {}", KV_DD, MONO_VALUE)>
                         {move || {
                             let s = slug.get();
                             if s.is_empty() {
@@ -154,13 +155,13 @@ pub fn WorkspaceSettingsGeneralBody() -> impl IntoView {
                             }
                         }}
                     </dd>
-                    <dt>"Slug"</dt>
-                    <dd class="mono-value">
+                    <dt class=KV_DT>"Slug"</dt>
+                    <dd class=format!("{} {}", KV_DD, MONO_VALUE)>
                         {move || {
                             let s = slug.get();
                             if s.is_empty() { "—".to_owned() } else { s }
                         }}
-                        <span class="workspace-settings-readonly-tag">" read-only"</span>
+                        <span class=WS_READONLY_TAG>" read-only"</span>
                     </dd>
                     {move || {
                         context.get().and_then(|r| r.ok()).map(|ctx| {
@@ -171,10 +172,10 @@ pub fn WorkspaceSettingsGeneralBody() -> impl IntoView {
                             };
                             let created = format_settings_timestamp_ms(ctx.organization.created_at_ms);
                             view! {
-                                <dt>"Status"</dt>
-                                <dd>{status}</dd>
-                                <dt>"Created"</dt>
-                                <dd>{created}</dd>
+                                <dt class=KV_DT>"Status"</dt>
+                                <dd class=KV_DD>{status}</dd>
+                                <dt class=KV_DT>"Created"</dt>
+                                <dd class=KV_DD>{created}</dd>
                             }
                             .into_any()
                         })
@@ -183,7 +184,7 @@ pub fn WorkspaceSettingsGeneralBody() -> impl IntoView {
                 </dl>
 
                 <Show when=move || step_up_hint.get()>
-                    <p class="workspace-settings-step-up" role="status">
+                    <p class=WS_STEP_UP role="status">
                         "Saving the name requires a step-up session (AAL2). "
                         <a href="/account/mfa">"Complete MFA"</a>
                         " if your session is not elevated, then try again."
@@ -201,7 +202,7 @@ pub fn WorkspaceSettingsGeneralBody() -> impl IntoView {
                 <div class=BUTTON_ROW>
                     <button
                         type="submit"
-                        class="link-button link-button-primary"
+                        class=BTN_PRIMARY
                         disabled=move || !can_save.get()
                     >
                         {move || if pending.get() { "Saving…" } else { "Save name" }}

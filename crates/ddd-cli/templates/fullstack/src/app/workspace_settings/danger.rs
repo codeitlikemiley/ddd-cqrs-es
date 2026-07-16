@@ -11,8 +11,11 @@ use crate::app::{
     get_workspace_settings_context, leave_workspace,
 };
 use crate::ui::classes::{
-    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
-    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+    BANNER_ERROR, BTN_PRIMARY, BTN_SECONDARY, FIELD, INPUT, MUTED, RESULT_LINE,
+    VAULT_MODAL_BACKDROP, VAULT_MODAL_BODY, VAULT_MODAL_CLOSE, VAULT_MODAL_CONFIRM,
+    VAULT_MODAL_HEAD, VAULT_MODAL_HEAD_P, VAULT_MODAL_HEAD_TITLE, WS_DANGER_BUTTON, WS_DANGER_CARD,
+    WS_DANGER_CARD_BTN, WS_DANGER_CONFIRM, WS_DANGER_ZONES, WS_MODAL_ACTIONS, WS_STEP_UP,
+    with_extra,
 };
 use leptos::prelude::*;
 
@@ -129,7 +132,7 @@ pub fn WorkspaceSettingsDangerBody() -> impl IntoView {
         </Show>
 
         <Show when=move || requires_step_up.get() && can_deactivate.get()>
-            <p class="workspace-settings-step-up" role="status">
+            <p class=WS_STEP_UP role="status">
                 "Deactivating a workspace requires a step-up session (AAL2). "
                 <a href="/account/mfa">"Complete MFA"</a>
                 " if your session is not elevated."
@@ -145,16 +148,19 @@ pub fn WorkspaceSettingsDangerBody() -> impl IntoView {
         </Show>
 
         <Show when=move || ready.get()>
-            <div class="workspace-settings-danger-zones">
-                <section class="workspace-settings-danger-card" aria-labelledby="leave-workspace-title">
+            <div class=WS_DANGER_ZONES>
+                <section class=WS_DANGER_CARD aria-labelledby="leave-workspace-title">
                     <h3 id="leave-workspace-title">"Leave workspace"</h3>
-                    <p class="board-muted">
+                    <p class=MUTED>
                         "Remove yourself from this workspace. You will lose access immediately. "
                         "The last owner cannot leave — transfer ownership first."
                     </p>
                     <button
                         type="button"
-                        class=format!("{}{}", BTN_SECONDARY, " workspace-settings-danger-button")
+                        class=with_extra(
+                            BTN_SECONDARY,
+                            Some(&format!("{WS_DANGER_BUTTON} {WS_DANGER_CARD_BTN}")),
+                        )
                         disabled=move || leave_pending.get() || deactivate_pending.get()
                         on:click=move |_| {
                             set_action_error.set(None);
@@ -167,23 +173,23 @@ pub fn WorkspaceSettingsDangerBody() -> impl IntoView {
                 </section>
 
                 <section
-                    class="workspace-settings-danger-card"
+                    class=WS_DANGER_CARD
                     aria-labelledby="deactivate-workspace-title"
                 >
                     <h3 id="deactivate-workspace-title">"Deactivate workspace"</h3>
-                    <p class="board-muted">
+                    <p class=MUTED>
                         "Soft-deactivates this workspace (status archived). Pending invitations are revoked "
                         "and members can no longer select it. "
                         <strong>"There is no hard delete"</strong>
                         " — data is retained for recovery and audit. Only owners can deactivate."
                     </p>
                     <Show when=move || !can_deactivate.get()>
-                        <p class="board-muted" role="status">
+                        <p class=MUTED role="status">
                             "Only workspace owners can deactivate this workspace."
                         </p>
                     </Show>
                     <Show when=move || can_deactivate.get()>
-                        <div class="workspace-settings-danger-confirm-field">
+                        <div class=WS_DANGER_CONFIRM>
                             <label class=FIELD>
                                 <span>
                                     "Type the workspace name or slug ("
@@ -199,6 +205,7 @@ pub fn WorkspaceSettingsDangerBody() -> impl IntoView {
                                     ") to enable deactivation"
                                 </span>
                                 <input
+                                    class=INPUT
                                     type="text"
                                     autocomplete="off"
                                     prop:value=move || deactivate_confirm.get()
@@ -209,7 +216,10 @@ pub fn WorkspaceSettingsDangerBody() -> impl IntoView {
                             </label>
                             <button
                                 type="button"
-                                class=format!("{}{}", BTN_PRIMARY, " workspace-settings-danger-button")
+                                class=with_extra(
+                                    BTN_PRIMARY,
+                                    Some(&format!("{WS_DANGER_BUTTON} {WS_DANGER_CARD_BTN}")),
+                                )
                                 disabled=move || {
                                     !deactivate_match.get()
                                         || deactivate_pending.get()
@@ -244,7 +254,7 @@ pub fn WorkspaceSettingsDangerBody() -> impl IntoView {
 
         <Show when=move || leave_confirm_open.get()>
             <div
-                class="board-modal-backdrop"
+                class=VAULT_MODAL_BACKDROP
                 role="presentation"
                 on:click=move |_| {
                     if !leave_pending.get() {
@@ -253,16 +263,16 @@ pub fn WorkspaceSettingsDangerBody() -> impl IntoView {
                 }
             >
                 <div
-                    class="board-modal vault-modal-confirm"
+                    class=VAULT_MODAL_CONFIRM
                     role="dialog"
                     aria-modal="true"
                     aria-labelledby="workspace-leave-title"
                     on:click=move |e| e.stop_propagation()
                 >
-                    <header class="board-modal-head">
+                    <header class=VAULT_MODAL_HEAD>
                         <div>
-                            <h2 id="workspace-leave-title">"Leave this workspace?"</h2>
-                            <p>
+                            <h2 id="workspace-leave-title" class=VAULT_MODAL_HEAD_TITLE>"Leave this workspace?"</h2>
+                            <p class=VAULT_MODAL_HEAD_P>
                                 "You will immediately lose access to "
                                 <strong>{move || workspace_name.get()}</strong>
                                 ". The last owner cannot leave without transferring ownership first."
@@ -270,15 +280,15 @@ pub fn WorkspaceSettingsDangerBody() -> impl IntoView {
                         </div>
                         <button
                             type="button"
-                            class="board-modal-close"
+                            class=VAULT_MODAL_CLOSE
                             disabled=move || leave_pending.get()
                             on:click=move |_| set_leave_confirm_open.set(false)
                         >
                             "Close"
                         </button>
                     </header>
-                    <div class="board-modal-body">
-                        <div class="workspace-settings-modal-actions">
+                    <div class=VAULT_MODAL_BODY>
+                        <div class=WS_MODAL_ACTIONS>
                             <button
                                 type="button"
                                 class=BTN_SECONDARY
@@ -289,7 +299,7 @@ pub fn WorkspaceSettingsDangerBody() -> impl IntoView {
                             </button>
                             <button
                                 type="button"
-                                class=format!("{}{}", BTN_PRIMARY, " workspace-settings-danger-button")
+                                class=with_extra(BTN_PRIMARY, Some(WS_DANGER_BUTTON))
                                 disabled=move || leave_pending.get()
                                 on:click=move |_| {
                                     let slug_value = slug.get_untracked();

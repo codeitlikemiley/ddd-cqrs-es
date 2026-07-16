@@ -15,8 +15,10 @@ use crate::app::{
 };
 use crate::contracts::{InvitationSummary, WorkspaceRoleOption};
 use crate::ui::classes::{
-    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
-    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+    BANNER_ERROR, BTN_PRIMARY, BTN_SECONDARY, FIELD, INPUT, MUTED, RESULT_LINE, WS_EMPTY,
+    WS_INVITATION_ACTIONS, WS_INVITE_ACTIONS, WS_INVITE_FORM, WS_MEMBER_ACTIONS, WS_MEMBER_EMAIL,
+    WS_REMOVE_BUTTON, WS_SELECT, WS_STEP_UP, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TH, WS_THEAD, WS_TR,
+    ws_status_pill, with_extra,
 };
 use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
@@ -198,7 +200,7 @@ pub fn WorkspaceSettingsInvitationsBody() -> impl IntoView {
         </Show>
 
         <Show when=move || requires_step_up.get()>
-            <p class="workspace-settings-step-up" role="status">
+            <p class=WS_STEP_UP role="status">
                 "Invite, resend, and revoke require a step-up session (AAL2). "
                 <a href="/account/mfa">"Complete MFA"</a>
                 " if your session is not elevated."
@@ -214,7 +216,7 @@ pub fn WorkspaceSettingsInvitationsBody() -> impl IntoView {
         </Show>
 
         <form
-            class="workspace-settings-invite-form"
+            class=WS_INVITE_FORM
             on:submit=move |event| {
                 event.prevent_default();
                 let slug_value = slug.get_untracked();
@@ -262,7 +264,7 @@ pub fn WorkspaceSettingsInvitationsBody() -> impl IntoView {
             <label class=FIELD>
                 <span>"Role"</span>
                 <select
-                    class="workspace-settings-role-select"
+                    class=WS_SELECT
                     prop:value=move || role_id.get()
                     disabled=move || any_busy.get() || role_options.get().is_empty()
                     on:change=move |event| {
@@ -292,7 +294,7 @@ pub fn WorkspaceSettingsInvitationsBody() -> impl IntoView {
                     }}
                 </select>
             </label>
-            <div class="workspace-settings-invite-actions">
+            <div class=WS_INVITE_ACTIONS>
                 <button
                     type="submit"
                     class=BTN_PRIMARY
@@ -316,9 +318,9 @@ pub fn WorkspaceSettingsInvitationsBody() -> impl IntoView {
             let list = rows.get();
             if list.is_empty() {
                 return view! {
-                    <div class="workspace-settings-empty" role="status">
+                    <div class=WS_EMPTY role="status">
                         <p>"No invitations yet."</p>
-                        <p class="board-muted">
+                        <p class=MUTED>
                             "Send an invite above. Only hashes are stored; the one-time link is mailed."
                         </p>
                     </div>
@@ -331,15 +333,15 @@ pub fn WorkspaceSettingsInvitationsBody() -> impl IntoView {
             let actions_locked = any_busy.get();
 
             view! {
-                <div class="table-wrap workspace-settings-table-wrap">
-                    <table class="data-table workspace-settings-invitations-table">
-                        <thead>
+                <div class=WS_TABLE_WRAP>
+                    <table class=WS_TABLE>
+                        <thead class=WS_THEAD>
                             <tr>
-                                <th scope="col">"Email"</th>
-                                <th scope="col">"Role"</th>
-                                <th scope="col">"Status"</th>
-                                <th scope="col">"Expires"</th>
-                                <th scope="col">"Actions"</th>
+                                <th scope="col" class=WS_TH>"Email"</th>
+                                <th scope="col" class=WS_TH>"Role"</th>
+                                <th scope="col" class=WS_TH>"Status"</th>
+                                <th scope="col" class=WS_TH>"Expires"</th>
+                                <th scope="col" class=WS_TH>"Actions"</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -398,22 +400,19 @@ fn invitation_row(
     let disabled = actions_locked || row_busy || !is_pending;
 
     view! {
-        <tr class="workspace-settings-invitation-row">
-            <td data-label="Email">
-                <span class="workspace-settings-member-email">{email}</span>
+        <tr class=WS_TR>
+            <td data-label="Email" class=WS_TD>
+                <span class=WS_MEMBER_EMAIL>{email}</span>
             </td>
-            <td data-label="Role">{role_label}</td>
-            <td data-label="Status">
-                <span class=format!(
-                    "workspace-settings-status-pill is-{}",
-                    status
-                )>{status.clone()}</span>
+            <td data-label="Role" class=WS_TD>{role_label}</td>
+            <td data-label="Status" class=WS_TD>
+                <span class=ws_status_pill(&status)>{status.clone()}</span>
             </td>
-            <td data-label="Expires">{expires}</td>
-            <td class="workspace-settings-member-actions" data-label="Actions">
+            <td data-label="Expires" class=WS_TD>{expires}</td>
+            <td class=format!("{} {}", WS_TD, WS_MEMBER_ACTIONS) data-label="Actions">
                 {if is_pending {
                     view! {
-                        <div class="workspace-settings-invitation-actions">
+                        <div class=WS_INVITATION_ACTIONS>
                             <button
                                 type="button"
                                 class=BTN_SECONDARY
@@ -443,7 +442,7 @@ fn invitation_row(
                             </button>
                             <button
                                 type="button"
-                                class=format!("{}{}", BTN_SECONDARY, " workspace-settings-remove-button")
+                                class=with_extra(BTN_SECONDARY, Some(WS_REMOVE_BUTTON))
                                 disabled=disabled
                                 on:click=move |_| {
                                     let slug_value = slug.get_untracked();
@@ -466,7 +465,7 @@ fn invitation_row(
                     }
                     .into_any()
                 } else {
-                    view! { <span class="board-muted">"—"</span> }.into_any()
+                    view! { <span class=MUTED>"—"</span> }.into_any()
                 }}
             </td>
         </tr>

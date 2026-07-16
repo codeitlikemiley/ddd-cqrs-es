@@ -24,7 +24,7 @@
 | 3.3–3.5 | Account domain (MFA/passkeys/vault/profile/sessions/providers) → utilities | **done** (account CSS deleted; shared mono/kv/modal CSS remains for other domains) |
 | 3.6 | Organizations shared buttons/fields | **partial** |
 | 3.7–3.8 | Dashboard board + resources shared primitives | **done** (board/resources CSS deleted; shared board-modal/muted kept for org/settings) |
-| 3.9 | Workspace settings shared primitives | **partial** |
+| 3.9 | Workspace settings shared primitives | **done** (domain pages pure Tailwind; shell chrome residual until Phase 4/5) |
 | 3.10–3.11 | Admin + onboarding | **partial** |
 | 4 | Workspace shell (sidebar modes, drawer, flyouts) | pending |
 | 5 | Closeout: delete residual CSS, update smokes, dual-sync, docs | pending |
@@ -35,7 +35,8 @@
 - 2026-07-16: Auth pages/forms + bulk shared-class swap across account/dashboard/settings/admin. `make check` green. Dual-sync after foundation.
 - 2026-07-16: Account domain pure Tailwind — MFA/passkeys/vault/profile/sessions/providers markup → `classes.rs` utilities; deleted matching account CSS. Left `.vault-modal-confirm` stub + shared `.mono-value`/`.kv`/board-modal for other domains.
 - 2026-07-16: Dashboard board + resources pure Tailwind — `dashboard/board/*` + `resources.rs` → `BOARD_*` / shared constants; deleted board page/tile/rq CSS. Kept `.board-modal*` / `.board-muted` + `@keyframes board-pulse` for org/settings residual + live-dot animation.
-- Next: finish domain-specific class strings (workspace-*, org-*), then delete matching CSS blocks from `input.css`.
+- 2026-07-16: Workspace settings domain pure Tailwind — `workspace_settings/{general,members,invitations,roles,audit,danger,shared}` → `WS_*` / vault modal constants; mobile card tables + danger full-width via utilities; deleted domain settings CSS + filter-combobox residual. Kept settings shell chrome (sidebar/nav/topbar/content) + org `board-modal*`.
+- Next: orgs/admin domain classes, then workspace shell chrome, then residual closeout.
 
 ## Residual CSS allowlist
 

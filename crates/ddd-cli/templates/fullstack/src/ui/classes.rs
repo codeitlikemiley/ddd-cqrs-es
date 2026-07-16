@@ -383,16 +383,17 @@ pub const ERROR_ACTIONS: &str = "mt-6 flex flex-wrap gap-2";
 
 // ── Filter combobox ────────────────────────────────────────────────────────
 
-pub const COMBOBOX: &str = "relative min-w-0";
-pub const COMBOBOX_LABEL: &str = "grid gap-1.5 text-xs font-semibold text-secondary";
+/// Toolbar-friendly combobox shell (audit filters flex row + mobile full width).
+pub const COMBOBOX: &str = "relative min-w-[11rem] flex-[0_1_14rem] max-[720px]:min-w-0 max-[720px]:flex-[1_1_100%]";
+pub const COMBOBOX_LABEL: &str = "m-0 grid gap-[0.3rem] text-[0.85rem] font-semibold [&_span]:text-[0.75rem] [&_span]:font-semibold [&_span]:uppercase [&_span]:tracking-[0.02em] [&_span]:text-secondary";
 pub const COMBOBOX_CONTROL: &str = "relative";
-pub const COMBOBOX_INPUT: &str = "w-full min-h-10 rounded-[10px] border border-border-strong bg-surface py-2 pl-3 pr-9 text-[13px] text-primary outline-none placeholder:text-tertiary focus:border-focus focus:shadow-[0_0_0_3px_color-mix(in_srgb,var(--focus-ring)_18%,transparent)] disabled:cursor-not-allowed disabled:opacity-55";
-pub const COMBOBOX_CHEVRON: &str = "pointer-events-none absolute right-3 top-1/2 h-0 w-0 -translate-y-1/2 border-x-4 border-t-[5px] border-x-transparent border-t-secondary";
-pub const COMBOBOX_LIST: &str = "absolute z-40 mt-1 max-h-60 w-full overflow-auto rounded-[10px] border border-border-subtle bg-surface p-1 shadow-soft";
-pub const COMBOBOX_EMPTY: &str = "px-2.5 py-2 text-[13px] text-tertiary";
-pub const COMBOBOX_OPTION: &str = "cursor-pointer rounded-lg px-2.5 py-2 text-[13px] text-primary";
+pub const COMBOBOX_INPUT: &str = "w-full min-h-[42px] appearance-none rounded-[10px] border border-border-strong bg-surface py-2.5 pl-3 pr-10 text-[13px] text-primary outline-none placeholder:text-tertiary focus:border-focus focus:shadow-[0_0_0_3px_color-mix(in_srgb,var(--focus-ring)_18%,transparent)] disabled:cursor-not-allowed disabled:opacity-55";
+pub const COMBOBOX_CHEVRON: &str = "pointer-events-none absolute right-0 top-0 h-full w-9 bg-[length:12px_8px] bg-center bg-no-repeat [background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1.5 1.75L6 6.25L10.5 1.75' stroke='%2364748b' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\")]";
+pub const COMBOBOX_LIST: &str = "absolute left-0 right-0 top-full z-30 m-0 mt-1 max-h-64 list-none overflow-auto rounded-[10px] border border-border-subtle bg-elevated p-[0.3rem] shadow-soft";
+pub const COMBOBOX_EMPTY: &str = "px-[0.65rem] py-[0.55rem] text-[0.85rem] text-secondary";
+pub const COMBOBOX_OPTION: &str = "cursor-pointer rounded-lg px-[0.65rem] py-2 text-[0.9rem] font-medium text-primary hover:bg-surface-hover";
 pub const COMBOBOX_OPTION_ACTIVE: &str = "bg-surface-hover";
-pub const COMBOBOX_OPTION_SELECTED: &str = "font-semibold";
+pub const COMBOBOX_OPTION_SELECTED: &str = "font-[650]";
 
 // ── Dashboard board ────────────────────────────────────────────────────────
 
@@ -612,3 +613,176 @@ pub const BOARD_RQ_ACTIONS: &str = "flex flex-wrap gap-2";
 pub const BOARD_RQ_OUTPUT: &str = "mt-2 grid gap-2";
 pub const BOARD_JSON_PREVIEW_LG: &str =
     "max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-[10px] border border-border-subtle bg-surface-subtle p-2.5 text-[11px]";
+
+// ── Workspace settings (domain pages; shell chrome stays residual CSS) ─────
+
+/// Page chrome inside settings outlet.
+pub const WS_PAGE: &str = "min-w-0";
+pub const WS_PAGE_HEADER: &str = "mb-[18px] grid gap-1.5";
+pub const WS_PAGE_TITLE: &str =
+    "m-0 text-[28px] font-bold leading-[1.15] tracking-[-0.02em]";
+pub const WS_PAGE_SUB: &str = "m-0 text-sm leading-snug text-secondary";
+pub const WS_STUB_PANEL: &str =
+    "grid gap-3.5 min-w-0 rounded-[14px] border border-border-subtle bg-surface p-6";
+pub const WS_STUB_RESULT: &str = "m-0 mb-3 text-[13px] leading-normal text-secondary";
+pub const WS_EMPTY: &str = "grid gap-1.5 text-secondary [&_p]:m-0";
+pub const WS_REDIRECT: &str = "mx-auto my-6 max-w-[480px]";
+
+/// Key/value grid (legacy `.kv` + settings density).
+pub const WS_KV: &str =
+    "mb-3 m-0 grid grid-cols-[minmax(100px,max-content)_minmax(0,1fr)] gap-x-4 gap-y-2.5";
+pub const WS_READONLY_TAG: &str = "text-xs font-medium text-tertiary";
+
+/// Step-up AAL2 callout.
+pub const WS_STEP_UP: &str = "mb-5 mt-0 rounded-lg border border-[color-mix(in_srgb,#f59e0b_35%,transparent)] bg-[color-mix(in_srgb,#f59e0b_12%,transparent)] px-3 py-2.5 text-[13px] leading-snug text-secondary [&_a]:font-semibold [&_a]:text-inherit [&_a]:underline [&_a]:underline-offset-2";
+
+pub const WS_GENERAL_FORM: &str = "grid max-w-[36rem] gap-3.5";
+
+/// Settings tables with mobile card layout (data-label ::before).
+pub const WS_TABLE_WRAP: &str = "m-0 w-full overflow-x-auto max-[720px]:overflow-visible";
+pub const WS_TABLE: &str = "w-full min-w-full table-auto border-separate border-spacing-0 text-[13px] leading-snug [&_tbody_tr:last-child_td]:border-b-0 [&_tbody_tr:hover_td]:bg-[color-mix(in_srgb,var(--text-primary)_2.5%,transparent)] max-[720px]:grid max-[720px]:min-w-0 max-[720px]:gap-3 max-[720px]:[&_tbody]:grid max-[720px]:[&_tbody]:min-w-0 max-[720px]:[&_tbody]:w-full max-[720px]:[&_tbody]:gap-3 max-[720px]:[&_tbody_tr:hover_td]:bg-transparent";
+pub const WS_TABLE_AUDIT: &str = "w-full min-w-full table-fixed border-separate border-spacing-0 text-[13px] leading-snug [&_tbody_tr:last-child_td]:border-b-0 [&_tbody_tr:hover_td]:bg-[color-mix(in_srgb,var(--text-primary)_2.5%,transparent)] max-[720px]:grid max-[720px]:min-w-0 max-[720px]:gap-3 max-[720px]:[&_tbody]:grid max-[720px]:[&_tbody]:min-w-0 max-[720px]:[&_tbody]:w-full max-[720px]:[&_tbody]:gap-3 max-[720px]:[&_tbody_tr:hover_td]:bg-transparent";
+pub const WS_THEAD: &str = "max-[720px]:absolute max-[720px]:m-[-1px] max-[720px]:h-px max-[720px]:w-px max-[720px]:overflow-hidden max-[720px]:whitespace-nowrap max-[720px]:border-0 max-[720px]:p-0 max-[720px]:[clip:rect(0,0,0,0)]";
+pub const WS_TR: &str = "max-[720px]:grid max-[720px]:w-full max-[720px]:gap-0 max-[720px]:rounded-xl max-[720px]:border max-[720px]:border-border-subtle max-[720px]:bg-[color-mix(in_srgb,var(--bg-surface)_92%,var(--bg-canvas))] max-[720px]:px-[0.85rem] max-[720px]:pb-[0.55rem] max-[720px]:pt-[0.35rem] max-[720px]:shadow-[0_1px_2px_rgba(15,23,42,0.04)]";
+pub const WS_TH: &str = "box-border border-b border-border-subtle px-[0.9rem] pb-[0.7rem] pt-[0.85rem] text-left align-middle text-[11px] font-[650] uppercase tracking-[0.04em] text-secondary whitespace-nowrap";
+/// Body cell — desktop table + mobile card row with `data-label` pseudo.
+pub const WS_TD: &str = "box-border border-b border-border-subtle px-[0.9rem] py-[0.85rem] pb-4 text-left align-middle max-[720px]:flex max-[720px]:min-w-0 max-[720px]:items-start max-[720px]:justify-between max-[720px]:gap-[0.85rem] max-[720px]:whitespace-normal max-[720px]:border-b max-[720px]:border-[color-mix(in_srgb,var(--border-subtle)_80%,transparent)] max-[720px]:px-0 max-[720px]:py-[0.65rem] max-[720px]:last:border-b-0 max-[720px]:before:content-[attr(data-label)] max-[720px]:before:flex-none max-[720px]:before:max-w-[38%] max-[720px]:before:pt-[0.15rem] max-[720px]:before:text-[0.72rem] max-[720px]:before:font-[650] max-[720px]:before:uppercase max-[720px]:before:tracking-[0.04em] max-[720px]:before:leading-snug max-[720px]:before:text-secondary max-[720px]:[&>*]:min-w-0 max-[720px]:[&>*]:text-right";
+
+pub const WS_MEMBER_EMAIL: &str = "mr-2";
+pub const WS_YOU_BADGE: &str = "inline-block rounded-full bg-[color-mix(in_srgb,var(--text-primary)_10%,transparent)] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.02em] text-secondary";
+
+/// Native select with custom chevron (settings role / transfer / invite).
+pub const WS_SELECT: &str = "box-border max-w-[14rem] min-h-[42px] min-w-[8.5rem] w-auto cursor-pointer appearance-none rounded-[10px] border border-border-strong bg-surface bg-[length:12px_8px] bg-[position:right_0.85rem_center] bg-no-repeat py-2.5 pl-3 pr-10 text-primary [background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1.5 1.75L6 6.25L10.5 1.75' stroke='%2364748b' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\")] max-[720px]:max-w-[min(14rem,58vw)]";
+pub const WS_SELECT_LABEL: &str = "m-0 inline-flex";
+
+pub const WS_MEMBER_ACTIONS: &str = "min-w-[10rem] whitespace-nowrap max-[720px]:flex max-[720px]:min-w-0 max-[720px]:flex-wrap max-[720px]:justify-end max-[720px]:gap-2 max-[720px]:whitespace-normal";
+pub const WS_REMOVE_BUTTON: &str = "px-2.5 py-1.5 text-[13px]";
+pub const WS_SELF_REMOVE_HINT: &str = "inline-block max-w-[14rem] whitespace-normal text-xs";
+
+pub const WS_MODAL_ACTIONS: &str = "flex flex-wrap justify-end gap-2.5";
+
+/// Danger / destructive filled button (compose with `BTN_PRIMARY` / `BTN_SECONDARY`).
+pub const WS_DANGER_BUTTON: &str =
+    "!border-[#b91c1c] !bg-[#b91c1c] !text-white hover:enabled:!border-[#991b1b] hover:enabled:!bg-[#991b1b] disabled:!text-white/90";
+/// Danger card action: content-sized desktop, full-width touch targets ≤720px.
+pub const WS_DANGER_CARD_BTN: &str =
+    "max-w-full w-auto self-start max-[720px]:w-full max-[720px]:self-stretch";
+
+pub const WS_DANGER_ZONES: &str = "flex flex-col gap-5";
+pub const WS_DANGER_CARD: &str = "flex flex-col items-start gap-3 rounded-[10px] border border-[color-mix(in_srgb,var(--danger)_28%,var(--border-subtle))] bg-[color-mix(in_srgb,var(--danger)_6%,var(--bg-surface))] px-[1.15rem] py-4 [&_h3]:m-0 [&_h3]:w-full [&_h3]:max-w-full [&_h3]:text-[1.05rem] [&_p]:w-full [&_p]:max-w-full";
+pub const WS_DANGER_CONFIRM: &str = "flex w-full max-w-[28rem] flex-col items-start gap-3 [&_label]:w-full";
+
+pub const WS_TRANSFER_BAR: &str = "mb-[1.35rem] mt-0 flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-border-subtle bg-surface px-4 py-[0.85rem] max-[720px]:flex-col max-[720px]:items-stretch [&_p]:m-0 [&_p]:flex-[1_1_16rem] max-[720px]:[&_button]:w-full";
+pub const WS_TRANSFER_MODAL: &str = "flex flex-col gap-[0.85rem]";
+
+pub const WS_INVITE_FORM: &str = "mb-5 mt-[0.15rem] grid max-w-[36rem] gap-[0.85rem]";
+pub const WS_INVITE_ACTIONS: &str = "flex items-center gap-3";
+pub const WS_INVITATION_ACTIONS: &str = "flex flex-wrap items-center gap-2 max-[720px]:justify-end";
+
+pub const WS_STATUS_PILL: &str = "inline-flex items-center rounded-full bg-[color-mix(in_srgb,var(--border-subtle)_70%,transparent)] px-2 py-[0.1rem] text-xs font-semibold lowercase text-primary";
+pub const WS_STATUS_PENDING: &str =
+    "bg-[color-mix(in_srgb,#2563eb_16%,transparent)] text-[#1d4ed8]";
+pub const WS_STATUS_MUTED: &str =
+    "bg-[color-mix(in_srgb,#94a3b8_22%,transparent)] text-[#475569]";
+pub const WS_STATUS_ACCEPTED: &str =
+    "bg-[color-mix(in_srgb,#0f7b58_16%,transparent)] text-[#0f7b58]";
+pub const WS_STATUS_FAIL: &str =
+    "bg-[color-mix(in_srgb,#dc2626_14%,transparent)] text-[#b91c1c]";
+
+/// Invitation / audit status pill from raw status string.
+pub fn ws_status_pill(status: &str) -> String {
+    let variant = match status {
+        "pending" => Some(WS_STATUS_PENDING),
+        "revoked" | "expired" => Some(WS_STATUS_MUTED),
+        "accepted" => Some(WS_STATUS_ACCEPTED),
+        "succeeded" | "allowed" => Some(WS_STATUS_ACCEPTED),
+        "failed" | "denied" => Some(WS_STATUS_FAIL),
+        _ => None,
+    };
+    with_extra(WS_STATUS_PILL, variant)
+}
+
+pub const WS_ROLES_TOOLBAR: &str = "mb-5 mt-0 flex w-full flex-wrap justify-start gap-3";
+pub const WS_ROLE_NAME: &str = "grid gap-[0.15rem] [&_strong]:font-semibold [&_small]:text-xs";
+pub const WS_ROLE_BADGE: &str =
+    "inline-flex items-center rounded-full px-[0.55rem] py-[0.12rem] text-[0.72rem] font-semibold uppercase tracking-[0.02em]";
+pub const WS_ROLE_BADGE_BUILTIN: &str =
+    "bg-[color-mix(in_srgb,#475569_14%,transparent)] text-[#334155]";
+pub const WS_ROLE_BADGE_CUSTOM: &str =
+    "bg-[color-mix(in_srgb,#7c3aed_14%,transparent)] text-[#6d28d9]";
+pub const WS_ROLE_ACTIONS: &str = "flex flex-wrap items-center gap-2 max-[720px]:justify-end";
+
+pub const WS_ROLE_FORM: &str =
+    "mb-5 mt-0 grid max-w-[48rem] gap-[0.9rem] rounded-xl border border-border-subtle px-[1.1rem] py-4 pb-[1.15rem]";
+pub const WS_ROLE_FORM_HEAD_H2: &str = "mb-1 mt-0 text-[1.05rem]";
+pub const WS_ROLE_FORM_HEAD_P: &str = "m-0";
+pub const WS_PERMISSION_FIELDSET: &str = "m-0 min-w-0 border-0 p-0";
+pub const WS_PERMISSION_LEGEND: &str = "mb-2 p-0 text-[0.85rem] font-semibold";
+pub const WS_PERMISSION_GROUP: &str = "mb-[0.85rem] grid gap-[0.45rem]";
+pub const WS_PERMISSION_GROUP_H3: &str =
+    "m-0 text-[0.8rem] font-semibold uppercase tracking-[0.03em] text-secondary";
+pub const WS_PERMISSION_GRID: &str =
+    "grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-[0.45rem]";
+pub const WS_PERMISSION_OPTION: &str = "flex cursor-pointer items-start gap-[0.55rem] rounded-lg border border-border-subtle px-[0.65rem] py-[0.55rem] [&_input]:mt-[0.2rem] [&_span]:grid [&_span]:gap-[0.1rem] [&_strong]:text-[0.9rem] [&_strong]:font-semibold [&_small]:text-[0.72rem]";
+pub const WS_ROLE_FORM_ACTIONS: &str = "flex flex-wrap justify-end gap-[0.65rem]";
+
+pub const WS_AUDIT_TOOLBAR: &str =
+    "mb-4 mt-0 flex w-full flex-wrap items-end justify-start gap-x-4 gap-y-[0.85rem]";
+pub const WS_AUDIT_FILTERS: &str =
+    "flex w-full min-w-0 flex-[1_1_auto] flex-wrap items-end gap-3";
+pub const WS_AUDIT_FILTER: &str =
+    "grid min-w-[9.5rem] gap-[0.3rem] text-[0.85rem] font-semibold max-[720px]:min-w-0 max-[720px]:flex-[1_1_100%]";
+pub const WS_AUDIT_FILTER_LABEL: &str =
+    "text-[0.75rem] font-semibold uppercase tracking-[0.02em] text-secondary";
+pub const WS_AUDIT_FILTER_ACTOR: &str =
+    "min-w-[12rem] max-w-[18rem] flex-[1_1_12rem] max-[720px]:max-w-none max-[720px]:w-full";
+pub const WS_AUDIT_HINT: &str = "mb-[1.1rem] mt-0 text-[0.85rem]";
+pub const WS_AUDIT_FOOTER: &str =
+    "mt-4 flex flex-wrap items-center justify-between gap-3";
+
+pub const WS_AUDIT_COL_WHEN: &str = "w-[7.5rem]";
+pub const WS_AUDIT_COL_ACTOR: &str = "w-[22%]";
+pub const WS_AUDIT_COL_ACTION: &str = "w-[20%]";
+pub const WS_AUDIT_COL_TARGET: &str = "w-[18%]";
+pub const WS_AUDIT_COL_OUTCOME: &str = "w-[3.25rem] text-center";
+pub const WS_AUDIT_COL_DETAILS: &str = "w-12 text-center";
+pub const WS_AUDIT_WHEN: &str =
+    "whitespace-nowrap text-[0.86rem] tabular-nums text-secondary";
+pub const WS_AUDIT_ELLIPSIS: &str =
+    "block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[0.92rem] font-medium";
+pub const WS_OUTCOME_ICON: &str =
+    "inline-flex h-[1.7rem] w-[1.7rem] items-center justify-center rounded-full text-[0.85rem] font-bold leading-none";
+pub const WS_OUTCOME_OK: &str =
+    "bg-[color-mix(in_srgb,#0f7b58_16%,transparent)] text-[#0f7b58]";
+pub const WS_OUTCOME_FAIL: &str =
+    "bg-[color-mix(in_srgb,#dc2626_14%,transparent)] text-[#b91c1c]";
+pub const WS_OUTCOME_DENY: &str =
+    "bg-[color-mix(in_srgb,#d97706_16%,transparent)] text-[#b45309]";
+pub const WS_OUTCOME_UNKNOWN: &str =
+    "bg-[color-mix(in_srgb,#94a3b8_18%,transparent)] text-[#64748b]";
+
+/// Audit outcome glyph chip from `outcome_class` key (`ok` / `fail` / `deny` / `unknown`).
+pub fn ws_outcome_icon(kind: &str) -> String {
+    let variant = match kind {
+        "ok" => WS_OUTCOME_OK,
+        "fail" => WS_OUTCOME_FAIL,
+        "deny" => WS_OUTCOME_DENY,
+        _ => WS_OUTCOME_UNKNOWN,
+    };
+    with_extra(WS_OUTCOME_ICON, Some(variant))
+}
+
+pub const WS_AUDIT_ICON_BUTTON: &str = "inline-flex h-8 w-8 cursor-pointer appearance-none items-center justify-center rounded-full border border-border-subtle bg-surface p-0 text-secondary transition-[background-color,border-color,color] duration-150 hover:border-border-strong hover:bg-surface-hover hover:text-primary";
+pub const WS_AUDIT_EYE: &str = "block";
+
+pub const WS_AUDIT_DETAIL_MODAL: &str =
+    "max-w-[min(36rem,96vw)] w-[min(36rem,calc(100vw-32px))]";
+pub const WS_AUDIT_DETAIL_LIST: &str = "mb-[1.1rem] mt-0 grid gap-3";
+pub const WS_AUDIT_DETAIL_ROW: &str = "grid gap-[0.15rem]";
+pub const WS_AUDIT_DETAIL_DT: &str =
+    "m-0 text-[0.72rem] font-semibold uppercase tracking-[0.03em] text-secondary";
+pub const WS_AUDIT_DETAIL_DD: &str = "m-0 grid gap-[0.15rem]";
+pub const WS_AUDIT_METADATA_H3: &str = "mb-1 mt-0 text-[0.95rem]";
+pub const WS_AUDIT_METADATA_P: &str = "mb-2 mt-0";
+pub const WS_AUDIT_JSON: &str = "mb-4 mt-0 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border-subtle bg-[color-mix(in_srgb,var(--text-primary)_4%,transparent)] px-[0.85rem] py-3 font-mono text-xs leading-snug";
+pub const WS_MONO: &str = "font-mono text-[0.78rem]";

@@ -281,7 +281,7 @@ async function assertSettingsPage(page, path, expectedH1) {
 async function assertGeneralNameField(page) {
   const nameInput = page
     .locator(
-      '.workspace-settings-general-form input[type="text"], form.workspace-settings-general-form input',
+      '[data-testid="workspace-settings-general-form"] input[type="text"], form[data-testid="workspace-settings-general-form"] input',
     )
     .first();
   await nameInput.waitFor({ state: "visible", timeout: 15_000 });
@@ -304,7 +304,7 @@ async function assertGeneralNameField(page) {
 async function tryRenameWorkspace(page) {
   const nameInput = page
     .locator(
-      '.workspace-settings-general-form input[type="text"], form.workspace-settings-general-form input',
+      '[data-testid="workspace-settings-general-form"] input[type="text"], form[data-testid="workspace-settings-general-form"] input',
     )
     .first();
   await nameInput.waitFor({ state: "visible", timeout: 15_000 });

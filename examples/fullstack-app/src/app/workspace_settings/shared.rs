@@ -7,8 +7,8 @@ use crate::app::helpers::redirect_browser;
 use crate::app::{browser_load, get_current_session, list_organizations};
 use crate::contracts::OrganizationSummary;
 use crate::ui::classes::{
-    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
-    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+    MUTED, PANEL, RESULT_LINE, WS_PAGE, WS_PAGE_HEADER, WS_PAGE_SUB, WS_PAGE_TITLE, WS_REDIRECT,
+    WS_STUB_PANEL, WS_STUB_RESULT, with_extra,
 };
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
@@ -334,9 +334,9 @@ pub fn LegacySettingsRedirect(section: String) -> impl IntoView {
     });
 
     view! {
-        <section class=format!("{}{}", PANEL, " workspace-settings-redirect")>
+        <section class=with_extra(PANEL, Some(WS_REDIRECT))>
             <p class=RESULT_LINE>"Opening workspace settings…"</p>
-            <p class="board-muted">
+            <p class=MUTED>
                 <a href="/organizations">"Back to workspaces"</a>
                 " if this takes too long."
             </p>
@@ -352,13 +352,13 @@ pub(crate) fn settings_page_stub(
     children: impl IntoView + 'static,
 ) -> impl IntoView {
     view! {
-        <div class="workspace-settings-page">
-            <header class="workspace-settings-page-header">
-                <h1>{title}</h1>
-                <p class="workspace-settings-page-sub">{subtitle}</p>
+        <div class=WS_PAGE>
+            <header class=WS_PAGE_HEADER>
+                <h1 class=WS_PAGE_TITLE>{title}</h1>
+                <p class=WS_PAGE_SUB>{subtitle}</p>
             </header>
-            <section class=format!("{}{}", PANEL, " workspace-settings-stub")>
-                <p class=RESULT_LINE>{permission_hint}</p>
+            <section class=WS_STUB_PANEL>
+                <p class=WS_STUB_RESULT>{permission_hint}</p>
                 {children}
             </section>
         </div>

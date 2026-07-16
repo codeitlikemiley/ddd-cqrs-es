@@ -17,8 +17,12 @@ use crate::app::{
 };
 use crate::contracts::{MembershipSummary, WorkspaceRoleOption};
 use crate::ui::classes::{
-    AUTH_TEXT_LINK, BANNER_ERROR, BANNER_SUCCESS, BTN_AUTH_SUBMIT, BTN_PRIMARY, BTN_SECONDARY,
-    BUTTON_ROW, FIELD, FIELD_GROUP, INPUT, PANEL, PANEL_COMPACT, RESULT_LINE, SECTION_LABEL,
+    BANNER_ERROR, BTN_PRIMARY, BTN_SECONDARY, FIELD, INPUT, MUTED, RESULT_LINE, SR_ONLY,
+    VAULT_MODAL_BACKDROP, VAULT_MODAL_BODY, VAULT_MODAL_CLOSE, VAULT_MODAL_CONFIRM,
+    VAULT_MODAL_HEAD, VAULT_MODAL_HEAD_P, VAULT_MODAL_HEAD_TITLE, WS_DANGER_BUTTON, WS_EMPTY,
+    WS_MEMBER_ACTIONS, WS_MEMBER_EMAIL, WS_MODAL_ACTIONS, WS_REMOVE_BUTTON, WS_SELECT,
+    WS_SELECT_LABEL, WS_SELF_REMOVE_HINT, WS_STEP_UP, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TH,
+    WS_THEAD, WS_TRANSFER_BAR, WS_TRANSFER_MODAL, WS_TR, WS_YOU_BADGE, with_extra,
 };
 use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
@@ -224,7 +228,7 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
         </Show>
 
         <Show when=move || requires_step_up.get()>
-            <p class="workspace-settings-step-up" role="status">
+            <p class=WS_STEP_UP role="status">
                 "Role changes, removals, and ownership transfer require a step-up session (AAL2). "
                 <a href="/account/mfa">"Complete MFA"</a>
                 " if your session is not elevated."
@@ -240,8 +244,8 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
         </Show>
 
         <Show when=move || can_transfer_ownership.get() && list_ready.get()>
-            <div class="workspace-settings-transfer-bar">
-                <p class="board-muted">
+            <div class=WS_TRANSFER_BAR>
+                <p class=MUTED>
                     "As owner you can transfer workspace ownership to another member. "
                     "You become an admin afterward."
                 </p>
@@ -269,7 +273,7 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
             let list = rows.get();
             if list.is_empty() {
                 return view! {
-                    <div class="workspace-settings-empty" role="status">
+                    <div class=WS_EMPTY role="status">
                         <p>"No members found."</p>
                     </div>
                 }
@@ -282,15 +286,15 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
             let actions_locked = any_busy.get();
 
             view! {
-                <div class="table-wrap workspace-settings-table-wrap">
-                    <table class="data-table workspace-settings-members-table">
-                        <thead>
+                <div class=WS_TABLE_WRAP>
+                    <table class=WS_TABLE>
+                        <thead class=WS_THEAD>
                             <tr>
-                                <th scope="col">"Email"</th>
-                                <th scope="col">"Role"</th>
-                                <th scope="col">"Status"</th>
-                                <th scope="col">"Joined"</th>
-                                <th scope="col">"Actions"</th>
+                                <th scope="col" class=WS_TH>"Email"</th>
+                                <th scope="col" class=WS_TH>"Role"</th>
+                                <th scope="col" class=WS_TH>"Status"</th>
+                                <th scope="col" class=WS_TH>"Joined"</th>
+                                <th scope="col" class=WS_TH>"Actions"</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -321,7 +325,7 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
 
         <Show when=move || remove_target.get().is_some()>
             <div
-                class="board-modal-backdrop"
+                class=VAULT_MODAL_BACKDROP
                 role="presentation"
                 on:click=move |_| {
                     if !remove_pending.get() {
@@ -330,16 +334,16 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
                 }
             >
                 <div
-                    class="board-modal vault-modal-confirm"
+                    class=VAULT_MODAL_CONFIRM
                     role="dialog"
                     aria-modal="true"
                     aria-labelledby="workspace-remove-member-title"
                     on:click=move |e| e.stop_propagation()
                 >
-                    <header class="board-modal-head">
+                    <header class=VAULT_MODAL_HEAD>
                         <div>
-                            <h2 id="workspace-remove-member-title">"Remove member?"</h2>
-                            <p>
+                            <h2 id="workspace-remove-member-title" class=VAULT_MODAL_HEAD_TITLE>"Remove member?"</h2>
+                            <p class=VAULT_MODAL_HEAD_P>
                                 "Remove "
                                 <strong>
                                     {move || {
@@ -354,15 +358,15 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
                         </div>
                         <button
                             type="button"
-                            class="board-modal-close"
+                            class=VAULT_MODAL_CLOSE
                             disabled=move || remove_pending.get()
                             on:click=move |_| set_remove_target.set(None)
                         >
                             "Close"
                         </button>
                     </header>
-                    <div class="board-modal-body">
-                        <div class="workspace-settings-modal-actions">
+                    <div class=VAULT_MODAL_BODY>
+                        <div class=WS_MODAL_ACTIONS>
                             <button
                                 type="button"
                                 class=BTN_SECONDARY
@@ -373,7 +377,7 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
                             </button>
                             <button
                                 type="button"
-                                class=format!("{}{}", BTN_PRIMARY, " workspace-settings-danger-button")
+                                class=with_extra(BTN_PRIMARY, Some(WS_DANGER_BUTTON))
                                 disabled=move || remove_pending.get()
                                 on:click=move |_| {
                                     let Some((user_id, _)) = remove_target.get_untracked() else {
@@ -411,7 +415,7 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
 
         <Show when=move || transfer_open.get()>
             <div
-                class="board-modal-backdrop"
+                class=VAULT_MODAL_BACKDROP
                 role="presentation"
                 on:click=move |_| {
                     if !transfer_pending.get() {
@@ -420,34 +424,34 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
                 }
             >
                 <div
-                    class="board-modal vault-modal-confirm"
+                    class=VAULT_MODAL_CONFIRM
                     role="dialog"
                     aria-modal="true"
                     aria-labelledby="workspace-transfer-ownership-title"
                     on:click=move |e| e.stop_propagation()
                 >
-                    <header class="board-modal-head">
+                    <header class=VAULT_MODAL_HEAD>
                         <div>
-                            <h2 id="workspace-transfer-ownership-title">"Transfer ownership"</h2>
-                            <p>
+                            <h2 id="workspace-transfer-ownership-title" class=VAULT_MODAL_HEAD_TITLE>"Transfer ownership"</h2>
+                            <p class=VAULT_MODAL_HEAD_P>
                                 "The selected member becomes the owner. You are demoted to admin. "
                                 "This requires step-up (AAL2)."
                             </p>
                         </div>
                         <button
                             type="button"
-                            class="board-modal-close"
+                            class=VAULT_MODAL_CLOSE
                             disabled=move || transfer_pending.get()
                             on:click=move |_| set_transfer_open.set(false)
                         >
                             "Close"
                         </button>
                     </header>
-                    <div class="board-modal-body workspace-settings-transfer-modal">
+                    <div class=with_extra(VAULT_MODAL_BODY, Some(WS_TRANSFER_MODAL))>
                         <label class=FIELD>
                             <span>"New owner"</span>
                             <select
-                                class="workspace-settings-role-select"
+                                class=WS_SELECT
                                 prop:value=move || transfer_target_id.get()
                                 disabled=move || transfer_pending.get()
                                 on:change=move |event| {
@@ -505,7 +509,7 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
                                 }
                             />
                         </label>
-                        <div class="workspace-settings-modal-actions">
+                        <div class=WS_MODAL_ACTIONS>
                             <button
                                 type="button"
                                 class=BTN_SECONDARY
@@ -516,7 +520,7 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
                             </button>
                             <button
                                 type="button"
-                                class=format!("{}{}", BTN_PRIMARY, " workspace-settings-danger-button")
+                                class=with_extra(BTN_PRIMARY, Some(WS_DANGER_BUTTON))
                                 disabled=move || {
                                     !transfer_confirm_ok.get() || transfer_pending.get()
                                 }
@@ -595,27 +599,23 @@ fn member_row(
     let current_role = role_id.clone();
 
     view! {
-        <tr class=if is_you {
-            "workspace-settings-member-row is-you"
-        } else {
-            "workspace-settings-member-row"
-        }>
-            <td data-label="Email">
-                <span class="workspace-settings-member-email">{email}</span>
+        <tr class=WS_TR>
+            <td data-label="Email" class=WS_TD>
+                <span class=WS_MEMBER_EMAIL>{email}</span>
                 {if is_you {
-                    view! { <span class="workspace-settings-you-badge">"You"</span> }.into_any()
+                    view! { <span class=WS_YOU_BADGE>"You"</span> }.into_any()
                 } else {
                     view! { <></> }.into_any()
                 }}
             </td>
-            <td data-label="Role">
+            <td data-label="Role" class=WS_TD>
                 {if can_change_role {
                     let select_disabled = actions_locked || row_busy;
                     view! {
-                        <label class="workspace-settings-role-select-label">
-                            <span class="sr-only">"Role"</span>
+                        <label class=WS_SELECT_LABEL>
+                            <span class=SR_ONLY>"Role"</span>
                             <select
-                                class="workspace-settings-role-select"
+                                class=WS_SELECT
                                 prop:value=current_role.clone()
                                 disabled=select_disabled
                                 on:change=move |event| {
@@ -671,13 +671,13 @@ fn member_row(
                     view! { <span>{role_label}</span> }.into_any()
                 }}
             </td>
-            <td data-label="Status">{status}</td>
-            <td data-label="Joined">{joined}</td>
-            <td class="workspace-settings-member-actions" data-label="Actions">
+            <td data-label="Status" class=WS_TD>{status}</td>
+            <td data-label="Joined" class=WS_TD>{joined}</td>
+            <td class=format!("{} {}", WS_TD, WS_MEMBER_ACTIONS) data-label="Actions">
                 {if is_you {
                     view! {
                         <span
-                            class="board-muted workspace-settings-self-remove-hint"
+                            class=with_extra(MUTED, Some(WS_SELF_REMOVE_HINT))
                             title="Leave from Danger zone"
                         >
                             "Use Danger zone to leave"
@@ -689,7 +689,7 @@ fn member_row(
                     view! {
                         <button
                             type="button"
-                            class=format!("{}{}", BTN_SECONDARY, " workspace-settings-remove-button")
+                            class=with_extra(BTN_SECONDARY, Some(WS_REMOVE_BUTTON))
                             disabled=disabled
                             on:click=move |_| {
                                 set_action_error.set(None);
