@@ -225,9 +225,15 @@ pub(crate) fn map_rate_limit_error(error: RateLimitError<SpinPostgresError>) -> 
         RateLimitError::InvalidRequest => {
             AuthStackError::validation("rate-limit request is invalid")
         }
-        RateLimitError::Transport(_) | RateLimitError::Row(_) | RateLimitError::InvalidRow => {
-            AuthStackError::store("rate-limit operation failed")
+        // Surface the host/transport detail in logs (public body stays generic via
+        // AuthStackError::public_message). Common cause: local Postgres is down.
+        RateLimitError::Transport(error) => {
+            AuthStackError::store(format!("rate-limit operation failed: {error}"))
         }
+        RateLimitError::Row(error) => {
+            AuthStackError::store(format!("rate-limit operation failed: {error}"))
+        }
+        RateLimitError::InvalidRow => AuthStackError::store("rate-limit operation failed: empty row"),
         _ => AuthStackError::store("rate-limit operation failed"),
     }
 }

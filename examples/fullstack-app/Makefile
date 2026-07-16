@@ -291,10 +291,13 @@ db-down:
 migration-preflight:
 	cargo $(CARGO_CONFIG_ARGS) check --locked --no-default-features --features migrate --bin wasi-auth-migrate
 
-db-migrate:
+# Local compose Postgres (127.0.0.1:54329) must be up before migrations/Spin.
+# Without this, login/register fail with HTTP 503 "auth storage is unavailable"
+# (rate-limit / session store cannot open a connection).
+db-migrate: db-up
 	DATABASE_URL='$(POSTGRES_URL)' cargo $(CARGO_CONFIG_ARGS) run --quiet --no-default-features --features migrate --bin wasi-auth-migrate -- apply
 
-db-verify:
+db-verify: db-up
 	DATABASE_URL='$(POSTGRES_URL)' cargo $(CARGO_CONFIG_ARGS) run --quiet --no-default-features --features migrate --bin wasi-auth-migrate -- verify-database
 
 validate-mail:
