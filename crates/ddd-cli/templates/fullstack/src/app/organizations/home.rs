@@ -6,8 +6,7 @@
 
 use super::create_modal::CreateOrganizationModal;
 use crate::app::helpers::{
-    action_result_text, has_permission, org_monogram, org_tone_index, server_error_text,
-    short_id_label,
+    action_result_text, org_monogram, org_tone_index, server_error_text, short_id_label,
 };
 use crate::app::{
     ListOrganizations, SelectOrganization, browser_load, get_current_session, list_organizations,
@@ -50,7 +49,7 @@ pub fn OrganizationsHome() -> impl IntoView {
                     class="primary-button"
                     on:click=move |_| set_create_open.set(true)
                 >
-                    "New organization"
+                    "New workspace"
                 </button>
             </header>
 
@@ -58,55 +57,7 @@ pub fn OrganizationsHome() -> impl IntoView {
                 <p class="error-banner">{move || action_result_text(select_value.get())}</p>
             </Show>
 
-            {move || match session.get() {
-                Some(Ok(session)) if session.authenticated => {
-                    let can_settings = has_permission(&session, "organization.update");
-                    let can_members = has_permission(&session, "member.view");
-                    let can_roles = has_permission(&session, "role.view");
-                    let can_audit = has_permission(&session, "audit.view");
-                    let active_tenant = session
-                        .tenant_id
-                        .clone()
-                        .filter(|value| !value.trim().is_empty());
-                    if can_settings || can_members || can_roles || can_audit {
-                        view! {
-                            <nav class="orgs-context-nav" aria-label="Selected organization">
-                                <div class="orgs-context-label">
-                                    <span class="dash-metric-dot dash-metric-dot-ok" aria-hidden="true"></span>
-                                    <span>
-                                        {match active_tenant.as_ref() {
-                                            Some(id) => format!("Active · {}", short_id_label(id)),
-                                            None => "Select an organization to unlock management".to_owned(),
-                                        }}
-                                    </span>
-                                </div>
-                                <div class="orgs-context-links">
-                                    <a class="orgs-context-link" href="/account/vault">"Vault"</a>
-                                    <Show when=move || can_settings>
-                                        <a class="orgs-context-link" href="/organizations/settings">"Settings"</a>
-                                    </Show>
-                                    <Show when=move || can_members>
-                                        <a class="orgs-context-link" href="/organizations/members">"Members"</a>
-                                        <a class="orgs-context-link" href="/organizations/invitations">"Invitations"</a>
-                                    </Show>
-                                    <Show when=move || can_roles>
-                                        <a class="orgs-context-link" href="/organizations/roles">"Roles"</a>
-                                        <a class="orgs-context-link" href="/organizations/permissions">"Permissions"</a>
-                                    </Show>
-                                    <Show when=move || can_audit>
-                                        <a class="orgs-context-link" href="/organizations/audit">"Audit"</a>
-                                    </Show>
-                                </div>
-                            </nav>
-                        }.into_any()
-                    } else {
-                        view! {}.into_any()
-                    }
-                }
-                _ => view! {}.into_any(),
-            }}
-
-            <section class="orgs-list-panel" aria-label="Organization list">
+            <section class="orgs-list-panel" aria-label="Workspace list">
                 {move || {
                     let active_tenant = session
                         .get()
@@ -116,15 +67,15 @@ pub fn OrganizationsHome() -> impl IntoView {
                     match organizations.get() {
                         Some(Ok(response)) if response.organizations.is_empty() => view! {
                             <div class="orgs-empty">
-                                <div class="orgs-empty-mark" aria-hidden="true">"O"</div>
-                                <h3>"No organizations yet"</h3>
+                                <div class="orgs-empty-mark" aria-hidden="true">"W"</div>
+                                <h3>"No workspaces yet"</h3>
                                 <p>"Create your first workspace to invite teammates and manage roles."</p>
                                 <button
                                     type="button"
                                     class="primary-button"
                                     on:click=move |_| set_create_open.set(true)
                                 >
-                                    "Create organization"
+                                    "Create workspace"
                                 </button>
                             </div>
                         }.into_any(),
@@ -149,11 +100,16 @@ pub fn OrganizationsHome() -> impl IntoView {
                                         } else {
                                             format!("/org/{org_slug}/vault")
                                         };
+                                        let settings_href = if org_slug.is_empty() {
+                                            "/organizations/settings".to_owned()
+                                        } else {
+                                            format!("/org/{org_slug}/settings/general")
+                                        };
                                         let action = if is_active {
                                             view! {
                                                 <a class="secondary-button" href=vault_href.clone()>"Vault"</a>
-                                                <a class="secondary-button" href="/organizations/settings">
-                                                    "Open"
+                                                <a class="secondary-button" href=settings_href.clone()>
+                                                    "Settings"
                                                 </a>
                                             }
                                             .into_any()
@@ -202,6 +158,14 @@ pub fn OrganizationsHome() -> impl IntoView {
                                                     <div class="orgs-row-meta">
                                                         <span class="orgs-badge">{role}</span>
                                                         <span class="orgs-status">{status}</span>
+                                                        {if org_slug.is_empty() {
+                                                            view! {}.into_any()
+                                                        } else {
+                                                            view! {
+                                                                <span class="orgs-status mono-value">{format!("/{org_slug}")}</span>
+                                                            }
+                                                            .into_any()
+                                                        }}
                                                     </div>
                                                 </div>
                                                 <div class="orgs-row-actions">

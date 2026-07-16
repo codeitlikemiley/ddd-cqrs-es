@@ -9,7 +9,7 @@
 | Field | Value |
 |-------|--------|
 | Run ID | `07aef382` |
-| Current PR | PR1 (proposed) |
+| Current PR | PR2 (proposed) |
 | Phase | awaiting_approval |
 | Branch base | `codex/fullstack-verification-flow` |
 
@@ -24,8 +24,8 @@
 ## Milestones
 
 - [x] **M0** Baseline & module split (PR0)
-- [ ] **M1** Access model (PR1)
-- [ ] **M2** Settings shell & routes (PR2)
+- [x] **M1** Access model (PR1)
+- [x] **M2** Settings shell & routes (PR2)
 - [ ] **M3** Read models & transport (PR3)
 - [ ] **M4** Settings areas (PR4a–e)
 - [ ] **M5** Lifecycle SQL (ships with PR4b/c/e)
@@ -35,9 +35,9 @@
 
 | ID | Title | Depends | Status |
 |----|-------|---------|--------|
-| PR0 | Tracker + org UI module split + template sync | — | done (code; awaiting orchestrator advance) |
-| PR1 | OrganizationAccessModel + deps + error fidelity | — (∥ PR0) | pending |
-| PR2 | Settings shell + slug routes + legacy redirects | PR0 | pending |
+| PR0 | Tracker + org UI module split + template sync | — | done |
+| PR1 | OrganizationAccessModel + deps + error fidelity | — (∥ PR0) | done (code; step-up fidelity deferred) |
+| PR2 | Settings shell + slug routes + legacy redirects | PR0 | done (code; awaiting orchestrator advance) |
 | PR3 | Settings DTOs + slug-scoped reads + assign/remove/update fns | PR2 (+PR1 preferred) | pending |
 | PR4a | General + Members UI | PR3 | pending |
 | PR4b | Invitations UI + revoke/resend | PR3 + wasi-auth | pending |
@@ -78,11 +78,20 @@ Default order: `PR0 → PR1 → PR2 → PR3 → PR4a → PR4b → PR4c → PR4d 
 
 ### PR2 — M2 Shell & routes
 
-- [ ] Routes `/org/:slug/settings/{general,members,invitations,roles,audit,danger}`
-- [ ] Settings sidebar chrome; hide global rail on these routes
-- [ ] Legacy `/organizations/*` redirects
-- [ ] `/organizations` switcher + create modal only
+- [x] Routes `/org/:slug/settings/{general,members,invitations,roles,audit,danger}`
+- [x] Settings sidebar chrome; hide global rail on these routes
+- [x] Legacy `/organizations/*` redirects
+- [x] `/organizations` switcher + create modal only
 - Evidence:
+  - Path helpers: `is_workspace_settings_path`; `is_workspace_path` returns false for settings
+  - `AppLayout` three modes: settings shell / workspace rail / auth-shell
+  - Routes: `/org/:slug/settings` → general; plus general/members/invitations/roles/audit/danger stubs
+  - Legacy: `/organizations/{settings,members,invitations,roles,permissions,audit}` → slug-scoped settings
+  - Permissions: `workspace_settings_route_permission` in `server.rs` (general/danger → organization.view; members/invitations → member.view; roles → role.view; audit → audit.view)
+  - CSS: `.workspace-settings-shell` + mobile drawer in `input.css`
+  - `bash examples/fullstack-app/scripts/sync_fullstack_template.sh` + `… check` — template in sync
+  - `cd examples/fullstack-app && make check` — green; `bash scripts/check_loc.sh` — OK
+  - Hydrate: `cargo check --target wasm32-unknown-unknown --features hydrate` — green
 
 ### PR3 — M3 Transport
 

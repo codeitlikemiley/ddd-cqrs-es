@@ -1,8 +1,27 @@
 //! Workspace vs public path helpers (layout chrome + topbar titles).
 
+/// Slug-scoped workspace settings (`/org/{slug}/settings` and subpaths).
+///
+/// These use the settings sidebar shell, not the global workspace rail.
+pub(crate) fn is_workspace_settings_path(path: &str) -> bool {
+    let path = path.trim_end_matches('/');
+    let Some(rest) = path.strip_prefix("/org/") else {
+        return false;
+    };
+    // rest = "{slug}/settings" or "{slug}/settings/…"
+    let Some((_, after_slug)) = rest.split_once('/') else {
+        return false;
+    };
+    after_slug == "settings" || after_slug.starts_with("settings/")
+}
+
 pub(crate) fn is_workspace_path(path: &str) -> bool {
     let path = path.trim_end_matches('/');
     if path.starts_with("/onboarding") {
+        return false;
+    }
+    // Settings chrome is exclusive — do not wrap with the global workspace rail.
+    if is_workspace_settings_path(path) {
         return false;
     }
     path == "/dashboard"
@@ -17,7 +36,7 @@ pub(crate) fn is_workspace_path(path: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_workspace_path;
+    use super::{is_workspace_path, is_workspace_settings_path};
 
     #[test]
     fn onboarding_uses_the_focused_layout() {
@@ -25,6 +44,22 @@ mod tests {
         assert!(!is_workspace_path("/onboarding/workspace/"));
         assert!(is_workspace_path("/dashboard"));
         assert!(is_workspace_path("/organizations"));
+    }
+
+    #[test]
+    fn settings_paths_use_settings_shell_not_workspace_rail() {
+        assert!(is_workspace_settings_path("/org/acme/settings"));
+        assert!(is_workspace_settings_path("/org/acme/settings/"));
+        assert!(is_workspace_settings_path("/org/acme/settings/general"));
+        assert!(is_workspace_settings_path("/org/acme/settings/members"));
+        assert!(is_workspace_settings_path("/org/acme/settings/danger"));
+        assert!(!is_workspace_settings_path("/org/acme/vault"));
+        assert!(!is_workspace_settings_path("/organizations/settings"));
+        assert!(!is_workspace_settings_path("/settings"));
+
+        assert!(!is_workspace_path("/org/acme/settings"));
+        assert!(!is_workspace_path("/org/acme/settings/general"));
+        assert!(is_workspace_path("/org/acme/vault"));
     }
 }
 
@@ -50,8 +85,22 @@ pub(crate) fn workspace_topbar_title(path: &str) -> &'static str {
         "Create workspace"
     } else if path.starts_with("/account") {
         "Account"
+    } else if is_workspace_settings_path(path) {
+        if path.ends_with("/members") {
+            "Members"
+        } else if path.ends_with("/invitations") {
+            "Invitations"
+        } else if path.ends_with("/roles") {
+            "Roles"
+        } else if path.ends_with("/audit") {
+            "Audit"
+        } else if path.ends_with("/danger") {
+            "Danger zone"
+        } else {
+            "Workspace settings"
+        }
     } else if path.starts_with("/organizations/settings") {
-        "Organization settings"
+        "Workspace settings"
     } else if path.starts_with("/organizations/members") {
         "Members"
     } else if path.starts_with("/organizations/invitations") {
@@ -59,11 +108,11 @@ pub(crate) fn workspace_topbar_title(path: &str) -> &'static str {
     } else if path.starts_with("/organizations/roles") {
         "Roles"
     } else if path.starts_with("/organizations/permissions") {
-        "Permissions"
+        "Roles"
     } else if path.starts_with("/organizations/audit") {
         "Audit"
     } else if path.starts_with("/organizations") {
-        "Organizations"
+        "Workspaces"
     } else if path.starts_with("/admin/users") {
         "Users"
     } else if path.starts_with("/admin/health") {

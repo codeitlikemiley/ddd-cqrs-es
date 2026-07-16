@@ -1,8 +1,7 @@
 //! Organization management UI.
 //!
 //! - [`OrganizationsPage`] / [`OrganizationsHome`]: workspace switcher + create modal
-//! - Legacy `/organizations/*` pages (settings/members/…) until PR2 redirects
-//! - [`OrganizationLinks`]: back-nav for legacy pages
+//! - Legacy `/organizations/*` routes redirect into slug-scoped settings (PR2)
 
 #![allow(unused_imports)]
 #![allow(clippy::unused_unit)]
@@ -27,7 +26,7 @@ use leptos::prelude::*;
 #[island(lazy)]
 pub fn OrganizationsPage() -> impl IntoView {
     page_shell(
-        "Organizations",
+        "Workspaces",
         "Workspaces you belong to. Select one to scope members, roles, and audit.",
         view! { <OrganizationsHome /> },
     )

@@ -1,6 +1,4 @@
 //! Slug-scoped workspace settings UI (Linear-style).
-//!
-//! Scaffolded in PR0; routes and real pages land in PR2+.
 
 pub mod audit;
 pub mod danger;
@@ -11,4 +9,11 @@ pub mod roles;
 pub mod shared;
 pub mod shell;
 
-pub use shell::WorkspaceSettingsShellPlaceholder;
+pub use audit::WorkspaceSettingsAuditPage;
+pub use danger::WorkspaceSettingsDangerPage;
+pub use general::WorkspaceSettingsGeneralPage;
+pub use invitations::WorkspaceSettingsInvitationsPage;
+pub use members::WorkspaceSettingsMembersPage;
+pub use roles::WorkspaceSettingsRolesPage;
+pub use shared::LegacySettingsRedirect;
+pub use shell::{WorkspaceSettingsIndexRedirect, WorkspaceSettingsShell};

@@ -8,7 +8,8 @@ use crate::app::helpers::{
     can_view_system_navigation, current_browser_pathname, org_monogram, redirect_browser,
     server_error_text,
 };
-use crate::app::path::{is_workspace_path, workspace_topbar_title};
+use crate::app::path::{is_workspace_path, is_workspace_settings_path, workspace_topbar_title};
+use crate::app::workspace_settings::WorkspaceSettingsShell;
 use crate::app::{
     CreateOrganization, LogoutButton, SelectOrganization, browser_load, get_current_session,
     list_organizations,
@@ -560,30 +561,42 @@ pub fn WorkspaceUserMenu() -> impl IntoView {
     }
 }
 
-/// Root layout: keep the workspace shell mounted across workspace navigations.
+/// Root layout: keep shell chrome mounted across navigations within each mode.
 #[component]
 pub fn AppLayout() -> impl IntoView {
     let location = use_location();
-    // Memo only flips when entering/leaving the workspace chrome — not on every path.
-    let workspace_mode = Memo::new(move |_| is_workspace_path(&location.pathname.get()));
+    // Mode only flips when entering/leaving settings vs workspace vs public chrome.
+    let layout_mode = Memo::new(move |_| {
+        let path = location.pathname.get();
+        if is_workspace_settings_path(&path) {
+            2_u8 // settings shell
+        } else if is_workspace_path(&path) {
+            1_u8 // workspace rail
+        } else {
+            0_u8 // auth / public
+        }
+    });
 
     view! {
-        {move || {
-            if workspace_mode.get() {
-                view! {
-                    <WorkspaceShell>
-                        <Outlet />
-                    </WorkspaceShell>
-                }
-                .into_any()
-            } else {
-                view! {
-                    <main class="auth-shell">
-                        <Outlet />
-                    </main>
-                }
-                .into_any()
+        {move || match layout_mode.get() {
+            2 => view! {
+                <WorkspaceSettingsShell>
+                    <Outlet />
+                </WorkspaceSettingsShell>
             }
+            .into_any(),
+            1 => view! {
+                <WorkspaceShell>
+                    <Outlet />
+                </WorkspaceShell>
+            }
+            .into_any(),
+            _ => view! {
+                <main class="auth-shell">
+                    <Outlet />
+                </main>
+            }
+            .into_any(),
         }}
     }
 }

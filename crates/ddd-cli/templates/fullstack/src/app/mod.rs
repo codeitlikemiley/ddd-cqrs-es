@@ -613,7 +613,11 @@ pub use router::App;
 pub use router::shell;
 pub use server_fns::*;
 pub use workspace::{AppLayout, WorkspaceOnboardingGate, WorkspaceOnboardingPage, WorkspaceShell};
-// workspace_settings is scaffolded in PR0; public re-exports land when routes ship (PR2).
+pub use workspace_settings::{
+    LegacySettingsRedirect, WorkspaceSettingsAuditPage, WorkspaceSettingsDangerPage,
+    WorkspaceSettingsGeneralPage, WorkspaceSettingsIndexRedirect, WorkspaceSettingsInvitationsPage,
+    WorkspaceSettingsMembersPage, WorkspaceSettingsRolesPage, WorkspaceSettingsShell,
+};
 
 use crate::app::helpers::{
     action_result_text, current_browser_pathname, has_permission, next_url, optional_text,

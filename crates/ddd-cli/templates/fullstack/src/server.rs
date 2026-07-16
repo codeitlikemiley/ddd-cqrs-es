@@ -469,12 +469,17 @@ fn protected_ui_route(path: &str) -> bool {
 }
 
 fn ui_route_permission(path: &str) -> Option<&'static str> {
+    let path = path.trim_end_matches('/');
+    if let Some(perm) = workspace_settings_route_permission(path) {
+        return Some(perm);
+    }
     match path {
         "/admin/auth/signing-keys" => Some("auth:signing-key:admin"),
         "/admin/auth/providers" => Some("auth:provider:write"),
         "/admin/auth/redirects" => Some("auth:redirect:write"),
         "/admin/authorization/policy" => Some("authz:check"),
-        "/organizations/settings" => Some("organization.update"),
+        // Legacy redirects still gate like the target settings pages.
+        "/organizations/settings" => Some("organization.view"),
         "/organizations/members" | "/organizations/invitations" => Some("member.view"),
         "/organizations/roles" | "/organizations/permissions" => Some("role.view"),
         "/organizations/audit" => Some("audit.view"),
@@ -482,6 +487,26 @@ fn ui_route_permission(path: &str) -> Option<&'static str> {
         "/admin/health" => Some("system.health.read"),
         "/admin/policies" => Some("system.policy.manage"),
         _ => None,
+    }
+}
+
+/// Map `/org/{slug}/settings/…` to the permission required to open the UI page.
+fn workspace_settings_route_permission(path: &str) -> Option<&'static str> {
+    let rest = path.strip_prefix("/org/")?;
+    let (_, after_slug) = rest.split_once('/')?;
+    let section = if after_slug == "settings" {
+        ""
+    } else {
+        after_slug.strip_prefix("settings/")?
+    };
+    match section {
+        "" | "general" => Some("organization.view"),
+        "members" | "invitations" => Some("member.view"),
+        "roles" => Some("role.view"),
+        "audit" => Some("audit.view"),
+        // Membership-level: any authenticated org member may open the danger stub.
+        "danger" => Some("organization.view"),
+        _ => Some("organization.view"),
     }
 }
 

@@ -2,6 +2,11 @@
 
 use crate::app::dashboard::DashboardPage;
 use crate::app::workspace::{AppLayout, WorkspaceOnboardingPage};
+use crate::app::workspace_settings::{
+    WorkspaceSettingsAuditPage, WorkspaceSettingsDangerPage, WorkspaceSettingsGeneralPage,
+    WorkspaceSettingsIndexRedirect, WorkspaceSettingsInvitationsPage, WorkspaceSettingsMembersPage,
+    WorkspaceSettingsRolesPage,
+};
 use crate::app::{
     AccountMfaPage, AccountPasskeysPage, AccountPasswordPage, AccountProfilePage,
     AccountProvidersPage, AccountSessionsPage, AccountVaultRedirectPage, AdminHealthPage,
@@ -89,8 +94,17 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/account/vault") view=AccountVaultRedirectPage />
                     <Route path=path!("/onboarding/workspace") view=WorkspaceOnboardingPage />
                     <Route path=path!("/org/:slug/vault") view=OrgVaultPage />
+                    // Slug-scoped workspace settings (settings shell via AppLayout).
+                    <Route path=path!("/org/:slug/settings") view=WorkspaceSettingsIndexRedirect />
+                    <Route path=path!("/org/:slug/settings/general") view=WorkspaceSettingsGeneralPage />
+                    <Route path=path!("/org/:slug/settings/members") view=WorkspaceSettingsMembersPage />
+                    <Route path=path!("/org/:slug/settings/invitations") view=WorkspaceSettingsInvitationsPage />
+                    <Route path=path!("/org/:slug/settings/roles") view=WorkspaceSettingsRolesPage />
+                    <Route path=path!("/org/:slug/settings/audit") view=WorkspaceSettingsAuditPage />
+                    <Route path=path!("/org/:slug/settings/danger") view=WorkspaceSettingsDangerPage />
                     <Route path=path!("/u/:handle") view=PublicProfilePage />
                     <Route path=path!("/organizations") view=OrganizationsPage />
+                    // Legacy org management → slug-scoped settings redirects.
                     <Route path=path!("/organizations/settings") view=OrganizationSettingsPage />
                     <Route path=path!("/organizations/members") view=OrganizationMembersPage />
                     <Route path=path!("/organizations/invitations") view=OrganizationInvitationsPage />
