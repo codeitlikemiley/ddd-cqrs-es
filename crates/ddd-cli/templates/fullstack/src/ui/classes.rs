@@ -40,6 +40,37 @@ pub const PANEL_INLINE: &str =
 /// Panel heading (legacy `.panel h2`).
 pub const PANEL_TITLE: &str = "m-0 text-lg font-semibold tracking-tight";
 
+// ── Skeleton loaders (semantic greys — see DESIGN.md) ───────────────────────
+
+/// Atomic pulse bone. Prefer over hard-coded greys.
+pub const SKEL_BONE: &str = "block animate-pulse rounded-md bg-surface-subtle";
+/// Taller bone for inputs / primary controls (`min-h-11`).
+pub const SKEL_BONE_LG: &str = "block h-11 w-full animate-pulse rounded-[10px] bg-surface-subtle";
+/// Medium bar (titles, table cells).
+pub const SKEL_BONE_MD: &str = "block h-3.5 w-full animate-pulse rounded-md bg-surface-subtle";
+/// Short text line.
+pub const SKEL_BONE_SM: &str = "block h-2.5 w-full animate-pulse rounded-md bg-surface-subtle";
+/// Avatar / monogram.
+pub const SKEL_CIRCLE: &str =
+    "block h-10 w-10 flex-none animate-pulse rounded-full bg-surface-subtle";
+/// Vertical stack of bones.
+pub const SKEL_STACK: &str = "grid gap-2.5";
+/// Horizontal row of bones.
+pub const SKEL_ROW: &str = "flex min-w-0 items-center gap-3";
+/// Panel shell for skeleton content (matches `PANEL` chrome).
+pub const SKEL_PANEL: &str =
+    "grid gap-3.5 min-w-0 rounded-[14px] border border-border-subtle bg-surface p-6";
+/// Table-like row height.
+pub const SKEL_TABLE_ROW: &str =
+    "flex min-h-12 min-w-0 items-center gap-3 border-b border-border-subtle py-2.5 last:border-b-0";
+/// Page header block (title + subtitle bones).
+pub const SKEL_PAGE_HEADER: &str = "mb-[18px] grid gap-2";
+/// Root wrapper for a section/page skeleton.
+pub const SKEL_ROOT: &str = "min-w-0 grid gap-4";
+/// Card tile for grids.
+pub const SKEL_CARD: &str =
+    "min-h-[140px] rounded-2xl border border-border-subtle bg-surface-subtle animate-pulse";
+
 // ── Fields ─────────────────────────────────────────────────────────────────
 
 /// Vertical field stack (legacy `.auth-fields`).

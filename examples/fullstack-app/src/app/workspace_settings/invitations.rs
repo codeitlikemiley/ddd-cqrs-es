@@ -20,6 +20,7 @@ use crate::ui::classes::{
     WS_REMOVE_BUTTON, WS_SELECT, WS_STEP_UP, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TH, WS_THEAD, WS_TR,
     ws_status_pill, with_extra,
 };
+use crate::ui::{SettingsPageSkeleton, SettingsSkeletonVariant};
 use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
 use leptos::task::spawn_local;
@@ -192,7 +193,11 @@ pub fn WorkspaceSettingsInvitationsBody() -> impl IntoView {
 
     view! {
         <Show when=move || invitations.get().is_none()>
-            <p class=RESULT_LINE aria-busy="true">"Loading invitations…"</p>
+            <SettingsPageSkeleton
+                label="Loading invitations"
+                variant=SettingsSkeletonVariant::Table
+                show_header=false
+            />
         </Show>
 
         <Show when=move || load_error.get().is_some()>

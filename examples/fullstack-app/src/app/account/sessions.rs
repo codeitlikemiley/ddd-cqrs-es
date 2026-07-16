@@ -15,6 +15,7 @@ use crate::ui::classes::{
     SECTION_LABEL, SESSION_ASSURANCE, SESSION_CARD, SESSION_CARD_CURRENT, SESSION_CARD_HEAD,
     SESSION_LIST, with_extra,
 };
+use crate::ui::ListSkeleton;
 use leptos::prelude::*;
 use server_fn::ServerFnError;
 #[cfg(feature = "hydrate")]
@@ -178,7 +179,10 @@ pub fn AccountSessionManager() -> impl IntoView {
                         }
                     }
                     Some(Err(error)) => view! { <p class=BANNER_ERROR>{server_error_text(error)}</p> }.into_any(),
-                    None => view! { <p class=RESULT_LINE>"Loading sessions"</p> }.into_any(),
+                    None => view! {
+                        <ListSkeleton rows=3 with_avatar=false label="Loading sessions" />
+                    }
+                    .into_any(),
                 }}
             </div>
             <p class=BANNER_SUCCESS hidden=move || status_message.get().is_none() || error_message.get().is_some()>

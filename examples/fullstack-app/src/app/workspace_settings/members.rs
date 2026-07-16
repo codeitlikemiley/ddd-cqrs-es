@@ -24,6 +24,7 @@ use crate::ui::classes::{
     WS_SELECT_LABEL, WS_SELF_REMOVE_HINT, WS_STEP_UP, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TH,
     WS_THEAD, WS_TRANSFER_BAR, WS_TRANSFER_MODAL_BODY, WS_TR, WS_YOU_BADGE, with_extra,
 };
+use crate::ui::{SettingsPageSkeleton, SettingsSkeletonVariant};
 use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
 use leptos::task::spawn_local;
@@ -220,7 +221,11 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
 
     view! {
         <Show when=move || members.get().is_none()>
-            <p class=RESULT_LINE aria-busy="true">"Loading members…"</p>
+            <SettingsPageSkeleton
+                label="Loading members"
+                variant=SettingsSkeletonVariant::Table
+                show_header=false
+            />
         </Show>
 
         <Show when=move || load_error.get().is_some()>

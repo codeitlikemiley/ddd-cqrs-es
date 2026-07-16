@@ -17,6 +17,7 @@ use crate::ui::classes::{
     WS_DANGER_CARD_BTN, WS_DANGER_CONFIRM, WS_DANGER_ZONES, WS_MODAL_ACTIONS, WS_STEP_UP,
     with_extra,
 };
+use crate::ui::{SettingsPageSkeleton, SettingsSkeletonVariant};
 use leptos::prelude::*;
 
 #[component]
@@ -124,7 +125,11 @@ pub fn WorkspaceSettingsDangerBody() -> impl IntoView {
 
     view! {
         <Show when=move || context.get().is_none()>
-            <p class=RESULT_LINE aria-busy="true">"Loading danger zone…"</p>
+            <SettingsPageSkeleton
+                label="Loading danger zone"
+                variant=SettingsSkeletonVariant::Danger
+                show_header=false
+            />
         </Show>
 
         <Show when=move || load_error.get().is_some()>

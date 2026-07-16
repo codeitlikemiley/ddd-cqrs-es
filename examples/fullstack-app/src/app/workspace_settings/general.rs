@@ -15,6 +15,7 @@ use crate::ui::classes::{
     BANNER_ERROR, BTN_PRIMARY, BUTTON_ROW, FIELD, INPUT, KV_DD, KV_DT, MONO_VALUE, RESULT_LINE,
     WS_GENERAL_FORM, WS_KV, WS_READONLY_TAG, WS_STEP_UP,
 };
+use crate::ui::{SettingsPageSkeleton, SettingsSkeletonVariant};
 use leptos::prelude::*;
 
 #[component]
@@ -96,7 +97,11 @@ pub fn WorkspaceSettingsGeneralBody() -> impl IntoView {
 
     view! {
         <Show when=move || context.get().is_none()>
-            <p class=RESULT_LINE aria-busy="true">"Loading workspace…"</p>
+            <SettingsPageSkeleton
+                label="Loading workspace"
+                variant=SettingsSkeletonVariant::Form
+                show_header=false
+            />
         </Show>
 
         <Show when=move || load_error.get().is_some()>

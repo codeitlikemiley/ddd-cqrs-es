@@ -8,7 +8,10 @@ use crate::app::{
     get_public_profile, update_account_profile,
 };
 use crate::contracts::{ProfileUpdateRequest, ProfileView, PublicProfileView};
-use crate::ui::{ErrorBanner, PrimaryButton, account_page_shell, public_page_shell};
+use crate::ui::{
+    ErrorBanner, ListSkeleton, PrimaryButton, SkeletonCircle, SkeletonText, account_page_shell,
+    public_page_shell,
+};
 use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
 use leptos::task::spawn_local;
@@ -186,13 +189,9 @@ pub fn AccountProfileCard() -> impl IntoView {
                     <p class=BANNER_ERROR>{server_error_text(error)}</p>
                 }.into_any(),
                 None if !seeded.get() => view! {
-                    <div class=PROFILE_LOADING aria-busy="true">
-                        <div class=PROFILE_SKELETON_AVATAR></div>
-                        <div class=PROFILE_SKELETON_LINES>
-                            <span class=format!("{} w-[42%]", PROFILE_SKELETON_LINE)></span>
-                            <span class=format!("{} w-[58%]", PROFILE_SKELETON_LINE)></span>
-                            <span class=format!("{} w-[34%]", PROFILE_SKELETON_LINE)></span>
-                        </div>
+                    <div class=PROFILE_LOADING aria-busy="true" aria-label="Loading profile">
+                        <SkeletonCircle class="h-24 w-24".to_string() />
+                        <SkeletonText lines=3 class="w-full max-w-sm justify-items-center".to_string() />
                     </div>
                 }.into_any(),
                 _ => view! {
@@ -564,7 +563,10 @@ pub fn PublicProfileCard(handle: String) -> impl IntoView {
     view! {
         <section class=with_extra(PANEL, Some(PUBLIC_PROFILE_PANEL))>
             {move || match profile.get() {
-                None => view! { <p class=RESULT_LINE>"Loading profile…"</p> }.into_any(),
+                None => view! {
+                    <ListSkeleton rows=2 with_avatar=true label="Loading profile" />
+                }
+                .into_any(),
                 Some(Err(_)) => view! {
                     <div class=PUBLIC_PROFILE_EMPTY>
                         <div class=PUBLIC_PROFILE_EMPTY_AVATAR aria-hidden="true">"?"</div>

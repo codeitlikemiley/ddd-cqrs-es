@@ -26,7 +26,9 @@ use crate::ui::classes::{
     WS_MODAL_ACTIONS, WS_MONO, WS_TABLE_AUDIT, WS_TABLE_WRAP, WS_TD, WS_TH, WS_THEAD, WS_TR,
     ws_outcome_icon, ws_status_pill, with_extra,
 };
-use crate::ui::{ComboboxOption, FilterCombobox};
+use crate::ui::{
+    ComboboxOption, FilterCombobox, SettingsPageSkeleton, SettingsSkeletonVariant,
+};
 use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
 use leptos::task::spawn_local;
@@ -222,7 +224,11 @@ pub fn WorkspaceSettingsAuditBody() -> impl IntoView {
 
     view! {
         <Show when=move || !list_ready.get() && load_error.get().is_none()>
-            <p class=RESULT_LINE aria-busy="true">"Loading audit events…"</p>
+            <SettingsPageSkeleton
+                label="Loading audit events"
+                variant=SettingsSkeletonVariant::Table
+                show_header=false
+            />
         </Show>
 
         <Show when=move || load_error.get().is_some()>

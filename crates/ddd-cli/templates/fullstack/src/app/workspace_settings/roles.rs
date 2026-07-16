@@ -21,6 +21,7 @@ use crate::ui::classes::{
     WS_ROLE_FORM, WS_ROLE_FORM_ACTIONS, WS_ROLE_FORM_HEAD_H2, WS_ROLE_FORM_HEAD_P, WS_ROLE_NAME,
     WS_ROLES_TOOLBAR, WS_STEP_UP, WS_TABLE, WS_TABLE_WRAP, WS_TD, WS_TH, WS_THEAD, WS_TR, with_extra,
 };
+use crate::ui::{SettingsPageSkeleton, SettingsSkeletonVariant};
 use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
 use leptos::task::spawn_local;
@@ -209,7 +210,11 @@ pub fn WorkspaceSettingsRolesBody() -> impl IntoView {
 
     view! {
         <Show when=move || roles.get().is_none()>
-            <p class=RESULT_LINE aria-busy="true">"Loading roles…"</p>
+            <SettingsPageSkeleton
+                label="Loading roles"
+                variant=SettingsSkeletonVariant::List
+                show_header=false
+            />
         </Show>
 
         <Show when=move || load_error.get().is_some()>

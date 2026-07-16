@@ -155,7 +155,48 @@ document head seeds `data-theme` from `localStorage` (`app-theme`).
 
 ---
 
-## 8. Change process
+## 8. Loading states (skeletons)
+
+Prefer **skeleton placeholders** over plain `"Loading members…"` text for async
+page/section content. Implementation: `src/ui/skeleton.rs` + `SKEL_*` in
+`classes.rs`.
+
+### Rules
+
+1. **Semantic grey only** — `bg-surface-subtle` + `animate-pulse` (via `SKEL_BONE*`).
+   No hard-coded `#e8e8ed` / zinc ramps for new loaders.
+2. **Layout-preserving** — mirror title, panel, table, or form shape so content
+   does not jump when data arrives.
+3. **Accessible** — root `aria-busy="true"` and a specific `aria-label`
+   (e.g. `"Loading members"`); bones `aria-hidden`.
+4. **Compose** — use primitives (`SkeletonBone`, `SkeletonRow`, `SkeletonStack`,
+   `SkeletonCircle`, `SkeletonText`, `SkeletonPanel`) for custom layouts; use
+   recipes (`FormSkeleton`, `TableSkeleton`, `ListSkeleton`,
+   `SettingsPageSkeleton`, `CardGridSkeleton`, `PageHeaderSkeleton`) when they fit.
+5. **Not for buttons** — keep control pending copy (`"Saving…"`, `"Loading demos…"`)
+   on CTAs; skeletons are for section/page body loads.
+
+### Example
+
+```rust
+use crate::ui::{SettingsPageSkeleton, SettingsSkeletonVariant, TableSkeleton};
+
+// Settings form body
+view! {
+  <Show when=move || data.get().is_none()>
+    <SettingsPageSkeleton label="Loading workspace" variant=SettingsSkeletonVariant::Form />
+  </Show>
+}
+
+// Custom members toolbar + table
+view! {
+  <TableSkeleton rows=6 cols=3 with_avatar=true label="Loading members" />
+}
+```
+
+---
+
+## 9. Change process
 
 1. Edit tokens in `examples/fullstack-app/input.css` (this brief stays in sync).
 2. Dual-sync product files to the CLI template when required  
@@ -167,7 +208,7 @@ When this document and `input.css` disagree, **update both** in the same change.
 
 ---
 
-## 9. Credits / inspiration
+## 10. Credits / inspiration
 
 - ChatGPT-style neutral product chrome (content-first, soft fields).
 - [Caleb Porzio — zinc-25 Tailwind note](https://x.com/calebporzio/status/2077409452571934940):

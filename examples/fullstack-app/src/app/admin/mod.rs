@@ -20,7 +20,7 @@ use crate::ui::classes::{
     BANNER_ERROR, BTN_PRIMARY, BTN_SECONDARY, CLIENT_DATA_SLOT, FIELD, INLINE_FIELD, INPUT, KV_DD,
     KV_DT, KV_LIST, PANEL, PANEL_TITLE, RESULT_LINE, TEXTAREA,
 };
-use crate::ui::page_shell;
+use crate::ui::{ListSkeleton, page_shell};
 use leptos::prelude::*;
 use server_fn::ServerFnError;
 
@@ -92,7 +92,10 @@ pub fn AdminUsersPage() -> impl IntoView {
                     <dt class=KV_DT>{user.primary_email}</dt><dd class=KV_DD>{if user.disabled { "disabled" } else if user.email_verified { "active / verified" } else { "pending verification" }}</dd>
                 } /></dl> }.into_any(),
                 Some(Err(error)) => view! { <p class=BANNER_ERROR>{server_error_text(error)}</p> }.into_any(),
-                None => view! { <p class=RESULT_LINE>"Loading users"</p> }.into_any(),
+                None => view! {
+                    <ListSkeleton rows=4 with_avatar=false label="Loading users" />
+                }
+                .into_any(),
             }}
         </div></section> },
     )
@@ -113,7 +116,10 @@ pub fn AdminHealthPage() -> impl IntoView {
                     <dt class=KV_DT>"Authorization"</dt><dd class=KV_DD>{value.authorization_provider}</dd>
                 </dl> }.into_any(),
                 Some(Err(error)) => view! { <p class=BANNER_ERROR>{server_error_text(error)}</p> }.into_any(),
-                None => view! { <p class=RESULT_LINE>"Loading health"</p> }.into_any(),
+                None => view! {
+                    <ListSkeleton rows=4 with_avatar=false label="Loading health" />
+                }
+                .into_any(),
             }}
         </div></section> },
     )
@@ -135,7 +141,10 @@ pub fn AdminPoliciesPage() -> impl IntoView {
                         <dt class=KV_DT>{version.version_id}</dt><dd class=KV_DD>{format!("{} / {}", version.status, version.policy_hash)}</dd>
                     } /></dl> }.into_any(),
                     Some(Err(error)) => view! { <p class=BANNER_ERROR>{server_error_text(error)}</p> }.into_any(),
-                    None => view! { <p class=RESULT_LINE>"Loading versions"</p> }.into_any(),
+                    None => view! {
+                        <ListSkeleton rows=3 with_avatar=false label="Loading versions" />
+                    }
+                    .into_any(),
                 }}
             </div></section>
             <section class=PANEL><h2 class=PANEL_TITLE>"Publish candidate"</h2>
@@ -252,7 +261,10 @@ pub fn SigningKeyRotationForm() -> impl IntoView {
                     Some(Err(error)) => view! {
                         <p class=RESULT_LINE>{server_error_text(error)}</p>
                     }.into_any(),
-                    None => view! { <p class=RESULT_LINE>"Loading keys"</p> }.into_any(),
+                    None => view! {
+                        <ListSkeleton rows=3 with_avatar=false label="Loading keys" />
+                    }
+                    .into_any(),
                 }}
             </div>
             <label class=FIELD>

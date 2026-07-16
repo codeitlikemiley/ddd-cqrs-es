@@ -56,6 +56,7 @@ use crate::ui::classes::{
     WS_SYSTEM_NAV, WS_TOPBAR, WS_TOPBAR_BRAND, WS_TOPBAR_ORG, WS_TOPBAR_PAGE, WS_TOPBAR_TITLE,
     with_extra,
 };
+use crate::ui::ChromeRowSkeleton;
 
 /// Inline stroke icon for workspace nav (replaces CSS mask icons).
 fn nav_icon(kind: &'static str) -> impl IntoView {
@@ -574,7 +575,7 @@ pub fn WorkspaceOrgSwitcher() -> impl IntoView {
                         }.into_any()
                     }
                     (Some(Ok(_)), _) | (None, _) => view! {
-                        <span class=ORG_SWITCHER_FALLBACK>"…"</span>
+                        <ChromeRowSkeleton label="Loading workspaces" />
                     }.into_any(),
                     _ => view! {
                         <a class=ORG_SWITCHER_FALLBACK href="/organizations">"Workspaces"</a>
@@ -668,7 +669,7 @@ pub fn WorkspaceUserMenu() -> impl IntoView {
                     <span class=USER_MENU_FALLBACK>"Session unavailable"</span>
                 }.into_any(),
                 None => view! {
-                    <span class=USER_MENU_FALLBACK>"Loading…"</span>
+                    <ChromeRowSkeleton label="Loading account" />
                 }.into_any(),
             }}
         </div>

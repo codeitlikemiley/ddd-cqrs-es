@@ -14,6 +14,7 @@ mod field;
 mod kicker;
 mod panel;
 mod shells;
+mod skeleton;
 
 pub use banner::{ErrorBanner, ResultLine, SuccessBanner};
 pub use brand::AuthBrand;
@@ -26,3 +27,8 @@ pub use field::{Field, FieldGroup, TextInput};
 pub use kicker::SectionLabel;
 pub use panel::{CompactPanel, Panel};
 pub use shells::{account_page_shell, error_page_shell, page_shell, public_page_shell};
+pub use skeleton::{
+    CardGridSkeleton, ChromeRowSkeleton, FormSkeleton, ListSkeleton, PageHeaderSkeleton,
+    SettingsPageSkeleton, SettingsSkeletonVariant, SkeletonBone, SkeletonCircle, SkeletonPanel,
+    SkeletonRow, SkeletonStack, SkeletonText, TableSkeleton,
+};

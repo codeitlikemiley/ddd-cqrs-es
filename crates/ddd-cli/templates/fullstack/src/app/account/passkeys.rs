@@ -16,6 +16,7 @@ use crate::app::{
 use crate::app::{create_passkey_credential, passkey_supported};
 use crate::contracts::{AuthCapabilities, SessionView};
 use crate::ui::account_page_shell;
+use crate::ui::FormSkeleton;
 use crate::ui::classes::{
     ACCOUNT_LEDE, ACCOUNT_PANEL, ACCOUNT_PANEL_TITLE, BADGE, BADGE_OFF, BADGE_ON, BANNER_ERROR,
     BTN_PRIMARY, BTN_SECONDARY, BUTTON_ROW, KV_DD, KV_DT, MFA_STATUS_KV, PASSKEY_BUTTON_MT,
@@ -307,9 +308,7 @@ pub fn PasskeyManager() -> impl IntoView {
 
                         {if !caps_loaded {
                             view! {
-                                <section class=ACCOUNT_PANEL>
-                                    <p class=RESULT_LINE>"Loading passkey settings…"</p>
-                                </section>
+                                <FormSkeleton fields=2 label="Loading passkey settings" />
                             }.into_any()
                         } else if !passkeys_on {
                             view! {
