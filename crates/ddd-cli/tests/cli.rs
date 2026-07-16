@@ -234,8 +234,8 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
     assert!(!cargo_toml.contains("ddd-auth ="));
     assert!(!cargo_toml.contains("ddd-authz ="));
     assert!(cargo_toml.contains("=0.4.2-rc.1"));
-    assert!(cargo_toml.contains("=0.1.0-rc.2"));
-    assert!(cargo_toml.contains("=0.3.0-rc.2"));
+    assert!(cargo_toml.contains("=0.1.0-rc.2")); // wasi-auth (independent cadence)
+    assert!(cargo_toml.contains(&format!("={}", env!("CARGO_PKG_VERSION")))); // ddd_cqrs_es
     assert!(cargo_toml.contains("=0.7.0"));
     assert!(cargo_toml.contains("=0.57.1"));
     assert!(!cargo_toml.contains("wit-bindgen-spin-compat"));
