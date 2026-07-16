@@ -699,59 +699,41 @@ pub fn AppLayout() -> impl IntoView {
 
 /// Primary sidebar nav: product rail or workspace-settings sections (permission-filtered).
 ///
-/// Settings links use **org-scoped** membership permissions from `list_organizations`
-/// (matched by URL slug), not session OAuth scopes. A raw `spawn_local` fetch without
-/// `after_island_hydration` left the rail stuck on “Loading settings…” while the
-/// General page’s own `browser_load` succeeded.
-#[component]
-fn WorkspacePrimaryNav() -> impl IntoView {
-    let location = use_location();
+/// **Must be an island.** Plain shell components are SSR-only; `browser_load` /
+/// Effects never run there, which left settings stuck on “Loading settings…”.
+/// Islands hydrate outside the Router — use `current_browser_pathname()`, not
+/// `use_location()`.
+#[island]
+pub fn WorkspacePrimaryNav() -> impl IntoView {
     let session = browser_load(get_current_session);
-    // Same hydrate-safe loader as the org switcher (waits for island hydration).
     let orgs = browser_load(list_organizations);
-    let settings_mode = Memo::new(move |_| is_workspace_settings_path(&location.pathname.get()));
-    let settings_slug = Memo::new(move |_| settings_slug_from_path(&location.pathname.get()));
-    // Session scopes for product/system rails only.
-    let session_access = Memo::new(move |_| match session.get() {
-        Some(Ok(view)) if view.authenticated => AccessContext::from_session(&view),
-        _ => AccessContext::anonymous(),
-    });
-    // Workspace RBAC for settings: match the URL slug to a membership row.
-    let settings_access = Memo::new(move |_| {
-        let Some(Ok(view)) = session.get() else {
-            return AccessContext::anonymous();
-        };
-        if !view.authenticated {
-            return AccessContext::anonymous();
-        }
-        let slug = settings_slug.get();
-        let Some(Ok(list)) = orgs.get() else {
-            return AccessContext::from_permissions(
-                true,
-                std::iter::empty::<&str>(),
-                &view.assurance,
-                view.system_administrator,
+    // Path signal: islands have no Router context; follow SPA navigations via
+    // the same `workspace-nav-mark` event as `WorkspaceNavActive`.
+    let path = RwSignal::new(current_browser_pathname());
+
+    #[cfg(feature = "hydrate")]
+    Effect::new(move |_| {
+        use wasm_bindgen::JsCast;
+        use wasm_bindgen::closure::Closure;
+
+        path.set(current_browser_pathname());
+        let on_nav = Closure::wrap(Box::new(move |_event: web_sys::Event| {
+            path.set(current_browser_pathname());
+        }) as Box<dyn FnMut(_)>);
+        if let Some(window) = window() {
+            let _ = window.add_event_listener_with_callback(
+                "workspace-nav-mark",
+                on_nav.as_ref().unchecked_ref(),
             );
-        };
-        let caps = list
-            .organizations
-            .iter()
-            .find(|org| !slug.is_empty() && org.slug == slug)
-            .map(|org| org.permissions.as_slice())
-            .unwrap_or(&[]);
-        AccessContext::from_permissions(
-            true,
-            caps.iter().map(String::as_str),
-            &view.assurance,
-            view.system_administrator,
-        )
+            on_nav.forget();
+        }
     });
 
     view! {
         <nav
             class=WS_NAV
             aria-label=move || {
-                if settings_mode.get() {
+                if is_workspace_settings_path(&path.get()) {
                     "Workspace settings"
                 } else {
                     "Authenticated workspace"
@@ -759,12 +741,38 @@ fn WorkspacePrimaryNav() -> impl IntoView {
             }
         >
             {move || {
-                if settings_mode.get() {
-                    let slug = settings_slug.get();
-                    let ctx = settings_access.get();
+                let pathname = path.get();
+                let settings_mode = is_workspace_settings_path(&pathname);
+                let slug = settings_slug_from_path(&pathname);
+                if settings_mode {
                     let orgs_state = orgs.get();
                     let loaded = orgs_state.is_some();
-                    let load_failed = matches!(orgs_state, Some(Err(_)));
+                    let load_failed = matches!(&orgs_state, Some(Err(_)));
+                    let ctx = match (session.get(), orgs_state.as_ref()) {
+                        (Some(Ok(view)), Some(Ok(list))) if view.authenticated => {
+                            let caps = list
+                                .organizations
+                                .iter()
+                                .find(|org| !slug.is_empty() && org.slug == slug)
+                                .map(|org| org.permissions.as_slice())
+                                .unwrap_or(&[]);
+                            AccessContext::from_permissions(
+                                true,
+                                caps.iter().map(String::as_str),
+                                &view.assurance,
+                                view.system_administrator,
+                            )
+                        }
+                        (Some(Ok(view)), _) if view.authenticated => {
+                            AccessContext::from_permissions(
+                                true,
+                                std::iter::empty::<&str>(),
+                                &view.assurance,
+                                view.system_administrator,
+                            )
+                        }
+                        _ => AccessContext::anonymous(),
+                    };
                     let items: Vec<_> = nav_settings_items()
                         .iter()
                         .filter(|item| item.requirement.is_satisfied_by(&ctx))
@@ -838,7 +846,10 @@ fn WorkspacePrimaryNav() -> impl IntoView {
                     }
                     .into_any()
                 } else {
-                    let ctx = session_access.get();
+                    let ctx = match session.get() {
+                        Some(Ok(view)) if view.authenticated => AccessContext::from_session(&view),
+                        _ => AccessContext::anonymous(),
+                    };
                     let product: Vec<_> = nav_product_items()
                         .iter()
                         .filter(|item| item.requirement.is_satisfied_by(&ctx))
