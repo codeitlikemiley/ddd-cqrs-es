@@ -5959,21 +5959,24 @@ html.board-modal-open body {
 }
 
 .workspace-settings-nav {
+  /* Pack links at the top — do not stretch rows to fill the rail (huge hit targets). */
+  align-content: start;
   display: grid;
   flex: 1 1 auto;
   gap: 2px;
+  grid-auto-rows: min-content;
   min-height: 0;
   overflow-y: auto;
 }
 
 .workspace-settings-nav-link {
-  border-radius: 10px;
+  border-radius: 8px;
   color: var(--text-secondary);
   display: block;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   line-height: 1.25;
-  padding: 9px 12px;
+  padding: 7px 10px;
   text-decoration: none;
   transition: background-color 140ms ease, color 140ms ease;
 }
@@ -5987,6 +5990,12 @@ html.board-modal-open body {
   background: var(--bg-surface-active);
   color: var(--text-primary);
   font-weight: 600;
+}
+
+.workspace-settings-nav-link.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  pointer-events: none;
 }
 
 .workspace-settings-sidebar-foot {

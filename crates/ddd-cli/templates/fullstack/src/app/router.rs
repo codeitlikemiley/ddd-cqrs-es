@@ -5,7 +5,7 @@ use crate::app::workspace::{AppLayout, WorkspaceOnboardingPage};
 use crate::app::workspace_settings::{
     WorkspaceSettingsAuditPage, WorkspaceSettingsDangerPage, WorkspaceSettingsGeneralPage,
     WorkspaceSettingsIndexRedirect, WorkspaceSettingsInvitationsPage, WorkspaceSettingsMembersPage,
-    WorkspaceSettingsRolesPage,
+    WorkspaceSettingsRolesPage, WorkspaceSettingsShell,
 };
 use crate::app::{
     AccountMfaPage, AccountPasskeysPage, AccountPasswordPage, AccountProfilePage,
@@ -94,14 +94,16 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/account/vault") view=AccountVaultRedirectPage />
                     <Route path=path!("/onboarding/workspace") view=WorkspaceOnboardingPage />
                     <Route path=path!("/org/:slug/vault") view=OrgVaultPage />
-                    // Slug-scoped workspace settings (settings shell via AppLayout).
-                    <Route path=path!("/org/:slug/settings") view=WorkspaceSettingsIndexRedirect />
-                    <Route path=path!("/org/:slug/settings/general") view=WorkspaceSettingsGeneralPage />
-                    <Route path=path!("/org/:slug/settings/members") view=WorkspaceSettingsMembersPage />
-                    <Route path=path!("/org/:slug/settings/invitations") view=WorkspaceSettingsInvitationsPage />
-                    <Route path=path!("/org/:slug/settings/roles") view=WorkspaceSettingsRolesPage />
-                    <Route path=path!("/org/:slug/settings/audit") view=WorkspaceSettingsAuditPage />
-                    <Route path=path!("/org/:slug/settings/danger") view=WorkspaceSettingsDangerPage />
+                    // Nested so `:slug` is in scope for the settings shell (nav links).
+                    <ParentRoute path=path!("/org/:slug/settings") view=WorkspaceSettingsShell>
+                        <Route path=path!("") view=WorkspaceSettingsIndexRedirect />
+                        <Route path=path!("/general") view=WorkspaceSettingsGeneralPage />
+                        <Route path=path!("/members") view=WorkspaceSettingsMembersPage />
+                        <Route path=path!("/invitations") view=WorkspaceSettingsInvitationsPage />
+                        <Route path=path!("/roles") view=WorkspaceSettingsRolesPage />
+                        <Route path=path!("/audit") view=WorkspaceSettingsAuditPage />
+                        <Route path=path!("/danger") view=WorkspaceSettingsDangerPage />
+                    </ParentRoute>
                     <Route path=path!("/u/:handle") view=PublicProfilePage />
                     <Route path=path!("/organizations") view=OrganizationsPage />
                     // Legacy org management → slug-scoped settings redirects.

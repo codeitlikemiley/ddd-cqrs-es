@@ -690,8 +690,28 @@ pub fn NotFoundPage() -> impl IntoView {
     error_page_shell(
         "Not found",
         "This page does not exist.",
-        view! { <ReturnToLoginLink /> },
+        view! { <NotFoundRecoveryLink /> },
     )
+}
+
+/// Prefer Dashboard when a session exists; otherwise sign-in.
+#[island]
+pub fn NotFoundRecoveryLink() -> impl IntoView {
+    let session = browser_load(get_current_session);
+    view! {
+        <div class="client-data-slot">
+            {move || match session.get() {
+                Some(Ok(view)) if view.authenticated => view! {
+                    <a class="link-button" href="/dashboard">"Go to dashboard"</a>
+                }
+                .into_any(),
+                _ => view! {
+                    <a class="link-button" href="/login">"Return to sign in"</a>
+                }
+                .into_any(),
+            }}
+        </div>
+    }
 }
 
 pub(crate) fn browser_load<T, Fut, F>(load: F) -> ReadSignal<Option<T>>

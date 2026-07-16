@@ -10,13 +10,44 @@ use crate::app::helpers::{
 };
 use crate::app::{browser_load, get_workspace_settings_context, list_organizations};
 use leptos::prelude::*;
+use leptos_router::components::Outlet;
+use leptos_router::hooks::{use_location, use_params_map};
+
+/// Resolve workspace slug for settings: route param first, pathname fallback.
+///
+/// Nested under `/org/:slug/settings`, so `use_params_map` sees `slug`. Islands
+/// outside the router still fall back to `window.location.pathname`.
+pub(crate) fn settings_slug_signal() -> Memo<String> {
+    let params = use_params_map();
+    let location = use_location();
+    Memo::new(move |_| {
+        let from_params = params
+            .get()
+            .get("slug")
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        if let Some(slug) = from_params {
+            return slug;
+        }
+        let from_router = slug_from_settings_pathname(&location.pathname.get());
+        if !from_router.is_empty() {
+            return from_router;
+        }
+        slug_from_settings_pathname(&current_browser_pathname())
+    })
+}
 
 /// Settings chrome: identity + section nav + main outlet.
 ///
-/// Mounted by [`crate::app::workspace::AppLayout`] when the path is under
-/// `/org/{slug}/settings`. Children come from the layout `<Outlet/>`.
+/// Mounted as a nested `ParentRoute` view for `/org/:slug/settings/*`.
 #[component]
-pub fn WorkspaceSettingsShell(children: Children) -> impl IntoView {
+pub fn WorkspaceSettingsShell() -> impl IntoView {
+    let slug = settings_slug_signal();
+    let location = use_location();
+    let active = Memo::new(move |_| {
+        SettingsSection::from_path(&location.pathname.get()).unwrap_or(SettingsSection::General)
+    });
+
     view! {
         <div class="workspace-settings-shell" id="workspace-settings-shell">
             <input
@@ -31,7 +62,7 @@ pub fn WorkspaceSettingsShell(children: Children) -> impl IntoView {
                 aria-label="Close settings navigation"
             ></label>
 
-            <WorkspaceSettingsSidebar />
+            <WorkspaceSettingsSidebar slug=slug active=active />
 
             <div class="workspace-settings-main">
                 <header class="workspace-settings-topbar">
@@ -54,36 +85,44 @@ pub fn WorkspaceSettingsShell(children: Children) -> impl IntoView {
                 </header>
 
                 <div class="workspace-settings-content">
-                    {children()}
+                    <Outlet />
                 </div>
             </div>
         </div>
     }
 }
 
-/// Sidebar island: loads org identity + builds section nav from the URL slug.
-#[island]
-pub fn WorkspaceSettingsSidebar() -> impl IntoView {
-    let path = RwSignal::new(current_browser_pathname());
-    #[cfg(feature = "hydrate")]
-    {
-        Effect::new(move |_| {
-            // Re-read on mount; soft navigations that remount the island refresh too.
-            path.set(current_browser_pathname());
-        });
-    }
-
-    let slug = Memo::new(move |_| slug_from_settings_pathname(&path.get()));
-    let active = Memo::new(move |_| {
-        SettingsSection::from_path(&path.get()).unwrap_or(SettingsSection::General)
-    });
-    // Prefer slug-scoped settings context; fall back to org list for identity.
-    let settings_ctx = browser_load({
-        move || {
-            let slug = slug_from_settings_pathname(&current_browser_pathname());
-            get_workspace_settings_context(slug)
+/// Sidebar: loads org identity + builds section nav from the resolved slug.
+///
+/// Not an island — must stay in Router context for params/location. Server
+/// data still loads via hydrate-only `browser_load`.
+#[component]
+pub fn WorkspaceSettingsSidebar(
+    slug: Memo<String>,
+    active: Memo<SettingsSection>,
+) -> impl IntoView {
+    // Load once slug is non-empty (params available under nested ParentRoute).
+    let (settings_ctx, set_settings_ctx) =
+        signal(None::<Result<crate::contracts::WorkspaceSettingsContext, server_fn::ServerFnError>>);
+    Effect::new(move |_| {
+        let slug_now = slug.get();
+        if slug_now.is_empty() {
+            return;
+        }
+        #[cfg(feature = "hydrate")]
+        {
+            use leptos::task::spawn_local;
+            spawn_local(async move {
+                let result = get_workspace_settings_context(slug_now).await;
+                set_settings_ctx.set(Some(result));
+            });
+        }
+        #[cfg(not(feature = "hydrate"))]
+        {
+            let _ = set_settings_ctx;
         }
     });
+
     let orgs = browser_load(list_organizations);
 
     let identity = Memo::new(move |_| {
@@ -116,7 +155,6 @@ pub fn WorkspaceSettingsSidebar() -> impl IntoView {
 
     let loading = Memo::new(move |_| settings_ctx.get().is_none() && orgs.get().is_none());
     let list_error = Memo::new(move |_| {
-        // Prefer surfacing settings-context errors (slug membership) over list noise.
         if let Some(Err(error)) = settings_ctx.get() {
             return Some(server_error_text(error));
         }
@@ -183,6 +221,16 @@ pub fn WorkspaceSettingsSidebar() -> impl IntoView {
                                 </div>
                                 <div class="workspace-settings-identity-copy">
                                     <strong>"Workspace"</strong>
+                                    <small class="mono-value">
+                                        {move || {
+                                            let s = slug.get();
+                                            if s.is_empty() {
+                                                "…".to_owned()
+                                            } else {
+                                                format!("/org/{s}")
+                                            }
+                                        }}
+                                    </small>
                                 </div>
                             </div>
                         }
@@ -213,18 +261,16 @@ pub fn WorkspaceSettingsSidebar() -> impl IntoView {
                         .copied()
                         .map(|section| {
                             let href = section.href(&slug_now);
-                            let href_for_click = href.clone();
                             let is_active = section == current;
                             let label = section.label();
+                            let disabled = slug_now.is_empty();
                             view! {
                                 <a
                                     class="workspace-settings-nav-link"
                                     class:is-active=is_active
+                                    class:is-disabled=disabled
                                     href=href
-                                    on:click=move |_| {
-                                        // Optimistic active state for in-app navigations.
-                                        path.set(href_for_click.clone());
-                                    }
+                                    aria-disabled=disabled
                                 >
                                     {label}
                                 </a>
@@ -247,22 +293,11 @@ pub fn WorkspaceSettingsSidebar() -> impl IntoView {
 }
 
 /// Index `/org/:slug/settings` → `…/general`.
-///
-/// Island: parse pathname (islands hydrate outside Router context).
-#[island]
+#[component]
 pub fn WorkspaceSettingsIndexRedirect() -> impl IntoView {
+    let slug = settings_slug_signal();
     Effect::new(move |_| {
-        let path = current_browser_pathname();
-        let path = path.trim_end_matches('/');
-        let Some(rest) = path.strip_prefix("/org/") else {
-            return;
-        };
-        let Some((slug, after)) = rest.split_once('/') else {
-            return;
-        };
-        if after != "settings" && !after.starts_with("settings/") {
-            return;
-        }
+        let slug = slug.get();
         if slug.is_empty() {
             return;
         }

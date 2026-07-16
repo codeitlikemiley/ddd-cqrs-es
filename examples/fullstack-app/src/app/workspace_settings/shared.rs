@@ -173,7 +173,37 @@ impl SettingsSection {
     }
 
     pub(crate) fn href(self, slug: &str) -> String {
+        let slug = slug.trim().trim_matches('/');
+        if slug.is_empty() {
+            // Never emit `/org//settings/…` — that 404s and loses the workspace.
+            return format!("/organizations");
+        }
         format!("/org/{slug}/settings/{}", self.path_segment())
+    }
+}
+
+#[cfg(test)]
+mod slug_href_tests {
+    use super::{SettingsSection, slug_from_settings_pathname};
+
+    #[test]
+    fn pathname_parser_extracts_slug() {
+        assert_eq!(
+            slug_from_settings_pathname("/org/uriah-space/settings/general"),
+            "uriah-space"
+        );
+        assert_eq!(slug_from_settings_pathname("/org//settings/danger"), "");
+        assert_eq!(slug_from_settings_pathname("/org/acme/vault"), "");
+    }
+
+    #[test]
+    fn href_never_double_slashes() {
+        assert_eq!(
+            SettingsSection::Danger.href("uriah-space"),
+            "/org/uriah-space/settings/danger"
+        );
+        assert_eq!(SettingsSection::General.href(""), "/organizations");
+        assert_eq!(SettingsSection::Members.href("  "), "/organizations");
     }
 }
 

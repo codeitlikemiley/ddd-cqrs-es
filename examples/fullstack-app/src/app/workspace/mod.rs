@@ -9,7 +9,7 @@ use crate::app::helpers::{
     server_error_text,
 };
 use crate::app::path::{is_workspace_path, is_workspace_settings_path, workspace_topbar_title};
-use crate::app::workspace_settings::WorkspaceSettingsShell;
+
 use crate::app::{
     CreateOrganization, LogoutButton, SelectOrganization, browser_load, get_current_session,
     list_organizations,
@@ -562,6 +562,9 @@ pub fn WorkspaceUserMenu() -> impl IntoView {
 }
 
 /// Root layout: keep shell chrome mounted across navigations within each mode.
+///
+/// Settings routes are a **nested** `ParentRoute` (`WorkspaceSettingsShell`) so
+/// `:slug` is available to the shell. AppLayout must not wrap them again.
 #[component]
 pub fn AppLayout() -> impl IntoView {
     let location = use_location();
@@ -569,7 +572,7 @@ pub fn AppLayout() -> impl IntoView {
     let layout_mode = Memo::new(move |_| {
         let path = location.pathname.get();
         if is_workspace_settings_path(&path) {
-            2_u8 // settings shell
+            2_u8 // nested settings shell owns chrome — bare outlet
         } else if is_workspace_path(&path) {
             1_u8 // workspace rail
         } else {
@@ -580,9 +583,8 @@ pub fn AppLayout() -> impl IntoView {
     view! {
         {move || match layout_mode.get() {
             2 => view! {
-                <WorkspaceSettingsShell>
-                    <Outlet />
-                </WorkspaceSettingsShell>
+                // Settings ParentRoute already mounts WorkspaceSettingsShell.
+                <Outlet />
             }
             .into_any(),
             1 => view! {

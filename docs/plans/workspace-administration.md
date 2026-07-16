@@ -9,8 +9,8 @@
 | Field | Value |
 |-------|--------|
 | Run ID | `07aef382` |
-| Current PR | PR5 |
-| Phase | done (pragmatic slice; authz matrix deferred) |
+| Current PR | — |
+| Phase | completed (local; not pushed) |
 | Branch base | `codex/fullstack-verification-flow` |
 
 ## Locked defaults
