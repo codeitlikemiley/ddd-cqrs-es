@@ -402,9 +402,8 @@ pub fn EmailPasswordAuthForm(register_default: bool) -> impl IntoView {
                             set_client_error.set(None);
                         }
                     />
-                    <small hidden=move || !register_mode.get()>
-                        "Use 15 to 128 characters. Only a derived password hash is stored."
-                    </small>
+                    // No permanent password policy hint — show length rules only after submit
+                    // via client_error / server validation (see validate_login_form).
                 </label>
 
                 // One error banner only: client validation + passkey + password/register server errors.
@@ -825,7 +824,6 @@ pub fn ResetPasswordForm() -> impl IntoView {
                             set_client_error.set(None);
                         }
                     />
-                    <small>"Use 15 to 128 characters. Existing sessions should be reviewed after reset."</small>
                 </label>
                 <p
                     class=BANNER_ERROR
