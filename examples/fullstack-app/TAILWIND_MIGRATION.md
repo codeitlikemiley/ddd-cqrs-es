@@ -39,6 +39,7 @@
 - 2026-07-16: Organizations + admin + onboarding pure Tailwind — domain CSS deleted.
 - 2026-07-16: Workspace shell pure Tailwind — `workspace/mod.rs` + org switcher + user menu → utilities; `@custom-variant shell-mini|shell-hidden|shell-animated`.
 - 2026-07-16: **Phase 5 closeout** — settings shell → `WSS_*` utilities; home/onboarding residual purged; Playwright smokes prefer `data-testid`; `input.css` pure Tailwind (+ minimal non-semantic residuals: body:has drawer scroll lock, `html.board-modal-open` scroll lock, `@keyframes board-pulse`).
+- 2026-07-16: Review fixes — `PAGE_GRID` restores 2-col + `max-[720px]` collapse; `@custom-variant settings-mobile` (inclusive ≤900) replaces exclusive `max-[900px]` on `WSS_*`.
 
 ## Residual CSS allowlist
 

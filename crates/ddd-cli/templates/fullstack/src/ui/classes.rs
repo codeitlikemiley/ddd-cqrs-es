@@ -393,7 +393,9 @@ pub const WORKSPACE_PAGE_HEADER: &str = "mb-7 border-b border-border-subtle px-0
 pub const WORKSPACE_PAGE_TITLE: &str =
     "m-0 max-w-[20ch] text-[clamp(28px,3.8vw,36px)] font-semibold leading-[1.08] tracking-tight";
 pub const WORKSPACE_PAGE_SUBTITLE: &str = "text-sm text-secondary";
-pub const PAGE_GRID: &str = "grid gap-4 min-w-0";
+/// Public / workspace page body grid (legacy `.page-grid`: 2-col, collapse ≤720).
+pub const PAGE_GRID: &str =
+    "grid min-w-0 grid-cols-2 items-start gap-4 max-[720px]:grid-cols-1";
 
 /// Error interrupt page.
 pub const ERROR_PAGE: &str = "grid min-h-dvh place-items-center bg-canvas p-6";
@@ -1089,11 +1091,11 @@ pub const ONBOARDING_FORM: &str = "grid gap-3.5";
 
 // ── Workspace settings shell (slug-scoped; exclusive of global rail) ───────
 //
-// Mobile drawer band: max-width 900px (checkbox peer; no custom shell-* variant).
+// Mobile drawer band: settings-mobile ≤900px inclusive (see input.css @custom-variant).
 
 /// Root grid: sticky 260px rail + main. Collapses to single column ≤900px.
 pub const WSS_SHELL: &str =
-    "grid min-h-dvh w-full grid-cols-[260px_minmax(0,1fr)] bg-canvas text-primary max-[900px]:grid-cols-1";
+    "grid min-h-dvh w-full grid-cols-[260px_minmax(0,1fr)] bg-canvas text-primary settings-mobile:grid-cols-1";
 
 /// Checkbox peer for pure-CSS mobile settings drawer.
 pub const WSS_NAV_TOGGLE: &str =
@@ -1101,11 +1103,11 @@ pub const WSS_NAV_TOGGLE: &str =
 
 /// Full-viewport scrim behind the mobile drawer.
 pub const WSS_NAV_BACKDROP: &str =
-    "fixed inset-0 z-30 m-0 hidden appearance-none border-0 bg-black/45 p-0 opacity-0 pointer-events-none transition-opacity duration-[160ms] ease-in-out max-[900px]:block max-[900px]:peer-checked:pointer-events-auto max-[900px]:peer-checked:opacity-100";
+    "fixed inset-0 z-30 m-0 hidden appearance-none border-0 bg-black/45 p-0 opacity-0 pointer-events-none transition-opacity duration-[160ms] ease-in-out settings-mobile:block settings-mobile:peer-checked:pointer-events-auto settings-mobile:peer-checked:opacity-100";
 
 /// Settings sidebar — sticky desktop column; fixed off-canvas drawer on mobile.
 pub const WSS_SIDEBAR: &str =
-    "sticky top-0 flex min-h-dvh flex-col gap-2 border-r border-border-subtle bg-sidebar px-3 py-[18px] pt-4 max-[900px]:fixed max-[900px]:inset-y-0 max-[900px]:left-0 max-[900px]:z-40 max-[900px]:w-[min(320px,88vw)] max-[900px]:max-w-[min(320px,88vw)] max-[900px]:-translate-x-[105%] max-[900px]:transform max-[900px]:transition-transform max-[900px]:duration-[180ms] max-[900px]:ease-in-out max-[900px]:peer-checked:translate-x-0 max-[900px]:peer-checked:shadow-[16px_0_40px_rgba(0,0,0,0.28)]";
+    "sticky top-0 flex min-h-dvh flex-col gap-2 border-r border-border-subtle bg-sidebar px-3 py-[18px] pt-4 settings-mobile:fixed settings-mobile:inset-y-0 settings-mobile:left-0 settings-mobile:z-40 settings-mobile:w-[min(320px,88vw)] settings-mobile:max-w-[min(320px,88vw)] settings-mobile:-translate-x-[105%] settings-mobile:transform settings-mobile:transition-transform settings-mobile:duration-[180ms] settings-mobile:ease-in-out settings-mobile:peer-checked:translate-x-0 settings-mobile:peer-checked:shadow-[16px_0_40px_rgba(0,0,0,0.28)]";
 
 pub const WSS_SIDEBAR_TOP: &str =
     "flex items-start justify-between gap-2 px-1 pb-3 pt-1";
@@ -1126,7 +1128,7 @@ pub const WSS_SKELETON_LINE_SM: &str =
 
 /// Mobile drawer close control (label for checkbox). Hidden on desktop.
 pub const WSS_SIDEBAR_CLOSE: &str =
-    "hidden cursor-pointer select-none appearance-none items-center rounded-lg border border-border-subtle bg-surface px-2.5 py-1.5 text-xs font-semibold text-secondary max-[900px]:inline-flex";
+    "hidden cursor-pointer select-none appearance-none items-center rounded-lg border border-border-subtle bg-surface px-2.5 py-1.5 text-xs font-semibold text-secondary settings-mobile:inline-flex";
 
 pub const WSS_NAV: &str =
     "grid min-h-0 flex-[1_1_auto] auto-rows-min content-start gap-0.5 overflow-y-auto";
@@ -1147,14 +1149,14 @@ pub const WSS_TOPBAR: &str =
 
 /// Hamburger label — hidden desktop, shown ≤900px.
 pub const WSS_MENU_BUTTON: &str =
-    "m-0 hidden h-9 w-9 cursor-pointer select-none appearance-none items-center justify-center rounded-[10px] border border-border-subtle bg-surface p-0 max-[900px]:inline-flex";
+    "m-0 hidden h-9 w-9 cursor-pointer select-none appearance-none items-center justify-center rounded-[10px] border border-border-subtle bg-surface p-0 settings-mobile:inline-flex";
 
 pub const WSS_TOPBAR_TITLE: &str =
     "grid gap-0.5 [&_strong]:text-[15px] [&_strong]:font-[650]";
 
 /// Main content column. Audit (and dense tables) widen via `data-settings-wide`.
 pub const WSS_CONTENT: &str =
-    "mx-auto w-full max-w-[820px] px-6 pb-16 pt-7 has-[[data-settings-wide]]:max-w-[min(1120px,100%)] max-[900px]:px-4 max-[900px]:pb-14 max-[900px]:pt-5";
+    "mx-auto w-full max-w-[820px] px-6 pb-16 pt-7 has-[[data-settings-wide]]:max-w-[min(1120px,100%)] settings-mobile:px-4 settings-mobile:pb-14 settings-mobile:pt-5";
 
 /// Settings avatar with deterministic tone background (0–5).
 pub fn settings_avatar_class(tone: u8) -> String {

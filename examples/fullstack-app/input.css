@@ -58,6 +58,9 @@
 /* Mobile drawer band: width ≤960 (pairs with desktop min-width: 961px; no 960px hole). */
 @custom-variant shell-mobile (@media (max-width: 960px));
 
+/* Settings shell mobile band: width ≤900 (inclusive; Tailwind max-[900px] is exclusive). */
+@custom-variant settings-mobile (@media (max-width: 900px));
+
 /*
  * Theme colors bridge to CSS custom properties so:
  * - Tailwind utilities: bg-canvas, text-secondary, border-subtle, …
