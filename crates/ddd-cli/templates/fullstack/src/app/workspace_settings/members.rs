@@ -1,4 +1,4 @@
-//! Workspace settings — Members (table, role assign, remove confirm).
+//! Workspace settings — Members (table, role assign, remove, transfer ownership).
 
 #![allow(unused_imports)]
 #![allow(clippy::unused_unit)]
@@ -10,9 +10,9 @@ use super::shared::{
 };
 use crate::app::helpers::{current_browser_pathname, server_error_text};
 use crate::app::{
-    AssignWorkspaceMemberRole, RemoveWorkspaceMember, assign_workspace_member_role, browser_load,
-    get_current_session, get_workspace_settings_context, list_workspace_members,
-    remove_workspace_member,
+    AssignWorkspaceMemberRole, RemoveWorkspaceMember, TransferWorkspaceOwnership,
+    assign_workspace_member_role, browser_load, get_current_session, get_workspace_settings_context,
+    list_workspace_members, remove_workspace_member, transfer_workspace_ownership,
 };
 use crate::contracts::{MembershipSummary, WorkspaceRoleOption};
 use leptos::prelude::*;
@@ -50,17 +50,24 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
 
     let assign = ServerAction::<AssignWorkspaceMemberRole>::new();
     let remove = ServerAction::<RemoveWorkspaceMember>::new();
+    let transfer = ServerAction::<TransferWorkspaceOwnership>::new();
     let assign_pending = assign.pending();
     let remove_pending = remove.pending();
+    let transfer_pending = transfer.pending();
     let assign_value = assign.value();
     let remove_value = remove.value();
+    let transfer_value = transfer.value();
 
     let (rows, set_rows) = signal(Vec::<MembershipSummary>::new());
     let (role_options, set_role_options) = signal(Vec::<WorkspaceRoleOption>::new());
     let (current_user_id, set_current_user_id) = signal(None::<String>);
+    let (can_transfer_ownership, set_can_transfer_ownership) = signal(false);
     let (requires_step_up, set_requires_step_up) = signal(false);
     let (busy_user_id, set_busy_user_id) = signal(None::<String>);
     let (remove_target, set_remove_target) = signal(None::<(String, String)>);
+    let (transfer_open, set_transfer_open) = signal(false);
+    let (transfer_target_id, set_transfer_target_id) = signal(String::new());
+    let (transfer_confirm, set_transfer_confirm) = signal(String::new());
     let (action_error, set_action_error) = signal(None::<String>);
     let (action_ok, set_action_ok) = signal(None::<String>);
     let (list_ready, set_list_ready) = signal(false);
@@ -76,6 +83,12 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
         if let Some(Ok(ctx)) = context.get() {
             set_role_options.set(ctx.role_options);
             set_requires_step_up.set(ctx.requires_step_up);
+            let owner_cap = ctx
+                .capabilities
+                .iter()
+                .any(|cap| cap == "ownership.transfer")
+                || ctx.membership.role_id == "owner";
+            set_can_transfer_ownership.set(owner_cap);
         }
     });
 
@@ -123,6 +136,36 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
         None => {}
     });
 
+    Effect::new(move |_| match transfer_value.get() {
+        Some(Ok(new_owner)) => {
+            set_rows.update(|list| {
+                let me = current_user_id.get_untracked();
+                for row in list.iter_mut() {
+                    if row.user_id == new_owner.user_id {
+                        *row = new_owner.clone();
+                    } else if me.as_deref() == Some(row.user_id.as_str()) && row.role_id == "owner"
+                    {
+                        row.role_id = "admin".to_owned();
+                    }
+                }
+            });
+            set_transfer_open.set(false);
+            set_transfer_target_id.set(String::new());
+            set_transfer_confirm.set(String::new());
+            set_busy_user_id.set(None);
+            set_action_error.set(None);
+            set_action_ok.set(Some("Ownership transferred. You are now an admin.".to_owned()));
+            set_can_transfer_ownership.set(false);
+            reload_members_list(slug.get_untracked(), set_rows, set_action_error);
+        }
+        Some(Err(error)) => {
+            set_busy_user_id.set(None);
+            set_action_ok.set(None);
+            set_action_error.set(Some(server_error_text(error)));
+        }
+        None => {}
+    });
+
     let load_error = Memo::new(move |_| {
         members.get().and_then(|result| match result {
             Ok(_) => None,
@@ -130,7 +173,40 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
         })
     });
 
-    let any_busy = Memo::new(move |_| assign_pending.get() || remove_pending.get());
+    let any_busy = Memo::new(move |_| {
+        assign_pending.get() || remove_pending.get() || transfer_pending.get()
+    });
+
+    let transfer_candidates = Memo::new(move |_| {
+        let me = current_user_id.get();
+        rows.get()
+            .into_iter()
+            .filter(|m| m.status == "active")
+            .filter(|m| me.as_deref() != Some(m.user_id.as_str()))
+            .collect::<Vec<_>>()
+    });
+
+    let transfer_target_email = Memo::new(move |_| {
+        let id = transfer_target_id.get();
+        transfer_candidates
+            .get()
+            .into_iter()
+            .find(|m| m.user_id == id)
+            .map(|m| {
+                if m.primary_email.trim().is_empty() {
+                    m.user_id
+                } else {
+                    m.primary_email
+                }
+            })
+            .unwrap_or_default()
+    });
+
+    let transfer_confirm_ok = Memo::new(move |_| {
+        let typed = transfer_confirm.get().trim().to_ascii_lowercase();
+        let expected = transfer_target_email.get().trim().to_ascii_lowercase();
+        !typed.is_empty() && !expected.is_empty() && typed == expected
+    });
 
     view! {
         <Show when=move || members.get().is_none()>
@@ -143,7 +219,7 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
 
         <Show when=move || requires_step_up.get()>
             <p class="workspace-settings-step-up" role="status">
-                "Role changes and removals require a step-up session (AAL2). "
+                "Role changes, removals, and ownership transfer require a step-up session (AAL2). "
                 <a href="/account/mfa">"Complete MFA"</a>
                 " if your session is not elevated."
             </p>
@@ -155,6 +231,29 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
 
         <Show when=move || action_ok.get().is_some()>
             <p class="result-line" role="status">{move || action_ok.get().unwrap_or_default()}</p>
+        </Show>
+
+        <Show when=move || can_transfer_ownership.get() && list_ready.get()>
+            <div class="workspace-settings-transfer-bar">
+                <p class="board-muted">
+                    "As owner you can transfer workspace ownership to another member. "
+                    "You become an admin afterward."
+                </p>
+                <button
+                    type="button"
+                    class="secondary-button"
+                    disabled=move || any_busy.get() || transfer_candidates.get().is_empty()
+                    on:click=move |_| {
+                        set_action_error.set(None);
+                        set_action_ok.set(None);
+                        set_transfer_target_id.set(String::new());
+                        set_transfer_confirm.set(String::new());
+                        set_transfer_open.set(true);
+                    }
+                >
+                    "Transfer ownership"
+                </button>
+            </div>
         </Show>
 
         {move || {
@@ -303,6 +402,149 @@ pub fn WorkspaceSettingsMembersBody() -> impl IntoView {
                 </div>
             </div>
         </Show>
+
+        <Show when=move || transfer_open.get()>
+            <div
+                class="board-modal-backdrop"
+                role="presentation"
+                on:click=move |_| {
+                    if !transfer_pending.get() {
+                        set_transfer_open.set(false);
+                    }
+                }
+            >
+                <div
+                    class="board-modal vault-modal-confirm"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="workspace-transfer-ownership-title"
+                    on:click=move |e| e.stop_propagation()
+                >
+                    <header class="board-modal-head">
+                        <div>
+                            <h2 id="workspace-transfer-ownership-title">"Transfer ownership"</h2>
+                            <p>
+                                "The selected member becomes the owner. You are demoted to admin. "
+                                "This requires step-up (AAL2)."
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            class="board-modal-close"
+                            disabled=move || transfer_pending.get()
+                            on:click=move |_| set_transfer_open.set(false)
+                        >
+                            "Close"
+                        </button>
+                    </header>
+                    <div class="board-modal-body workspace-settings-transfer-modal">
+                        <label class="auth-field">
+                            <span>"New owner"</span>
+                            <select
+                                class="workspace-settings-role-select"
+                                prop:value=move || transfer_target_id.get()
+                                disabled=move || transfer_pending.get()
+                                on:change=move |event| {
+                                    set_transfer_target_id.set(event_target_value(&event));
+                                    set_transfer_confirm.set(String::new());
+                                }
+                            >
+                                <option value="">"Select a member…"</option>
+                                {move || {
+                                    transfer_candidates
+                                        .get()
+                                        .into_iter()
+                                        .map(|member| {
+                                            let id = member.user_id.clone();
+                                            let label = if member.primary_email.trim().is_empty() {
+                                                format!("{} ({})", member.user_id, member.role_id)
+                                            } else {
+                                                format!(
+                                                    "{} ({})",
+                                                    member.primary_email, member.role_id
+                                                )
+                                            };
+                                            let selected = transfer_target_id.get() == id;
+                                            view! {
+                                                <option value=id selected=selected>
+                                                    {label}
+                                                </option>
+                                            }
+                                        })
+                                        .collect_view()
+                                }}
+                            </select>
+                        </label>
+                        <label class="auth-field">
+                            <span>
+                                "Type the new owner's email to confirm"
+                                {move || {
+                                    let email = transfer_target_email.get();
+                                    if email.is_empty() {
+                                        String::new()
+                                    } else {
+                                        format!(" ({email})")
+                                    }
+                                }}
+                            </span>
+                            <input
+                                type="text"
+                                autocomplete="off"
+                                prop:value=move || transfer_confirm.get()
+                                disabled=move || {
+                                    transfer_pending.get() || transfer_target_id.get().is_empty()
+                                }
+                                on:input=move |ev| {
+                                    set_transfer_confirm.set(event_target_value(&ev));
+                                }
+                            />
+                        </label>
+                        <div class="workspace-settings-modal-actions">
+                            <button
+                                type="button"
+                                class="secondary-button"
+                                disabled=move || transfer_pending.get()
+                                on:click=move |_| set_transfer_open.set(false)
+                            >
+                                "Cancel"
+                            </button>
+                            <button
+                                type="button"
+                                class="primary-button workspace-settings-danger-button"
+                                disabled=move || {
+                                    !transfer_confirm_ok.get() || transfer_pending.get()
+                                }
+                                on:click=move |_| {
+                                    let slug_value = slug.get_untracked();
+                                    let target = transfer_target_id.get_untracked();
+                                    if slug_value.is_empty() || target.is_empty() {
+                                        set_action_error.set(Some(
+                                            "missing workspace or member".to_owned(),
+                                        ));
+                                        return;
+                                    }
+                                    set_action_error.set(None);
+                                    set_action_ok.set(None);
+                                    set_busy_user_id.set(Some(target.clone()));
+                                    transfer.dispatch(TransferWorkspaceOwnership {
+                                        slug: slug_value,
+                                        target_user_id: target,
+                                    });
+                                }
+                            >
+                                {move || {
+                                    if transfer_pending.get() {
+                                        "Transferring…"
+                                    } else {
+                                        "Transfer ownership"
+                                    }
+                                }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </Show>
     }
 }
 
@@ -430,9 +672,9 @@ fn member_row(
                     view! {
                         <span
                             class="board-muted workspace-settings-self-remove-hint"
-                            title="Leaving the workspace is not available here yet"
+                            title="Leave from Danger zone"
                         >
-                            "Use Danger zone to leave (coming soon)"
+                            "Use Danger zone to leave"
                         </span>
                     }
                     .into_any()

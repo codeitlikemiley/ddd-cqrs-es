@@ -447,6 +447,60 @@ pub async fn delete_workspace_role(
 }
 
 #[server(prefix = "/api/ui")]
+pub async fn transfer_workspace_ownership(
+    slug: String,
+    target_user_id: String,
+) -> Result<crate::contracts::MembershipSummary, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        crate::application::transfer_workspace_ownership(
+            slug,
+            target_user_id,
+            server_fn_request_auth(),
+        )
+        .await
+        .map_err(server_fn_error)
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (slug, target_user_id);
+        unreachable!()
+    }
+}
+
+#[server(prefix = "/api/ui")]
+pub async fn leave_workspace(slug: String) -> Result<AcceptedResponse, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        crate::application::leave_workspace(slug, server_fn_request_auth())
+            .await
+            .map_err(server_fn_error)
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = slug;
+        unreachable!()
+    }
+}
+
+#[server(prefix = "/api/ui")]
+pub async fn deactivate_workspace(
+    slug: String,
+) -> Result<crate::contracts::OrganizationSummary, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        crate::application::deactivate_workspace(slug, server_fn_request_auth())
+            .await
+            .map_err(server_fn_error)
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = slug;
+        unreachable!()
+    }
+}
+
+#[server(prefix = "/api/ui")]
 pub async fn list_workspace_permissions(
     slug: String,
 ) -> Result<crate::contracts::PermissionCatalogResponse, ServerFnError> {

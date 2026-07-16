@@ -425,6 +425,58 @@ pub async fn remove_member(
         .map_err(map_management_error)
 }
 
+pub async fn transfer_ownership(
+    session_id: &str,
+    organization_id: &str,
+    target_user_id: &str,
+) -> AuthStackResult<MembershipSummary> {
+    let session_id = bounded_session_id(session_id)?;
+    management_service()
+        .await?
+        .transfer_ownership(
+            &session_id,
+            organization_id,
+            target_user_id,
+            &request_id("transfer-ownership")?,
+        )
+        .await
+        .map(membership_summary)
+        .map_err(map_management_error)
+}
+
+pub async fn leave_organization(
+    session_id: &str,
+    organization_id: &str,
+) -> AuthStackResult<()> {
+    let session_id = bounded_session_id(session_id)?;
+    management_service()
+        .await?
+        .leave_organization(
+            &session_id,
+            organization_id,
+            &request_id("leave-organization")?,
+        )
+        .await
+        .map_err(map_management_error)
+}
+
+pub async fn archive_organization(
+    session_id: &str,
+    organization_id: &str,
+) -> AuthStackResult<OrganizationSummary> {
+    let session_id = bounded_session_id(session_id)?;
+    management_service()
+        .await?
+        .archive_organization(
+            &session_id,
+            organization_id,
+            &request_id("archive-organization")?,
+        )
+        .await
+        .map(organization_summary)
+        .map_err(map_management_error)
+}
+
 pub fn organization_permission_catalog() -> Vec<String> {
     ORGANIZATION_PERMISSION_CATALOG
         .iter()

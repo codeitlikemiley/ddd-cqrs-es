@@ -6198,6 +6198,58 @@ html.board-modal-open body {
   padding-left: 12px;
 }
 
+.workspace-settings-danger-zones {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.workspace-settings-danger-card {
+  border: 1px solid color-mix(in srgb, var(--danger, #dc2626) 28%, var(--border-subtle));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--danger, #dc2626) 6%, var(--bg-surface));
+  padding: 1rem 1.15rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.workspace-settings-danger-card h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.workspace-settings-danger-confirm-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 28rem;
+}
+
+.workspace-settings-transfer-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--bg-surface);
+}
+
+.workspace-settings-transfer-bar p {
+  margin: 0;
+  flex: 1 1 16rem;
+}
+
+.workspace-settings-transfer-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
 .workspace-settings-redirect {
   margin: 24px auto;
   max-width: 480px;

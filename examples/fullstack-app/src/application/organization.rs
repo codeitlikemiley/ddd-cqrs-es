@@ -594,6 +594,56 @@ pub async fn delete_workspace_role(
     Ok(AcceptedResponse { accepted: true })
 }
 
+/// Transfer workspace ownership to another active member (owner + AAL2).
+pub async fn transfer_workspace_ownership(
+    slug: String,
+    target_user_id: String,
+    auth: RequestAuth,
+) -> AuthStackResult<MembershipSummary> {
+    validate_identifier("target_user_id", &target_user_id)?;
+    let (context, _) = verified_context_and_permissions(auth, true).await?;
+    let resolved = resolve_workspace_by_slug_with_context(&context, &slug).await?;
+    crate::auth_product::transfer_ownership(
+        context.session_id().as_str(),
+        &resolved.organization_id,
+        &target_user_id,
+    )
+    .await
+}
+
+/// Leave the workspace (self-remove). Fails if last owner.
+pub async fn leave_workspace(
+    slug: String,
+    auth: RequestAuth,
+) -> AuthStackResult<AcceptedResponse> {
+    let (context, _) = verified_context_and_permissions(auth, false).await?;
+    let resolved = resolve_workspace_by_slug_with_context(&context, &slug).await?;
+    crate::auth_product::leave_organization(
+        context.session_id().as_str(),
+        &resolved.organization_id,
+    )
+    .await?;
+    Ok(AcceptedResponse { accepted: true })
+}
+
+/// Soft-deactivate (archive) the workspace. Owner + AAL2.
+pub async fn deactivate_workspace(
+    slug: String,
+    auth: RequestAuth,
+) -> AuthStackResult<OrganizationSummary> {
+    let (context, _) = verified_context_and_permissions(auth, true).await?;
+    let resolved = resolve_workspace_by_slug_with_context(&context, &slug).await?;
+    let mut organization = crate::auth_product::archive_organization(
+        context.session_id().as_str(),
+        &resolved.organization_id,
+    )
+    .await?;
+    if organization.slug.trim().is_empty() {
+        organization.slug = resolved.organization.slug;
+    }
+    Ok(organization)
+}
+
 pub async fn list_workspace_permissions(
     slug: String,
     auth: RequestAuth,

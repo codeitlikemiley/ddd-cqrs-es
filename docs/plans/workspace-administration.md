@@ -9,8 +9,8 @@
 | Field | Value |
 |-------|--------|
 | Run ID | `07aef382` |
-| Current PR | PR4d (proposed) |
-| Phase | awaiting_approval |
+| Current PR | PR4e |
+| Phase | done (code; awaiting orchestrator advance) |
 | Branch base | `codex/fullstack-verification-flow` |
 
 ## Locked defaults
@@ -27,8 +27,8 @@
 - [x] **M1** Access model (PR1)
 - [x] **M2** Settings shell & routes (PR2)
 - [x] **M3** Read models & transport (PR3)
-- [ ] **M4** Settings areas (PR4a–e)
-- [ ] **M5** Lifecycle SQL (ships with PR4b/c/e)
+- [x] **M4** Settings areas (PR4a–e)
+- [x] **M5** Lifecycle SQL (ships with PR4b/c/e)
 - [ ] **M6** Verification & isolation (PR5)
 
 ## PR stack
@@ -43,7 +43,7 @@
 | PR4b | Invitations UI + revoke/resend | PR3 + wasi-auth | done (code; awaiting orchestrator advance) |
 | PR4c | Roles UI + delete custom role | PR3 + wasi-auth | done (code; awaiting orchestrator advance) |
 | PR4d | Audit humanization | PR3 | done (code; awaiting orchestrator advance) |
-| PR4e | Ownership transfer + Danger zone | PR3 + wasi-auth | pending |
+| PR4e | Ownership transfer + Danger zone | PR3 + wasi-auth | done (code; awaiting orchestrator advance) |
 | PR5 | Isolation harness + authz matrix + browser suite | PR4* | pending |
 
 Default order: `PR0 → PR1 → PR2 → PR3 → PR4a → PR4b → PR4c → PR4d → PR4e → PR5`
@@ -157,10 +157,15 @@ Default order: `PR0 → PR1 → PR2 → PR3 → PR4a → PR4b → PR4c → PR4d 
 
 ### PR4e — Ownership + Danger
 
-- [ ] Transfer ownership (atomic)
-- [ ] Leave workspace
-- [ ] Soft deactivate / archive
+- [x] Transfer ownership (atomic)
+- [x] Leave workspace
+- [x] Soft deactivate / archive
 - Evidence:
+  - wasi-auth: `transfer_ownership.sql` / `leave_organization.sql` / `archive_organization.sql` + management methods (promote-before-demote transfer; last-owner leave fail; archive revokes pending invites + clears selected org + bumps authz revision; **no** membership freeze / bulk relationship revoke — gated by `status='active'`)
+  - ddd: `transfer_workspace_ownership` / `leave_workspace` / `deactivate_workspace` application + server_fns; members transfer modal (owners only); danger page leave + typed-confirm deactivate
+  - `bash examples/fullstack-app/scripts/sync_fullstack_template.sh` + `check` — green
+  - `cd examples/fullstack-app && make check` — green; hydrate check green; `bash scripts/check_loc.sh` — OK
+
 
 ### PR5 — Verification
 

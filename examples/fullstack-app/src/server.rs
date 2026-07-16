@@ -7,12 +7,13 @@ use crate::app::{
     AcceptOrganizationInvitation, App, AssignWorkspaceMemberRole, ChangePassword,
     CompleteEmailVerification, CompleteOauthCallback, CompletePasswordReset, ConfirmTotpEnrollment,
     CreateDashboardSecret, CreateOrganization, DeleteDashboardQuery, DeleteDashboardResource,
-    DeleteDashboardSecret, DeleteDashboardSource, DeleteWorkspaceRole,
+    DeactivateWorkspace, DeleteDashboardSecret, DeleteDashboardSource, DeleteWorkspaceRole,
     DevelopmentMailCaptureEnabled,
     DismissDashboardNotification, GetAccountProfile, GetAdminHealth, GetAuthCapabilities,
     GetAuthorizationCapabilities, GetCurrentSession, GetDashboardSnapshot, GetMfaStatus,
     GetPublicProfile, GetWorkspaceSettingsContext, InviteCurrentOrganizationMember,
-    InviteWorkspaceMember, LatestDevelopmentMail, ListAccountSessions, ListAdminUsers,
+    InviteWorkspaceMember, LatestDevelopmentMail, LeaveWorkspace, ListAccountSessions,
+    ListAdminUsers,
     ListAuthProviders, ListCurrentOrganizationAudit, ListCurrentOrganizationInvitations,
     ListCurrentOrganizationMembers, ListCurrentOrganizationRoles, ListDashboardSecrets,
     ListOrganizations, ListPolicyVersions, ListSigningKeys, ListWorkspaceAudit,
@@ -25,7 +26,8 @@ use crate::app::{
     RunDashboardQuery, SaveAuthProvider, SaveDashboardLayout, SaveRedirectAllowlist,
     SeedDashboardDemos, SelectOrganization, StartOauthLogin, StartPasskeyLogin,
     StartPasskeyRegistration, StartPasswordReset, StartTotpEnrollment, TestDashboardHttpSource,
-    UpdateAccountProfile, UpdateDashboardNote, UpdateWorkspaceName, UpsertCurrentOrganizationRole,
+    TransferWorkspaceOwnership, UpdateAccountProfile, UpdateDashboardNote, UpdateWorkspaceName,
+    UpsertCurrentOrganizationRole,
     UpsertDashboardQuery, UpsertDashboardResource, UpsertDashboardSource, UpsertWorkspaceRole,
     VerifyPasskeyLogin, VerifyPasskeyRegistration, VerifyRecoveryCode, VerifyTotpStepUp, shell,
 };
@@ -289,6 +291,9 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
             .with_server_fn::<ResendWorkspaceInvitation>()
             .with_server_fn::<UpsertWorkspaceRole>()
             .with_server_fn::<DeleteWorkspaceRole>()
+            .with_server_fn::<TransferWorkspaceOwnership>()
+            .with_server_fn::<LeaveWorkspace>()
+            .with_server_fn::<DeactivateWorkspace>()
             .with_server_fn::<ListWorkspacePermissions>()
             .with_server_fn::<ListAdminUsers>()
             .with_server_fn::<GetAdminHealth>()
