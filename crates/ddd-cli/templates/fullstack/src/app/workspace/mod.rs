@@ -26,7 +26,7 @@ use web_sys::window;
 use crate::app::{bind_user_menu_dismiss, bind_workspace_nav_active, init_workspace_sidebar};
 use crate::ui::classes::{
     BANNER_ERROR, BTN_PRIMARY, FIELD, INPUT, MONO_VALUE, MUTED, ONBOARDING_CARD, ONBOARDING_FORM,
-    ONBOARDING_LEDE, ONBOARDING_PAGE, ONBOARDING_TITLE, PANEL, SECTION_LABEL, SLUG_INPUT_FIELD,
+    ONBOARDING_LEDE, ONBOARDING_PAGE, ONBOARDING_TITLE, SECTION_LABEL, SLUG_INPUT_FIELD,
     SLUG_INPUT_GROUP, SLUG_INPUT_PREFIX, with_extra,
 };
 
@@ -240,10 +240,9 @@ pub fn WorkspaceOnboardingPanel() -> impl IntoView {
         &with_extra(INPUT, Some(SLUG_INPUT_FIELD)),
         Some(MONO_VALUE),
     );
-    let card_class = with_extra(PANEL, Some(ONBOARDING_CARD));
 
     view! {
-        <section class=card_class>
+        <section class=ONBOARDING_CARD>
             <p class=SECTION_LABEL>"Welcome"</p>
             <h1 class=ONBOARDING_TITLE>"Create your workspace"</h1>
             <p class=ONBOARDING_LEDE>

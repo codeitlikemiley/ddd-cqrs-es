@@ -166,7 +166,7 @@ pub const KV_LIST: &str =
 pub const KV_DT: &str = "text-[13px] leading-normal text-secondary";
 pub const KV_DD: &str = "m-0 min-w-0 break-words text-[13px] text-primary";
 
-/// Muted helper (legacy `.board-muted` / `.muted`).
+/// Tertiary muted helper (legacy `.board-muted`). For secondary body hints use `RESULT_LINE`.
 pub const MUTED: &str = "m-0 text-[13px] text-tertiary";
 
 /// Checkbox / switch row (legacy `.inline-field`).
@@ -440,7 +440,8 @@ pub const BTN_SECONDARY_ACTIVE: &str = "inline-flex items-center justify-center 
 pub const BOARD_EDIT_HINT: &str =
     "m-0 rounded-xl border border-border-subtle bg-surface-subtle px-3.5 py-2.5 text-[13px] leading-[1.45] text-secondary";
 
-/// Shared modal chrome (also used by org/settings via residual CSS — prefer these constants).
+/// Dashboard board modal chrome. Settings use `VAULT_MODAL_*`; org create uses `ORG_CREATE_*`.
+/// Scroll lock still shares the `board-modal-open` class name with org create.
 pub const BOARD_MODAL_BACKDROP: &str =
     "fixed inset-0 z-[80] grid place-items-center bg-overlay-scrim px-4 py-6 overscroll-contain";
 pub const BOARD_MODAL: &str = "grid max-h-[min(84dvh,720px)] w-[min(720px,100%)] max-w-[720px] grid-rows-[auto_minmax(0,1fr)] gap-[18px] overflow-hidden rounded-[18px] border border-border-subtle bg-surface p-5 shadow-[0_24px_64px_rgba(0,0,0,0.22)]";
@@ -833,9 +834,10 @@ pub const ORG_TOOLBAR_SUB: &str =
 pub const ORG_LIST_PANEL: &str =
     "min-w-0 overflow-hidden rounded-2xl border border-border-subtle bg-surface";
 pub const ORG_LIST: &str = "m-0 grid list-none gap-0 p-0";
+/// Idle workspace row (layout + hover). Do not compose with `ORG_ROW_ACTIVE` — conflicting bg/hover.
 pub const ORG_ROW: &str = "grid items-center gap-3.5 border-b border-border-subtle px-4 py-3.5 transition-colors duration-150 last:border-b-0 hover:bg-surface-subtle grid-cols-[auto_minmax(0,1fr)_auto] max-[720px]:grid-cols-[auto_minmax(0,1fr)]";
-pub const ORG_ROW_ACTIVE: &str =
-    "bg-[color-mix(in_srgb,var(--success)_6%,var(--bg-surface))]";
+/// Active tenant row — full shell (no stack with `ORG_ROW`). Hover keeps success tint (legacy `.orgs-row.is-active` won over hover).
+pub const ORG_ROW_ACTIVE: &str = "grid items-center gap-3.5 border-b border-border-subtle bg-[color-mix(in_srgb,var(--success)_6%,var(--bg-surface))] px-4 py-3.5 transition-colors duration-150 last:border-b-0 hover:bg-[color-mix(in_srgb,var(--success)_6%,var(--bg-surface))] grid-cols-[auto_minmax(0,1fr)_auto] max-[720px]:grid-cols-[auto_minmax(0,1fr)]";
 pub const ORG_AVATAR: &str = "inline-flex h-[42px] w-[42px] flex-none items-center justify-center rounded-xl text-[13px] font-bold tracking-wide text-white";
 pub const ORG_ROW_MAIN: &str = "grid min-w-0 gap-1.5";
 pub const ORG_ROW_TITLE: &str = "flex min-w-0 flex-wrap items-center gap-2 [&_strong]:max-w-full [&_strong]:truncate [&_strong]:text-sm [&_strong]:font-[650] [&_strong]:tracking-tight";
@@ -855,7 +857,8 @@ pub const ORG_SKELETON: &str = "grid gap-0 [&_span]:block [&_span]:h-[72px] [&_s
 pub const ORG_CREATE_BACKDROP: &str =
     "fixed inset-0 z-[90] grid place-items-center bg-overlay-scrim px-4 py-6 overscroll-contain";
 /// Overflow visible so focus rings are not clipped (unlike shared vault/board modals).
-pub const ORG_CREATE_MODAL: &str = "grid w-[min(600px,100%)] max-w-[600px] gap-[18px] overflow-visible rounded-[18px] border border-border-subtle bg-surface p-5 shadow-[0_24px_64px_rgba(0,0,0,0.22)]";
+/// Max-height matches legacy board-modal constraint; body stays overflow-visible for focus rings.
+pub const ORG_CREATE_MODAL: &str = "grid max-h-[min(84dvh,720px)] w-[min(600px,100%)] max-w-[600px] gap-[18px] overflow-visible rounded-[18px] border border-border-subtle bg-surface p-5 shadow-[0_24px_64px_rgba(0,0,0,0.22)]";
 pub const ORG_CREATE_BODY: &str = "grid min-h-0 overflow-visible";
 pub const ORG_CREATE_FORM: &str = "grid gap-5";
 pub const ORG_CREATE_FIELDS: &str = "grid gap-[18px] p-1";
@@ -881,12 +884,12 @@ pub fn org_avatar_class(tone: u8) -> String {
     with_extra(ORG_AVATAR, Some(bg))
 }
 
-/// Active vs idle workspace row.
-pub fn org_row_class(is_active: bool) -> String {
+/// Active vs idle workspace row (standalone shells — never compose `ORG_ROW` + `ORG_ROW_ACTIVE`).
+pub fn org_row_class(is_active: bool) -> &'static str {
     if is_active {
-        with_extra(ORG_ROW, Some(ORG_ROW_ACTIVE))
+        ORG_ROW_ACTIVE
     } else {
-        ORG_ROW.to_owned()
+        ORG_ROW
     }
 }
 
@@ -894,7 +897,9 @@ pub fn org_row_class(is_active: bool) -> String {
 
 /// Compose with residual `.page` shell if present, or use alone.
 pub const ONBOARDING_PAGE: &str = "mx-auto max-w-[520px] px-5 pb-20 pt-12";
-pub const ONBOARDING_CARD: &str = "grid gap-2";
+/// Complete panel chrome with onboarding gap (do not compose with `PANEL` — gap clash).
+pub const ONBOARDING_CARD: &str =
+    "grid min-w-0 gap-2 rounded-[14px] border border-border-subtle bg-surface p-6";
 pub const ONBOARDING_TITLE: &str = "m-0 text-[1.6rem] font-[650] tracking-tight";
 pub const ONBOARDING_LEDE: &str =
     "m-0 mb-4 max-w-[42ch] text-sm leading-[1.55] text-secondary";

@@ -18,7 +18,7 @@ use crate::contracts::{
 };
 use crate::ui::classes::{
     BANNER_ERROR, BTN_PRIMARY, BTN_SECONDARY, CLIENT_DATA_SLOT, FIELD, INLINE_FIELD, INPUT, KV_DD,
-    KV_DT, KV_LIST, MUTED, PANEL, PANEL_TITLE, RESULT_LINE, TEXTAREA,
+    KV_DT, KV_LIST, PANEL, PANEL_TITLE, RESULT_LINE, TEXTAREA,
 };
 use crate::ui::page_shell;
 use leptos::prelude::*;
@@ -231,7 +231,7 @@ pub fn SigningKeyRotationForm() -> impl IntoView {
     view! {
         <section class=PANEL>
             <h2 class=PANEL_TITLE>"Signing key rotation"</h2>
-            <p class=MUTED>"Requires a system-administrator session with MFA step-up."</p>
+            <p class=RESULT_LINE>"Requires a system-administrator session with MFA step-up."</p>
             <div class=CLIENT_DATA_SLOT>
                 {move || match keys.get() {
                     Some(Ok(response)) if response.keys.is_empty() => view! {
