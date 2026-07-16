@@ -18,11 +18,15 @@ use crate::app::theme::ThemeToggle;
 
 use crate::app::{
     CreateOrganization, LogoutButton, SelectOrganization, browser_load, get_current_session,
-    list_organizations,
+    get_workspace_settings_context, list_organizations,
 };
+use crate::contracts::WorkspaceSettingsContext;
 use leptos::prelude::*;
 use leptos_router::components::Outlet;
 use leptos_router::hooks::use_location;
+use server_fn::ServerFnError;
+#[cfg(feature = "hydrate")]
+use leptos::task::spawn_local;
 #[cfg(feature = "hydrate")]
 use wasm_bindgen::prelude::*;
 #[cfg(feature = "hydrate")]
@@ -492,7 +496,18 @@ pub fn WorkspaceOrgSwitcher() -> impl IntoView {
                                 }
                             })
                             .unwrap_or_else(|| "/organizations".into());
-                        let show_settings = can_view_any_settings(&AccessContext::from_session(&sess));
+                        // Org RBAC lives on the membership, not session OAuth scopes.
+                        let show_settings = active
+                            .as_ref()
+                            .map(|org| {
+                                can_view_any_settings(&AccessContext::from_permissions(
+                                    true,
+                                    org.permissions.iter().map(String::as_str),
+                                    &sess.assurance,
+                                    sess.system_administrator,
+                                ))
+                            })
+                            .unwrap_or(false);
                         let orgs_for_list = list.organizations.clone();
 
                         view! {
@@ -687,15 +702,78 @@ pub fn AppLayout() -> impl IntoView {
 }
 
 /// Primary sidebar nav: product rail or workspace-settings sections (permission-filtered).
+///
+/// Settings links use **org-scoped** capabilities from
+/// [`get_workspace_settings_context`], not session OAuth scopes — owners otherwise
+/// saw “No settings available for your role” while the General page still loaded.
 #[component]
 fn WorkspacePrimaryNav() -> impl IntoView {
     let location = use_location();
     let session = browser_load(get_current_session);
     let settings_mode = Memo::new(move |_| is_workspace_settings_path(&location.pathname.get()));
     let settings_slug = Memo::new(move |_| settings_slug_from_path(&location.pathname.get()));
-    let access = Memo::new(move |_| match session.get() {
+    // Session scopes for product/system rails only.
+    let session_access = Memo::new(move |_| match session.get() {
         Some(Ok(view)) if view.authenticated => AccessContext::from_session(&view),
         _ => AccessContext::anonymous(),
+    });
+    // Workspace RBAC for settings sections (slug → membership capabilities).
+    let (workspace_settings, set_workspace_settings) =
+        signal(None::<Result<WorkspaceSettingsContext, ServerFnError>>);
+    let (settings_fetch_slug, set_settings_fetch_slug) = signal(None::<String>);
+
+    Effect::new(move |_| {
+        if !settings_mode.get() {
+            return;
+        }
+        let slug = settings_slug.get();
+        if slug.is_empty() {
+            set_workspace_settings.set(None);
+            set_settings_fetch_slug.set(None);
+            return;
+        }
+        if settings_fetch_slug.get_untracked().as_ref() == Some(&slug)
+            && workspace_settings.get_untracked().is_some()
+        {
+            return;
+        }
+        set_settings_fetch_slug.set(Some(slug.clone()));
+        set_workspace_settings.set(None);
+        #[cfg(feature = "hydrate")]
+        {
+            spawn_local(async move {
+                let result = get_workspace_settings_context(slug).await;
+                set_workspace_settings.set(Some(result));
+            });
+        }
+        #[cfg(not(feature = "hydrate"))]
+        {
+            let _ = slug;
+        }
+    });
+
+    let settings_access = Memo::new(move |_| {
+        let Some(Ok(view)) = session.get() else {
+            return AccessContext::anonymous();
+        };
+        if !view.authenticated {
+            return AccessContext::anonymous();
+        }
+        match workspace_settings.get() {
+            Some(Ok(ws)) => AccessContext::from_permissions(
+                true,
+                ws.capabilities.iter().map(String::as_str),
+                &view.assurance,
+                view.system_administrator,
+            ),
+            // While loading / failed, do not fall back to session scopes (empty org RBAC).
+            _ => AccessContext::from_permissions(
+                true,
+                std::iter::empty::<&str>(),
+                &view.assurance,
+                view.system_administrator,
+            ),
+        }
     });
 
     view! {
@@ -710,9 +788,11 @@ fn WorkspacePrimaryNav() -> impl IntoView {
             }
         >
             {move || {
-                let ctx = access.get();
                 if settings_mode.get() {
                     let slug = settings_slug.get();
+                    let ctx = settings_access.get();
+                    let loaded = workspace_settings.get().is_some();
+                    let load_failed = matches!(workspace_settings.get(), Some(Err(_)));
                     let items: Vec<_> = nav_settings_items()
                         .iter()
                         .filter(|item| item.requirement.is_satisfied_by(&ctx))
@@ -728,7 +808,19 @@ fn WorkspacePrimaryNav() -> impl IntoView {
                             {nav_icon("overview")}
                             <span class=WS_NAV_TEXT>"Overview"</span>
                         </a>
-                        {if items.is_empty() {
+                        {if !loaded {
+                            view! {
+                                <p class=WS_NAV_LABEL_SECONDARY>"Loading settings…"</p>
+                            }
+                            .into_any()
+                        } else if load_failed {
+                            view! {
+                                <p class=WS_NAV_LABEL_SECONDARY>
+                                    "Could not load workspace permissions."
+                                </p>
+                            }
+                            .into_any()
+                        } else if items.is_empty() {
                             view! {
                                 <p class=WS_NAV_LABEL_SECONDARY>
                                     "No settings available for your role."
@@ -774,6 +866,7 @@ fn WorkspacePrimaryNav() -> impl IntoView {
                     }
                     .into_any()
                 } else {
+                    let ctx = session_access.get();
                     let product: Vec<_> = nav_product_items()
                         .iter()
                         .filter(|item| item.requirement.is_satisfied_by(&ctx))
