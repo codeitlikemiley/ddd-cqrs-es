@@ -405,7 +405,7 @@ dependencies = [
 
 [[package]]
 name = "ddd-cqrs-es-cli"
-version = "0.3.0-rc.5"
+version = "0.3.0-rc.6"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -421,7 +421,7 @@ dependencies = [
 
 [[package]]
 name = "ddd_cqrs_es"
-version = "0.3.0-rc.5"
+version = "0.3.0-rc.6"
 dependencies = [
  "async-trait",
  "bytes",

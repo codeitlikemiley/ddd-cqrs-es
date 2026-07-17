@@ -288,7 +288,7 @@ fn render_fullstack(input: &InitRenderInput) -> Vec<FileOperation> {
         )
         .replace(
             // Keep in sync with templates/fullstack/Cargo.toml.template pin; rewritten to CLI version.
-            "ddd_cqrs_es = { version = \"=0.3.0-rc.5\"",
+            "ddd_cqrs_es = { version = \"=0.3.0-rc.6\"",
             &format!("ddd_cqrs_es = {{ version = \"={}\"", framework_version()),
         )
         .replace(

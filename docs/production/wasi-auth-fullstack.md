@@ -226,8 +226,8 @@ the crates.io index and verifies a registry-only generated consumer.
 The package order is:
 
 `leptos-wasi-runtime 0.4.2-rc.1` (aliased as `leptos_wasi`), then
-`wasi-auth 0.1.0-rc.2`, the `ddd_cqrs_es 0.3.0-rc.5` library, and finally the
-`ddd-cqrs-es-cli 0.3.0-rc.5` generator and generated consumers. The library
+`wasi-auth 0.1.0-rc.2`, the `ddd_cqrs_es 0.3.0-rc.6` library, and finally the
+`ddd-cqrs-es-cli 0.3.0-rc.6` generator and generated consumers. The library
 and CLI follow `wasi-auth` because the `fullstack` preset emits that exact
 public dependency. Stable releases repeat the same dependency order.
 

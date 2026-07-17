@@ -21,7 +21,7 @@ After publishing or installing from crates.io, the user-facing command is:
 ddd <args>
 ```
 
-Current library/CLI version pair: read `version` from root `Cargo.toml` (e.g. `0.3.0-rc.5`). Always keep library and CLI at the **same** version.
+Current library/CLI version pair: read `version` from root `Cargo.toml` (e.g. `0.3.0-rc.6`). Always keep library and CLI at the **same** version.
 
 ## First Moves
 

@@ -104,7 +104,7 @@ You do **not** need the whole monorepo long-term. Three options:
 Published CLI (includes this template):
 
 ```bash
-cargo install ddd-cqrs-es-cli --version 0.3.0-rc.5
+cargo install ddd-cqrs-es-cli --version 0.3.0-rc.6
 ddd init my-saas --preset fullstack
 cd my-saas
 # follow generated README: db-up, dev, …
@@ -128,7 +128,7 @@ make db-up && make dev transport=both
 
 1. Copy `examples/fullstack-app/` into your repository.  
 2. Ensure `Cargo.toml` uses **crates.io versions** (not monorepo `path =` patches), e.g.:
-   - `ddd_cqrs_es = "=0.3.0-rc.5"`
+   - `ddd_cqrs_es = "=0.3.0-rc.6"`
    - `wasi-auth = "=0.1.0-rc.2"`
 3. Remove any `[patch.crates-io]` entries that point at sibling checkouts unless you keep those crates locally.  
 4. Run `make db-up && make dev transport=both`.

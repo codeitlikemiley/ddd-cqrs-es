@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0-rc.6
+
+- Fullstack product domain: `ddd add aggregate` wires `src/domain_app` (InMemory
+  demo store) and `/api/domain/...` REST hooks beside wasi-auth; refuse unwired
+  projection/route stubs.
+- `ddd serve` for fullstack uses `make dev`; scaffold UX via
+  `make scaffold-fullstack`.
+- Docs: promote Fullstack SaaS (Spin + wasi-auth) and islands chrome guide to
+  top-level nav.
+- **Note:** `wasi-auth` stays at `0.1.0-rc.2` (no auth crate changes in this
+  release).
+
 ## 0.3.0-rc.5
 
 - Fullstack settings islands take **route `slug` props** so soft-nav no longer
@@ -48,29 +60,4 @@
 - Replaced the `auth-stack` CLI preset with the canonical `fullstack` preset and
   byte-for-byte generated `examples/fullstack-app`.
 - Added final-WASI Leptos islands, REST, and Spin gRPC dispatch to the fullstack
-  example, including bounded audit streaming and production configuration
-  guards.
-- Added unary, server-streaming, client-streaming, and bidirectional-streaming
-  gRPC to the counter example, with an optional authorization feature.
-- Hardened atomic idempotent execution so completed retries return their
-  original result before an already-applied command is evaluated again.
-- Pinned final `wasip3` 0.7.0 and the maintained Spin SDK revision required by
-  the generated final-WASI examples.
-- Replaced production RS256 access-token signing with ES256 and added a
-  public-only JWKS round-trip test; provider-issued RS256 ID tokens remain
-  verification-only behind `wasi-auth`'s private-RSA signing denial.
-
-## 0.2.0
-
-- Removed the legacy `store` module shim; use top-level exports or the `event_store` and `memory` modules directly.
-- Removed `Aggregate::id()` from the aggregate trait and renamed raw test replay to `replay_raw_events_from_zero`.
-- Changed `EventType` from a `String` alias to a serde-transparent newtype.
-- Made `SqlSchemaConfig` table names private and added eager validation through fallible builders.
-- Added bounded idempotency waits through `IdempotencyWaitConfig` and timeout errors.
-- Added process-manager runners for sync and async command dispatch.
-- Added `ProjectionRunnerError` `Display` and `Error` implementations.
-- Added configurable event-store contract-test sequence expectations.
-- Optimized `execute_returning_state` to avoid a second stream load.
-- Added bounded global replay and projection batch APIs for production catch-up loops.
-- Added schema migration v6 to remove legacy duplicate stream indexes while preserving unique stream constraints.
-- Added query-plan coverage for SQLite and live-gated PostgreSQL/MySQL adapter checks.
+  product surface.
