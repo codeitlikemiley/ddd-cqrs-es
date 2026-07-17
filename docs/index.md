@@ -132,4 +132,4 @@ We structured our guides as a structured, chronological path designed to take yo
 ### Module 7: [Runtimes & Cloud Deployment (Spin vs. Wasmtime)](./wasmtime-vs-spin-comparison)
 * **What you'll learn:** Production runtimes and connection engineering. Understand the performance differences between Wasmtime CLI and Fermyon Spin connection pooling. Read our best practice architectural recommendations for database proximity, and learn how to deploy serverless WASM applications to Fermyon Cloud and SpinKube on AWS EKS, GCP GKE, and Azure AKS.
 
-For documentation site indexing details (including where `PRD` and full tutorial pages are registered), see `docs/docs.json`.
+For documentation site navigation (which public pages are registered), see `docs/docs.json`. Internal roadmap and PRD notes under `docs/prd/` and `docs/PRD.md` stay in the repo for maintainers and are not published in the sidebar.

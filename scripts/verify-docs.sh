@@ -18,13 +18,13 @@ trap cleanup EXIT
 
 jq -r '.navigation.groups[].pages[]' "$DOCS_JSON" | sort | grep -v '^README$' > "$nav_pages"
 {
-  # Individual authentication PRDs are archived evidence. Publish their index
-  # only, so obsolete multi-crate guidance cannot silently re-enter nav.
+  # Keep internal design/roadmap material out of the public Mintlify nav:
+  # docs/PRD.md, docs/prd/** (historical auth multi-crate plans), docs/plans/**
   find docs -type f -name '*.md' \
     | grep -v '^docs/README\.md$' \
+    | grep -v '^docs/PRD\.md$' \
     | grep -v '^docs/prd/' \
     | grep -v '^docs/plans/'
-  printf '%s\n' docs/prd/README.md
 } | sed 's#^docs/##' \
   | sed 's#\.md$##' \
   | sort > "$fs_pages"

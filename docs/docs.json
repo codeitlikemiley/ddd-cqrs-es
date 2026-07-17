@@ -104,22 +104,6 @@
           "tutorial/leptos-ssr-architecture-payoff",
           "wasmtime-vs-spin-comparison"
         ]
-      },
-      {
-        "group": "7. Reference",
-        "icon": "book-open",
-        "expanded": true,
-        "pages": [
-          "PRD"
-        ]
-      },
-      {
-        "group": "8. Product Roadmaps",
-        "icon": "map",
-        "expanded": true,
-        "pages": [
-          "prd/README"
-        ]
       }
     ]
   },
