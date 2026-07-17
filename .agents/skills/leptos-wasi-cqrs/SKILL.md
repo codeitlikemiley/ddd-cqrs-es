@@ -5,7 +5,16 @@ description: Guidance for building full-stack Event Sourced (CQRS) applications 
 
 # Leptos WASI + CQRS/ES Integration Skill
 
-This skill provides step-by-step instructions and reference patterns for an AI agent to build, modify, debug, and expand full-stack Event Sourced (CQRS) applications integrating the `ddd_cqrs_es` framework with the `leptos_wasi` component model server on both **Fermyon Spin** and **generic Wasmtime** runtimes. The current counter app supports `sqlite`, `postgres`, `neon`, `supabase`, `turso`, `mysql`, and `redis` through the Makefile.
+This skill provides step-by-step instructions and reference patterns for an AI agent to build, modify, debug, and expand full-stack Event Sourced (CQRS) applications integrating the `ddd_cqrs_es` framework with the `leptos_wasi` component model server on both **Fermyon Spin** and **generic Wasmtime** runtimes. The current **counter app** (`examples/counter-app`) supports `sqlite`, `postgres`, `neon`, `supabase`, `turso`, `mysql`, and `redis` through the Makefile.
+
+**Scope note:** This skill is oriented at the **counter** multi-backend example and pure CQRS wiring. For the production **SaaS product shell** (`examples/fullstack-app` / `ddd init --preset fullstack`), use:
+
+- `.agents/skills/ddd-cli/SKILL.md` — scaffold, serve (`make dev`), dual-sync, what CLI ops are allowed
+- `docs/tutorial/leptos-islands-persistent-chrome.md` — soft-nav, persistent sidebar chrome, skeleton rules
+- `docs/production/wasi-auth-fullstack.md` — auth/outbox/operator runbook
+- `examples/fullstack-app/README.md` — day-to-day product commands
+
+Do not use `ddd add aggregate/event/command` against fullstack; it is refused by design.
 
 ---
 

@@ -411,6 +411,132 @@ fn fullstack_rejects_non_fullstack_shape() {
         .stderr(predicate::str::contains("requires transport=both"));
 }
 
+fn init_fullstack_app(temp: &tempfile::TempDir, name: &str) {
+    let mut init = Command::cargo_bin("ddd").unwrap();
+    init.arg("--cwd")
+        .arg(temp.path())
+        .arg("init")
+        .arg(name)
+        .arg("--preset")
+        .arg("fullstack");
+    init.assert().success();
+}
+
+#[test]
+fn fullstack_rejects_add_aggregate() {
+    let temp = tempfile::tempdir().unwrap();
+    init_fullstack_app(&temp, "saas-add-agg");
+    let project = temp.path().join("saas-add-agg");
+
+    let mut command = Command::cargo_bin("ddd").unwrap();
+    command
+        .arg("--cwd")
+        .arg(&project)
+        .arg("add")
+        .arg("aggregate")
+        .arg("Billing");
+
+    command
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("preset=fullstack"))
+        .stderr(predicate::str::contains("not a domain codegen target"));
+}
+
+#[test]
+fn fullstack_rejects_add_event() {
+    let temp = tempfile::tempdir().unwrap();
+    init_fullstack_app(&temp, "saas-add-event");
+    let project = temp.path().join("saas-add-event");
+
+    let mut command = Command::cargo_bin("ddd").unwrap();
+    command
+        .arg("--cwd")
+        .arg(&project)
+        .arg("add")
+        .arg("event")
+        .arg("Billing")
+        .arg("Paid")
+        .arg("--field")
+        .arg("amount:i64");
+
+    command
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("preset=fullstack"));
+}
+
+#[test]
+fn fullstack_rejects_orphan_projection_stub() {
+    let temp = tempfile::tempdir().unwrap();
+    init_fullstack_app(&temp, "saas-add-proj");
+    let project = temp.path().join("saas-add-proj");
+
+    let mut command = Command::cargo_bin("ddd").unwrap();
+    command
+        .arg("--cwd")
+        .arg(&project)
+        .arg("add")
+        .arg("projection")
+        .arg("Ledger");
+
+    command
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("preset=fullstack"));
+
+    assert!(
+        !project.join("src/projections/ledger.rs").exists(),
+        "orphan projection stubs must not be written under fullstack"
+    );
+}
+
+#[test]
+fn fullstack_serve_plans_dev() {
+    let temp = tempfile::tempdir().unwrap();
+    init_fullstack_app(&temp, "saas-serve");
+    let project = temp.path().join("saas-serve");
+
+    let mut command = Command::cargo_bin("ddd").unwrap();
+    command
+        .arg("--cwd")
+        .arg(&project)
+        .arg("--dry-run")
+        .arg("--format")
+        .arg("json")
+        .arg("serve");
+
+    command
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"dev\""))
+        .stdout(predicate::str::contains("transport=both"))
+        .stdout(predicate::str::contains("make"));
+}
+
+#[test]
+fn fullstack_init_reports_next_steps() {
+    let temp = tempfile::tempdir().unwrap();
+
+    let mut command = Command::cargo_bin("ddd").unwrap();
+    command
+        .arg("--cwd")
+        .arg(temp.path())
+        .arg("--format")
+        .arg("json")
+        .arg("init")
+        .arg("saas-next")
+        .arg("--preset")
+        .arg("fullstack");
+
+    command
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("next_steps"))
+        .stdout(predicate::str::contains("make db-up"))
+        .stdout(predicate::str::contains("make dev transport=both"));
+}
+
 #[test]
 fn init_dry_run_accepts_full_spin_runtime_matrix() {
     let temp = tempfile::tempdir().unwrap();

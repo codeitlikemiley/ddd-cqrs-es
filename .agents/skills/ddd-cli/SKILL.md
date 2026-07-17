@@ -1,6 +1,6 @@
 ---
 name: ddd-cli
-description: Use when scaffolding, extending, validating, serving, watching, or publishing ddd_cqrs_es applications through the `ddd` CLI; especially for agent/MCP workflows that need dry-run JSON, `ddd.toml` manifests, fine-grained `ddd add ...` commands, capability enablement, Spin runtime presets, or same-version library/CLI release handling.
+description: Use when scaffolding, extending, validating, serving, watching, or publishing ddd_cqrs_es applications through the `ddd` CLI; especially for agent/MCP workflows that need dry-run JSON, `ddd.toml` manifests, fine-grained `ddd add ...` commands, capability enablement, Spin runtime presets, fullstack SaaS scaffolding, or same-version library/CLI release handling.
 ---
 
 # ddd CLI Skill
@@ -20,6 +20,8 @@ After publishing or installing from crates.io, the user-facing command is:
 ```bash
 ddd <args>
 ```
+
+Current library/CLI version pair: read `version` from root `Cargo.toml` (e.g. `0.3.0-rc.5`). Always keep library and CLI at the **same** version.
 
 ## First Moves
 
@@ -41,25 +43,79 @@ Before generating or mutating code:
 
 The JSON report is the agent/MCP contract. Expect fields like `status`, `message`, `operations`, `command`, and `data`.
 
-## Project Creation
+## Presets
 
-Create new projects with `ddd init <path>`. Prefer explicit options when an agent is producing reproducible work:
+Supported presets (from `capabilities --json`): `basic`, `leptos-wasi`, **`fullstack`**, `native-api`, `worker`, `custom`.
+
+| Preset | Use for | Domain codegen (`ddd add`) | Runtime after init |
+| --- | --- | --- | --- |
+| `basic` | Pure domain + fixture tests | Yes (`src/domain` markers) | N/A (library-shaped) |
+| `leptos-wasi` | Thin Spin Leptos CQRS shell (counter-style) | Yes | `make spin …` via `ddd serve` |
+| **`fullstack`** | Production SaaS (auth/org/settings, wasi-auth) | **No** — refuse with clear error | `make dev transport=both` via `ddd serve` |
+| `native-api` / `worker` / `custom` | API/worker/minimal bases | Partial / stub-oriented | Make targets as generated |
+
+The CLI is Spin-focused. Do not use `--runtime wasmtime` for CLI-generated projects unless `capabilities --json` lists it.
+
+### Fullstack shape (locked)
+
+`preset=fullstack` requires:
+
+- `db=postgres`
+- `transport=both`
+- `ui=leptos`
+
+Defaults already set those. Generated tree is dual-synced with `examples/fullstack-app` (no `src/domain/`; empty `[domains]` in `ddd.toml`).
+
+## Quick scaffold: fullstack SaaS
+
+Preferred product path:
+
+```bash
+# From crates.io after install:
+ddd init my-saas --preset fullstack
+
+# From this monorepo:
+make scaffold-fullstack DIR=my-saas
+# or:
+cargo run -p ddd-cqrs-es-cli -- init my-saas --preset fullstack
+
+cd my-saas
+cp .env.example .env
+make db-up
+make dev transport=both
+# http://localhost:3008
+```
+
+Init JSON includes `data.next_steps` for fullstack. `make dev` starts **Spin + wasi-auth-outbox-worker** (required for verification mail). `make spin` alone does not deliver mail.
+
+### Fullstack command matrix
+
+| Command | Supported? |
+| --- | --- |
+| `ddd check` | Yes |
+| `ddd serve` / `ddd watch` | Yes → `make dev transport=…` |
+| `ddd fresh` | Yes → `make db=postgres fresh` (Postgres up) |
+| `ddd enable auth` / `authorization` / `passkeys` / `oauth-provider *` | Manifest only; set secrets in `.env`/Spin |
+| `ddd enable grpc` / `rest` / `leptos` | Manifest bookkeeping; **no** Cargo.toml feature surgery |
+| `ddd enable db *` (non-postgres) | Fails validation |
+| `ddd add *` (any) | **Fails** with “not a domain codegen target” |
+
+Do **not** invent domain markers under fullstack. Add business aggregates manually under `src/application`, `src/store`, `src/contracts`, etc.
+
+## Project Creation (other presets)
 
 ```bash
 cargo run -p ddd-cqrs-es-cli -- init my-app --preset basic --domain Invoice
 cargo run -p ddd-cqrs-es-cli -- init my-app --preset leptos-wasi --domain Counter --db sqlite --runtime spin --realtime off --transport http --ui leptos
+cargo run -p ddd-cqrs-es-cli -- init my-saas --preset fullstack
 ```
-
-Supported presets are discovered from `capabilities --json`; current presets are `basic`, `leptos-wasi`, `native-api`, `worker`, and `custom`.
-
-The CLI is Spin-focused. Do not use `--runtime wasmtime` for CLI-generated projects unless the CLI implementation adds it again and `capabilities --json` confirms it.
 
 Keep Redis modes distinct:
 
 - `--db redis` means Redis is the durable event/checkpoint/read-model store.
 - `--realtime redis` means Redis is the wake/notification transport and can pair with another durable DB.
 
-## Extending Generated Projects
+## Extending Generated Projects (basic / leptos-wasi)
 
 Run fine-grained generators from the generated project root, or pass `--cwd <project>`:
 
@@ -71,7 +127,9 @@ cargo run -p ddd-cqrs-es-cli -- --cwd my-app add projection InvoiceLedger
 cargo run -p ddd-cqrs-es-cli -- --cwd my-app add route invoice-summary --method GET --path /api/invoices/summary
 ```
 
-Use `ddd enable ...` for capability wiring:
+These require `src/domain/{module}.rs` with `// ddd:…` markers. They **do not** apply to fullstack product templates.
+
+Use `ddd enable ...` for capability wiring on non-fullstack apps:
 
 ```bash
 cargo run -p ddd-cqrs-es-cli -- --cwd my-app enable db postgres
@@ -88,11 +146,7 @@ Generated projects are tracked by `ddd.toml`. If `ddd.toml` is missing, treat th
 
 Do not invent unsupported target syntax. As of this skill, `ddd add event` and `ddd add command` target aggregates by manifest/domain name, not arbitrary `/path/to/file.rs:Symbol` selectors.
 
-If a user asks for path or symbol targeting such as `/path/to/file.rs:Struct`, first inspect the current CLI parser and tests. If the syntax is not implemented, either add CLI support with tests or patch the file manually using structured Rust-aware edits; do not pass imaginary flags to `ddd`.
-
 ## Runtime Commands
-
-Resolve runtime commands through the CLI so agents can preview them:
 
 ```bash
 cargo run -p ddd-cqrs-es-cli -- --cwd my-app --dry-run --format json serve
@@ -108,27 +162,45 @@ Use `ddd check` after mutations:
 cargo run -p ddd-cqrs-es-cli -- --cwd my-app check
 ```
 
+## Monorepo: dual-sync and drift (template editors)
+
+When editing `examples/fullstack-app` product files that belong in the CLI template:
+
+```bash
+bash examples/fullstack-app/scripts/sync_fullstack_template.sh
+bash examples/fullstack-app/scripts/sync_fullstack_template.sh check
+bash scripts/regenerate-fullstack-example.sh --check   # or: make fullstack-check
+```
+
+Cargo for the template is shipped as `Cargo.toml.template` (not nested `Cargo.toml`) so `cargo package` includes the tree.
+
+UI chrome / soft-nav / skeleton patterns: `docs/tutorial/leptos-islands-persistent-chrome.md` and `examples/fullstack-app` (not domain codegen).
+
 ## Safety Rules
 
 - Dry-run before writing unless the user explicitly asks for immediate writes.
 - Avoid `--force` until inspecting the collision and confirming overwrite is intended.
-- Prefer generated marker regions and `ddd.toml` updates over ad hoc string edits.
+- Prefer generated marker regions and `ddd.toml` updates over ad hoc string edits (non-fullstack).
 - Keep the root framework transport-agnostic; HTTP, REST, SSE, gRPC, Spin, and app wiring belong in generated apps and CLI templates.
 - When changing CLI behavior, update tests and this skill if agent-facing commands change.
+- Never run `ddd add` against fullstack expecting domain files; it fails closed by design.
 
 ## Release Workflow
 
 The library crate and CLI crate are released as a same-version pair:
 
 ```bash
-make version 0.2.6
+make version 0.3.0-rc.6   # or next RC / stable
 make publish dry-run
+make publish
 ```
 
-`make publish dry-run` and `make publish -- --dry-run` are the reliable dry-run forms. Real publish uses:
+Full chain (leptos-wasi-runtime → wasi-auth → ddd → CLI):
 
 ```bash
-make publish
+make publish-fullstack dry-run
+make publish-fullstack
+make registry-check
 ```
 
 Run `cargo login` first, or provide `CARGO_REGISTRY_TOKEN` in the environment.
@@ -140,15 +212,18 @@ The publish script validates matching versions and publishes `ddd_cqrs_es` befor
 After editing the CLI or this skill, run the focused checks that match the change:
 
 ```bash
-python3 /Users/uriah/.codex/skills/.system/skill-creator/scripts/quick_validate.py .agents/skills/ddd-cli
 cargo fmt --all -- --check
 cargo test -p ddd-cqrs-es-cli --all-targets
+bash scripts/verify-docs.sh
+bash scripts/regenerate-fullstack-example.sh --check
 ```
-
-If the validator fails because `PyYAML` is missing, create a temporary venv, install `PyYAML` there, and rerun the same validator from that venv. Do not add validator dependencies to this repository unless the user asks for repo-managed skill tooling.
 
 For release-flow changes, run:
 
 ```bash
 bash scripts/release-crates-io.sh dry-run
 ```
+
+## Roadmap (not implemented)
+
+Optional future: product domain extension inside fullstack (`src/domain` + application wiring) so `ddd add aggregate` can coexist with wasi-auth. Until then, treat fullstack as a product template only.

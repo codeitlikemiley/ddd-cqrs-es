@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 SHELL := /usr/bin/env bash
 
-.PHONY: help version publish publish-fullstack registry-check example example-check fullstack-sync fullstack-check ci clean preflight check-tools check-example-runtime check-wasm-target
+.PHONY: help version publish publish-fullstack registry-check example example-check fullstack-sync fullstack-check scaffold-fullstack ci clean preflight check-tools check-example-runtime check-wasm-target
 
 # Convenience aliases used by examples/counter-app passthrough.
 EXAMPLE_RUNTIME := $(word 2,$(MAKECMDGOALS))
@@ -12,6 +12,9 @@ CARGO_CONFIG_ARGS ?=
 
 # `make version` can take `make version X.Y.Z` or `VERSION=X.Y.Z make version`.
 VERSION_ARG := $(if $(VERSION),$(VERSION),$(word 2,$(MAKECMDGOALS)))
+
+# Scaffold output directory: `make scaffold-fullstack DIR=my-saas`
+SCAFFOLD_DIR := $(if $(DIR),$(DIR),my-saas)
 
 # If the user invokes `make version <x.y.z>`, `make publish dry-run`,
 # or `make example spin`, treat extra positional arguments as no-op targets.
@@ -31,6 +34,7 @@ help:
 	@echo "  make publish-fullstack [dry-run]    gate and publish Leptos, wasi-auth, DDD, and CLI in order"
 	@echo "  make registry-check                 verify the published RC chain with a clean generated consumer"
 	@echo "  make example <spin|wasmtime|run>    run counter-app example with db/realtime args"
+	@echo "  make scaffold-fullstack [DIR=path]  scaffold a fullstack SaaS app via ddd CLI (default DIR=my-saas)"
 	@echo "  make fullstack-sync                 regenerate examples/fullstack-app from the CLI template"
 	@echo "  make fullstack-check                fail when the generated fullstack example has drifted"
 	@echo "  make preflight                      check required local tools before running CI/release/example commands"
@@ -41,6 +45,7 @@ help:
 	@echo "  make publish"
 	@echo "  make publish -- --dry-run"
 	@echo "  make publish dry-run"
+	@echo "  make scaffold-fullstack DIR=my-saas"
 	@echo "  make example spin db=neon realtime=redis"
 	@echo "  make example-check                  # Compile counter-app counterexample with sqlite feature"
 	@echo "  make ci                             # Run full CI quality suite locally"
@@ -108,6 +113,22 @@ example:
 example-check:
 	@$(MAKE) check-tools check-wasm-target
 	@cargo check $(CARGO_CONFIG_ARGS) --manifest-path examples/$(EXAMPLE_TARGET)/Cargo.toml --target wasm32-wasip2 --no-default-features --features $(EXAMPLE_CHECK_FEATURES)
+
+scaffold-fullstack:
+	@$(MAKE) check-tools
+	@if [ -e "$(SCAFFOLD_DIR)" ]; then \
+		echo "Error: $(SCAFFOLD_DIR) already exists. Choose another DIR= or remove it." >&2; \
+		exit 1; \
+	fi
+	cargo run -q --package ddd-cqrs-es-cli --bin ddd -- init "$(SCAFFOLD_DIR)" --preset fullstack
+	@echo ""
+	@echo "Scaffolded fullstack app at $(SCAFFOLD_DIR)"
+	@echo "Next steps:"
+	@echo "  cd $(SCAFFOLD_DIR)"
+	@echo "  cp .env.example .env"
+	@echo "  make db-up"
+	@echo "  make dev transport=both"
+	@echo "  open http://localhost:3008"
 
 fullstack-sync:
 	@bash scripts/regenerate-fullstack-example.sh

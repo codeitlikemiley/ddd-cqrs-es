@@ -263,7 +263,7 @@ fn init_project(ctx: &ExecutionContext, args: InitArgs) -> Result<CommandReport>
     let operations = render_init(&input);
     let reports = apply_operations(&target, &operations, ctx.dry_run, ctx.force)?;
     let status = if ctx.dry_run { "planned" } else { "applied" };
-    Ok(CommandReport::new(
+    let mut report = CommandReport::new(
         status,
         format!(
             "{} project `{}` at {}",
@@ -272,11 +272,53 @@ fn init_project(ctx: &ExecutionContext, args: InitArgs) -> Result<CommandReport>
             target.display()
         ),
     )
-    .with_operations(reports))
+    .with_operations(reports);
+
+    if selection.preset == Preset::Fullstack {
+        let dir_name = target
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&input.package_name);
+        report = report.with_data(json!({
+            "preset": "fullstack",
+            "next_steps": [
+                format!("cd {dir_name}"),
+                "cp .env.example .env",
+                "make db-up",
+                "make dev transport=both",
+                "open http://localhost:3008  # or visit in a browser"
+            ],
+            "notes": [
+                "make dev starts Spin plus the wasi-auth outbox worker (required for verification mail)",
+                "ddd add aggregate/event/command is not supported on fullstack product templates",
+                "use preset basic or leptos-wasi when you need domain marker codegen"
+            ]
+        }));
+    }
+
+    Ok(report)
+}
+
+fn fullstack_add_unsupported_message() -> String {
+    "preset=fullstack is a product template (auth/org shell), not a domain codegen target. \
+     `ddd add …` (aggregates, events, commands, routes, stubs) is unsupported because there is \
+     no `src/domain/` marker layout. Add business domain code manually under `src/` \
+     (application/store/contracts) or scaffold domain modules with \
+     `ddd init --preset basic` / `--preset leptos-wasi`. \
+     Runtime: `ddd serve` → `make dev transport=both` after `make db-up`."
+        .to_string()
+}
+
+fn refuse_fullstack_add(manifest: &ProjectManifest) -> Result<()> {
+    if manifest.preset == Preset::Fullstack {
+        anyhow::bail!("{}", fullstack_add_unsupported_message());
+    }
+    Ok(())
 }
 
 fn add_to_project(ctx: &ExecutionContext, command: AddCommand) -> Result<CommandReport> {
     let mut manifest = ProjectManifest::read_from(&ctx.cwd)?;
+    refuse_fullstack_add(&manifest)?;
     let mut operations = Vec::new();
 
     match command {
@@ -515,7 +557,9 @@ fn enable_capability(ctx: &ExecutionContext, command: EnableCommand) -> Result<C
         true,
         "update project manifest",
     )];
-    if !cargo_features.is_empty() {
+    // Fullstack Cargo.toml is a large product manifest; the naive first-`features = [`
+    // patch targets the wrong table. Feature wiring is already baked into the template.
+    if !cargo_features.is_empty() && manifest.preset != Preset::Fullstack {
         operations.push(write_operation(
             "Cargo.toml",
             patch_cargo_features(&ctx.cwd.join("Cargo.toml"), &cargo_features)?,
@@ -537,6 +581,10 @@ enum RunMode {
 
 fn run_project(ctx: &ExecutionContext, args: RunArgs, mode: RunMode) -> Result<CommandReport> {
     let manifest = ProjectManifest::read_from(&ctx.cwd).ok();
+    let preset = manifest
+        .as_ref()
+        .map(|manifest| manifest.preset)
+        .unwrap_or(Preset::LeptosWasi);
     let runtime = args
         .runtime
         .or_else(|| manifest.as_ref().map(|manifest| manifest.runtime))
@@ -554,10 +602,7 @@ fn run_project(ctx: &ExecutionContext, args: RunArgs, mode: RunMode) -> Result<C
         .or_else(|| manifest.as_ref().map(|manifest| manifest.transport))
         .unwrap_or(Transport::Http);
     AppSelection {
-        preset: manifest
-            .as_ref()
-            .map(|manifest| manifest.preset)
-            .unwrap_or(Preset::LeptosWasi),
+        preset,
         runtime,
         db,
         realtime,
@@ -570,8 +615,8 @@ fn run_project(ctx: &ExecutionContext, args: RunArgs, mode: RunMode) -> Result<C
     .validate()?;
 
     let command = match mode {
-        RunMode::Serve => serve_command(runtime, db, realtime, transport),
-        RunMode::Watch => watch_command(runtime, db, realtime, transport),
+        RunMode::Serve => serve_command(preset, runtime, db, realtime, transport),
+        RunMode::Watch => watch_command(preset, runtime, db, realtime, transport),
     };
     if !ctx.dry_run {
         run_external_command(&ctx.cwd, &command)?;
@@ -748,11 +793,21 @@ fn capabilities() -> Result<CommandReport> {
 }
 
 fn serve_command(
+    preset: Preset,
     runtime: Runtime,
     db: DbBackend,
     realtime: Realtime,
     transport: Transport,
 ) -> Vec<String> {
+    // Fullstack product Makefile: `dev` runs Spin + outbox worker (mail delivery).
+    // `make spin` alone leaves verification email pending.
+    if preset == Preset::Fullstack {
+        return vec![
+            "make".to_string(),
+            "dev".to_string(),
+            format!("transport={transport}"),
+        ];
+    }
     vec![
         "make".to_string(),
         runtime.as_str().to_string(),
@@ -763,19 +818,25 @@ fn serve_command(
 }
 
 fn watch_command(
+    preset: Preset,
     runtime: Runtime,
     db: DbBackend,
     realtime: Realtime,
     transport: Transport,
 ) -> Vec<String> {
+    let make_script = if preset == Preset::Fullstack {
+        format!("make dev transport={transport}")
+    } else {
+        format!(
+            "make {} db={db} realtime={realtime} transport={transport}",
+            runtime
+        )
+    };
     vec![
         "cargo".to_string(),
         "watch".to_string(),
         "-s".to_string(),
-        format!(
-            "make {} db={db} realtime={realtime} transport={transport}",
-            runtime
-        ),
+        make_script,
     ]
 }
 

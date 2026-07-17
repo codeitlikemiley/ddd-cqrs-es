@@ -44,6 +44,41 @@ cargo run -p ddd-cqrs-es-cli -- init billing --preset basic --domain Invoice
 
 ## Quick Start
 
+### Fullstack SaaS product (recommended starter)
+
+Scaffold the production Spin + Leptos + wasi-auth template (same tree as
+`examples/fullstack-app`):
+
+```bash
+ddd init my-saas --preset fullstack
+# or from this monorepo: make scaffold-fullstack DIR=my-saas
+cd my-saas
+cp .env.example .env
+make db-up
+make dev transport=both
+# open http://localhost:3008
+```
+
+`ddd serve` on a fullstack project resolves to `make dev transport=both` (Spin
+**plus** the outbox worker so verification mail can deliver). Use `make spin`
+only when you intentionally want the app without mail delivery.
+
+**What works after fullstack init**
+
+| Command | Fullstack |
+| --- | --- |
+| `ddd check` | Yes — validates product file inventory |
+| `ddd serve` / `ddd watch` | Yes — `make dev` (+ cargo-watch for watch) |
+| `ddd fresh` | Yes — `make db=postgres fresh` (Postgres must be up) |
+| `ddd enable auth` / oauth-provider / passkeys | Manifest bookkeeping only; still set Spin/.env secrets |
+| `ddd add aggregate\|event\|command\|…` | **No** — fails with a clear error (no domain marker layout) |
+
+Domain marker codegen (`src/domain` + `// ddd:…` regions) is for `basic` and
+`leptos-wasi`. Fullstack business aggregates should be added manually under
+`src/` (application/store/contracts), not via `ddd add`.
+
+### Domain-only or thin Leptos app
+
 Create a small domain-only project:
 
 ```bash
