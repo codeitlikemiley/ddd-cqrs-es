@@ -1,12 +1,22 @@
 # Changelog
 
+## 0.3.0-rc.5
+
+- Fullstack settings islands take **route `slug` props** so soft-nav no longer
+  hits empty-slug 500s after client-side hops.
+- CI: read publishable package version dynamically; normalize monorepo-only
+  fullstack example artifacts during drift checks.
+- CLI ships the dual-synced product README for `ddd init --preset fullstack`.
+- **Note:** `wasi-auth` stays at `0.1.0-rc.2` (no auth crate changes in this
+  release).
+
 ## 0.3.0-rc.4
 
 - Fix CLI packaging: ship fullstack manifest as `Cargo.toml.template` so
   `cargo package` includes the full template tree (nested `Cargo.toml` was
   treated as a separate package and dropped from the crate).
 - Yank recommendation: `ddd-cqrs-es-cli 0.3.0-rc.3` cannot scaffold fullstack
-  (`fullstack Cargo.toml must be embedded`); use `0.3.0-rc.4`.
+  (`fullstack Cargo.toml must be embedded`); use `0.3.0-rc.4` or later.
 
 ## 0.3.0-rc.3
 
