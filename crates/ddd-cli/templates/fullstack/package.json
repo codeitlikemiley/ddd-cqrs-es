@@ -5,7 +5,8 @@
     "browser-smoke": "node ./scripts/verify_auth_pages.mjs",
     "oauth-dev-smoke": "node ./scripts/verify_auth_oauth_dev_browser.mjs",
     "live-oauth-smoke": "node ./scripts/verify_live_oauth_browser.mjs",
-    "passkey-smoke": "node ./scripts/verify_auth_passkeys.mjs"
+    "passkey-smoke": "node ./scripts/verify_auth_passkeys.mjs",
+    "workspace-settings-smoke": "node ./scripts/verify_workspace_settings.mjs"
   },
   "devDependencies": {
     "playwright": "^1.61.1"

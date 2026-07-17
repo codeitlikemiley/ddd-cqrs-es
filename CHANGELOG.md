@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.0-rc.4
+
+- Fix CLI packaging: ship fullstack manifest as `Cargo.toml.template` so
+  `cargo package` includes the full template tree (nested `Cargo.toml` was
+  treated as a separate package and dropped from the crate).
+- Yank recommendation: `ddd-cqrs-es-cli 0.3.0-rc.3` cannot scaffold fullstack
+  (`fullstack Cargo.toml must be embedded`); use `0.3.0-rc.4`.
+
+## 0.3.0-rc.3
+
+- Fullstack Leptos template: **persistent workspace chrome** soft-nav so org
+  switcher, account menu, and theme stay mounted across in-app hops
+  (`islands_router` + content-only region swap).
+- Cache-first chrome snapshot and client-side flyout focus for settings/account
+  menus; composable skeleton loaders for page bodies.
+- Documented the technique in
+  `docs/tutorial/leptos-islands-persistent-chrome.md` for reuse in other islands
+  apps.
+- Dual-synced the CLI `fullstack` template with the example product tree.
+- **Note:** `wasi-auth` stays at `0.1.0-rc.2` (no auth crate changes in this
+  release).
+
 ## 0.3.0-rc.2
 
 - Added native Resend delivery through `wasi-auth-outbox-worker` with durable

@@ -59,7 +59,8 @@ Spin auth stack, and the Leptos UI.
 | `/login` | `LoginPage` | Guest-only | `EmailPasswordAuthForm`, `OptionalLoginMethods`, `OAuthProviderList`, `PasskeyLoginForm` |
 | `/register` | `RegisterPage` | Guest-only | `EmailPasswordAuthForm`, `OptionalLoginMethods` |
 | `/forgot-password` | `ForgotPasswordPage` | Guest-only | `ForgotPasswordForm` |
-| `/reset-password` | `ResetPasswordPage` | Guest-only | `ResetPasswordForm` |
+| `/reset-password` | `ResetPasswordPage` | Guest-only without `token`; tokenized deep link always renders | `ResetPasswordForm` |
+| `/invitations/accept` | `InvitationAcceptPage` | Protected (auth required; `next` preserves token) | `InvitationAcceptForm` |
 | `/dashboard` | `DashboardPage` | Yes | `SessionSummary`, `WorkspaceAccessLinks` |
 | `/logout` | `LogoutPage` | Yes | `LogoutForm` |
 | `/auth/callback/{provider}` | `OAuthCallbackPage` | No | `OAuthCallbackStatus` |

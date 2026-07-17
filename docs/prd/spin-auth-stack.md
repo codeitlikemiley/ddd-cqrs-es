@@ -137,7 +137,7 @@ counter app:
    for browser and REST paths.
 3. Serve explicit REST auth and authz routes.
 4. Enforce browser-route auth middleware: authenticated users are redirected
-   away from guest-only auth pages, and unauthenticated users are redirected
+   away from guest-only auth pages (except tokenized reset/verify links), and unauthenticated users are redirected
    away from protected app/admin pages.
 5. Serve Leptos server functions for browser actions.
 6. Serve static assets under `/pkg/...`.

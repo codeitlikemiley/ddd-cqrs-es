@@ -4,17 +4,29 @@ use leptos_wasi::wasip3::prelude::{Handler, HandlerConfig, init_wasip3_spawner};
 use wasip3::http::types::{ErrorCode, Request, Response};
 
 use crate::app::{
-    App, ChangePassword, CompleteEmailVerification, CompleteOauthCallback, CompletePasswordReset,
-    CreateOrganization, GetAdminHealth, GetAuthCapabilities, GetAuthorizationCapabilities,
-    GetCurrentSession, InviteCurrentOrganizationMember, ListAccountSessions, ListAdminUsers,
-    ListAuthProviders, ListCurrentOrganizationAudit, ListCurrentOrganizationInvitations,
-    ListCurrentOrganizationMembers, ListCurrentOrganizationRoles, ListOrganizations,
-    ListPolicyVersions, ListSigningKeys, LoginEmailPassword, LogoutCurrentSession,
-    PublishPolicyVersion, RegisterEmailPassword, RequireAuthenticatedRoute, RequireAuthorizedRoute,
-    ResendEmailVerification, RevokeAccountSession, RotateSigningKey, SaveAuthProvider,
-    SaveRedirectAllowlist, SelectOrganization, StartOauthLogin, StartPasskeyLogin,
-    StartPasskeyRegistration, StartPasswordReset, UpsertCurrentOrganizationRole,
-    VerifyPasskeyLogin, VerifyPasskeyRegistration, shell,
+    AcceptOrganizationInvitation, App, AssignWorkspaceMemberRole, ChangePassword,
+    CompleteEmailVerification, CompleteOauthCallback, CompletePasswordReset, ConfirmTotpEnrollment,
+    CreateDashboardSecret, CreateOrganization, DeactivateWorkspace, DeleteDashboardQuery,
+    DeleteDashboardResource, DeleteDashboardSecret, DeleteDashboardSource, DeleteWorkspaceRole,
+    DevelopmentMailCaptureEnabled, DismissDashboardNotification, GetAccountProfile, GetAdminHealth,
+    GetAuthCapabilities, GetAuthorizationCapabilities, GetCurrentSession, GetDashboardSnapshot,
+    GetMfaStatus, GetPublicProfile, GetWorkspaceSettingsContext, InviteCurrentOrganizationMember,
+    InviteWorkspaceMember, LatestDevelopmentMail, LeaveWorkspace, ListAccountSessions,
+    ListAdminUsers, ListAuthProviders, ListCurrentOrganizationAudit,
+    ListCurrentOrganizationInvitations, ListCurrentOrganizationMembers,
+    ListCurrentOrganizationRoles, ListDashboardSecrets, ListOrganizations, ListPolicyVersions,
+    ListSigningKeys, ListWorkspaceAudit, ListWorkspaceInvitations, ListWorkspaceMembers,
+    ListWorkspacePermissions, ListWorkspaceRoles, LoginEmailPassword, LogoutCurrentSession,
+    MigrateWorkspaceLegacyData, PublishPolicyVersion, RegisterEmailPassword, RemoveWorkspaceMember,
+    RequireAuthenticatedRoute, RequireAuthorizedRoute, ResendEmailVerification,
+    ResendWorkspaceInvitation, ResolveWorkspaceVaultTarget, RevealDashboardSecret,
+    RevokeAccountSession, RevokeWorkspaceInvitation, RotateSigningKey, RunDashboardQuery,
+    SaveAuthProvider, SaveDashboardLayout, SaveRedirectAllowlist, SeedDashboardDemos,
+    SelectOrganization, StartOauthLogin, StartPasskeyLogin, StartPasskeyRegistration,
+    StartPasswordReset, StartTotpEnrollment, TestDashboardHttpSource, TransferWorkspaceOwnership,
+    UpdateAccountProfile, UpdateDashboardNote, UpdateWorkspaceName, UpsertCurrentOrganizationRole,
+    UpsertDashboardQuery, UpsertDashboardResource, UpsertDashboardSource, UpsertWorkspaceRole,
+    VerifyPasskeyLogin, VerifyPasskeyRegistration, VerifyRecoveryCode, VerifyTotpStepUp, shell,
 };
 
 struct FullstackServer;
@@ -75,6 +87,15 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
         let is_browser_navigation = !is_grpc
             && !crate::rest::is_rest_request(&req)
             && matches!(*req.method(), http::Method::GET | http::Method::HEAD);
+        // WebAuthn rejects IP hosts as rpId. Canonicalize loopback IPs → localhost
+        // for document navigations so passkeys and session cookies share one host.
+        if is_browser_navigation
+            && !request_path.starts_with("/pkg/")
+            && let Some(location) =
+                loopback_ip_to_localhost_redirect(req.headers(), &request_path, request_query.as_deref())
+        {
+            return redirect_response(&location);
+        }
         if matches!(
             *req.method(),
             http::Method::POST | http::Method::PUT | http::Method::PATCH | http::Method::DELETE
@@ -82,6 +103,14 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
             && !is_grpc
             && let Err(error) = crate::application::validate_browser_origin(req.headers()).await
         {
+            // Server functions expect `Type|message` error bodies. Plain text
+            // yields "error deserializing server function results: missing delimiter".
+            if request_path.starts_with("/api/ui/") {
+                return server_fn_error_response(
+                    error.http_status(),
+                    "Request origin rejected. Open the app with the same host as AUTH_PUBLIC_BASE_URL (localhost and 127.0.0.1 are interchangeable on loopback).",
+                );
+            }
             return plain_text_response(error.http_status(), "Request origin rejected.");
         }
 
@@ -148,11 +177,27 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
             return wasip3::http_compat::http_into_wasi_response(response);
         }
 
-        if guest_only_ui_route(&request_path) && authenticated_session(session_id.clone()).await {
+        // Logout is an action, not a document. Keep direct navigations safe and
+        // prevent the browser from ever rendering a logout page.
+        if request_path == "/logout"
+            && matches!(*req.method(), http::Method::GET | http::Method::HEAD)
+        {
+            return redirect_response("/");
+        }
+
+        // Guest-only pages bounce authenticated browsers away, but one-time
+        // token links must still render. Dropping `?token=` here is what made
+        // password reset appear to "already be signed in" without a form.
+        if guest_only_ui_route(&request_path)
+            && !tokenized_public_ui_route(&request_path, request_query.as_deref())
+            && authenticated_session(session_id.clone()).await
+        {
             return redirect_response(login_success_redirect(request_query.as_deref()));
         }
 
-        if let Some(location) = protected_ui_redirect(&request_path, session_id).await {
+        if let Some(location) =
+            protected_ui_redirect(&request_path, request_query.as_deref(), session_id).await
+        {
             return redirect_response(&location);
         }
 
@@ -183,6 +228,30 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
             .with_server_fn::<StartPasswordReset>()
             .with_server_fn::<CompletePasswordReset>()
             .with_server_fn::<GetCurrentSession>()
+            .with_server_fn::<GetAccountProfile>()
+            .with_server_fn::<UpdateAccountProfile>()
+            .with_server_fn::<GetPublicProfile>()
+            .with_server_fn::<GetDashboardSnapshot>()
+            .with_server_fn::<SaveDashboardLayout>()
+            .with_server_fn::<DismissDashboardNotification>()
+            .with_server_fn::<UpdateDashboardNote>()
+            .with_server_fn::<UpsertDashboardSource>()
+            .with_server_fn::<DeleteDashboardSource>()
+            .with_server_fn::<CreateDashboardSecret>()
+            .with_server_fn::<DeleteDashboardSecret>()
+            .with_server_fn::<RevealDashboardSecret>()
+            .with_server_fn::<ListDashboardSecrets>()
+            .with_server_fn::<ResolveWorkspaceVaultTarget>()
+            .with_server_fn::<SeedDashboardDemos>()
+            .with_server_fn::<MigrateWorkspaceLegacyData>()
+            .with_server_fn::<TestDashboardHttpSource>()
+            .with_server_fn::<UpsertDashboardResource>()
+            .with_server_fn::<UpsertDashboardQuery>()
+            .with_server_fn::<DeleteDashboardResource>()
+            .with_server_fn::<DeleteDashboardQuery>()
+            .with_server_fn::<RunDashboardQuery>()
+            .with_server_fn::<DevelopmentMailCaptureEnabled>()
+            .with_server_fn::<LatestDevelopmentMail>()
             .with_server_fn::<RequireAuthenticatedRoute>()
             .with_server_fn::<RequireAuthorizedRoute>()
             .with_server_fn::<StartPasskeyRegistration>()
@@ -200,15 +269,38 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
             .with_server_fn::<ChangePassword>()
             .with_server_fn::<ListAccountSessions>()
             .with_server_fn::<RevokeAccountSession>()
+            .with_server_fn::<GetMfaStatus>()
+            .with_server_fn::<StartTotpEnrollment>()
+            .with_server_fn::<ConfirmTotpEnrollment>()
+            .with_server_fn::<VerifyTotpStepUp>()
+            .with_server_fn::<VerifyRecoveryCode>()
             .with_server_fn::<ListOrganizations>()
             .with_server_fn::<CreateOrganization>()
             .with_server_fn::<SelectOrganization>()
             .with_server_fn::<ListCurrentOrganizationMembers>()
             .with_server_fn::<ListCurrentOrganizationInvitations>()
             .with_server_fn::<InviteCurrentOrganizationMember>()
+            .with_server_fn::<AcceptOrganizationInvitation>()
             .with_server_fn::<ListCurrentOrganizationRoles>()
             .with_server_fn::<UpsertCurrentOrganizationRole>()
             .with_server_fn::<ListCurrentOrganizationAudit>()
+            .with_server_fn::<GetWorkspaceSettingsContext>()
+            .with_server_fn::<ListWorkspaceMembers>()
+            .with_server_fn::<ListWorkspaceInvitations>()
+            .with_server_fn::<ListWorkspaceRoles>()
+            .with_server_fn::<ListWorkspaceAudit>()
+            .with_server_fn::<UpdateWorkspaceName>()
+            .with_server_fn::<AssignWorkspaceMemberRole>()
+            .with_server_fn::<RemoveWorkspaceMember>()
+            .with_server_fn::<InviteWorkspaceMember>()
+            .with_server_fn::<RevokeWorkspaceInvitation>()
+            .with_server_fn::<ResendWorkspaceInvitation>()
+            .with_server_fn::<UpsertWorkspaceRole>()
+            .with_server_fn::<DeleteWorkspaceRole>()
+            .with_server_fn::<TransferWorkspaceOwnership>()
+            .with_server_fn::<LeaveWorkspace>()
+            .with_server_fn::<DeactivateWorkspace>()
+            .with_server_fn::<ListWorkspacePermissions>()
             .with_server_fn::<ListAdminUsers>()
             .with_server_fn::<GetAdminHealth>()
             .with_server_fn::<ListPolicyVersions>()
@@ -239,25 +331,62 @@ async fn authenticated_session(session_id: Option<String>) -> bool {
         .unwrap_or(false)
 }
 
-async fn protected_ui_redirect(path: &str, session_id: Option<String>) -> Option<String> {
+async fn protected_ui_redirect(
+    path: &str,
+    query: Option<&str>,
+    session_id: Option<String>,
+) -> Option<String> {
     if !protected_ui_route(path) {
         return None;
     }
 
-    let Some(permission) = ui_route_permission(path) else {
-        return (!authenticated_session(session_id).await)
-            .then(|| format!("/auth/required?next={path}"));
+    let next = encode_next_target(path, query);
+
+    let session = match crate::application::get_current_session_for(session_id.clone()).await {
+        Ok(session) if session.authenticated => session,
+        _ => return Some(format!("/auth/required?next={next}")),
     };
+
+    // Organization setup is a product gate, not an optional page. Until the
+    // first workspace exists, protected workspace/account/admin routes all
+    // lead back to the focused onboarding screen. Invitation acceptance stays
+    // reachable because accepting one can establish the first membership.
+    if path != "/invitations/accept" {
+        let Some(user_id) = session.user_id.as_deref() else {
+            return Some(format!("/auth/required?next={next}"));
+        };
+        match crate::auth_product::list_organizations(user_id).await {
+            Ok(organizations) => {
+                if let Some(location) = workspace_setup_redirect(path, &organizations) {
+                    return Some(location);
+                }
+            }
+            Err(error) => {
+                tracing::error!(
+                    error = %error,
+                    error_code = error.public_code(),
+                    path,
+                    "failed to evaluate workspace onboarding gate"
+                );
+                return Some(format!("/auth/session-expired?next={next}"));
+            }
+        }
+    }
+
+    let Some(permission) = crate::access::permission_for_ui_path(path) else {
+        return None;
+    };
+    let permission = permission.as_str();
 
     match crate::application::require_authorized_route_for(permission, session_id).await {
         Ok(_) => None,
         Err(crate::error::AuthStackError::Forbidden) => {
-            Some(format!("/auth/forbidden?next={path}"))
+            Some(format!("/auth/forbidden?next={next}"))
         }
         Err(crate::error::AuthStackError::AuthRequired)
         | Err(crate::error::AuthStackError::InvalidToken)
         | Err(crate::error::AuthStackError::SessionExpired) => {
-            Some(format!("/auth/required?next={path}"))
+            Some(format!("/auth/required?next={next}"))
         }
         Err(error) => {
             tracing::error!(
@@ -267,9 +396,51 @@ async fn protected_ui_redirect(path: &str, session_id: Option<String>) -> Option
                 permission,
                 "failed to authorize protected UI route"
             );
-            Some(format!("/auth/session-expired?next={path}"))
+            Some(format!("/auth/session-expired?next={next}"))
         }
     }
+}
+
+fn workspace_setup_redirect(
+    path: &str,
+    organizations: &crate::contracts::OrganizationListResponse,
+) -> Option<String> {
+    if organizations.organizations.is_empty() {
+        return (path != "/onboarding/workspace").then(|| "/onboarding/workspace".to_owned());
+    }
+
+    // Additional workspaces are created from /organizations (modal), not
+    // /onboarding/workspace?new=…. Once an org exists, leave focused onboarding.
+    if path == "/onboarding/workspace" {
+        return Some("/dashboard".to_owned());
+    }
+
+    None
+}
+
+fn encode_next_target(path: &str, query: Option<&str>) -> String {
+    match query {
+        // Preserve path-only next= values unencoded for stable smoke URLs.
+        // Encode when a query is present so tokens survive auth redirects.
+        Some(query) if !query.is_empty() => percent_encode_component(&format!("{path}?{query}")),
+        _ => path.to_owned(),
+    }
+}
+
+fn percent_encode_component(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() * 3);
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char);
+            }
+            _ => {
+                use std::fmt::Write as _;
+                let _ = write!(out, "%{byte:02X}");
+            }
+        }
+    }
+    out
 }
 
 fn guest_only_ui_route(path: &str) -> bool {
@@ -282,6 +453,21 @@ fn guest_only_ui_route(path: &str) -> bool {
             | "/verify-email"
             | "/verify-email/resend"
     )
+}
+
+/// Email deep links that must remain reachable even when a session cookie exists.
+///
+/// Without this, authenticated users who open reset/verify mail never see the
+/// form: the guest-only redirect sends them to `/dashboard` and discards `token`.
+fn tokenized_public_ui_route(path: &str, query: Option<&str>) -> bool {
+    let Some(query) = query else {
+        return false;
+    };
+    let has_token = query.split('&').any(|part| {
+        part.strip_prefix("token=")
+            .is_some_and(|value| !value.is_empty())
+    });
+    has_token && matches!(path, "/reset-password" | "/verify-email")
 }
 
 fn public_authentication_route(path: &str) -> bool {
@@ -305,26 +491,12 @@ fn public_authentication_route(path: &str) -> bool {
 
 fn protected_ui_route(path: &str) -> bool {
     path == "/dashboard"
+        || path == "/onboarding/workspace"
+        || path == "/invitations/accept"
         || path.starts_with("/account/")
+        || path.starts_with("/org/")
         || path.starts_with("/organizations")
         || path.starts_with("/admin/")
-}
-
-fn ui_route_permission(path: &str) -> Option<&'static str> {
-    match path {
-        "/admin/auth/signing-keys" => Some("auth:signing-key:admin"),
-        "/admin/auth/providers" => Some("auth:provider:write"),
-        "/admin/auth/redirects" => Some("auth:redirect:write"),
-        "/admin/authorization/policy" => Some("authz:check"),
-        "/organizations/settings" => Some("organization.update"),
-        "/organizations/members" | "/organizations/invitations" => Some("member.view"),
-        "/organizations/roles" | "/organizations/permissions" => Some("role.view"),
-        "/organizations/audit" => Some("audit.view"),
-        "/admin/users" => Some("system.user.manage"),
-        "/admin/health" => Some("system.health.read"),
-        "/admin/policies" => Some("system.policy.manage"),
-        _ => None,
-    }
 }
 
 fn login_success_redirect(query: Option<&str>) -> &str {
@@ -447,6 +619,33 @@ fn plain_text_response(
     wasip3::http_compat::http_into_wasi_response(response)
 }
 
+fn server_fn_error_response(
+    status: http::StatusCode,
+    message: &'static str,
+) -> Result<Response, ErrorCode> {
+    use http_body_util::BodyExt;
+
+    // Matches `server_fn::error::ServerFnErrorEncoding` (`ServerError|{message}`).
+    let body_text = format!("ServerError|{message}");
+    let stream = futures::stream::once(async move {
+        Ok::<_, std::io::Error>(http_body::Frame::data(bytes::Bytes::from(body_text)))
+    });
+    let body = http_body_util::StreamBody::new(stream).boxed_unsync();
+    let response = http::Response::builder()
+        .status(status)
+        .header(http::header::CONTENT_TYPE, "text/plain")
+        .header("serverfnerror", "true")
+        .body(body)
+        .map_err(|error| {
+            tracing::error!(
+                error = %error,
+                "failed to build server function error response"
+            );
+            ErrorCode::InternalError(None)
+        })?;
+    wasip3::http_compat::http_into_wasi_response(response)
+}
+
 fn redirect_response(location: &str) -> Result<Response, ErrorCode> {
     let response = http::Response::builder()
         .status(http::StatusCode::SEE_OTHER)
@@ -462,9 +661,114 @@ fn redirect_response(location: &str) -> Result<Response, ErrorCode> {
     wasip3::http_compat::http_into_wasi_response(response)
 }
 
+/// Rewrite `http://127.0.0.1[:port]/…` (and `::1`) document URLs to `localhost`.
+///
+/// Browsers refuse WebAuthn when `rpId` is an IP address. Passkey enrollment and
+/// login must run on `http://localhost:PORT` while Spin can still bind
+/// `127.0.0.1:PORT`. REST/gRPC and static package fetches are left alone.
+fn loopback_ip_to_localhost_redirect(
+    headers: &http::HeaderMap,
+    path: &str,
+    query: Option<&str>,
+) -> Option<String> {
+    let host_header = headers
+        .get(http::header::HOST)
+        .and_then(|value| value.to_str().ok())?
+        .trim();
+    if host_header.is_empty() {
+        return None;
+    }
+    let (hostname, port) = match host_header.rsplit_once(':') {
+        Some((host, port))
+            if !host.is_empty()
+                && !host.starts_with('[')
+                && port.chars().all(|c| c.is_ascii_digit()) =>
+        {
+            (host, Some(port))
+        }
+        _ => {
+            // `[::1]:3008` or bare hostname
+            if let Some(rest) = host_header.strip_prefix('[') {
+                if let Some((host, port_part)) = rest.split_once("]:") {
+                    (host, Some(port_part))
+                } else if let Some(host) = rest.strip_suffix(']') {
+                    (host, None)
+                } else {
+                    (host_header, None)
+                }
+            } else {
+                (host_header, None)
+            }
+        }
+    };
+    let hostname = hostname.trim().trim_matches(|c| c == '[' || c == ']');
+    if !matches!(hostname, "127.0.0.1" | "::1") {
+        return None;
+    }
+    let mut location = String::from("http://localhost");
+    if let Some(port) = port.filter(|p| !p.is_empty()) {
+        location.push(':');
+        location.push_str(port);
+    }
+    if path.is_empty() {
+        location.push('/');
+    } else {
+        location.push_str(path);
+    }
+    if let Some(query) = query.filter(|q| !q.is_empty()) {
+        location.push('?');
+        location.push_str(query);
+    }
+    Some(location)
+}
+
 fn internal_error(error: impl std::fmt::Display) -> ErrorCode {
     tracing::error!(error = %error, "fullstack WASI request failed");
     ErrorCode::InternalError(None)
+}
+
+#[cfg(test)]
+mod loopback_redirect_tests {
+    use super::loopback_ip_to_localhost_redirect;
+    use http::header::HOST;
+
+    fn headers(host: &str) -> http::HeaderMap {
+        let mut map = http::HeaderMap::new();
+        map.insert(HOST, host.parse().expect("host header"));
+        map
+    }
+
+    #[test]
+    fn redirects_127_to_localhost_preserving_path_query_port() {
+        let location = loopback_ip_to_localhost_redirect(
+            &headers("127.0.0.1:3008"),
+            "/account/passkeys",
+            Some("next=%2Fdashboard"),
+        );
+        assert_eq!(
+            location.as_deref(),
+            Some("http://localhost:3008/account/passkeys?next=%2Fdashboard")
+        );
+    }
+
+    #[test]
+    fn redirects_ipv6_loopback() {
+        let location =
+            loopback_ip_to_localhost_redirect(&headers("[::1]:3008"), "/login", None);
+        assert_eq!(location.as_deref(), Some("http://localhost:3008/login"));
+    }
+
+    #[test]
+    fn leaves_localhost_and_public_hosts_alone() {
+        assert!(
+            loopback_ip_to_localhost_redirect(&headers("localhost:3008"), "/account/passkeys", None)
+                .is_none()
+        );
+        assert!(
+            loopback_ip_to_localhost_redirect(&headers("auth.example.com"), "/account/passkeys", None)
+                .is_none()
+        );
+    }
 }
 
 wasip3::http::service::export!(FullstackServer);

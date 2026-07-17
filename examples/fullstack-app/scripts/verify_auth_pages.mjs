@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
-const baseUrl = process.env.BASE_URL || "http://127.0.0.1:3008";
+const baseUrl =
+  process.env.BASE_URL ||
+  process.env.AUTH_PUBLIC_BASE_URL ||
+  "http://127.0.0.1:3008";
 const expectSystemAdministrator =
   process.env.BROWSER_SMOKE_EXPECT_SYSTEM_ADMIN === "true";
 const configuredSessionEmails = (process.env.BROWSER_SMOKE_EMAILS || "")
@@ -37,6 +40,17 @@ async function assertPage(page, path, expectedTitle) {
     overflowX:
       document.documentElement.scrollWidth >
       document.documentElement.clientWidth + 1,
+    overflowElements: [...document.querySelectorAll("body *")]
+      .filter((element) => element.getBoundingClientRect().right > document.documentElement.clientWidth + 1)
+      .slice(0, 8)
+      .map((element) => ({
+        tag: element.tagName,
+        className: element.className,
+        type: element.getAttribute("type"),
+        html: element.outerHTML.slice(0, 240),
+        right: Math.round(element.getBoundingClientRect().right),
+        width: Math.round(element.getBoundingClientRect().width),
+      })),
     submitText:
       document.querySelector('button[type="submit"]')?.textContent?.trim() ||
       "",
@@ -47,10 +61,40 @@ async function assertPage(page, path, expectedTitle) {
     );
   }
   if (state.overflowX) {
-    throw new Error(`${path} has horizontal overflow at current viewport`);
+    throw new Error(
+      `${path} has horizontal overflow at current viewport: ${JSON.stringify(state.overflowElements)}`,
+    );
   }
   await waitForPageWasm(page);
   return state;
+}
+
+async function assertServerFunction(page, path, functionName, expectedTitle) {
+  const responses = [];
+  const onResponse = (response) => {
+    const pathname = new URL(response.url()).pathname;
+    if (pathname.startsWith(`/api/ui/${functionName}`)) {
+      responses.push({ pathname, status: response.status() });
+    }
+  };
+  page.on("response", onResponse);
+  try {
+    const state = await assertPage(page, path, expectedTitle);
+    if (responses.length === 0) {
+      throw new Error(
+        `Expected ${functionName} to be called while loading ${path}`,
+      );
+    }
+    const failed = responses.find(({ status }) => status === 404);
+    if (failed) {
+      throw new Error(
+        `Server function ${failed.pathname} returned 404 while loading ${path}`,
+      );
+    }
+    return state;
+  } finally {
+    page.off("response", onResponse);
+  }
 }
 
 async function waitForPageWasm(page) {
@@ -187,7 +231,12 @@ async function createSessionCookie() {
     throw new Error(`Register response did not create a pending account`);
   }
   const mail = await capturedMail(email, "email-verification");
-  const verificationUrl = new URL(mail.body_text, baseUrl);
+  const actionUrl =
+    mail.action_url || mail.body_text.match(/https?:\/\/[^\s]+/)?.[0];
+  if (!actionUrl) {
+    throw new Error("Verification mail did not contain an action URL");
+  }
+  const verificationUrl = new URL(actionUrl, baseUrl);
   const token = verificationUrl.searchParams.get("token");
   if (!token) {
     throw new Error("Verification mail did not contain a one-time token");
@@ -352,11 +401,13 @@ try {
         return;
       }
       unexpectedBrowserErrors.push(
-        `browser console ${message.type()}: ${message.text()}`,
+        `browser console ${message.type()} at ${page.url()} (${viewport.width}px): ${message.text()}`,
       );
     });
     page.on("pageerror", (error) => {
-      unexpectedBrowserErrors.push(`browser page error: ${error.message}`);
+      unexpectedBrowserErrors.push(
+        `browser page error at ${page.url()} (${viewport.width}px): ${error.message}`,
+      );
     });
     page.on("requestfailed", (request) => {
       const requestUrl = new URL(request.url());
@@ -373,12 +424,17 @@ try {
     await assertPage(page, "/", "Production fullstack Rust");
     await assertIslandComponents(page, []);
     await assertPage(page, "/login", "Welcome back");
-    await assertIslandComponents(page, [
+    const loginIslands = [
       "ExistingSessionRedirect_",
       "EmailPasswordAuthForm_",
-      "OptionalLoginMethods_",
-    ]);
-    const register = await assertPage(page, "/register", "Create your workspace");
+    ];
+    await assertIslandComponents(page, loginIslands);
+    const register = await assertServerFunction(
+      page,
+      "/register",
+      "development_mail_capture_enabled",
+      "Create your workspace",
+    );
     if (register.submitText !== "Create workspace") {
       throw new Error(
         `Expected /register submit text to be "Create workspace", got "${register.submitText}"`,
@@ -403,8 +459,22 @@ try {
     await assertPage(page, "/auth/callback/google", "Completing sign-in");
     await assertPage(page, "/auth/callback/google/error", "Sign-in failed");
     await assertRedirect(page, "/dashboard", "/auth/required");
-    await assertRedirect(page, "/account/security", "/auth/required");
+    await assertRedirect(page, "/account/profile", "/auth/required");
     await assertRedirect(page, "/admin/auth/signing-keys", "/auth/required");
+    await assertRedirect(
+      page,
+      "/invitations/accept?token=browser-smoke-invite",
+      "/auth/required",
+    );
+    {
+      const requiredUrl = new URL(page.url());
+      const next = requiredUrl.searchParams.get("next");
+      if (next !== "/invitations/accept?token=browser-smoke-invite") {
+        throw new Error(
+          `Expected auth/required next to preserve invite token, got ${JSON.stringify(next)}`,
+        );
+      }
+    }
 
     const parsed = new URL(baseUrl);
     await context.addCookies([
@@ -422,10 +492,55 @@ try {
 
     const session = await createSessionCookie();
     await context.addCookies([session.cookie]);
-    await assertPage(page, "/dashboard", "Dashboard");
-    await assertVisibleText(page, session.email);
-    await assertPage(page, "/account/security", "Account security");
-    await assertPage(page, "/account/mfa", "Multi-factor authentication");
+    const csrfResponse = await page.request.get(url("/api/auth/csrf"));
+    if (!csrfResponse.ok()) {
+      throw new Error(`CSRF token request failed with ${csrfResponse.status()}`);
+    }
+    const { token: csrfToken } = await csrfResponse.json();
+    const organizationResponse = await page.request.post(url("/api/organizations"), {
+      data: {
+        name: `Browser Smoke ${Date.now()}`,
+        slug: `browser-smoke-${Date.now()}-${sessionEmailIndex}`,
+      },
+      headers: { origin: baseUrl, "x-csrf-token": csrfToken },
+    });
+    if (!organizationResponse.ok()) {
+      throw new Error(
+        `Organization creation failed with ${organizationResponse.status()}: ${await organizationResponse.text()}`,
+      );
+    }
+    await assertPage(
+      page,
+      "/dashboard",
+      `Good to see you, ${session.email.split("@")[0]}`,
+    );
+    if (viewport.width > 520) {
+      await assertVisibleText(page, session.email);
+    }
+    await assertPage(page, "/organizations", "Organizations");
+    await assertVisibleText(page, "Your workspaces");
+    await page.getByRole("button", { name: "New organization", exact: true }).click();
+    const createOrganizationDialog = page.getByRole("dialog", {
+      name: "Create organization",
+      exact: true,
+    });
+    await createOrganizationDialog.waitFor({ state: "visible" });
+    const organizationName = createOrganizationDialog.getByLabel("Organization name");
+    await organizationName.fill("Modal Workspace");
+    const workspaceUrl = createOrganizationDialog.getByLabel("Workspace URL");
+    if ((await workspaceUrl.inputValue()) !== "modal-workspace") {
+      throw new Error("Expected organization modal to derive the workspace URL slug");
+    }
+    await organizationName.press("Escape");
+    await createOrganizationDialog.waitFor({ state: "hidden" });
+    await assertPage(
+      page,
+      "/invitations/accept?token=browser-smoke-invite",
+      "Accept invitation",
+    );
+    await assertPage(page, "/account/profile", "Profile");
+    await assertPage(page, "/account/password", "Password");
+    await assertPage(page, "/account/mfa", "Authenticator app");
     await verifyMfaFlow(session.sessionId);
     assertSplitRequestState(
       requestedWasm,
@@ -461,16 +576,38 @@ try {
       await assertAnyText(page, ["Access denied"]);
     }
     await assertRedirect(page, "/login", "/dashboard");
-    await assertRedirect(page, "/login?next=/account/security", "/account/security");
+    await assertRedirect(page, "/login?next=/account/profile", "/account/profile");
     await assertRedirect(page, "/login?next=https://evil.example", "/dashboard");
     await assertRedirect(page, "/login?next=//evil.example", "/dashboard");
     await assertRedirect(page, "/register", "/dashboard");
     await assertRedirect(page, "/forgot-password", "/dashboard");
-    await assertRedirect(page, "/reset-password?token=browser-smoke-token", "/dashboard");
+    // Tokenized reset must stay reachable while authenticated so the form can run.
+    await assertPage(
+      page,
+      "/reset-password?token=browser-smoke-token",
+      "Choose a new password",
+    );
+    // Without a token, guest-only behavior still applies.
+    await assertRedirect(page, "/reset-password", "/dashboard");
 
-    await assertPage(page, "/logout", "Log out");
-    await page.getByRole("button", { name: "Log out" }).click();
-    await assertVisibleText(page, "Request accepted");
+    await assertPage(
+      page,
+      "/dashboard",
+      `Good to see you, ${session.email.split("@")[0]}`,
+    );
+    if (viewport.width <= 960) {
+      await page.getByLabel("Open navigation", { exact: true }).click();
+    }
+    await page.getByLabel("Account menu", { exact: true }).click();
+    const signOut = page.getByRole("button", { name: "Sign out", exact: true });
+    const signOutCount = await signOut.count();
+    if (signOutCount !== 1) {
+      throw new Error(`Expected one Sign out action, got ${signOutCount}`);
+    }
+    await signOut.click();
+    await page.waitForURL(url("/"), { waitUntil: "domcontentloaded", timeout: 5000 });
+    await assertPage(page, "/", "Production fullstack Rust");
+    await assertRedirect(page, "/logout", "/");
     await assertRedirect(page, "/dashboard", "/auth/required");
 
     await waitForPageWasm(page);

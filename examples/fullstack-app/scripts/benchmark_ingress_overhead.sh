@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-INGRESS_URL="${INGRESS_URL:-http://127.0.0.1:3008}"
+INGRESS_URL="${INGRESS_URL:-${BASE_URL:-${AUTH_PUBLIC_BASE_URL:-http://127.0.0.1:3008}}}"
 DIRECT_URL="${DIRECT_URL:-http://127.0.0.1:3010}"
 RESULTS_DIR="${RESULTS_DIR:-target/benchmarks/native-ingress-overhead}"
 REPETITIONS="${REPETITIONS:-5}"

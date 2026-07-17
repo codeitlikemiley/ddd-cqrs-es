@@ -138,10 +138,10 @@ fn fullstack_dry_run_json_lists_auth_template_operations() {
         .stdout(predicate::str::contains(
             "\"path\": \"spin.production.toml.example\"",
         ))
-        .stdout(predicate::str::contains("\"path\": \"src/app.rs\""))
+        .stdout(predicate::str::contains("\"path\": \"src/app/mod.rs\""))
         .stdout(predicate::str::contains("\"path\": \"src/oauth.rs\""))
         .stdout(predicate::str::contains("\"path\": \"src/rest.rs\""))
-        .stdout(predicate::str::contains("\"path\": \"src/grpc.rs\""))
+        .stdout(predicate::str::contains("\"path\": \"src/grpc/mod.rs\""))
         .stdout(predicate::str::contains("\"path\": \"proto/auth.proto\""))
         .stdout(predicate::str::contains(
             "\"path\": \"proto/authorization.proto\"",
@@ -175,23 +175,24 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
         "spin.toml",
         "spin.production.toml.example",
         ".env.example",
-        "src/app.rs",
-        "src/application.rs",
-        "src/contracts.rs",
+        "src/app/mod.rs",
+        "src/application/mod.rs",
+        "src/contracts/mod.rs",
         "src/error.rs",
         "src/oauth.rs",
         "src/rest.rs",
-        "src/grpc.rs",
+        "src/grpc/mod.rs",
         "src/lib.rs",
         "src/main.rs",
         "src/server.rs",
-        "src/store.rs",
+        "src/store/mod.rs",
         "src/wasip3_random.rs",
         "proto/admin.proto",
         "proto/audit.proto",
         "proto/auth.proto",
         "proto/authorization.proto",
         "proto/organization.proto",
+        "migrations/postgres/0001_app_storage.sql",
         "scripts/benchmark_fullstack.sh",
         "scripts/benchmark_ingress_overhead.sh",
         "scripts/soak_fullstack.sh",
@@ -233,8 +234,8 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
     assert!(!cargo_toml.contains("ddd-auth ="));
     assert!(!cargo_toml.contains("ddd-authz ="));
     assert!(cargo_toml.contains("=0.4.2-rc.1"));
-    assert!(cargo_toml.contains("=0.1.0-rc.2"));
-    assert!(cargo_toml.contains("=0.3.0-rc.2"));
+    assert!(cargo_toml.contains("=0.1.0-rc.2")); // wasi-auth (independent cadence)
+    assert!(cargo_toml.contains(&format!("={}", env!("CARGO_PKG_VERSION")))); // ddd_cqrs_es
     assert!(cargo_toml.contains("=0.7.0"));
     assert!(cargo_toml.contains("=0.57.1"));
     assert!(!cargo_toml.contains("wit-bindgen-spin-compat"));

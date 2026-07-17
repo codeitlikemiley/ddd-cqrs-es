@@ -4,9 +4,13 @@
 compile_error!("the fullstack server requires the PostgreSQL storage feature");
 
 #[cfg(any(feature = "ssr", feature = "hydrate"))]
+mod access;
+#[cfg(any(feature = "ssr", feature = "hydrate"))]
 mod app;
 #[cfg(any(feature = "ssr", feature = "hydrate"))]
 mod contracts;
+#[cfg(any(feature = "ssr", feature = "hydrate"))]
+mod ui;
 
 #[cfg(all(target_arch = "wasm32", target_env = "p3"))]
 mod wasip3_random;

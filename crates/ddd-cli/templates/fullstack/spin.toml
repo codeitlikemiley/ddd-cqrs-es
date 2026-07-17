@@ -16,7 +16,7 @@ auth_trusted_ingress_key_base64 = { default = "" }
 auth_trusted_ingress_audience = { default = "fullstack-app" }
 auth_trusted_ingress_max_age_seconds = { default = "5" }
 auth_enable_password_login = { default = "true" }
-auth_password_min_length = { default = "8" }
+auth_password_min_length = { default = "15" }
 auth_password_kdf = { default = "argon2id" }
 auth_password_argon2_memory_kib = { default = "19456" }
 auth_password_argon2_iterations = { default = "2" }
@@ -34,6 +34,7 @@ auth_bootstrap_admin_emails = { default = "" }
 auth_csrf_secret = { default = "" }
 auth_vault_key_base64 = { default = "" }
 auth_vault_key_version = { default = "development-v1" }
+auth_vault_key_ring_json = { default = "" }
 auth_outbox_key_base64 = { default = "" }
 auth_outbox_key_version = { default = "development-v1" }
 auth_recovery_code_pepper_base64 = { default = "" }
@@ -123,6 +124,8 @@ allowed_outbound_hosts = [
   "https://appleid.apple.com:443",
   "https://www.facebook.com:443",
   "https://graph.facebook.com:443",
+  "https://*:*",
+  "http://*:*",
   "postgres://*:*",
   "postgresql://*:*",
   "*://localhost:*",
@@ -161,6 +164,7 @@ auth_bootstrap_admin_emails = "{{ auth_bootstrap_admin_emails }}"
 auth_csrf_secret = "{{ auth_csrf_secret }}"
 auth_vault_key_base64 = "{{ auth_vault_key_base64 }}"
 auth_vault_key_version = "{{ auth_vault_key_version }}"
+auth_vault_key_ring_json = "{{ auth_vault_key_ring_json }}"
 auth_outbox_key_base64 = "{{ auth_outbox_key_base64 }}"
 auth_outbox_key_version = "{{ auth_outbox_key_version }}"
 auth_recovery_code_pepper_base64 = "{{ auth_recovery_code_pepper_base64 }}"
@@ -235,6 +239,8 @@ allowed_outbound_hosts = [
   "https://appleid.apple.com:443",
   "https://www.facebook.com:443",
   "https://graph.facebook.com:443",
+  "https://*:*",
+  "http://*:*",
   "postgres://*:*",
   "postgresql://*:*",
   "*://localhost:*",
@@ -273,6 +279,7 @@ auth_bootstrap_admin_emails = "{{ auth_bootstrap_admin_emails }}"
 auth_csrf_secret = "{{ auth_csrf_secret }}"
 auth_vault_key_base64 = "{{ auth_vault_key_base64 }}"
 auth_vault_key_version = "{{ auth_vault_key_version }}"
+auth_vault_key_ring_json = "{{ auth_vault_key_ring_json }}"
 auth_outbox_key_base64 = "{{ auth_outbox_key_base64 }}"
 auth_outbox_key_version = "{{ auth_outbox_key_version }}"
 auth_recovery_code_pepper_base64 = "{{ auth_recovery_code_pepper_base64 }}"
@@ -343,6 +350,8 @@ allowed_outbound_hosts = [
   "https://appleid.apple.com:443",
   "https://www.facebook.com:443",
   "https://graph.facebook.com:443",
+  "https://*:*",
+  "http://*:*",
   "postgres://*:*",
   "postgresql://*:*",
   "*://localhost:*",
@@ -381,6 +390,7 @@ auth_bootstrap_admin_emails = "{{ auth_bootstrap_admin_emails }}"
 auth_csrf_secret = "{{ auth_csrf_secret }}"
 auth_vault_key_base64 = "{{ auth_vault_key_base64 }}"
 auth_vault_key_version = "{{ auth_vault_key_version }}"
+auth_vault_key_ring_json = "{{ auth_vault_key_ring_json }}"
 auth_outbox_key_base64 = "{{ auth_outbox_key_base64 }}"
 auth_outbox_key_version = "{{ auth_outbox_key_version }}"
 auth_recovery_code_pepper_base64 = "{{ auth_recovery_code_pepper_base64 }}"

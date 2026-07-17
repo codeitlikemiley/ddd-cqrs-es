@@ -94,7 +94,7 @@ initial_refresh_token="$(jq -er '.refresh_token' <<<"${verification}")"
 session_cookie="Cookie: wasi_auth_dev_session=${session_id}"
 csrf_token="$(curl -fsS "${BASE_URL}/api/auth/csrf"   -H "${session_cookie}" | jq -er '.token')"
 
-organization="$(json_post /api/organizations   "{\"name\":\"Benchmark Organization\"}"   -H "${session_cookie}"   -H "x-csrf-token: ${csrf_token}")"
+organization="$(json_post /api/organizations   "{\"name\":\"Benchmark Organization\",\"slug\":\"bench-org\"}"   -H "${session_cookie}"   -H "x-csrf-token: ${csrf_token}")"
 organization_id="$(jq -er '.organization_id' <<<"${organization}")"
 
 refreshed="$(json_post /api/auth/token/refresh   "{\"refresh_token\":\"${initial_refresh_token}\"}"   -H "${session_cookie}"   -H "x-csrf-token: ${csrf_token}")"

@@ -98,6 +98,7 @@
           "tutorial/leptos-ssr-projections",
           "tutorial/leptos-ssr-server-api",
           "tutorial/leptos-ssr-ui",
+          "tutorial/leptos-islands-persistent-chrome",
           "tutorial/leptos-ssr-runtime-backends",
           "tutorial/leptos-ssr-execution",
           "tutorial/leptos-ssr-architecture-payoff",

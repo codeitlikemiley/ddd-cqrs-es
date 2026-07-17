@@ -1,4 +1,8 @@
 transport ?= both
+# Spin listen address. Change this once to move the public origin stack:
+#   make spin listen=127.0.0.1:3000
+# AUTH_PUBLIC_BASE_URL, JWT issuer, OAuth redirects, passkey origin, and smoke
+# BASE_URL default from this value unless set explicitly (or via .env).
 listen ?= 127.0.0.1:3008
 backend_listen ?= 127.0.0.1:3009
 WASI_AUTH_INGRESS_BIN ?= wasi-auth-ingress
@@ -17,6 +21,20 @@ export
 
 db ?= $(if $(DATABASE_BACKEND),$(DATABASE_BACKEND),postgres)
 
+# --- Public origin (single source of truth) ---------------------------------
+AUTH_PUBLIC_SCHEME ?= http
+# Host without port for WebAuthn rpId (ports are not allowed in rpId).
+AUTH_PUBLIC_HOST := $(firstword $(subst :, ,$(listen)))
+AUTH_PUBLIC_PORT := $(word 2,$(subst :, ,$(listen)))
+# Browsers reject IP addresses as WebAuthn rpId (SecurityError). When Spin
+# listens on a loopback IP, public URLs and passkeys use the "localhost"
+# hostname — open http://localhost:PORT (not http://127.0.0.1:PORT). The app
+# also 303-redirects document navigations from 127.0.0.1/::1 → localhost.
+AUTH_PUBLIC_CANONICAL_HOST := $(if $(filter 127.0.0.1 ::1,$(AUTH_PUBLIC_HOST)),localhost,$(AUTH_PUBLIC_HOST))
+AUTH_PUBLIC_BASE_URL ?= $(AUTH_PUBLIC_SCHEME)://$(AUTH_PUBLIC_CANONICAL_HOST)$(if $(AUTH_PUBLIC_PORT),:$(AUTH_PUBLIC_PORT),)
+BASE_URL ?= $(AUTH_PUBLIC_BASE_URL)
+AUTH_PASSKEY_HOST := $(AUTH_PUBLIC_CANONICAL_HOST)
+
 AUTH_PRODUCTION_MODE ?= false
 AUTH_REQUIRE_TRUSTED_INGRESS ?= false
 AUTH_TRUSTED_INGRESS_KEY_BASE64 ?=
@@ -27,7 +45,7 @@ AUTH_INGRESS_TOKEN_CACHE_CAPACITY ?= 4096
 AUTH_INGRESS_CACHE_REVALIDATE_MS ?= 1000
 AUTH_ENABLE_PASSWORD_LOGIN ?= true
 AUTH_PASSWORD_MIN_LENGTH ?= 15
-AUTH_JWT_ISSUER ?= http://127.0.0.1:3008
+AUTH_JWT_ISSUER ?= $(AUTH_PUBLIC_BASE_URL)
 AUTH_JWT_AUDIENCE ?= fullstack-app
 AUTH_JWT_KID ?= fullstack-app-dev-hs256
 AUTH_JWT_SECRET ?= dev-fullstack-app-secret-change-me
@@ -39,6 +57,7 @@ AUTH_BOOTSTRAP_ADMIN_EMAILS ?=
 AUTH_CSRF_SECRET ?=
 AUTH_VAULT_KEY_BASE64 ?=
 AUTH_VAULT_KEY_VERSION ?= development-v1
+AUTH_VAULT_KEY_RING_JSON ?=
 AUTH_OUTBOX_KEY_BASE64 ?= 3FbbdAQKHq2YhqzKKU1GuAAdRq7nZmDU/iX3ZmGX02o=
 AUTH_OUTBOX_KEY_VERSION ?= development-v1
 AUTH_OUTBOX_POSTGRES_POOL_SIZE ?= 4
@@ -51,8 +70,10 @@ AUTH_DEV_TOOLS ?= true
 AUTH_MAIL_TRANSPORT ?= capture
 AUTH_MAIL_HTTP_URL ?=
 AUTH_MAIL_HTTP_TOKEN ?=
+AUTH_MAIL_PRODUCT_NAME ?= Goldcoders
 AUTH_RESEND_API_KEY ?=
 AUTH_RESEND_FROM ?=
+# Strip quotes only; keep Name <email> intact. Always pass through single-quoted shell assignment.
 AUTH_RESEND_FROM_VALUE = $(subst ",,$(strip $(AUTH_RESEND_FROM)))
 AUTH_SPICEDB_ENABLED ?= false
 AUTH_SPICEDB_CHECK_URL ?=
@@ -64,17 +85,18 @@ AUTH_SESSION_TTL_SECONDS ?= 3600
 AUTH_ACCESS_TOKEN_TTL_SECONDS ?= 900
 AUTH_REFRESH_TOKEN_TTL_SECONDS ?= 2592000
 AUTH_COOKIE_SECURE ?= false
-AUTH_PUBLIC_BASE_URL ?= http://127.0.0.1:3008
 AUTH_ENABLE_OAUTH ?= false
 AUTH_OAUTH_DEVELOPMENT_CALLBACK_BYPASS ?= false
 AUTH_ENABLE_PASSKEYS ?= false
-AUTH_PASSKEY_RP_ID ?= localhost
+AUTH_PASSKEY_RP_ID ?= $(AUTH_PASSKEY_HOST)
 AUTH_PASSKEY_RP_NAME ?= wasi-auth
-AUTH_PASSKEY_ORIGIN ?= http://localhost:3008
+AUTH_PASSKEY_ORIGIN ?= $(if $(filter 127.0.0.1 ::1,$(AUTH_PUBLIC_HOST)),$(AUTH_PUBLIC_SCHEME)://localhost$(if $(AUTH_PUBLIC_PORT),:$(AUTH_PUBLIC_PORT),),$(AUTH_PUBLIC_BASE_URL))
 AUTH_PASSKEY_REQUIRE_USER_VERIFICATION ?= true
 AUTH_PASSKEY_REQUIRE_USER_HANDLE ?= false
 AUTH_PASSKEY_STRICT_BASE64 ?= true
-AUTH_PASSKEY_AUTHENTICATOR_ATTACHMENT ?= platform
+# "any" is the reliable default for local + multi-device SaaS: platform-only
+# (Touch ID / Hello) fails immediately on many desktops with NotAllowedError.
+AUTH_PASSKEY_AUTHENTICATOR_ATTACHMENT ?= any
 AUTH_PASSKEY_CHALLENGE_TTL_SECONDS ?= 300
 AUTH_GOOGLE_ENABLED ?= false
 AUTH_GOOGLE_CLIENT_ID ?=
@@ -86,7 +108,7 @@ AUTH_GOOGLE_JWKS_URL ?= https://www.googleapis.com/oauth2/v3/certs
 AUTH_GOOGLE_JWKS_JSON ?=
 AUTH_GOOGLE_USERINFO_URL ?= https://openidconnect.googleapis.com/v1/userinfo
 AUTH_GOOGLE_SCOPES ?= openid email profile
-AUTH_GOOGLE_REDIRECT_URI ?= http://127.0.0.1:3008/api/auth/oauth/google/callback
+AUTH_GOOGLE_REDIRECT_URI ?= $(AUTH_PUBLIC_BASE_URL)/api/auth/oauth/google/callback
 AUTH_FACEBOOK_ENABLED ?= false
 AUTH_FACEBOOK_CLIENT_ID ?=
 AUTH_FACEBOOK_CLIENT_SECRET ?=
@@ -95,7 +117,7 @@ AUTH_FACEBOOK_AUTHORIZATION_URL ?= https://www.facebook.com/v20.0/dialog/oauth
 AUTH_FACEBOOK_TOKEN_URL ?= https://graph.facebook.com/v20.0/oauth/access_token
 AUTH_FACEBOOK_USERINFO_URL ?= https://graph.facebook.com/v20.0/me?fields=id,email,name
 AUTH_FACEBOOK_SCOPES ?= email public_profile
-AUTH_FACEBOOK_REDIRECT_URI ?= http://127.0.0.1:3008/api/auth/oauth/facebook/callback
+AUTH_FACEBOOK_REDIRECT_URI ?= $(AUTH_PUBLIC_BASE_URL)/api/auth/oauth/facebook/callback
 AUTH_APPLE_ENABLED ?= false
 AUTH_APPLE_CLIENT_ID ?=
 AUTH_APPLE_GENERATED_CLIENT_SECRET ?=
@@ -109,8 +131,16 @@ AUTH_APPLE_TOKEN_URL ?= https://appleid.apple.com/auth/token
 AUTH_APPLE_JWKS_URL ?= https://appleid.apple.com/auth/keys
 AUTH_APPLE_JWKS_JSON ?=
 AUTH_APPLE_SCOPES ?= openid email name
-AUTH_APPLE_REDIRECT_URI ?= http://127.0.0.1:3008/api/auth/oauth/apple/callback
+AUTH_APPLE_REDIRECT_URI ?= $(AUTH_PUBLIC_BASE_URL)/api/auth/oauth/apple/callback
 POSTGRES_URL ?= postgres://wasi_auth:wasi_auth_dev@127.0.0.1:54329/wasi_auth
+
+# Propagated into smoke scripts so port changes stay consistent.
+PUBLIC_ORIGIN_ENV = \
+	BASE_URL='$(BASE_URL)' \
+	AUTH_PUBLIC_BASE_URL='$(AUTH_PUBLIC_BASE_URL)' \
+	AUTH_JWT_ISSUER='$(AUTH_JWT_ISSUER)' \
+	AUTH_JWT_SECRET='$(AUTH_JWT_SECRET)' \
+	AUTH_JWT_AUDIENCE='$(AUTH_JWT_AUDIENCE)'
 
 AUTH_DATABASE_URL :=
 ifeq ($(db),postgres)
@@ -150,6 +180,7 @@ SPIN_VARIABLE_ARGS = \
 	--variable auth_csrf_secret='$(AUTH_CSRF_SECRET)' \
 	--variable auth_vault_key_base64='$(AUTH_VAULT_KEY_BASE64)' \
 	--variable auth_vault_key_version='$(AUTH_VAULT_KEY_VERSION)' \
+	--variable auth_vault_key_ring_json='$(AUTH_VAULT_KEY_RING_JSON)' \
 	--variable auth_outbox_key_base64='$(AUTH_OUTBOX_KEY_BASE64)' \
 	--variable auth_outbox_key_version='$(AUTH_OUTBOX_KEY_VERSION)' \
 	--variable auth_recovery_code_pepper_base64='$(AUTH_RECOVERY_CODE_PEPPER_BASE64)' \
@@ -211,23 +242,27 @@ SPIN_VARIABLE_ARGS = \
 	--variable auth_apple_scopes='$(AUTH_APPLE_SCOPES)' \
 	--variable auth_apple_redirect_uri=$(AUTH_APPLE_REDIRECT_URI)
 
-.PHONY: help validate-toolchain validate-mail db-up db-down db-migrate db-verify check grpc-check dev spin spin-backend spin-backend-prebuilt trusted-ingress install-outbox-worker outbox-worker fresh smoke oauth-credentials oauth-preflight oauth-evidence oauth-callback oauth-browser-smoke oauth-dev-browser-smoke browser-smoke passkey-browser-smoke
+.PHONY: help validate-toolchain validate-mail db-up db-down migration-preflight db-migrate db-verify check grpc-check dev spin spin-backend spin-backend-prebuilt trusted-ingress install-outbox-worker outbox-worker fresh smoke oauth-credentials oauth-preflight oauth-evidence oauth-callback oauth-browser-smoke oauth-dev-browser-smoke browser-smoke passkey-browser-smoke workspace-settings-smoke
 
 help:
 	@echo "Fullstack targets:"
 	@echo "  make check                 Compile Spin HTTP/Leptos shell with db=$(db)"
 	@echo "  make grpc-check            Compile Spin gRPC services with db=$(db)"
 	@echo "  make db-up                Start the local PostgreSQL development container"
+	@echo "  make migration-preflight Verify the migration binary before destructive resets"
 	@echo "  make db-migrate           Apply lock-protected wasi-auth migrations"
 	@echo "  make db-verify            Verify migration history and required tables"
-	@echo "  make dev                   Run Spin and the development mail worker together"
-	@echo "  make spin transport=both   Build and run the Spin fullstack app on $(listen)"
+	@echo "  make dev                   Run Spin + outbox worker (use this for register/verify mail)"
+	@echo "  make spin transport=both   Spin only on $(listen) — does NOT deliver mail"
 	@echo "  make spin-backend          Run loopback Spin backend on $(backend_listen)"
 	@echo "  make spin-backend-prebuilt Run the already verified component without rebuilding"
 	@echo "  make trusted-ingress       Run native ingress on $(listen) in a second terminal"
-	@echo "  make outbox-worker         Install and run matching native mail/SpiceDB delivery"
+	@echo "  make outbox-worker         Native mail/SpiceDB delivery (required beside spin for email)"
+	@echo ""
+	@echo "Mail note: spin.toml is the app only. AUTH_MAIL_TRANSPORT (capture|resend) is used by"
+	@echo "  the outbox worker, not by Spin. Prefer 'make dev' so verification email works."
 	@echo "  make fresh db=postgres     Erase PostgreSQL data using POSTGRES_URL"
-	@echo "  make smoke                 Run REST/web route smoke checks against BASE_URL"
+	@echo "  make smoke                 Run REST/web route smoke checks against BASE_URL=$(BASE_URL)"
 	@echo "  make oauth-credentials     Check required live OAuth credential variables"
 	@echo "  make oauth-preflight       Validate live OAuth provider start URLs against BASE_URL"
 	@echo "  make oauth-evidence        Report redacted OAuth storage evidence"
@@ -236,6 +271,15 @@ help:
 	@echo "  make oauth-dev-browser-smoke Verify OAuth UI with development callback bypass"
 	@echo "  make browser-smoke         Run Playwright page and middleware checks"
 	@echo "  make passkey-browser-smoke Run Playwright WebAuthn virtual authenticator checks"
+	@echo "  make workspace-settings-smoke  Playwright workspace settings pages (needs make dev)"
+	@echo "                                 optional ALLOW_MUTATING_SMOKE=1 for rename; prefer make fresh first"
+	@echo ""
+	@echo "Public origin (derived from listen unless overridden):"
+	@echo "  listen=$(listen)"
+	@echo "  AUTH_PUBLIC_BASE_URL=$(AUTH_PUBLIC_BASE_URL)"
+	@echo "  AUTH_JWT_ISSUER=$(AUTH_JWT_ISSUER)"
+	@echo "  BASE_URL=$(BASE_URL)"
+	@echo "  Example: make spin listen=127.0.0.1:3000"
 
 validate-toolchain:
 	bash scripts/verify_toolchain.sh
@@ -246,10 +290,16 @@ db-up:
 db-down:
 	docker compose down
 
-db-migrate:
+migration-preflight:
+	cargo $(CARGO_CONFIG_ARGS) check --locked --no-default-features --features migrate --bin wasi-auth-migrate
+
+# Local compose Postgres (127.0.0.1:54329) must be up before migrations/Spin.
+# Without this, login/register fail with HTTP 503 "auth storage is unavailable"
+# (rate-limit / session store cannot open a connection).
+db-migrate: db-up
 	DATABASE_URL='$(POSTGRES_URL)' cargo $(CARGO_CONFIG_ARGS) run --quiet --no-default-features --features migrate --bin wasi-auth-migrate -- apply
 
-db-verify:
+db-verify: db-up
 	DATABASE_URL='$(POSTGRES_URL)' cargo $(CARGO_CONFIG_ARGS) run --quiet --no-default-features --features migrate --bin wasi-auth-migrate -- verify-database
 
 validate-mail:
@@ -310,15 +360,16 @@ trusted-ingress: db-migrate
 	AUTH_PUBLIC_BASE_URL='$(AUTH_PUBLIC_BASE_URL)' \
 	"$(WASI_AUTH_INGRESS_BIN)"
 
+# FORCE_OUTBOX_REBUILD=1 make install-outbox-worker  — reinstall even if present
 install-outbox-worker:
-	@if [ ! -x "$(WASI_AUTH_OUTBOX_WORKER_BIN)" ]; then \
+	@if [ ! -x "$(WASI_AUTH_OUTBOX_WORKER_BIN)" ] || [ "$(FORCE_OUTBOX_REBUILD)" = "1" ]; then \
 		if [ -n "$(WASI_AUTH_SOURCE)" ]; then \
 			echo "Installing local wasi-auth-outbox-worker from $(WASI_AUTH_SOURCE)..."; \
-			cargo install --path "$(WASI_AUTH_SOURCE)" --locked --root "$(WASI_AUTH_TOOLS_ROOT)" \
+			cargo install --path "$(WASI_AUTH_SOURCE)" --locked --force --root "$(WASI_AUTH_TOOLS_ROOT)" \
 				--features outbox-worker --bin wasi-auth-outbox-worker; \
 		else \
 			echo "Installing wasi-auth-outbox-worker $(WASI_AUTH_VERSION) into $(WASI_AUTH_TOOLS_ROOT)..."; \
-			cargo install wasi-auth --version '=$(WASI_AUTH_VERSION)' --locked \
+			cargo install wasi-auth --version '=$(WASI_AUTH_VERSION)' --locked --force \
 				--root "$(WASI_AUTH_TOOLS_ROOT)" --features outbox-worker \
 				--bin wasi-auth-outbox-worker; \
 		fi; \
@@ -341,6 +392,7 @@ outbox-worker: validate-mail db-migrate install-outbox-worker
 	AUTH_MAIL_TRANSPORT=$(AUTH_MAIL_TRANSPORT) \
 	AUTH_MAIL_HTTP_URL='$(AUTH_MAIL_HTTP_URL)' \
 	AUTH_MAIL_HTTP_TOKEN='$(AUTH_MAIL_HTTP_TOKEN)' \
+	AUTH_MAIL_PRODUCT_NAME='$(AUTH_MAIL_PRODUCT_NAME)' \
 	AUTH_RESEND_API_KEY='$(AUTH_RESEND_API_KEY)' \
 	AUTH_RESEND_FROM='$(AUTH_RESEND_FROM_VALUE)' \
 	AUTH_SPICEDB_ENABLED=$(AUTH_SPICEDB_ENABLED) \
@@ -348,7 +400,7 @@ outbox-worker: validate-mail db-migrate install-outbox-worker
 	AUTH_SPICEDB_TOKEN='$(AUTH_SPICEDB_TOKEN)' \
 	"$(WASI_AUTH_OUTBOX_WORKER_BIN)"
 
-fresh:
+fresh: migration-preflight
 	@case "$(db)" in \
 		postgres) \
 			if [ -z "$$POSTGRES_URL" ]; then \
@@ -361,36 +413,44 @@ fresh:
 	$(MAKE) db-migrate
 
 smoke:
-	bash scripts/verify_fullstack.sh
+	$(PUBLIC_ORIGIN_ENV) bash scripts/verify_fullstack.sh
 
 oauth-credentials:
-	bash scripts/verify_oauth_credentials.sh
+	$(PUBLIC_ORIGIN_ENV) bash scripts/verify_oauth_credentials.sh
 
 oauth-preflight: oauth-credentials
-	bash scripts/verify_live_oauth_preflight.sh
+	$(PUBLIC_ORIGIN_ENV) bash scripts/verify_live_oauth_preflight.sh
 
 oauth-evidence:
-	bash scripts/report_oauth_evidence.sh
+	$(PUBLIC_ORIGIN_ENV) bash scripts/report_oauth_evidence.sh
 
 oauth-callback: oauth-credentials
-	bash scripts/verify_live_oauth_callback.sh
+	$(PUBLIC_ORIGIN_ENV) bash scripts/verify_live_oauth_callback.sh
 
 oauth-browser-smoke: oauth-preflight
 	npm install
 	npm exec -- playwright install chromium
-	npm run live-oauth-smoke
+	$(PUBLIC_ORIGIN_ENV) npm run live-oauth-smoke
 
 oauth-dev-browser-smoke:
 	npm install
 	npm exec -- playwright install chromium
-	npm run oauth-dev-smoke
+	$(PUBLIC_ORIGIN_ENV) npm run oauth-dev-smoke
 
 browser-smoke:
 	npm install
 	npm exec -- playwright install chromium
-	npm run browser-smoke
+	$(PUBLIC_ORIGIN_ENV) npm run browser-smoke
 
 passkey-browser-smoke:
 	npm install
 	npm exec -- playwright install chromium
-	npm run passkey-smoke
+	$(PUBLIC_ORIGIN_ENV) npm run passkey-smoke
+
+# Optional Playwright smoke for /org/{slug}/settings/* (creates a workspace).
+# Requires a running server (make dev). Skips cleanly if server/session unavailable.
+# Prefer `make fresh db=postgres` before ALLOW_MUTATING_SMOKE=1 on a shared DB.
+workspace-settings-smoke:
+	npm install
+	npm exec -- playwright install chromium
+	$(PUBLIC_ORIGIN_ENV) npm run workspace-settings-smoke

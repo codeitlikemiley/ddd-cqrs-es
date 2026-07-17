@@ -275,9 +275,29 @@ fn render_leptos_wasi(input: &InitRenderInput, names: &NameParts) -> Vec<FileOpe
 }
 
 fn render_fullstack(input: &InitRenderInput) -> Vec<FileOperation> {
+    let cargo_template = TEMPLATE_DIR
+        .get_file("fullstack/Cargo.toml.template")
+        .expect("fullstack Cargo.toml must be embedded")
+        .contents_utf8()
+        .expect("fullstack Cargo.toml must be UTF-8");
+    let cargo = cargo_template
+        .replacen(
+            "name = \"fullstack-app\"",
+            &format!("name = \"{}\"", input.package_name),
+            1,
+        )
+        .replace(
+            // Keep in sync with templates/fullstack/Cargo.toml.template pin; rewritten to CLI version.
+            "ddd_cqrs_es = { version = \"=0.3.0-rc.4\"",
+            &format!("ddd_cqrs_es = {{ version = \"={}\"", framework_version()),
+        )
+        .replace(
+            "# Local wasi-auth for HTML mail templates until the next published rc.\nwasi-auth = { path = \"../../../wasi-auth/crates/wasi-auth\" }\n",
+            "",
+        );
     let mut operations = vec![write_operation(
         "Cargo.toml",
-        render_fullstack_cargo(input),
+        cargo,
         false,
         "fullstack Cargo manifest",
     )];
@@ -302,7 +322,12 @@ fn append_fullstack_template_operations(
             .strip_prefix("fullstack")
             .expect("fullstack template files must be under fullstack");
         let relative_path_string = relative_path.display().to_string();
-        if relative_path_string == "README.md" || relative_path_string == "Cargo.toml" {
+        // Cargo.toml is written from Cargo.toml.template (renamed so cargo package
+        // does not treat templates/fullstack as a nested package and drop the tree).
+        if relative_path_string == "README.md"
+            || relative_path_string == "Cargo.toml"
+            || relative_path_string == "Cargo.toml.template"
+        {
             continue;
         }
         let content = render_fullstack_template_content(
@@ -406,15 +431,14 @@ fn render_worker(input: &InitRenderInput, names: &NameParts) -> Vec<FileOperatio
 
 fn render_readme(input: &InitRenderInput, names: &NameParts) -> String {
     if input.selection.preset == Preset::Fullstack {
-        let readme = format!(
-            "# {package}\n\nGenerated with `ddd init --preset fullstack`.\n\nThis project is a Spin fullstack authentication and authorization service with Leptos pages, REST endpoints, and gRPC service contracts.\n\n- Runtime: `spin`\n- DB: `{db}`\n- Transport: `both`\n- UI: `leptos`\n- Auth: email/password enabled by default\n- OAuth and passkeys: feature-flagged until credentials are configured\n\nStart with `.env.example`. Run `make db-up`, then `make dev`. The development target installs the exact matching `wasi-auth-outbox-worker` into `target/wasi-auth-tools` and runs it with Spin. Mail and optional SpiceDB writes are never dispatched from an HTTP request. Capture mail stays local and the registration UI opens the captured verification link after delivery. For real mail, set `AUTH_MAIL_TRANSPORT=resend`, `AUTH_RESEND_API_KEY`, and a verified `AUTH_RESEND_FROM`; the secret is passed only to the native worker.\n\nThe toolchain gate requires Rust 1.93.0+, `cargo-leptos >= 0.3.7`, `wasm32-wasip2`, and `wasm-tools`. The distributed P2 Rust target supplies `std`; the generated component is inspected to prove it exports `wasi:http/handler@0.3.0` and has no Preview 1 imports. The unstable `wasm32-wasip3` Rust target remains a canary.\n\n`wasi-auth` owns the only PostgreSQL auth schema. `make db-migrate` uses its native, advisory-lock-protected migration runner before Spin starts; the WASM request component never mutates schema. `make fresh` resets PostgreSQL and reapplies the immutable migration catalog. The app and worker must share `AUTH_OUTBOX_KEY_BASE64` and `AUTH_OUTBOX_KEY_VERSION`; production rejects capture mail and the documented development key, and requires distinct ingress, vault, outbox, and recovery-code secrets.\n\nFor production, start from `spin.production.toml.example`, replace the example auth domain and database hosts with exact deployment hosts, and run the same migration binary as an explicit deployment step. Keep mail and SpiceDB write credentials only in the native worker environment. The Spin guest receives a check-only SpiceDB credential.\n\nProduction traffic terminates at the signed native ingress; Spin listens only on loopback. Obtain the signed `wasi-auth-ingress` release artifact, generate a 32-byte `AUTH_TRUSTED_INGRESS_KEY_BASE64`, and supply that same secret to both processes. For a local two-terminal ingress proof:\n\n```bash\nexport AUTH_TRUSTED_INGRESS_KEY_BASE64=\"$(openssl rand -base64 32)\"\nexport WASI_AUTH_INGRESS_BIN=/path/to/wasi-auth-ingress\nmake spin-backend\n# second terminal, with the same environment\nmake trusted-ingress\n```\n\nMigrations `0009_context_invalidation` and `0010_typed_relationship_outbox` are mandatory. The native processes refuse unsafe configuration, and the Spin backend must not be exposed outside the pod or host. The ingress proxies Leptos, REST, and every gRPC streaming mode with backpressure, and evaluates the active REST Cedar bundle locally to avoid a second network hop. Run `scripts/benchmark_ingress_overhead.sh` for five protected-path pairs, `scripts/benchmark_fullstack.sh` for the absolute concurrency-100 SLO, and `scripts/soak_fullstack.sh` for ten-minute status, transport, revocation, memory, and sensitive-log gates.\n\nAfter OAuth provider credentials and callback URLs are configured, run `make oauth-preflight` before the browser callback smoke. Use `make oauth-browser-smoke` to complete the provider login in a browser, or `make oauth-callback` with an issued session cookie to capture final callback evidence manually.\n\nUse `ddd enable oauth-provider google`, `apple`, or `facebook` to record provider placeholders in `ddd.toml` without writing secrets.\n",
-            package = input.package_name,
-            db = input.selection.db
-        );
-        return readme.replace(
-            "The toolchain gate requires",
-            "## What the outbox worker does\n\n`wasi-auth-outbox-worker` is not an email server and it does not replace Resend. It is a native background process that leases encrypted mail and optional SpiceDB jobs from PostgreSQL, calls the selected provider, and records delivery or retry status. The application commits the user change and mail intent together, then returns without waiting for the provider.\n\nIf the worker is stopped, requests can still commit but mail remains `pending` until a worker starts again. `make dev` starts Spin and the worker together. Use `make spin` and `make outbox-worker` separately only when you need independent logs. Production runs the worker beside Spin, sharing PostgreSQL and the outbox key; provider credentials stay only in the worker environment.\n\nThe toolchain gate requires",
-        );
+        // Ship the dual-synced product README from templates/fullstack/README.md
+        // (kept in lockstep with examples/fullstack-app via sync_fullstack_template.sh).
+        let raw = TEMPLATE_DIR
+            .get_file("fullstack/README.md")
+            .expect("fullstack README.md must be embedded")
+            .contents_utf8()
+            .expect("fullstack README.md must be UTF-8");
+        return raw.replacen("# fullstack-app", &format!("# {}", input.package_name), 1);
     }
     format!(
         "# {}\n\nGenerated with `ddd init --preset {}`.\n\n- Aggregate: `{}`\n- Runtime: `{}`\n- DB: `{}`\n- Realtime: `{}`\n- Transport: `{}`\n\nUse `ddd add ...` to extend this generated project.\n",
@@ -476,163 +500,6 @@ spin-grpc = []
         package = input.package_name,
         framework_version = framework_version(),
         db_feature = input.selection.db.feature(input.selection.runtime)
-    )
-}
-
-fn render_fullstack_cargo(input: &InitRenderInput) -> String {
-    format!(
-        r#"[package]
-name = "{package}"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.93.0"
-authors = ["codeitlikemiley <codeitlikemiley@gmail.com>"]
-description = "A Spin fullstack authentication and authorization service for ddd_cqrs_es"
-build = "build.rs"
-
-[workspace]
-
-[lib]
-crate-type = ["cdylib", "rlib"]
-
-[dependencies]
-bytes = {{ version = "1.7.2", optional = true }}
-base64 = {{ version = "0.22", optional = true }}
-console_error_panic_hook = "0.1"
-futures = {{ version = "0.3.30", optional = true }}
-form_urlencoded = {{ version = "1.2", optional = true }}
-http = "1.1.0"
-http-body = {{ version = "1.0", optional = true }}
-http-body-util = {{ version = "0.1.2", optional = true }}
-getrandom = {{ version = "0.2", optional = true }}
-getrandom03 = {{ package = "getrandom", version = "0.3.4" }}
-leptos = {{ version = "0.8.20", default-features = false }}
-leptos_meta = {{ version = "0.8.6", default-features = false }}
-leptos_router = {{ version = "0.8.14", default-features = false }}
-leptos_wasi = {{ package = "leptos-wasi-runtime", version = "=0.4.2-rc.1", default-features = false, features = ["wasip3", "islands-router", "tracing"], optional = true }}
-server_fn = {{ version = "0.8.13", default-features = false }}
-spin-sdk = {{ git = "https://github.com/codeitlikemiley/spin-rust-sdk", rev = "a02d330fe9357be2d18e6deef400511195ce6f7f", version = "6.0.0", optional = true }}
-wasip3 = {{ version = "=0.7.0", features = ["http-compat"], optional = true }}
-# `wasip3 0.7.0` is generated against wit-bindgen 0.57.1. A second runtime
-# version duplicates unit-stream intrinsics and cannot be component-linked.
-wit-bindgen = {{ version = "=0.57.1", features = ["async-spawn", "inter-task-wakeup"], optional = true }}
-wasm-bindgen = {{ version = "=0.2.126", optional = true }}
-wasm-bindgen-futures = {{ version = "0.4", optional = true }}
-web-sys = {{ version = "0.3", features = ["Location", "Storage", "Window"], optional = true }}
-serde = {{ version = "1.0", features = ["derive"] }}
-serde_json = {{ version = "1.0", optional = true }}
-thiserror = {{ version = "2", optional = true }}
-tracing = {{ version = "0.1", optional = true }}
-tracing-subscriber = {{ version = "0.3.18", features = ["fmt", "env-filter"], optional = true }}
-prost = {{ version = "0.13", optional = true }}
-sha2 = {{ version = "0.10", optional = true }}
-tonic = {{ version = "0.12", default-features = false, features = ["codegen", "prost"], optional = true }}
-tokio = {{ version = "1.52", features = ["macros", "rt"], optional = true }}
-wasi-auth = {{ version = "=0.1.0-rc.2", default-features = false, optional = true }}
-ddd_cqrs_es = {{ version = "={framework_version}", default-features = false, features = ["json", "serde", "async", "tracing", "json-file"], optional = true }}
-
-[target.wasm32-unknown-unknown.dependencies]
-getrandom03 = {{ package = "getrandom", version = "0.3.4", features = ["wasm_js"] }}
-
-[build-dependencies]
-tonic-build = {{ version = "0.12", default-features = false, features = ["prost"] }}
-wasi-auth = {{ version = "=0.1.0-rc.2", default-features = false, features = ["cedar"] }}
-
-# Keep every transitive SDK edge on the audited final-WASI revision until an
-# upstream release contains the same wasip3 graph.
-[patch.crates-io]
-spin-sdk = {{ git = "https://github.com/codeitlikemiley/spin-rust-sdk", rev = "a02d330fe9357be2d18e6deef400511195ce6f7f" }}
-
-[features]
-default = []
-mail-capture = ["wasi-auth/mail-capture"]
-mail-http = ["wasi-auth/mail-http"]
-spicedb = ["wasi-auth/spicedb"]
-migrate = ["dep:serde_json", "dep:tokio", "dep:wasi-auth", "wasi-auth/postgres-native"]
-hydrate = [
-  "leptos/hydrate",
-  "leptos/islands",
-  "leptos/islands-router",
-  "dep:wasm-bindgen",
-  "dep:wasm-bindgen-futures",
-  "dep:web-sys",
-]
-ssr = [
-  "leptos/ssr",
-  "leptos/islands",
-  "leptos/islands-router",
-  "leptos_meta/ssr",
-  "leptos_router/ssr",
-  "server_fn/axum-no-default",
-  "dep:base64",
-  "dep:bytes",
-  "dep:ddd_cqrs_es",
-  "dep:form_urlencoded",
-  "dep:futures",
-  "dep:getrandom",
-  "dep:serde_json",
-  "dep:sha2",
-  "dep:thiserror",
-  "dep:tracing",
-  "dep:wasi-auth",
-  "wasi-auth/fullstack-spin",
-  "dep:leptos_wasi",
-  "dep:wasip3",
-  "dep:wit-bindgen",
-  "dep:http-body",
-  "dep:http-body-util",
-  "dep:tracing-subscriber",
-]
-postgres = [
-  "ssr",
-  "dep:spin-sdk",
-  "spin-sdk/variables",
-  "wasi-auth/postgres-spin",
-  "ddd_cqrs_es/spin-postgres",
-]
-spin-grpc = [
-  "ssr",
-  "dep:spin-sdk",
-  "spin-sdk/grpc",
-  "spin-sdk/variables",
-  "dep:prost",
-  "dep:tonic",
-]
-oauth-providers = []
-passkeys = []
-
-[profile.wasm-release]
-inherits = "release"
-opt-level = "z"
-lto = true
-codegen-units = 1
-panic = "abort"
-
-[profile.wasm-benchmark]
-inherits = "release"
-opt-level = 3
-lto = true
-codegen-units = 1
-panic = "abort"
-strip = "symbols"
-
-[package.metadata.leptos]
-output-name = "{crate_name}"
-bin-target = "{package}"
-tailwind-input-file = "input.css"
-assets-dir = "public"
-disable-erase-components = true
-
-lib-profile-release = "wasm-release"
-lib-features = ["hydrate"]
-
-bin-profile-release = "wasm-release"
-bin-target-triple = "wasm32-wasip2"
-bin-features = ["ssr"]
-"#,
-        package = input.package_name,
-        crate_name = input.package_name.replace('-', "_"),
-        framework_version = framework_version(),
     )
 }
 

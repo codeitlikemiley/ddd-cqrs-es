@@ -38,12 +38,48 @@ bearer tokens. No request accepts `admin_token` or raw authorization tuples.
 
 ## Development and production profiles
 
+### Spin is not the mail sender
+
+`spin.toml` defines the **request-facing** product only (Leptos UI, REST, gRPC).
+Transactional email is **not** a Spin component. Registration encrypts a mail
+intent into PostgreSQL and returns success without calling Resend. Delivery is
+owned by the native `wasi-auth-outbox-worker` process.
+
+```text
+Browser / API  ->  Spin (spin.toml)  ->  Postgres outbox (pending)
+                                              |
+                                              v
+                                   wasi-auth-outbox-worker
+                                   (capture or Resend)
+```
+
+| Command | Serves app | Delivers mail |
+|---------|------------|---------------|
+| `make spin` | yes | **no** — intents stay `pending` |
+| `make outbox-worker` | no | yes |
+| `make dev` | yes | yes (both processes) |
+
+`AUTH_MAIL_TRANSPORT=resend` (or `capture`) in `.env` configures the **worker**.
+It does not make Spin send mail. Resend keys never appear in Spin variables.
+
+### Local run
+
 The generated application uses PostgreSQL with capture mail during local
 development:
 
 ```bash
+# from monorepo root (recommended when working in this repository)
 make -C examples/fullstack-app db-up
+# preferred: Spin + worker so register/verify email works
 make -C examples/fullstack-app dev transport=both
+
+# app only — no mail delivery
+make -C examples/fullstack-app spin transport=both
+
+# equivalent after: cd examples/fullstack-app
+make db-up
+make dev transport=both
+make spin transport=both
 ```
 
 `make dev` installs the exact `wasi-auth-outbox-worker` release into the
@@ -52,7 +88,9 @@ requests commit durable mail intents; the worker marks them delivered. The
 default `capture` transport never sends internet email. The registration and
 resend pages provide an **Open captured verification link** action after local
 delivery. Run `make outbox-worker` and `make spin` separately only when you need
-independent process logs.
+independent process logs. Full target list: `make -C examples/fullstack-app help`
+or the example [README](../../examples/fullstack-app/README.md)
+([Spin vs outbox worker](../../examples/fullstack-app/README.md#spin-vs-outbox-worker-why-two-processes)).
 
 For real local or production delivery through Resend, use a verified sender:
 
@@ -68,19 +106,22 @@ correlation ID as the provider idempotency key, so worker retries do not send a
 second message during the provider's idempotency window.
 
 For local testing, put those values in `examples/fullstack-app/.env` and run
-`make -C examples/fullstack-app dev`. For production, inject them only into
-the worker service or its secret manager, not into the Spin component.
+`make -C examples/fullstack-app dev` (worker required). For production, inject
+them only into the worker service or its secret manager, not into the Spin
+component.
 
 ### What the outbox worker is
 
 The outbox worker is not an SMTP server, mail server, or replacement for
-Resend. It is a native background delivery process:
+Resend. It is a native background delivery process — deliberately **outside**
+`spin.toml` so provider secrets stay off the WASM guest and delivery can retry
+after the HTTP response:
 
 ```text
 request -> PostgreSQL transaction
            user state + encrypted mail intent
         -> HTTP response
-worker  -> leases pending intent -> calls Resend -> records delivery ID
+worker  -> leases pending intent -> capture or Resend -> records delivery ID
 ```
 
 The application commits the account change and mail intent together. The
@@ -95,13 +136,49 @@ For local development, `make dev` owns both processes. Use this only when you
 need separate logs:
 
 ```bash
-make spin
+# monorepo root
+make -C examples/fullstack-app spin transport=both
+make -C examples/fullstack-app outbox-worker
+
+# or from examples/fullstack-app
+make spin transport=both
 make outbox-worker
 ```
 
-Running only `make spin` does not send mail. Running only the worker cannot
-serve pages or API requests. The worker owns Resend and SpiceDB write
-credentials; the Spin guest receives neither.
+Running only `make spin` does not send mail (capture or Resend). Running only
+the worker cannot serve pages or API requests. The worker owns Resend and
+SpiceDB write credentials; the Spin guest receives neither.
+
+### Email verification: register vs resend
+
+Registering the **same email again never sends another verification mail**. A
+second signup is an email conflict (`normalized_email` insert-once), not
+“resend verification.” That is intentional (no duplicate accounts).
+
+| Action | Result |
+|--------|--------|
+| 1st register | User + outbox mail; worker delivers |
+| 2nd register (same email) | Conflict → no new mail |
+| Resend (`/verify-email/resend`) | New token + mail while still `pending_verification` |
+
+To get another link while pending:
+
+1. Open `/verify-email/resend` (or the link on `/verify-email/pending`).
+2. Keep the outbox worker running (`make dev` or `outbox-worker`).
+
+| Limit | Value |
+|-------|--------|
+| Resends per email | 5 / hour (over cap: accepted-looking response, no mail) |
+| Register attempts per email | 5 / hour (still no re-mail on existing user) |
+| Token lifetime | 24 hours from issue; one-time; hash at rest |
+| Already `active` | Resend silent no-op; log in instead |
+
+Checklist: same user needs another verify email → **resend**, not register
+again → worker up → still pending → under 5 resends/hour.
+
+Full operator detail (UI paths, token invalidation on resend, errors for spent
+links):
+[Email verification: register vs resend](../../examples/fullstack-app/README.md#email-verification-register-vs-resend).
 
 The stale Spin SQLite migration-only feature was removed before the first RC.
 It did not implement the product workflows and had already diverged from the
@@ -133,10 +210,24 @@ Spin host is built separately at its truthful Rust 1.94 floor because Wasmtime
 
 ## Release topology
 
-The dependency graph requires a staged RC release: publish
+The dependency graph requires a staged RC release. Run the cross-repository
+gate from the DDD checkout:
+
+```bash
+make publish-fullstack dry-run
+make publish-fullstack
+```
+
+The dry run performs all checks without uploading. Publish mode uploads only
+after every repository is clean and its package dry-run, tests, formatting,
+and generated-consumer checks pass; it then waits for each version to appear in
+the crates.io index and verifies a registry-only generated consumer.
+
+The package order is:
+
 `leptos-wasi-runtime 0.4.2-rc.1` (aliased as `leptos_wasi`), then
-`wasi-auth 0.1.0-rc.2`, the `ddd_cqrs_es 0.3.0-rc.2` library, and finally the
-`ddd-cqrs-es-cli 0.3.0-rc.2` generator and generated consumers. The library
+`wasi-auth 0.1.0-rc.2`, the `ddd_cqrs_es 0.3.0-rc.4` library, and finally the
+`ddd-cqrs-es-cli 0.3.0-rc.4` generator and generated consumers. The library
 and CLI follow `wasi-auth` because the `fullstack` preset emits that exact
 public dependency. Stable releases repeat the same dependency order.
 

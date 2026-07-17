@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
-const baseUrl = process.env.BASE_URL || "http://127.0.0.1:3008";
+const baseUrl =
+  process.env.BASE_URL ||
+  process.env.AUTH_PUBLIC_BASE_URL ||
+  "http://127.0.0.1:3008";
 const systemAccessToken = process.env.AUTH_SYSTEM_ACCESS_TOKEN || "";
 const provider = (process.env.OAUTH_PROVIDER || "google").toLowerCase();
 

@@ -62,14 +62,14 @@ Add the crate to `Cargo.toml`:
 
 ```toml
 [dependencies]
-ddd_cqrs_es = "0.3.0-rc.2"
+ddd_cqrs_es = "0.3.0-rc.4"
 ```
 
 Enable only the adapters you need:
 
 ```toml
 [dependencies]
-ddd_cqrs_es = { version = "0.3.0-rc.2", features = ["serde", "json", "sqlite"] }
+ddd_cqrs_es = { version = "0.3.0-rc.4", features = ["serde", "json", "sqlite"] }
 ```
 
 Common features:
@@ -105,6 +105,22 @@ islands + REST + Spin gRPC application. The committed
 `examples/fullstack-app` is generated from that embedded template, while
 `examples/counter-app` demonstrates unary, server-streaming, client-streaming,
 and bidirectional-streaming gRPC with optional `wasi-auth` authorization.
+
+Run the committed example from the monorepo root:
+
+```bash
+make -C examples/fullstack-app db-up
+# Spin + outbox worker (required for verification / reset / invite mail)
+make -C examples/fullstack-app dev transport=both
+# app only (no mail): make -C examples/fullstack-app spin transport=both
+```
+
+Mail is **not** a Spin component: `spin.toml` serves the app; a native
+`wasi-auth-outbox-worker` delivers capture or Resend mail. Prefer `make dev`
+over `make spin` when testing registration. See
+[examples/fullstack-app/README.md](./examples/fullstack-app/README.md)
+([Spin vs outbox worker](./examples/fullstack-app/README.md#spin-vs-outbox-worker-why-two-processes))
+and [docs/production/wasi-auth-fullstack.md](./docs/production/wasi-auth-fullstack.md).
 
 ## Learn More
 

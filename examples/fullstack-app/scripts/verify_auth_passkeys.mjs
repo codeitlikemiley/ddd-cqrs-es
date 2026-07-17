@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
-const baseUrl = process.env.BASE_URL || "http://localhost:3008";
+const baseUrl =
+  process.env.BASE_URL ||
+  process.env.AUTH_PUBLIC_BASE_URL ||
+  "http://localhost:3008";
 
 async function loadPlaywright() {
   try {
@@ -22,7 +25,7 @@ function assertLocalhostOrigin() {
   const parsed = new URL(baseUrl);
   if (parsed.hostname !== "localhost") {
     throw new Error(
-      `Passkey smoke must use http://localhost so the browser origin matches AUTH_PASSKEY_RP_ID=localhost; got ${baseUrl}`,
+      `Passkey smoke must use hostname "localhost" so WebAuthn rpId matches (set listen=localhost:PORT or AUTH_PASSKEY_RP_ID); got ${baseUrl}`,
     );
   }
 }
