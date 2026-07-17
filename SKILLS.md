@@ -23,15 +23,6 @@ This repository ships repository-local skills used by agent workflows.
     - migration and reset behavior for backends
     - Spin trigger and SSE/realtime behavior in examples
 
-- `workspace-admin-orchestrator`
-  - Location: `.grok/skills/workspace-admin-orchestrator/SKILL.md`
-  - Scope: Human-gated orchestration of the Complete Workspace Administration program (settings shell, wasi-auth lifecycle, PR stack).
-  - Living tracker: `docs/plans/workspace-administration.md`
-  - Use this for:
-    - `/workspace-admin-orchestrator` end-to-end delivery with manual approval gates
-    - deciding next PR/milestone and spawning implementer/reviewer/explore subagents
-    - dual-sync + gate enforcement across `examples/fullstack-app` and the CLI template
-
 ## When to consult
 
 - Consult `ddd-cli` before using or changing the CLI command surface, generated templates, `ddd.toml`, or CLI release workflow.

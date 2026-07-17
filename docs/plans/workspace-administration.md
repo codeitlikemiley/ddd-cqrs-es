@@ -1,8 +1,7 @@
 # Workspace Administration — Living Tracker
 
-**Orchestrator skill:** `.grok/skills/workspace-admin-orchestrator/SKILL.md`  
-**Invoke:** `/workspace-admin-orchestrator`  
-**Program:** Complete Workspace Administration (slug-scoped Linear-style settings)
+**Program:** Complete Workspace Administration (slug-scoped Linear-style settings)  
+**Note:** One-time delivery; orchestrator skill removed after stack completion.
 
 ## Status
 
@@ -10,8 +9,8 @@
 |-------|--------|
 | Run ID | `07aef382` |
 | Current PR | — |
-| Phase | completed (local; not pushed) |
-| Branch base | `codex/fullstack-verification-flow` |
+| Phase | completed (merged via fullstack verification flow) |
+| Branch base | `main` (was `codex/fullstack-verification-flow`) |
 
 ## Locked defaults
 
