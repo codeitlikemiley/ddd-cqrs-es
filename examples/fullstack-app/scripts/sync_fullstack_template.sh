@@ -52,6 +52,8 @@ for path in "${SYNC_PATHS[@]}"; do
         --exclude 'node_modules/' \
         --exclude '.DS_Store' \
         --exclude 'domain/' \
+        --exclude 'domain_app/' \
+        --exclude 'domain_rest.rs' \
         "$SRC/$path/" "$DST/$path/" 2>&1)"
     else
       out="$(rsync "${rsync_flags[@]}" \

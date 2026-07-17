@@ -98,7 +98,7 @@ Init JSON includes `data.next_steps` for fullstack. `make dev` starts **Spin + w
 | `ddd enable auth` / `authorization` / `passkeys` / `oauth-provider *` | Manifest only; set secrets in `.env`/Spin |
 | `ddd enable grpc` / `rest` / `leptos` | Manifest bookkeeping; **no** Cargo.toml feature surgery |
 | `ddd enable db *` (non-postgres) | Fails validation |
-| `ddd add aggregate` | Yes — creates `src/domain/`, registers `pub mod domain` in `src/lib.rs` |
+| `ddd add aggregate` | Yes — `src/domain` + `domain_app` + `domain_rest` (`/api/domain/...`) + lib/rest hooks |
 | `ddd add event` / `command` | Yes — patches marker regions on the aggregate module |
 | `ddd add projection\|route\|server-fn\|grpc-method\|…` | **No** — unwired product stubs refused |
 
@@ -109,10 +109,13 @@ cd my-saas
 ddd add aggregate Invoice
 ddd add event Invoice InvoicePaid --field amount:i64
 ddd add command Invoice PayInvoice --field amount:i64
-# Then wire Invoice into application/rest/UI manually (CLI does not invent product routes).
+# Demo REST (process-local store):
+# POST /api/domain/invoice/{id}/commands  {"CreateInvoice":{"name":"acme"}}
+# GET  /api/domain/invoice/{id}
+# Replace InMemoryEventStore for production; add authn/authz as needed.
 ```
 
-`src/domain` is **app-specific** and excluded from dual-sync to the embedded template.
+`src/domain`, `src/domain_app`, and `src/domain_rest.rs` are **app-specific** and excluded from dual-sync.
 
 ## Project Creation (other presets)
 
@@ -139,7 +142,9 @@ cargo run -p ddd-cqrs-es-cli -- --cwd my-app add projection InvoiceLedger
 cargo run -p ddd-cqrs-es-cli -- --cwd my-app add route invoice-summary --method GET --path /api/invoices/summary
 ```
 
-These require `src/domain/{module}.rs` with `// ddd:…` markers. They **do not** apply to fullstack product templates.
+These require `src/domain/{module}.rs` with `// ddd:…` markers. On fullstack,
+prefer `add aggregate|event|command` (also wires domain_app + REST); refuse
+orphan projection/route stubs.
 
 Use `ddd enable ...` for capability wiring on non-fullstack apps:
 
@@ -238,5 +243,6 @@ bash scripts/release-crates-io.sh dry-run
 
 ## Roadmap
 
-Product domain codegen (`src/domain`) is available on fullstack. Still manual:
-application service, REST/gRPC, Leptos UI, and projection wiring for those aggregates.
+Fullstack product domain includes demo app + REST. Still manual for production:
+durable event store (replace InMemory), Cedar auth on `/api/domain/*`, Leptos UI,
+gRPC, and projections.

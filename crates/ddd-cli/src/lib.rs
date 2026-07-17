@@ -12,7 +12,9 @@ use crate::operation::{apply_operations, write_operation, CommandReport, FileOpe
 use crate::render::{
     available_template_names, parse_field_specs, render_aggregate, render_command_handle_arm,
     render_command_variant, render_domain_mod, render_domain_test, render_event_type_arm,
-    render_event_variant, render_init, sanitize_package_name, InitRenderInput, NameParts,
+    render_event_variant, render_fullstack_domain_app_mod, render_fullstack_domain_app_module,
+    render_fullstack_domain_rest_arm, render_fullstack_domain_rest_bootstrap, render_init,
+    sanitize_package_name, InitRenderInput, NameParts,
 };
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
@@ -290,8 +292,8 @@ fn init_project(ctx: &ExecutionContext, args: InitArgs) -> Result<CommandReport>
             ],
             "notes": [
                 "make dev starts Spin plus the wasi-auth outbox worker (required for verification mail)",
-                "ddd add aggregate/event/command bootstraps optional src/domain beside wasi-auth",
-                "wire aggregates into application/rest/UI manually; route/projection stubs are refused"
+                "ddd add aggregate wires src/domain + domain_app + /api/domain REST (InMemory demo store)",
+                "replace InMemoryEventStore for production; domain routes are not Cedar-gated by default"
             ]
         }));
     }
@@ -355,36 +357,210 @@ fn ensure_domain_mod_content(
     }
 }
 
-/// Register `mod domain;` in fullstack `src/lib.rs` via product-domain markers.
-fn ensure_fullstack_lib_domain_module(cwd: &Path) -> Result<Option<String>> {
+/// Register domain (+ domain_app / domain_rest) in fullstack `src/lib.rs`.
+fn ensure_fullstack_lib_domain_modules(cwd: &Path) -> Result<Option<String>> {
     let lib_path = cwd.join("src/lib.rs");
     if !lib_path.exists() {
         return Ok(None);
     }
-    let content = std::fs::read_to_string(&lib_path)
+    let mut content = std::fs::read_to_string(&lib_path)
         .with_context(|| format!("failed to read {}", lib_path.display()))?;
-    if content.contains("mod domain;") || content.contains("pub mod domain;") {
+    let mut changed = false;
+
+    if !content.contains("mod domain;") && !content.contains("pub mod domain;") {
+        if content.contains("// ddd:product-domain:end") {
+            content =
+                insert_before_marker(&content, "// ddd:product-domain:end", "pub mod domain;\n")?;
+            changed = true;
+        } else {
+            anyhow::bail!(
+                "could not register `pub mod domain` in src/lib.rs; add `// ddd:product-domain` markers"
+            );
+        }
+    }
+
+    if !content.contains("mod domain_app;") {
+        if content.contains("// ddd:product-domain-app:end") {
+            content = insert_before_marker(
+                &content,
+                "// ddd:product-domain-app:end",
+                "#[cfg(feature = \"ssr\")]\nmod domain_app;\n#[cfg(feature = \"ssr\")]\nmod domain_rest;\n",
+            )?;
+            changed = true;
+        } else {
+            // Insert after product-domain block if present.
+            let insertion = "\n// ddd:product-domain-app\n#[cfg(feature = \"ssr\")]\nmod domain_app;\n#[cfg(feature = \"ssr\")]\nmod domain_rest;\n// ddd:product-domain-app:end\n";
+            if let Some(index) = content.find("// ddd:product-domain:end") {
+                let insert_at = index + "// ddd:product-domain:end".len();
+                let mut patched = String::new();
+                patched.push_str(&content[..insert_at]);
+                patched.push_str(insertion);
+                patched.push_str(&content[insert_at..]);
+                content = patched;
+                changed = true;
+            } else {
+                anyhow::bail!(
+                    "could not register domain_app/domain_rest in src/lib.rs; add product-domain-app markers"
+                );
+            }
+        }
+    }
+
+    Ok(if changed { Some(content) } else { None })
+}
+
+fn ensure_fullstack_rest_domain_hooks(cwd: &Path) -> Result<Option<String>> {
+    let rest_path = cwd.join("src/rest.rs");
+    if !rest_path.exists() {
         return Ok(None);
     }
-    if content.contains("// ddd:product-domain:end") {
-        let patched =
-            insert_before_marker(&content, "// ddd:product-domain:end", "pub mod domain;\n")?;
-        return Ok(Some(patched));
+    let mut content = std::fs::read_to_string(&rest_path)
+        .with_context(|| format!("failed to read {}", rest_path.display()))?;
+    let mut changed = false;
+
+    if !content.contains("/api/domain/") {
+        if content.contains("// ddd:domain-rest-prefix:end") {
+            content = insert_before_marker(
+                &content,
+                "// ddd:domain-rest-prefix:end",
+                "        || path.starts_with(\"/api/domain/\")\n",
+            )?;
+            changed = true;
+        } else if let Some(index) = content.find("path.starts_with(\"/api/audit/\")") {
+            let insert_at = index + "path.starts_with(\"/api/audit/\")".len();
+            let mut patched = String::new();
+            patched.push_str(&content[..insert_at]);
+            patched.push_str(
+                "\n        // ddd:domain-rest-prefix\n        || path.starts_with(\"/api/domain/\")\n        // ddd:domain-rest-prefix:end",
+            );
+            patched.push_str(&content[insert_at..]);
+            content = patched;
+            changed = true;
+        }
     }
-    // Fallback for older generated trees without markers: insert after compile_error block.
-    let needle =
-        "compile_error!(\"the fullstack server requires the PostgreSQL storage feature\");\n";
-    if let Some(index) = content.find(needle) {
-        let insert_at = index + needle.len();
-        let mut patched = String::with_capacity(content.len() + 80);
-        patched.push_str(&content[..insert_at]);
-        patched.push_str("\n// ddd:product-domain\npub mod domain;\n// ddd:product-domain:end\n");
-        patched.push_str(&content[insert_at..]);
-        return Ok(Some(patched));
+
+    if !content.contains("domain_rest::dispatch") {
+        let hook = "    if path.starts_with(\"/api/domain/\") {\n        return crate::domain_rest::dispatch(req).await;\n    }\n";
+        if content.contains("// ddd:domain-rest-dispatch:end") {
+            content = insert_before_marker(&content, "// ddd:domain-rest-dispatch:end", hook)?;
+            changed = true;
+        } else if let Some(index) =
+            content.find("let cookie_session_id = cookie_session_id_from_request(&req);")
+        {
+            let mut patched = String::new();
+            patched.push_str(&content[..index]);
+            patched.push_str("// ddd:domain-rest-dispatch\n");
+            patched.push_str(hook);
+            patched.push_str("// ddd:domain-rest-dispatch:end\n    ");
+            patched.push_str(&content[index..]);
+            content = patched;
+            changed = true;
+        }
     }
-    anyhow::bail!(
-        "could not register `pub mod domain` in src/lib.rs; add `// ddd:product-domain` markers or `pub mod domain;`"
-    );
+
+    Ok(if changed { Some(content) } else { None })
+}
+
+fn fullstack_product_domain_wiring(
+    cwd: &Path,
+    names: &NameParts,
+    force: bool,
+) -> Result<Vec<crate::operation::FileOperation>> {
+    let mut operations = Vec::new();
+
+    // domain_app module
+    let app_mod_path = cwd.join("src/domain_app/mod.rs");
+    if app_mod_path.exists() {
+        let mut content = std::fs::read_to_string(&app_mod_path)
+            .with_context(|| format!("failed to read {}", app_mod_path.display()))?;
+        content = insert_before_marker(
+            &content,
+            "// ddd:domain-app-modules:end",
+            &format!("pub mod {};\n", names.module),
+        )?;
+        content = insert_before_marker(
+            &content,
+            "// ddd:domain-app-exports:end",
+            &format!("pub use {}::*;\n", names.module),
+        )?;
+        operations.push(write_operation(
+            "src/domain_app/mod.rs",
+            content,
+            true,
+            "register domain_app module",
+        ));
+    } else {
+        operations.push(write_operation(
+            "src/domain_app/mod.rs",
+            render_fullstack_domain_app_mod(names),
+            false,
+            "bootstrap domain_app module",
+        ));
+    }
+    operations.push(write_operation(
+        format!("src/domain_app/{}.rs", names.module),
+        render_fullstack_domain_app_module(names),
+        force,
+        "domain application service",
+    ));
+
+    // domain_rest router
+    let rest_domain_path = cwd.join("src/domain_rest.rs");
+    if rest_domain_path.exists() {
+        let mut content = std::fs::read_to_string(&rest_domain_path)
+            .with_context(|| format!("failed to read {}", rest_domain_path.display()))?;
+        // Import new command/id types if missing.
+        let use_line = format!(
+            "use crate::domain::{{{}, {}}};\n",
+            names.command_type, names.id_type
+        );
+        if !content.contains(&names.command_type) {
+            if let Some(index) = content.find("use crate::domain_app;") {
+                let mut patched = String::new();
+                patched.push_str(&content[..index]);
+                patched.push_str(&use_line);
+                patched.push_str(&content[index..]);
+                content = patched;
+            }
+        }
+        content = insert_before_marker(
+            &content,
+            "        // ddd:domain-rest-arms:end",
+            &render_fullstack_domain_rest_arm(names),
+        )?;
+        operations.push(write_operation(
+            "src/domain_rest.rs",
+            content,
+            true,
+            "extend domain REST dispatch",
+        ));
+    } else {
+        operations.push(write_operation(
+            "src/domain_rest.rs",
+            render_fullstack_domain_rest_bootstrap(names),
+            false,
+            "bootstrap domain REST surface",
+        ));
+    }
+
+    if let Some(lib_content) = ensure_fullstack_lib_domain_modules(cwd)? {
+        operations.push(write_operation(
+            "src/lib.rs",
+            lib_content,
+            true,
+            "register domain modules in library root",
+        ));
+    }
+    if let Some(rest_content) = ensure_fullstack_rest_domain_hooks(cwd)? {
+        operations.push(write_operation(
+            "src/rest.rs",
+            rest_content,
+            true,
+            "hook domain REST into product rest router",
+        ));
+    }
+
+    Ok(operations)
 }
 
 fn add_to_project(ctx: &ExecutionContext, command: AddCommand) -> Result<CommandReport> {
@@ -440,14 +616,9 @@ fn add_to_project(ctx: &ExecutionContext, command: AddCommand) -> Result<Command
                 "aggregate fixture test",
             ));
             if manifest.preset == Preset::Fullstack {
-                if let Some(lib_content) = ensure_fullstack_lib_domain_module(&ctx.cwd)? {
-                    operations.push(write_operation(
-                        "src/lib.rs",
-                        lib_content,
-                        true,
-                        "register domain module in library root",
-                    ));
-                }
+                operations.extend(fullstack_product_domain_wiring(
+                    &ctx.cwd, &names, ctx.force,
+                )?);
             }
         }
         AddCommand::Event(args) => {

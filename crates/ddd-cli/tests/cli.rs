@@ -441,10 +441,22 @@ fn fullstack_add_aggregate_bootstraps_product_domain() {
     assert!(project.join("src/domain/mod.rs").exists());
     assert!(project.join("src/domain/billing.rs").exists());
     assert!(project.join("tests/billing_domain.rs").exists());
+    assert!(project.join("src/domain_app/mod.rs").exists());
+    assert!(project.join("src/domain_app/billing.rs").exists());
+    assert!(project.join("src/domain_rest.rs").exists());
     let lib = std::fs::read_to_string(project.join("src/lib.rs")).unwrap();
     assert!(
         lib.contains("pub mod domain;"),
         "lib.rs must register product domain"
+    );
+    assert!(
+        lib.contains("mod domain_app;") && lib.contains("mod domain_rest;"),
+        "lib.rs must register domain_app + domain_rest"
+    );
+    let rest = std::fs::read_to_string(project.join("src/rest.rs")).unwrap();
+    assert!(
+        rest.contains("/api/domain/") && rest.contains("domain_rest::dispatch"),
+        "rest.rs must route /api/domain/*"
     );
     let domain_mod = std::fs::read_to_string(project.join("src/domain/mod.rs")).unwrap();
     assert!(domain_mod.contains("pub mod billing;"));
@@ -452,6 +464,11 @@ fn fullstack_add_aggregate_bootstraps_product_domain() {
     let aggregate = std::fs::read_to_string(project.join("src/domain/billing.rs")).unwrap();
     assert!(aggregate.contains("// ddd:events:end"));
     assert!(aggregate.contains("// ddd:commands:end"));
+    let app = std::fs::read_to_string(project.join("src/domain_app/billing.rs")).unwrap();
+    assert!(app.contains("InMemoryEventStore"));
+    assert!(app.contains("execute_billing_command"));
+    let domain_rest = std::fs::read_to_string(project.join("src/domain_rest.rs")).unwrap();
+    assert!(domain_rest.contains("/api/domain/billing/"));
     let manifest = std::fs::read_to_string(project.join("ddd.toml")).unwrap();
     assert!(manifest.contains("Billing") || manifest.contains("billing"));
 

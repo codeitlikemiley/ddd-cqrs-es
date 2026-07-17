@@ -7,6 +7,9 @@ compile_error!("the fullstack server requires the PostgreSQL storage feature");
 // `ddd add aggregate <Name>`; empty markers keep the stock example domain-free.
 // ddd:product-domain
 // ddd:product-domain:end
+// Optional domain application + REST wiring (ssr only).
+// ddd:product-domain-app
+// ddd:product-domain-app:end
 
 #[cfg(any(feature = "ssr", feature = "hydrate"))]
 mod access;

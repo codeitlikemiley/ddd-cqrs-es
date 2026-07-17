@@ -28,6 +28,8 @@ pub fn is_rest_request(req: &RestRequest) -> bool {
         || path.starts_with("/api/organizations")
         || path.starts_with("/api/admin/")
         || path.starts_with("/api/audit/")
+        // ddd:domain-rest-prefix
+        // ddd:domain-rest-prefix:end
 }
 
 pub async fn serve(req: RestRequest) -> AuthStackResult<RestResponse> {
@@ -70,6 +72,8 @@ async fn dispatch(req: RestRequest) -> AuthStackResult<RestResponse> {
     let method = req.method().clone();
     let uri = req.uri().clone();
     let path = uri.path().to_string();
+    // ddd:domain-rest-dispatch
+    // ddd:domain-rest-dispatch:end
     let cookie_session_id = cookie_session_id_from_request(&req);
     let request_auth = request_auth_from_request(&req);
     let session_id = request_auth

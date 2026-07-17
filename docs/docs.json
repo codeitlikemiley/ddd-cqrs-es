@@ -77,9 +77,6 @@
           "production/persisted-store",
           "production/persisted-views",
           "production/db-query-patterns",
-          "production/wasi-auth-fullstack",
-          "production/auth-storage-rollout",
-          "production/auth-oauth-rollout",
           "production/redis",
           "production/metadata",
           "production/upcasters",
@@ -88,7 +85,18 @@
         ]
       },
       {
-        "group": "6. Runtimes & Cloud Deployment",
+        "group": "6. Fullstack SaaS (Spin + wasi-auth)",
+        "icon": "layout-dashboard",
+        "expanded": true,
+        "pages": [
+          "production/wasi-auth-fullstack",
+          "production/auth-storage-rollout",
+          "production/auth-oauth-rollout",
+          "tutorial/leptos-islands-persistent-chrome"
+        ]
+      },
+      {
+        "group": "7. Runtimes & Cloud Deployment",
         "icon": "server",
         "expanded": true,
         "pages": [
@@ -98,7 +106,6 @@
           "tutorial/leptos-ssr-projections",
           "tutorial/leptos-ssr-server-api",
           "tutorial/leptos-ssr-ui",
-          "tutorial/leptos-islands-persistent-chrome",
           "tutorial/leptos-ssr-runtime-backends",
           "tutorial/leptos-ssr-execution",
           "tutorial/leptos-ssr-architecture-payoff",
