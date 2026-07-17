@@ -51,7 +51,7 @@ Supported presets (from `capabilities --json`): `basic`, `leptos-wasi`, **`fulls
 | --- | --- | --- | --- |
 | `basic` | Pure domain + fixture tests | Yes (`src/domain` markers) | N/A (library-shaped) |
 | `leptos-wasi` | Thin Spin Leptos CQRS shell (counter-style) | Yes | `make spin …` via `ddd serve` |
-| **`fullstack`** | Production SaaS (auth/org/settings, wasi-auth) | **No** — refuse with clear error | `make dev transport=both` via `ddd serve` |
+| **`fullstack`** | Production SaaS (auth/org/settings, wasi-auth) | **Yes** for `aggregate`/`event`/`command` (optional `src/domain`); stubs refused | `make dev transport=both` via `ddd serve` |
 | `native-api` / `worker` / `custom` | API/worker/minimal bases | Partial / stub-oriented | Make targets as generated |
 
 The CLI is Spin-focused. Do not use `--runtime wasmtime` for CLI-generated projects unless `capabilities --json` lists it.
@@ -98,9 +98,21 @@ Init JSON includes `data.next_steps` for fullstack. `make dev` starts **Spin + w
 | `ddd enable auth` / `authorization` / `passkeys` / `oauth-provider *` | Manifest only; set secrets in `.env`/Spin |
 | `ddd enable grpc` / `rest` / `leptos` | Manifest bookkeeping; **no** Cargo.toml feature surgery |
 | `ddd enable db *` (non-postgres) | Fails validation |
-| `ddd add *` (any) | **Fails** with “not a domain codegen target” |
+| `ddd add aggregate` | Yes — creates `src/domain/`, registers `pub mod domain` in `src/lib.rs` |
+| `ddd add event` / `command` | Yes — patches marker regions on the aggregate module |
+| `ddd add projection\|route\|server-fn\|grpc-method\|…` | **No** — unwired product stubs refused |
 
-Do **not** invent domain markers under fullstack. Add business aggregates manually under `src/application`, `src/store`, `src/contracts`, etc.
+Example after fullstack init:
+
+```bash
+cd my-saas
+ddd add aggregate Invoice
+ddd add event Invoice InvoicePaid --field amount:i64
+ddd add command Invoice PayInvoice --field amount:i64
+# Then wire Invoice into application/rest/UI manually (CLI does not invent product routes).
+```
+
+`src/domain` is **app-specific** and excluded from dual-sync to the embedded template.
 
 ## Project Creation (other presets)
 
@@ -183,7 +195,7 @@ UI chrome / soft-nav / skeleton patterns: `docs/tutorial/leptos-islands-persiste
 - Prefer generated marker regions and `ddd.toml` updates over ad hoc string edits (non-fullstack).
 - Keep the root framework transport-agnostic; HTTP, REST, SSE, gRPC, Spin, and app wiring belong in generated apps and CLI templates.
 - When changing CLI behavior, update tests and this skill if agent-facing commands change.
-- Never run `ddd add` against fullstack expecting domain files; it fails closed by design.
+- On fullstack, prefer `ddd add aggregate|event|command` for product domain; refuse unwired stubs.
 
 ## Release Workflow
 
@@ -224,6 +236,7 @@ For release-flow changes, run:
 bash scripts/release-crates-io.sh dry-run
 ```
 
-## Roadmap (not implemented)
+## Roadmap
 
-Optional future: product domain extension inside fullstack (`src/domain` + application wiring) so `ddd add aggregate` can coexist with wasi-auth. Until then, treat fullstack as a product template only.
+Product domain codegen (`src/domain`) is available on fullstack. Still manual:
+application service, REST/gRPC, Leptos UI, and projection wiring for those aggregates.

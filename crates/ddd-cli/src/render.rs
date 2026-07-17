@@ -540,7 +540,7 @@ tokio = {{ version = "1", features = ["macros", "rt-multi-thread"] }}
     )
 }
 
-fn render_domain_mod(names: &NameParts) -> String {
+pub fn render_domain_mod(names: &NameParts) -> String {
     format!(
         "pub mod {module};\n// ddd:domain-modules\n// ddd:domain-modules:end\n\npub use {module}::{{{aggregate}, {command_type}, {event_type}, {id_type}}};\n// ddd:domain-exports\n// ddd:domain-exports:end\n",
         module = names.module,
@@ -551,7 +551,7 @@ fn render_domain_mod(names: &NameParts) -> String {
     )
 }
 
-fn render_aggregate(names: &NameParts) -> String {
+pub fn render_aggregate(names: &NameParts) -> String {
     format!(
         r#"use ddd_cqrs_es::{{Aggregate, DomainEvent}};
 use serde::{{Deserialize, Serialize}};
@@ -666,7 +666,7 @@ impl Aggregate for {aggregate} {{
     )
 }
 
-fn render_domain_test(input: &InitRenderInput, names: &NameParts) -> String {
+pub fn render_domain_test(input: &InitRenderInput, names: &NameParts) -> String {
     format!(
         r#"use ddd_cqrs_es::Aggregate;
 use {module_path}::domain::{{{aggregate}, {command_type}, {event_type}}};

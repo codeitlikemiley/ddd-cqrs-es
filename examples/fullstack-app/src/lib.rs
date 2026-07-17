@@ -3,6 +3,11 @@
 #[cfg(all(feature = "ssr", not(feature = "postgres")))]
 compile_error!("the fullstack server requires the PostgreSQL storage feature");
 
+// Optional product domain (business aggregates). Bootstrapped by
+// `ddd add aggregate <Name>`; empty markers keep the stock example domain-free.
+// ddd:product-domain
+// ddd:product-domain:end
+
 #[cfg(any(feature = "ssr", feature = "hydrate"))]
 mod access;
 #[cfg(any(feature = "ssr", feature = "hydrate"))]

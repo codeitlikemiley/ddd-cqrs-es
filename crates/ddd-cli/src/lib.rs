@@ -10,9 +10,9 @@ use crate::model::{
 };
 use crate::operation::{apply_operations, write_operation, CommandReport, FileOperation};
 use crate::render::{
-    available_template_names, parse_field_specs, render_command_handle_arm, render_command_variant,
-    render_event_type_arm, render_event_variant, render_init, sanitize_package_name,
-    InitRenderInput, NameParts,
+    available_template_names, parse_field_specs, render_aggregate, render_command_handle_arm,
+    render_command_variant, render_domain_mod, render_domain_test, render_event_type_arm,
+    render_event_variant, render_init, sanitize_package_name, InitRenderInput, NameParts,
 };
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
@@ -290,8 +290,8 @@ fn init_project(ctx: &ExecutionContext, args: InitArgs) -> Result<CommandReport>
             ],
             "notes": [
                 "make dev starts Spin plus the wasi-auth outbox worker (required for verification mail)",
-                "ddd add aggregate/event/command is not supported on fullstack product templates",
-                "use preset basic or leptos-wasi when you need domain marker codegen"
+                "ddd add aggregate/event/command bootstraps optional src/domain beside wasi-auth",
+                "wire aggregates into application/rest/UI manually; route/projection stubs are refused"
             ]
         }));
     }
@@ -299,72 +299,156 @@ fn init_project(ctx: &ExecutionContext, args: InitArgs) -> Result<CommandReport>
     Ok(report)
 }
 
-fn fullstack_add_unsupported_message() -> String {
-    "preset=fullstack is a product template (auth/org shell), not a domain codegen target. \
-     `ddd add …` (aggregates, events, commands, routes, stubs) is unsupported because there is \
-     no `src/domain/` marker layout. Add business domain code manually under `src/` \
-     (application/store/contracts) or scaffold domain modules with \
-     `ddd init --preset basic` / `--preset leptos-wasi`. \
+fn fullstack_stub_unsupported_message() -> String {
+    "preset=fullstack supports product-domain codegen only: \
+     `ddd add aggregate|event|command` (and optional `ddd add test`). \
+     Route/projection/server-fn/grpc stubs are not auto-wired into the product shell \
+     (app/rest/grpc/store). Scaffold those by hand under `src/app`, `src/rest`, \
+     `src/application`, or use `--preset basic` / `leptos-wasi` for thin apps. \
      Runtime: `ddd serve` → `make dev transport=both` after `make db-up`."
         .to_string()
 }
 
-fn refuse_fullstack_add(manifest: &ProjectManifest) -> Result<()> {
-    if manifest.preset == Preset::Fullstack {
-        anyhow::bail!("{}", fullstack_add_unsupported_message());
+fn refuse_fullstack_unwired_stub(manifest: &ProjectManifest, command: &AddCommand) -> Result<()> {
+    if manifest.preset != Preset::Fullstack {
+        return Ok(());
     }
-    Ok(())
+    match command {
+        AddCommand::Aggregate(_)
+        | AddCommand::Event(_)
+        | AddCommand::Command(_)
+        | AddCommand::Test(_) => Ok(()),
+        _ => anyhow::bail!("{}", fullstack_stub_unsupported_message()),
+    }
+}
+
+/// Ensure `src/domain/mod.rs` exists (bootstraps on first aggregate for fullstack).
+fn ensure_domain_mod_content(
+    cwd: &Path,
+    names: &NameParts,
+    force_create: bool,
+) -> Result<(String, bool)> {
+    let mod_path = cwd.join("src/domain/mod.rs");
+    if mod_path.exists() {
+        let mut content = std::fs::read_to_string(&mod_path)
+            .with_context(|| format!("failed to read {}", mod_path.display()))?;
+        content = insert_before_marker(
+            &content,
+            "// ddd:domain-modules:end",
+            &format!("pub mod {};\n", names.module),
+        )?;
+        content = insert_before_marker(
+            &content,
+            "// ddd:domain-exports:end",
+            &format!(
+                "pub use {}::{{{}, {}, {}, {}}};\n",
+                names.module, names.aggregate, names.command_type, names.event_type, names.id_type
+            ),
+        )?;
+        Ok((content, true))
+    } else if force_create {
+        Ok((render_domain_mod(names), false))
+    } else {
+        anyhow::bail!(
+            "missing src/domain/mod.rs; run `ddd add aggregate <Name>` first to bootstrap the product domain"
+        );
+    }
+}
+
+/// Register `mod domain;` in fullstack `src/lib.rs` via product-domain markers.
+fn ensure_fullstack_lib_domain_module(cwd: &Path) -> Result<Option<String>> {
+    let lib_path = cwd.join("src/lib.rs");
+    if !lib_path.exists() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(&lib_path)
+        .with_context(|| format!("failed to read {}", lib_path.display()))?;
+    if content.contains("mod domain;") || content.contains("pub mod domain;") {
+        return Ok(None);
+    }
+    if content.contains("// ddd:product-domain:end") {
+        let patched =
+            insert_before_marker(&content, "// ddd:product-domain:end", "pub mod domain;\n")?;
+        return Ok(Some(patched));
+    }
+    // Fallback for older generated trees without markers: insert after compile_error block.
+    let needle =
+        "compile_error!(\"the fullstack server requires the PostgreSQL storage feature\");\n";
+    if let Some(index) = content.find(needle) {
+        let insert_at = index + needle.len();
+        let mut patched = String::with_capacity(content.len() + 80);
+        patched.push_str(&content[..insert_at]);
+        patched.push_str("\n// ddd:product-domain\npub mod domain;\n// ddd:product-domain:end\n");
+        patched.push_str(&content[insert_at..]);
+        return Ok(Some(patched));
+    }
+    anyhow::bail!(
+        "could not register `pub mod domain` in src/lib.rs; add `// ddd:product-domain` markers or `pub mod domain;`"
+    );
 }
 
 fn add_to_project(ctx: &ExecutionContext, command: AddCommand) -> Result<CommandReport> {
     let mut manifest = ProjectManifest::read_from(&ctx.cwd)?;
-    refuse_fullstack_add(&manifest)?;
+    refuse_fullstack_unwired_stub(&manifest, &command)?;
     let mut operations = Vec::new();
 
     match command {
         AddCommand::Aggregate(args) => {
             let names = NameParts::new(&args.name);
+            if ctx
+                .cwd
+                .join(format!("src/domain/{}.rs", names.module))
+                .exists()
+                && !ctx.force
+            {
+                anyhow::bail!(
+                    "aggregate module src/domain/{}.rs already exists (use --force to overwrite)",
+                    names.module
+                );
+            }
             manifest.add_domain(names.domain_record());
             let aggregate_path = format!("src/domain/{}.rs", names.module);
             operations.push(write_operation(
-                aggregate_path.clone(),
-                crate::render::render_init(&InitRenderInput {
-                    package_name: manifest.name.clone(),
-                    domain_name: args.name,
-                    selection: manifest.selection(),
-                })
-                .into_iter()
-                .find(|operation| operation.path == Path::new(&aggregate_path))
-                .map(|operation| operation.content)
-                .ok_or_else(|| anyhow::anyhow!("failed to render aggregate"))?,
-                false,
+                aggregate_path,
+                render_aggregate(&names),
+                ctx.force,
                 "aggregate module",
             ));
-            let mod_path = PathBuf::from("src/domain/mod.rs");
-            let mod_content = read_project_file(&ctx.cwd, &mod_path)?;
-            let mod_content = insert_before_marker(
-                &mod_content,
-                "// ddd:domain-modules:end",
-                &format!("pub mod {};\n", names.module),
-            )?;
-            let mod_content = insert_before_marker(
-                &mod_content,
-                "// ddd:domain-exports:end",
-                &format!(
-                    "pub use {}::{{{}, {}, {}, {}}};\n",
-                    names.module,
-                    names.aggregate,
-                    names.command_type,
-                    names.event_type,
-                    names.id_type
-                ),
-            )?;
+            let (mod_content, domain_mod_existed) =
+                ensure_domain_mod_content(&ctx.cwd, &names, true)?;
             operations.push(write_operation(
-                mod_path,
+                "src/domain/mod.rs",
                 mod_content,
-                true,
-                "register and export aggregate module",
+                domain_mod_existed,
+                if domain_mod_existed {
+                    "register and export aggregate module"
+                } else {
+                    "bootstrap product domain module"
+                },
             ));
+            operations.push(write_operation(
+                format!("tests/{}_domain.rs", names.module),
+                render_domain_test(
+                    &InitRenderInput {
+                        package_name: manifest.name.clone(),
+                        domain_name: args.name.clone(),
+                        selection: manifest.selection(),
+                    },
+                    &names,
+                ),
+                false,
+                "aggregate fixture test",
+            ));
+            if manifest.preset == Preset::Fullstack {
+                if let Some(lib_content) = ensure_fullstack_lib_domain_module(&ctx.cwd)? {
+                    operations.push(write_operation(
+                        "src/lib.rs",
+                        lib_content,
+                        true,
+                        "register domain module in library root",
+                    ));
+                }
+            }
         }
         AddCommand::Event(args) => {
             let module = resolve_domain_module(&manifest, &args.aggregate)?;

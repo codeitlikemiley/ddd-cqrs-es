@@ -44,11 +44,22 @@ for path in "${SYNC_PATHS[@]}"; do
     exit 1
   fi
   if [[ -d "$SRC/$path" ]]; then
-    out="$(rsync "${rsync_flags[@]}" \
-      --exclude 'target/' \
-      --exclude 'node_modules/' \
-      --exclude '.DS_Store' \
-      "$SRC/$path/" "$DST/$path/" 2>&1)"
+    # Product-domain aggregates (src/domain) are app-specific CLI output and
+    # must not dual-sync into the embedded template or wipe user domains.
+    if [[ "$path" == "src" ]]; then
+      out="$(rsync "${rsync_flags[@]}" \
+        --exclude 'target/' \
+        --exclude 'node_modules/' \
+        --exclude '.DS_Store' \
+        --exclude 'domain/' \
+        "$SRC/$path/" "$DST/$path/" 2>&1)"
+    else
+      out="$(rsync "${rsync_flags[@]}" \
+        --exclude 'target/' \
+        --exclude 'node_modules/' \
+        --exclude '.DS_Store' \
+        "$SRC/$path/" "$DST/$path/" 2>&1)"
+    fi
   elif [[ "$MODE" == "check" ]]; then
     if [[ -f "$DST/$path" ]] && cmp -s "$SRC/$path" "$DST/$path"; then
       out=""

@@ -14,7 +14,7 @@ This skill provides step-by-step instructions and reference patterns for an AI a
 - `docs/production/wasi-auth-fullstack.md` — auth/outbox/operator runbook
 - `examples/fullstack-app/README.md` — day-to-day product commands
 
-Do not use `ddd add aggregate/event/command` against fullstack; it is refused by design.
+On fullstack, `ddd add aggregate|event|command` bootstraps optional `src/domain` beside wasi-auth; route/UI wiring stays manual. Unwired stubs (`add projection`, etc.) are refused.
 
 ---
 

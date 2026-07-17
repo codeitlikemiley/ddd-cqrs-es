@@ -71,11 +71,14 @@ only when you intentionally want the app without mail delivery.
 | `ddd serve` / `ddd watch` | Yes — `make dev` (+ cargo-watch for watch) |
 | `ddd fresh` | Yes — `make db=postgres fresh` (Postgres must be up) |
 | `ddd enable auth` / oauth-provider / passkeys | Manifest bookkeeping only; still set Spin/.env secrets |
-| `ddd add aggregate\|event\|command\|…` | **No** — fails with a clear error (no domain marker layout) |
+| `ddd add aggregate` | Yes — bootstraps optional `src/domain` + registers in `src/lib.rs` |
+| `ddd add event` / `ddd add command` | Yes — once an aggregate exists |
+| `ddd add projection\|route\|server-fn\|…` | **No** — refuses unwired product stubs (hand-wire under `src/app` / rest / store) |
 
-Domain marker codegen (`src/domain` + `// ddd:…` regions) is for `basic` and
-`leptos-wasi`. Fullstack business aggregates should be added manually under
-`src/` (application/store/contracts), not via `ddd add`.
+Product domain aggregates live beside the wasi-auth shell under `src/domain/`.
+They are pure CQRS modules; wire them into application services, REST, or UI by
+hand. Stock `examples/fullstack-app` stays domain-free; dual-sync excludes
+`src/domain/`.
 
 ### Domain-only or thin Leptos app
 

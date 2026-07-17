@@ -423,7 +423,7 @@ fn init_fullstack_app(temp: &tempfile::TempDir, name: &str) {
 }
 
 #[test]
-fn fullstack_rejects_add_aggregate() {
+fn fullstack_add_aggregate_bootstraps_product_domain() {
     let temp = tempfile::tempdir().unwrap();
     init_fullstack_app(&temp, "saas-add-agg");
     let project = temp.path().join("saas-add-agg");
@@ -436,34 +436,72 @@ fn fullstack_rejects_add_aggregate() {
         .arg("aggregate")
         .arg("Billing");
 
-    command
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("preset=fullstack"))
-        .stderr(predicate::str::contains("not a domain codegen target"));
+    command.assert().success();
+
+    assert!(project.join("src/domain/mod.rs").exists());
+    assert!(project.join("src/domain/billing.rs").exists());
+    assert!(project.join("tests/billing_domain.rs").exists());
+    let lib = std::fs::read_to_string(project.join("src/lib.rs")).unwrap();
+    assert!(
+        lib.contains("pub mod domain;"),
+        "lib.rs must register product domain"
+    );
+    let domain_mod = std::fs::read_to_string(project.join("src/domain/mod.rs")).unwrap();
+    assert!(domain_mod.contains("pub mod billing;"));
+    assert!(domain_mod.contains("// ddd:domain-modules:end"));
+    let aggregate = std::fs::read_to_string(project.join("src/domain/billing.rs")).unwrap();
+    assert!(aggregate.contains("// ddd:events:end"));
+    assert!(aggregate.contains("// ddd:commands:end"));
+    let manifest = std::fs::read_to_string(project.join("ddd.toml")).unwrap();
+    assert!(manifest.contains("Billing") || manifest.contains("billing"));
+
+    let mut check = Command::cargo_bin("ddd").unwrap();
+    check.arg("--cwd").arg(&project).arg("check");
+    check.assert().success();
 }
 
 #[test]
-fn fullstack_rejects_add_event() {
+fn fullstack_add_event_and_command_extend_domain() {
     let temp = tempfile::tempdir().unwrap();
     init_fullstack_app(&temp, "saas-add-event");
     let project = temp.path().join("saas-add-event");
 
-    let mut command = Command::cargo_bin("ddd").unwrap();
-    command
+    let mut add_agg = Command::cargo_bin("ddd").unwrap();
+    add_agg
+        .arg("--cwd")
+        .arg(&project)
+        .arg("add")
+        .arg("aggregate")
+        .arg("Invoice");
+    add_agg.assert().success();
+
+    let mut add_event = Command::cargo_bin("ddd").unwrap();
+    add_event
         .arg("--cwd")
         .arg(&project)
         .arg("add")
         .arg("event")
-        .arg("Billing")
+        .arg("Invoice")
         .arg("Paid")
         .arg("--field")
         .arg("amount:i64");
+    add_event.assert().success();
 
-    command
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("preset=fullstack"));
+    let mut add_cmd = Command::cargo_bin("ddd").unwrap();
+    add_cmd
+        .arg("--cwd")
+        .arg(&project)
+        .arg("add")
+        .arg("command")
+        .arg("Invoice")
+        .arg("PayInvoice")
+        .arg("--field")
+        .arg("amount:i64");
+    add_cmd.assert().success();
+
+    let aggregate = std::fs::read_to_string(project.join("src/domain/invoice.rs")).unwrap();
+    assert!(aggregate.contains("Paid"));
+    assert!(aggregate.contains("PayInvoice") || aggregate.contains("amount"));
 }
 
 #[test]
@@ -483,7 +521,8 @@ fn fullstack_rejects_orphan_projection_stub() {
     command
         .assert()
         .failure()
-        .stderr(predicate::str::contains("preset=fullstack"));
+        .stderr(predicate::str::contains("preset=fullstack"))
+        .stderr(predicate::str::contains("product-domain codegen only"));
 
     assert!(
         !project.join("src/projections/ledger.rs").exists(),

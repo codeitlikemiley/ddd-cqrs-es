@@ -10,7 +10,7 @@ This repository ships repository-local skills used by agent workflows.
   - Use this for:
     - `ddd init --preset fullstack` / `make scaffold-fullstack`
     - creating domain apps with `ddd init --preset basic|leptos-wasi`
-    - extending non-fullstack apps with `ddd add ...` (refused on fullstack)
+    - extending apps with `ddd add ...` (fullstack: domain aggregate/event/command only)
     - enabling capabilities with `ddd enable ...`
     - previewing operations for agents/MCP with `--dry-run --format json`
     - release/version flows (`make publish`, `make publish-fullstack`)
