@@ -84,6 +84,14 @@ redis.call('SET', KEYS[1], current + count)
 return {'OK', first_sequence, last_sequence, current + count}
 "#;
 
+const FETCH_HASHES_LUA: &str = r#"
+local values = {}
+for i = 1, #KEYS do
+    values[i] = redis.call('HGETALL', KEYS[i])
+end
+return values
+"#;
+
 /// Redis protocol value returned by [`RedisCommandExecutor`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RedisValue {
@@ -262,34 +270,50 @@ where
         redis_optional_u64(&value, "stream revision")
     }
 
-    async fn load_sequence(
+    /// Fetches the event hashes for `sequences` in a single round trip.
+    ///
+    /// The reply order matches `sequences`; every sequence must exist or the
+    /// load fails (an indexed-but-missing event is store corruption).
+    async fn load_sequence_hashes(
         &self,
-        sequence: u64,
-    ) -> Result<EventEnvelope<A::Event, A::Id>, EventStoreError>
-    where
-        A::Event: serde::de::DeserializeOwned,
-        A::Id: serde::de::DeserializeOwned,
-    {
-        let hash = self.load_sequence_hash(sequence).await?;
-        hash_to_envelope::<A>(&self.upcasters, hash)
-    }
+        sequences: &[u64],
+    ) -> Result<Vec<BTreeMap<String, Vec<u8>>>, EventStoreError> {
+        if sequences.is_empty() {
+            return Ok(Vec::new());
+        }
 
-    async fn load_sequence_hash(
-        &self,
-        sequence: u64,
-    ) -> Result<BTreeMap<String, Vec<u8>>, EventStoreError> {
+        let mut args = Vec::with_capacity(sequences.len() + 2);
+        args.push(FETCH_HASHES_LUA.as_bytes().to_vec());
+        args.push(sequences.len().to_string().into_bytes());
+        for sequence in sequences {
+            args.push(self.event_key(*sequence).into_bytes());
+        }
         let value = self
             .client
-            .execute("HGETALL", vec![self.event_key(sequence).into_bytes()])
+            .execute("EVAL", args)
             .await
             .map_err(map_executor_error)?;
-        let hash = redis_hash(&value)?;
-        if hash.is_empty() {
+
+        let replies = redis_array_items(&value)?;
+        if replies.len() != sequences.len() {
             return Err(EventStoreError::Deserialization(format!(
-                "Redis event sequence {sequence} is indexed but missing"
+                "Redis hash batch returned {} of {} events",
+                replies.len(),
+                sequences.len()
             )));
         }
-        Ok(hash)
+
+        let mut hashes = Vec::with_capacity(sequences.len());
+        for (sequence, reply) in sequences.iter().zip(replies) {
+            let hash = redis_hash(reply)?;
+            if hash.is_empty() {
+                return Err(EventStoreError::Deserialization(format!(
+                    "Redis event sequence {sequence} is indexed but missing"
+                )));
+            }
+            hashes.push(hash);
+        }
+        Ok(hashes)
     }
 }
 
@@ -315,9 +339,9 @@ where
             .map_err(map_executor_error)?;
 
         let sequences = redis_sequence_list(&value)?;
-        let mut events = Vec::with_capacity(sequences.len());
-        for sequence in sequences {
-            let hash = self.load_sequence_hash(sequence).await?;
+        let hashes = self.load_sequence_hashes(&sequences).await?;
+        let mut events = Vec::with_capacity(hashes.len());
+        for hash in hashes {
             if hash_field_string(&hash, "aggregate_type")? == A::aggregate_type() {
                 events.push(hash_to_envelope::<A>(&self.upcasters, hash)?);
             }
@@ -415,9 +439,10 @@ where
             .map_err(map_executor_error)?;
 
         let sequences = redis_sequence_list(&value)?;
-        let mut events = Vec::with_capacity(sequences.len());
-        for sequence in sequences {
-            events.push(self.load_sequence(sequence).await?);
+        let hashes = self.load_sequence_hashes(&sequences).await?;
+        let mut events = Vec::with_capacity(hashes.len());
+        for hash in hashes {
+            events.push(hash_to_envelope::<A>(&self.upcasters, hash)?);
         }
 
         Ok(events)
@@ -446,9 +471,10 @@ where
             .map_err(map_executor_error)?;
 
         let sequences = redis_sequence_list(&value)?;
-        let mut events = Vec::with_capacity(sequences.len());
-        for sequence in sequences {
-            events.push(self.load_sequence(sequence).await?);
+        let hashes = self.load_sequence_hashes(&sequences).await?;
+        let mut events = Vec::with_capacity(hashes.len());
+        for hash in hashes {
+            events.push(hash_to_envelope::<A>(&self.upcasters, hash)?);
         }
 
         Ok(events)
@@ -519,6 +545,16 @@ where
         projection_name: &str,
         sequence: u64,
     ) -> Result<(), Self::Error> {
+        // Checkpoints must be monotonic: a lagging writer (for example after a
+        // rebalance) must never regress a newer checkpoint. Redis offers no
+        // compare-and-set over plain GET/SET here, so guard with a read first;
+        // the remaining race window only affects concurrent writers of the
+        // same projection.
+        if let Some(existing) = self.load_checkpoint(projection_name).await? {
+            if sequence <= existing {
+                return Ok(());
+            }
+        }
         let _ = self
             .client
             .execute(

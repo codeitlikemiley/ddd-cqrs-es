@@ -788,7 +788,12 @@ fn map_sqlite_insert_error(
 ) -> EventStoreError {
     match &error {
         rusqlite::Error::SqliteFailure(failure, _)
-            if failure.code == ErrorCode::ConstraintViolation =>
+            if failure.code == ErrorCode::ConstraintViolation
+                && matches!(
+                    failure.extended_code,
+                    rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
+                        | rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY
+                ) =>
         {
             EventStoreError::Concurrency(crate::ConcurrencyError::WrongExpectedRevision {
                 expected,

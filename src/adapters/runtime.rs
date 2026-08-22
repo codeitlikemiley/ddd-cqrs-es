@@ -709,21 +709,14 @@ fn write_password_message(stream: &mut PgStream, password: &str) -> std::io::Res
 
 #[cfg(feature = "wasi-postgres-tcp")]
 fn generate_client_nonce() -> String {
-    use std::time::SystemTime;
-    let seed = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(42) as u64;
-
-    let mut rng = seed;
-    let chars = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    let mut nonce = String::with_capacity(24);
-    for _ in 0..24 {
-        rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
-        let idx = (rng % chars.len() as u64) as usize;
-        nonce.push(chars[idx] as char);
-    }
-    nonce
+    const NONCE_LEN: usize = 24;
+    const CHARS: &[u8; 62] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let mut raw = [0_u8; NONCE_LEN];
+    getrandom::fill(&mut raw)
+        .unwrap_or_else(|error| panic!("failed to generate SCRAM client nonce: {error}"));
+    raw.iter()
+        .map(|byte| CHARS[(*byte as usize) % CHARS.len()] as char)
+        .collect()
 }
 
 #[cfg(feature = "wasi-postgres-tcp")]
@@ -965,7 +958,8 @@ static PG_CONN: std::sync::Mutex<Option<(String, PgStream)>> = std::sync::Mutex:
 #[cfg(feature = "wasi-postgres-tcp")]
 /// Open and authenticate a PostgreSQL TCP connection and negotiate protocol handshakes.
 ///
-/// Handles optional SSL negotiation and returns a ready-to-use stream wrapper.
+/// TLS is required by default; the connection is refused if the server rejects
+/// SSL unless `sslmode=disable` (or `sslmode=allow`) is present in the URL.
 pub fn connect_and_auth_postgres(
     url: &str,
     pg_params: &PgConnParams,
@@ -1009,9 +1003,11 @@ pub fn connect_and_auth_postgres(
         let tls_stream = rustls::StreamOwned::new(conn, stream);
         PgStream::Tls(Box::new(tls_stream))
     } else if ssl_response[0] == b'N' {
-        if url.contains("sslmode=require") {
+        if !url.contains("sslmode=disable") && !url.contains("sslmode=allow") {
             return Err(
-                "Server rejected SSL request, but sslmode=require was requested".to_string(),
+                "Server rejected SSL request; refusing to continue without TLS because credentials \
+                 would be sent in plaintext. Add sslmode=disable to the URL to explicitly allow plaintext."
+                    .to_string(),
             );
         }
         PgStream::Plain(stream)

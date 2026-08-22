@@ -10,9 +10,10 @@ use crate::model::{
 };
 use crate::operation::{apply_operations, write_operation, CommandReport, FileOperation};
 use crate::render::{
-    available_template_names, parse_field_specs, render_aggregate, render_command_handle_arm,
-    render_command_variant, render_domain_mod, render_domain_test, render_event_type_arm,
-    render_event_variant, render_fullstack_domain_app_mod, render_fullstack_domain_app_module,
+    available_template_names, ensure_rust_identifier, ensure_snake_identifier, parse_field_specs,
+    render_aggregate, render_command_handle_arm, render_command_variant, render_domain_mod,
+    render_domain_test, render_event_type_arm, render_event_variant,
+    render_fullstack_domain_app_mod, render_fullstack_domain_app_module,
     render_fullstack_domain_rest_arm, render_fullstack_domain_rest_bootstrap, render_init,
     sanitize_package_name, InitRenderInput, NameParts,
 };
@@ -22,7 +23,7 @@ use heck::{ToSnakeCase, ToUpperCamelCase};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use toml_edit::DocumentMut;
+use toml_edit::{DocumentMut, Item};
 
 #[derive(Debug, Parser)]
 #[command(name = "ddd", version, about = "Scaffold ddd_cqrs_es applications")]
@@ -251,6 +252,9 @@ fn init_project(ctx: &ExecutionContext, args: InitArgs) -> Result<CommandReport>
     selection.validate()?;
 
     let target = resolve_path(&ctx.cwd, &args.path);
+    let domain_names = NameParts::new(&args.domain);
+    ensure_rust_identifier(&domain_names.aggregate, "domain name")?;
+    ensure_snake_identifier(&domain_names.module, "domain module")?;
     let package_name = target
         .file_name()
         .and_then(|name| name.to_str())
@@ -566,11 +570,14 @@ fn fullstack_product_domain_wiring(
 fn add_to_project(ctx: &ExecutionContext, command: AddCommand) -> Result<CommandReport> {
     let mut manifest = ProjectManifest::read_from(&ctx.cwd)?;
     refuse_fullstack_unwired_stub(&manifest, &command)?;
+    validate_add_names(&command)?;
     let mut operations = Vec::new();
 
     match command {
         AddCommand::Aggregate(args) => {
             let names = NameParts::new(&args.name);
+            ensure_rust_identifier(&names.aggregate, "aggregate name")?;
+            ensure_snake_identifier(&names.module, "aggregate module")?;
             if ctx
                 .cwd
                 .join(format!("src/domain/{}.rs", names.module))
@@ -630,7 +637,9 @@ fn add_to_project(ctx: &ExecutionContext, command: AddCommand) -> Result<Command
                 .context("domain not found")?;
             let fields = parse_field_specs(&args.fields)?;
             let variant = args.name.to_upper_camel_case();
+            ensure_rust_identifier(&variant, "event name")?;
             let event_type = args.event_type.unwrap_or_else(|| variant.to_snake_case());
+            ensure_snake_identifier(&event_type, "event type")?;
             let path = format!("src/domain/{module}.rs");
             let relative_path = PathBuf::from(&path);
             let content = read_project_file(&ctx.cwd, &relative_path)?;
@@ -642,7 +651,7 @@ fn add_to_project(ctx: &ExecutionContext, command: AddCommand) -> Result<Command
             let content = insert_before_marker(
                 &content,
                 "            // ddd:event-types:end",
-                &render_event_type_arm(&event_type, &variant),
+                &render_event_type_arm(&event_type, &variant)?,
             )?;
             let content = insert_before_marker(
                 &content,
@@ -670,6 +679,7 @@ fn add_to_project(ctx: &ExecutionContext, command: AddCommand) -> Result<Command
                 .context("domain not found")?;
             let fields = parse_field_specs(&args.fields)?;
             let variant = args.name.to_upper_camel_case();
+            ensure_rust_identifier(&variant, "command name")?;
             let path = format!("src/domain/{module}.rs");
             let relative_path = PathBuf::from(&path);
             let content = read_project_file(&ctx.cwd, &relative_path)?;
@@ -725,7 +735,7 @@ fn add_to_project(ctx: &ExecutionContext, command: AddCommand) -> Result<Command
         AddCommand::Route(args) | AddCommand::RestEndpoint(args) => {
             operations.push(write_operation(
                 format!("src/routes/{}.rs", args.name.to_snake_case()),
-                render_route_stub(&args.name, &args.method, args.path.as_deref()),
+                render_route_stub(&args.name, &args.method, args.path.as_deref())?,
                 false,
                 "route scaffold",
             ))
@@ -760,6 +770,35 @@ fn add_to_project(ctx: &ExecutionContext, command: AddCommand) -> Result<Command
     let reports = apply_operations(&ctx.cwd, &operations, ctx.dry_run, ctx.force)?;
     let status = if ctx.dry_run { "planned" } else { "applied" };
     Ok(CommandReport::new(status, "project extension complete").with_operations(reports))
+}
+
+/// Validates user-supplied names before any codegen: the derived snake_case
+/// form must be a safe Rust identifier and path segment.
+fn validate_add_names(command: &AddCommand) -> Result<()> {
+    fn check(name: &str, label: &str) -> Result<()> {
+        ensure_snake_identifier(&name.to_snake_case(), label)
+    }
+    match command {
+        AddCommand::Aggregate(args) => check(&args.name, "aggregate name"),
+        AddCommand::Event(args) => {
+            check(&args.aggregate, "aggregate name")?;
+            check(&args.name, "event name")
+        }
+        AddCommand::Command(args) => {
+            check(&args.aggregate, "aggregate name")?;
+            check(&args.name, "command name")
+        }
+        AddCommand::Error(args) => check(&args.name, "error name"),
+        AddCommand::Projection(args) => check(&args.name, "projection name"),
+        AddCommand::Query(args) => check(&args.name, "query name"),
+        AddCommand::ProcessManager(args) => check(&args.name, "process manager name"),
+        AddCommand::Snapshot(args) => check(&args.name, "snapshot policy name"),
+        AddCommand::Upcaster(args) => check(&args.event, "upcaster event name"),
+        AddCommand::Route(args) | AddCommand::RestEndpoint(args) => check(&args.name, "route name"),
+        AddCommand::GrpcMethod(args) => check(&args.name, "gRPC method name"),
+        AddCommand::ServerFn(args) => check(&args.name, "server function name"),
+        AddCommand::Test(args) => check(&args.name, "test name"),
+    }
 }
 
 fn enable_capability(ctx: &ExecutionContext, command: EnableCommand) -> Result<CommandReport> {
@@ -1202,15 +1241,53 @@ fn stub_operation(path: impl Into<PathBuf>, name: &str, kind: &str) -> FileOpera
     )
 }
 
-fn render_route_stub(name: &str, method: &str, path: Option<&str>) -> String {
-    let const_name = format!("{}_PATH", name.to_snake_case().to_uppercase());
+fn render_route_stub(name: &str, method: &str, path: Option<&str>) -> Result<String> {
+    let module = name.to_snake_case();
+    ensure_snake_identifier(&module, "route name")?;
+    validate_route_method(method)?;
     let route_path = path
         .map(ToOwned::to_owned)
-        .unwrap_or_else(|| format!("/api/{}", name.to_snake_case().replace('_', "-")));
-    format!(
+        .unwrap_or_else(|| format!("/api/{}", module.replace('_', "-")));
+    if let Some(path) = path {
+        validate_route_path(path)?;
+    }
+    let const_name = format!("{}_PATH", module.to_uppercase());
+    Ok(format!(
         "pub const {const_name}: &str = \"{route_path}\";\npub const METHOD: &str = \"{}\";\n",
         method.to_ascii_uppercase()
-    )
+    ))
+}
+
+const ROUTE_PATH_CHARS: &str = "/-_.{}:";
+const HTTP_METHODS: &[&str] = &["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"];
+
+fn validate_route_method(method: &str) -> Result<()> {
+    let upper = method.to_ascii_uppercase();
+    if HTTP_METHODS.contains(&upper.as_str()) {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "HTTP method `{method}` is not supported; use one of {}",
+            HTTP_METHODS.join(", ")
+        )
+    }
+}
+
+fn validate_route_path(path: &str) -> Result<()> {
+    if !path.starts_with('/') {
+        anyhow::bail!("route path `{path}` must start with `/`");
+    }
+    if path.contains('\\') || path.contains('"') || path.chars().any(char::is_whitespace) {
+        anyhow::bail!("route path `{path}` contains characters that cannot be embedded in code");
+    }
+    let safe = path
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ROUTE_PATH_CHARS.contains(ch));
+    if safe {
+        Ok(())
+    } else {
+        anyhow::bail!("route path `{path}` contains unsupported characters")
+    }
 }
 
 fn render_upcaster_stub(event: &str, from: u32, to: u32) -> String {
@@ -1223,26 +1300,33 @@ fn render_upcaster_stub(event: &str, from: u32, to: u32) -> String {
 fn patch_cargo_features(path: &Path, features: &[String]) -> Result<String> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read {}", path.display()))?;
-    text.parse::<DocumentMut>()
+    let mut doc = text
+        .parse::<DocumentMut>()
         .with_context(|| format!("{} is not valid TOML", path.display()))?;
 
-    let mut patched = text;
+    let dependency = doc
+        .get_mut("dependencies")
+        .and_then(Item::as_table_like_mut)
+        .ok_or_else(|| anyhow::anyhow!("Cargo.toml has no [dependencies] table"))?
+        .get_mut("ddd_cqrs_es")
+        .ok_or_else(|| anyhow::anyhow!("Cargo.toml has no ddd_cqrs_es dependency"))?;
+    let existing = dependency
+        .as_table_like_mut()
+        .and_then(|dependency| dependency.get_mut("features"))
+        .and_then(Item::as_array_mut)
+        .ok_or_else(|| anyhow::anyhow!("the ddd_cqrs_es dependency must use a features array"))?;
+
     for feature in features {
-        if patched.contains(&format!("\"{feature}\"")) {
+        if existing
+            .iter()
+            .any(|item| item.as_str() == Some(feature.as_str()))
+        {
             continue;
         }
-        let marker = "features = [";
-        let Some(index) = patched.find(marker) else {
-            anyhow::bail!("Cargo.toml dependency ddd_cqrs_es must use a features array");
-        };
-        let insert_at = index + marker.len();
-        patched.insert_str(insert_at, &format!("\"{feature}\", "));
+        existing.push(feature.clone());
     }
 
-    patched
-        .parse::<DocumentMut>()
-        .with_context(|| "patched Cargo.toml is not valid TOML")?;
-    Ok(patched)
+    Ok(doc.to_string())
 }
 
 #[cfg(test)]
