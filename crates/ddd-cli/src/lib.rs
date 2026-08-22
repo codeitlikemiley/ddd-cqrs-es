@@ -33,8 +33,6 @@ pub struct Cli {
     #[arg(long, global = true)]
     dry_run: bool,
     #[arg(long, global = true)]
-    yes: bool,
-    #[arg(long, global = true)]
     force: bool,
     #[arg(long, global = true, value_enum, default_value_t = OutputFormat::Text)]
     format: OutputFormat,
@@ -213,7 +211,6 @@ pub fn run_from_env() -> Result<()> {
 }
 
 pub fn execute(cli: Cli) -> Result<CommandReport> {
-    let _yes = cli.yes;
     let ctx = ExecutionContext {
         cwd: cli
             .cwd
@@ -939,6 +936,44 @@ fn fresh_project(ctx: &ExecutionContext, args: FreshArgs) -> Result<CommandRepor
     .with_command(command))
 }
 
+fn tool_on_path(tool: &str) -> bool {
+    let Some(paths) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&paths).any(|dir| {
+        let candidates = [
+            dir.join(tool),
+            #[cfg(windows)]
+            dir.join(format!("{tool}.exe")),
+            #[cfg(windows)]
+            dir.join(format!("{tool}.cmd")),
+            #[cfg(windows)]
+            dir.join(format!("{tool}.bat")),
+        ];
+        candidates
+            .iter()
+            .any(|candidate| is_executable_file(candidate))
+    })
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
 fn doctor(_ctx: &ExecutionContext) -> Result<CommandReport> {
     let tools = [
         "cargo",
@@ -950,15 +985,7 @@ fn doctor(_ctx: &ExecutionContext) -> Result<CommandReport> {
     ];
     let results = tools
         .iter()
-        .map(|tool| {
-            let found = Command::new("sh")
-                .arg("-c")
-                .arg(format!("command -v {tool} >/dev/null 2>&1"))
-                .status()
-                .map(|status| status.success())
-                .unwrap_or(false);
-            json!({ "tool": tool, "found": found })
-        })
+        .map(|tool| json!({ "tool": tool, "found": tool_on_path(tool) }))
         .collect::<Vec<_>>();
     Ok(CommandReport::new("ok", "doctor completed").with_data(json!({ "tools": results })))
 }

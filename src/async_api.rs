@@ -16,6 +16,44 @@ use async_trait::async_trait;
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
 
+/// Releases a reserved idempotency key after a failed execution.
+///
+/// A key left `Pending` blocks every retry until it is removed, so cleanup
+/// is retried with backoff and a final failure is logged loudly instead of
+/// being silently swallowed.
+async fn release_idempotency_key<I, V>(idempotency_store: &I, idempotency_key: &IdempotencyKey)
+where
+    I: AsyncIdempotencyStore<V>,
+    V: Clone + Send + Sync + 'static,
+{
+    const MAX_ATTEMPTS: usize = 3;
+    const RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(50);
+    for attempt in 1..=MAX_ATTEMPTS {
+        match idempotency_store.remove(idempotency_key).await {
+            Ok(()) => return,
+            Err(_) => {
+                #[cfg(feature = "tracing")]
+                if attempt == MAX_ATTEMPTS {
+                    tracing::warn!(
+                        key = %idempotency_key,
+                        "failed to release idempotency key after execution failure; \
+                         the key stays Pending and will block retries until removed"
+                    );
+                } else {
+                    tracing::debug!(
+                        key = %idempotency_key,
+                        attempt,
+                        "retrying failed idempotency-key release"
+                    );
+                }
+                if attempt < MAX_ATTEMPTS {
+                    tokio::time::sleep(RETRY_DELAY).await;
+                }
+            }
+        }
+    }
+}
+
 /// Async event persistence abstraction for one aggregate type.
 #[async_trait]
 pub trait AsyncEventStore<A>: Clone + Send + Sync + 'static
@@ -473,7 +511,7 @@ where
         {
             Ok(committed) => committed,
             Err(err) => {
-                let _ = idempotency_store.remove(&idempotency_key).await;
+                release_idempotency_key(idempotency_store, &idempotency_key).await;
                 return Err(err);
             }
         };
