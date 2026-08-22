@@ -583,6 +583,7 @@ where
         table = table_name
     );
     let mut committed = Vec::with_capacity(prepared.len());
+    let aggregate_id: A::Id = deserialize_id(aggregate_id_key)?;
 
     for (index, event) in prepared.into_iter().enumerate() {
         let revision = actual_revision + index as u64 + 1;
@@ -614,7 +615,7 @@ where
 
         committed.push(EventEnvelope::new(
             event.event_id,
-            deserialize_id(aggregate_id_key)?,
+            aggregate_id.clone(),
             A::aggregate_type(),
             revision,
             Some(sequence),

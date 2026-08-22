@@ -723,12 +723,24 @@ fn write_password_message(stream: &mut PgStream, password: &str) -> std::io::Res
 fn generate_client_nonce() -> String {
     const NONCE_LEN: usize = 24;
     const CHARS: &[u8; 62] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    let mut raw = [0_u8; NONCE_LEN];
-    getrandom::fill(&mut raw)
-        .unwrap_or_else(|error| panic!("failed to generate SCRAM client nonce: {error}"));
-    raw.iter()
-        .map(|byte| CHARS[(*byte as usize) % CHARS.len()] as char)
-        .collect()
+    // Rejection sampling keeps the character distribution unbiased.
+    let mut nonce = String::with_capacity(NONCE_LEN);
+    let mut buf = [0_u8; 64];
+    while nonce.len() < NONCE_LEN {
+        getrandom::fill(&mut buf)
+            .unwrap_or_else(|error| panic!("failed to generate SCRAM client nonce: {error}"));
+        for byte in buf {
+            if nonce.len() == NONCE_LEN {
+                break;
+            }
+            // 248 is the largest multiple of 62 within a byte, so values
+            // below it map uniformly onto the alphabet and the rest redrawn.
+            if byte < 248 {
+                nonce.push(CHARS[(byte % CHARS.len() as u8) as usize] as char);
+            }
+        }
+    }
+    nonce
 }
 
 #[cfg(feature = "wasi-postgres-tcp")]
@@ -772,6 +784,18 @@ fn write_sasl_response(stream: &mut PgStream, response: &[u8]) -> std::io::Resul
 struct PgMessage {
     msg_type: u8,
     payload: Vec<u8>,
+}
+
+#[cfg(feature = "wasi-postgres-tcp")]
+/// Extracts the `sslmode` query parameter value from a Postgres URL.
+fn url_sslmode(url: &str) -> Option<String> {
+    let query = url.split_once('?')?.1;
+    for pair in query.split('&') {
+        if let Some(value) = pair.strip_prefix("sslmode=") {
+            return Some(value.to_ascii_lowercase());
+        }
+    }
+    None
 }
 
 #[cfg(feature = "wasi-postgres-tcp")]
@@ -1031,7 +1055,7 @@ pub fn connect_and_auth_postgres(
         let tls_stream = rustls::StreamOwned::new(conn, stream);
         PgStream::Tls(Box::new(tls_stream))
     } else if ssl_response[0] == b'N' {
-        if !url.contains("sslmode=disable") && !url.contains("sslmode=allow") {
+        if !matches!(url_sslmode(url).as_deref(), Some("disable") | Some("allow")) {
             return Err(
                 "Server rejected SSL request; refusing to continue without TLS because credentials \
                  would be sent in plaintext. Add sslmode=disable to the URL to explicitly allow plaintext."

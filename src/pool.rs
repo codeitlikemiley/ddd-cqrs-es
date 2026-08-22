@@ -38,6 +38,15 @@ pub(crate) fn resolve_pool_size(explicit: Option<usize>) -> usize {
 
 type Connect<C> = Box<dyn Fn() -> Result<C, EventStoreError> + Send + Sync>;
 
+/// Transport-level failures justify discarding a pooled connection; domain
+/// outcomes (concurrency conflicts, serialization, deserialization) do not.
+fn is_transport_error(error: &EventStoreError) -> bool {
+    matches!(
+        error,
+        EventStoreError::Backend(_) | EventStoreError::BackendWithSource { .. }
+    )
+}
+
 struct PoolState<C> {
     idle: Vec<C>,
     leased: usize,
@@ -98,7 +107,10 @@ impl<C> DerefMut for PoolLease<C> {
 
 impl<C> Drop for PoolLease<C> {
     fn drop(&mut self) {
-        let connection = if self.broken {
+        // A pool without a reconnect factory cannot replace a discarded
+        // connection, so broken leases are retained (matching the previous
+        // mutex-guarded behaviour of keeping one client forever).
+        let connection = if self.broken && self.shared.connect.is_some() {
             None
         } else {
             self.connection.take()
@@ -170,21 +182,15 @@ impl<C> ConnectionPool<C> {
                 return Ok(self.lease(connection));
             }
             if state.leased < self.shared.max_size {
-                let has_factory = self.shared.connect.is_some();
-                if !has_factory {
-                    state.leased = self.shared.max_size;
+                let Some(connect) = self.shared.connect.as_ref() else {
                     return Err(EventStoreError::Backend(
-                        "connection was discarded and no reconnect factory is configured"
+                        "no pooled connection is available and no reconnect factory is configured"
                             .to_owned(),
                     ));
-                }
+                };
                 state.leased += 1;
                 drop(state);
-                let connected = (self
-                    .shared
-                    .connect
-                    .as_ref()
-                    .expect("factory presence checked"))();
+                let connected = connect();
                 let mut state = self
                     .shared
                     .state
@@ -215,8 +221,14 @@ impl<C> ConnectionPool<C> {
         F: Fn(&mut C) -> Result<T, EventStoreError>,
     {
         let mut lease = self.acquire()?;
-        if let Ok(value) = operation(&mut lease) {
-            return Ok(value);
+        let first = operation(&mut lease);
+        match first {
+            Ok(value) => return Ok(value),
+            Err(error) => {
+                if !is_transport_error(&error) {
+                    return Err(error);
+                }
+            }
         }
         lease.mark_broken();
         drop(lease);
@@ -224,16 +236,19 @@ impl<C> ConnectionPool<C> {
         operation(&mut fresh)
     }
 
-    /// Runs an operation exactly once, discarding the connection on failure
-    /// without retrying (writes may have partially applied).
+    /// Runs an operation exactly once. The connection is discarded only when
+    /// the failure looks transport-level; domain outcomes such as optimistic
+    /// concurrency conflicts leave the connection healthy and pooled.
     pub(crate) fn write<F, T>(&self, operation: F) -> Result<T, EventStoreError>
     where
         F: FnOnce(&mut C) -> Result<T, EventStoreError>,
     {
         let mut lease = self.acquire()?;
         let result = operation(&mut lease);
-        if result.is_err() {
-            lease.mark_broken();
+        if let Err(error) = &result {
+            if is_transport_error(error) {
+                lease.mark_broken();
+            }
         }
         result
     }
@@ -382,5 +397,52 @@ mod tests {
             Err(error) => assert!(matches!(error, EventStoreError::Backend(_))),
         }
         assert!(pool.acquire().is_err());
+    }
+
+    #[test]
+    fn single_pool_keeps_serving_after_marked_broken_lease() {
+        let pool = ConnectionPool::single(7_u32);
+        {
+            let mut lease = pool.acquire().unwrap();
+            lease.mark_broken();
+        }
+
+        let mut lease = pool.acquire().unwrap();
+        *lease += 1;
+        assert_eq!(*lease, 8);
+    }
+
+    #[test]
+    fn single_pool_survives_failed_writes_and_stays_usable() {
+        let pool = ConnectionPool::<()>::single(());
+
+        for _ in 0..3 {
+            let result: Result<(), EventStoreError> =
+                pool.write(|_| Err(EventStoreError::Backend("connection reset".to_owned())));
+            assert!(result.is_err());
+
+            // Must never hang or brick; each write acquires again.
+        }
+    }
+
+    #[test]
+    fn domain_errors_do_not_discard_pooled_connections() {
+        let connects = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&connects);
+        let pool = ConnectionPool::<()>::pooled(2, move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        });
+
+        let conflict = Err(EventStoreError::Concurrency(
+            crate::ConcurrencyError::StreamAlreadyExists,
+        ));
+        let result: Result<(), EventStoreError> = pool.write(move |_| conflict);
+        assert!(result.is_err());
+
+        // The healthy connection must be recycled, not reconnected.
+        let second: Result<(), EventStoreError> = pool.write(|_| Ok(()));
+        assert!(second.is_ok());
+        assert_eq!(connects.load(Ordering::SeqCst), 1);
     }
 }

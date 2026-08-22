@@ -274,6 +274,10 @@ where
     ///
     /// The reply order matches `sequences`; every sequence must exist or the
     /// load fails (an indexed-but-missing event is store corruption).
+    ///
+    /// The batched multi-key script requires all event keys to hash to one
+    /// Redis Cluster slot (or a non-cluster deployment); CROSSSLOT errors
+    /// surface from clustered proxies where per-key HGETALL previously worked.
     async fn load_sequence_hashes(
         &self,
         sequences: &[u64],
@@ -1384,7 +1388,7 @@ fn read_resp_value_at_depth(
     reader: &mut impl BufRead,
     depth: usize,
 ) -> Result<RedisValue, RedisClientError> {
-    if depth > MAX_RESP_DEPTH {
+    if depth >= MAX_RESP_DEPTH {
         return Err(RedisClientError::Protocol(format!(
             "RESP nesting exceeds {MAX_RESP_DEPTH} levels"
         )));

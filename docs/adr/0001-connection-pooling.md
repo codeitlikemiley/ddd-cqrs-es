@@ -1,6 +1,6 @@
 # ADR-0001: Connection pooling for SQL-backed event stores
 
-- Status: Proposed
+- Status: Accepted (phase 1 implemented for Postgres and MySQL)
 - Date: 2026-08-22
 - Scope: `src/postgres.rs`, `src/mysql.rs`, `src/sqlite.rs`
 
@@ -17,24 +17,27 @@ All database work in a process serializes on that mutex:
   connections. SQLite allows only a single writer (WAL permits concurrent
   readers), so it benefits least.
 
-## Decision (proposed)
+## Decision (implemented)
 
 Replace the single mutex-guarded connection with a small internal connection
-pool for Postgres and MySQL first:
+pool for Postgres and MySQL:
 
-1. Pool size defaults to `std::thread::available_parallelism` clamped to
-   `[2, 8]`; overridable via constructor (`with_pool_size`) and env var.
-2. Acquisition is semaphore-based FIFO. Leases are held across transactions:
-   the append path checks out on `BEGIN` and returns the connection after
-   `COMMIT`/`ROLLBACK`, never mid-transaction.
-3. Stale-connection handling reuses the existing retry-once pattern from the
-   raw-TCP adapter: a failed checkout is discarded and replaced, one retry,
-   then surface the error.
+1. Pool size resolves from an explicit constructor argument, then the
+   `DDD_CQRS_ES_POOL_SIZE` environment variable, then the CPU count clamped
+   to `[2, 8]` (overrides clamped to `[1, 128]`).
+2. Acquisition is mutex + condvar based; leases are held across transactions
+   and return to the pool on drop unless marked broken.
+3. Reads retry once on a fresh connection after transport-level failures;
+   writes run exactly once and only discard connections on transport errors —
+   domain outcomes such as concurrency conflicts recycle healthy connections.
+   Legacy single-connection constructors retain their connection even when an
+   operation fails (no reconnect factory exists to replace it).
 4. SQLite keeps the current single-connection mutex deliberately (single
    writer; WAL reader pooling can be a later, separate decision).
 
 Public API stays source-compatible: existing constructors keep accepting a
-single `Connection`; pool-aware constructors are additive.
+single `Connection`; `connect_pooled(_with_table_name)` constructors are
+additive.
 
 ## Alternatives considered
 
