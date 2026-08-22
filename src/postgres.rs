@@ -172,6 +172,35 @@ where
             .collect()
     }
 
+    fn load_after_revision(
+        &self,
+        aggregate_id: &A::Id,
+        revision: u64,
+    ) -> Result<EventStream<A>, Self::Error> {
+        let revision_i64 = i64::try_from(revision)
+            .map_err(|_| EventStoreError::Serialization("revision exceeds i64".to_owned()))?;
+        let aggregate_id = serialize_id(aggregate_id)?;
+        let mut client = self.client.lock().map_err(|_| EventStoreError::Poisoned)?;
+        let query = format!(
+            "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
+             event_version, payload, metadata, recorded_at_ms FROM {table} \
+             WHERE aggregate_type = $1 AND aggregate_id = $2 AND revision > $3 \
+             ORDER BY revision ASC",
+            table = self.table_name
+        );
+        let rows = client
+            .query(
+                &query,
+                &[&A::aggregate_type(), &aggregate_id, &revision_i64],
+            )
+            .map_err(map_postgres_error)?;
+
+        let upcasters = self.upcasters.clone();
+        rows.into_iter()
+            .map(|row| row_to_envelope::<A>(&upcasters, row))
+            .collect()
+    }
+
     fn append(
         &self,
         aggregate_id: &A::Id,
@@ -571,6 +600,20 @@ where
         tokio::task::spawn_blocking(move || EventStore::load(&this, &aggregate_id))
             .await
             .map_err(|error| EventStoreError::Backend(error.to_string()))?
+    }
+
+    async fn load_after_revision(
+        &self,
+        aggregate_id: &A::Id,
+        revision: u64,
+    ) -> Result<EventStream<A>, Self::Error> {
+        let this = self.clone();
+        let aggregate_id = aggregate_id.clone();
+        tokio::task::spawn_blocking(move || {
+            EventStore::load_after_revision(&this, &aggregate_id, revision)
+        })
+        .await
+        .map_err(|error| EventStoreError::Backend(error.to_string()))?
     }
 
     async fn append(

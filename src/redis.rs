@@ -350,6 +350,37 @@ where
         Ok(events)
     }
 
+    async fn load_after_revision(
+        &self,
+        aggregate_id: &A::Id,
+        revision: u64,
+    ) -> Result<EventStream<A>, Self::Error> {
+        let keys = self.stream_keys(aggregate_id)?;
+        let value = self
+            .client
+            .execute(
+                "ZRANGEBYSCORE",
+                vec![
+                    keys.stream_key.into_bytes(),
+                    format!("({revision}").into_bytes(),
+                    b"+inf".to_vec(),
+                ],
+            )
+            .await
+            .map_err(map_executor_error)?;
+
+        let sequences = redis_sequence_list(&value)?;
+        let hashes = self.load_sequence_hashes(&sequences).await?;
+        let mut events = Vec::with_capacity(hashes.len());
+        for hash in hashes {
+            if hash_field_string(&hash, "aggregate_type")? == A::aggregate_type() {
+                events.push(hash_to_envelope::<A>(&self.upcasters, hash)?);
+            }
+        }
+
+        Ok(events)
+    }
+
     async fn append(
         &self,
         aggregate_id: &A::Id,
