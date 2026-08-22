@@ -763,6 +763,12 @@ struct PgMessage {
 }
 
 #[cfg(feature = "wasi-postgres-tcp")]
+/// Upper bound for a single Postgres protocol message payload; generous for
+/// event payloads while preventing multi-gigabyte allocations from hostile
+/// or corrupted length prefixes.
+const MAX_PG_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
+
+#[cfg(feature = "wasi-postgres-tcp")]
 fn read_message(stream: &mut PgStream) -> std::io::Result<PgMessage> {
     use std::io::Read;
     let mut type_buf = [0u8; 1];
@@ -781,6 +787,16 @@ fn read_message(stream: &mut PgStream) -> std::io::Result<PgMessage> {
     }
 
     let payload_len = (length - 4) as usize;
+    if payload_len > MAX_PG_MESSAGE_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "Postgres message payload of {payload_len} bytes exceeds the {} byte limit",
+                MAX_PG_MESSAGE_BYTES
+            ),
+        ));
+    }
+
     let mut payload = vec![0u8; payload_len];
     if payload_len > 0 {
         stream.read_exact(&mut payload)?;
@@ -1304,7 +1320,10 @@ pub fn execute_query_on_stream(
 }
 
 #[cfg(feature = "wasi-postgres-tcp")]
-/// Execute SQL over raw Postgres TCP with a small connection cache per URL.
+/// Execute SQL over raw Postgres TCP with a small connection cache.
+///
+/// The cache is keyed by host/port/user/database only, so credentials are
+/// never retained in the global cache after connecting.
 ///
 /// Returns all rows as JSON arrays/objects in the framework's shared shape.
 pub fn execute_raw_tcp_postgres(
@@ -1314,13 +1333,17 @@ pub fn execute_raw_tcp_postgres(
 ) -> Result<Vec<serde_json::Value>, String> {
     let pg_params = parse_pg_url(url)?;
     let addr = format!("{}:{}", pg_params.host, pg_params.port);
+    let cache_key = format!(
+        "{}:{}/{}?user={}",
+        pg_params.host, pg_params.port, pg_params.database, pg_params.user
+    );
 
     let mut guard = PG_CONN
         .lock()
         .map_err(|_| "Failed to lock PG_CONN mutex".to_string())?;
 
-    let pg_stream = if let Some((ref cached_url, _)) = *guard {
-        if cached_url == url {
+    let pg_stream = if let Some((ref cached_key, _)) = *guard {
+        if *cached_key == cache_key {
             let (_, stream) = guard.take().unwrap();
             Some(stream)
         } else {
@@ -1334,7 +1357,7 @@ pub fn execute_raw_tcp_postgres(
     if let Some(mut stream) = pg_stream {
         match execute_query_on_stream(&mut stream, sql, params.clone()) {
             Ok(rows) => {
-                *guard = Some((url.to_string(), stream));
+                *guard = Some((cache_key, stream));
                 return Ok(rows);
             }
             Err(_) => {
@@ -1347,7 +1370,7 @@ pub fn execute_raw_tcp_postgres(
     let res = execute_query_on_stream(&mut fresh_stream, sql, params);
 
     if res.is_ok() {
-        *guard = Some((url.to_string(), fresh_stream));
+        *guard = Some((cache_key, fresh_stream));
     }
 
     res

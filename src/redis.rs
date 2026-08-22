@@ -1335,7 +1335,29 @@ fn push_bulk(output: &mut Vec<u8>, bytes: &[u8]) {
 }
 
 #[cfg(feature = "wasi-redis")]
+const MAX_RESP_BULK_BYTES: usize = 64 * 1024 * 1024;
+#[cfg(feature = "wasi-redis")]
+const MAX_RESP_LINE_BYTES: usize = 1024 * 1024;
+#[cfg(feature = "wasi-redis")]
+const MAX_RESP_ARRAY_LEN: usize = 1_000_000;
+#[cfg(feature = "wasi-redis")]
+const MAX_RESP_DEPTH: usize = 32;
+
+#[cfg(feature = "wasi-redis")]
 fn read_resp_value(reader: &mut impl BufRead) -> Result<RedisValue, RedisClientError> {
+    read_resp_value_at_depth(reader, 0)
+}
+
+#[cfg(feature = "wasi-redis")]
+fn read_resp_value_at_depth(
+    reader: &mut impl BufRead,
+    depth: usize,
+) -> Result<RedisValue, RedisClientError> {
+    if depth > MAX_RESP_DEPTH {
+        return Err(RedisClientError::Protocol(format!(
+            "RESP nesting exceeds {MAX_RESP_DEPTH} levels"
+        )));
+    }
     let mut prefix = [0_u8; 1];
     reader.read_exact(&mut prefix)?;
     match prefix[0] {
@@ -1358,6 +1380,11 @@ fn read_resp_value(reader: &mut impl BufRead) -> Result<RedisValue, RedisClientE
             }
             let len = usize::try_from(len)
                 .map_err(|_| RedisClientError::Protocol("bulk length exceeds usize".to_owned()))?;
+            if len > MAX_RESP_BULK_BYTES {
+                return Err(RedisClientError::Protocol(format!(
+                    "bulk reply of {len} bytes exceeds the {MAX_RESP_BULK_BYTES} byte limit"
+                )));
+            }
             let mut bytes = vec![0_u8; len];
             reader.read_exact(&mut bytes)?;
             read_expected_crlf(reader)?;
@@ -1373,9 +1400,14 @@ fn read_resp_value(reader: &mut impl BufRead) -> Result<RedisValue, RedisClientE
             }
             let len = usize::try_from(len)
                 .map_err(|_| RedisClientError::Protocol("array length exceeds usize".to_owned()))?;
-            let mut values = Vec::with_capacity(len);
+            if len > MAX_RESP_ARRAY_LEN {
+                return Err(RedisClientError::Protocol(format!(
+                    "array reply of {len} elements exceeds the {MAX_RESP_ARRAY_LEN} element limit"
+                )));
+            }
+            let mut values = Vec::with_capacity(len.min(1024));
             for _ in 0..len {
-                values.push(read_resp_value(reader)?);
+                values.push(read_resp_value_at_depth(reader, depth + 1)?);
             }
             Ok(RedisValue::Array(values))
         }
@@ -1388,7 +1420,19 @@ fn read_resp_value(reader: &mut impl BufRead) -> Result<RedisValue, RedisClientE
 #[cfg(feature = "wasi-redis")]
 fn read_resp_line(reader: &mut impl BufRead) -> Result<String, RedisClientError> {
     let mut line = Vec::new();
-    reader.read_until(b'\n', &mut line)?;
+    let mut byte = [0_u8; 1];
+    loop {
+        reader.read_exact(&mut byte)?;
+        line.push(byte[0]);
+        if line.len() > MAX_RESP_LINE_BYTES {
+            return Err(RedisClientError::Protocol(
+                "RESP line exceeds the maximum length".to_owned(),
+            ));
+        }
+        if byte[0] == b'\n' {
+            break;
+        }
+    }
     if !line.ends_with(b"\r\n") {
         return Err(RedisClientError::Protocol(
             "RESP line did not end with CRLF".to_owned(),

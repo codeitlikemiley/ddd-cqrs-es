@@ -251,6 +251,10 @@ pub async fn csrf_token_for_session(session_id: &str) -> AuthStackResult<String>
     {
         value
     } else {
+        tracing::warn!(
+            "AUTH_CSRF_SECRET is not set; deriving CSRF tokens from the public development \
+             secret. Set AUTH_CSRF_SECRET before exposing this app."
+        );
         "dev-fullstack-csrf-secret-change-me".to_owned()
     };
     let digest = Sha256::digest(format!("csrf:{secret}:{session_id}").as_bytes());

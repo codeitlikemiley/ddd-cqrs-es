@@ -604,7 +604,14 @@ pub(crate) async fn configured_jwt_key_ring() -> AuthStackResult<JwtKeyRing> {
                     .unwrap_or_else(|| "fullstack-app-dev-hs256".to_owned());
                 let secret = runtime_config_value("AUTH_JWT_SECRET")
                     .await
-                    .unwrap_or_else(|| "dev-fullstack-app-secret-change-me".to_owned());
+                    .unwrap_or_else(|| {
+                        tracing::warn!(
+                            "AUTH_JWT_SECRET is not set; signing tokens with the public \
+                             development key. Set AUTH_PRODUCTION_MODE=true and provide \
+                             AUTH_JWT_KEY_RING_JSON before exposing this app."
+                        );
+                        "dev-fullstack-app-secret-change-me".to_owned()
+                    });
                 JwtKeyRing::development_hs256(kid, secret.into_bytes())
                     .map_err(|_| AuthStackError::configuration("development JWT key is invalid"))?
             }
