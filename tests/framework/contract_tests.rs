@@ -113,6 +113,41 @@ fn postgres_store_passes_reusable_contract_when_url_is_provided() {
 
 #[cfg(feature = "postgres")]
 #[test]
+fn postgres_pooled_store_passes_reusable_contract_when_url_is_provided() {
+    let Ok(database_url) = std::env::var("DDD_CQRS_ES_POSTGRES_URL") else {
+        eprintln!(
+            "skipping live pooled Postgres contract test: DDD_CQRS_ES_POSTGRES_URL is not set"
+        );
+        return;
+    };
+    let table_name = format!(
+        "events_live_pool_{}_{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+
+    let store = ddd_cqrs_es::PostgresEventStore::<Counter>::connect_pooled_with_table_name(
+        &database_url,
+        table_name,
+        3,
+    )
+    .unwrap();
+    store.initialize_schema().unwrap();
+
+    assert_event_store_contract::<Counter, _>(
+        store,
+        "postgres-pooled-contract-counter".to_owned(),
+        CounterEvent::Created,
+        CounterEvent::Incremented { by: 1 },
+        EventStoreContractOptions::default(),
+    );
+}
+
+#[cfg(feature = "postgres")]
+#[test]
 fn postgres_idempotency_store_passes_contract_when_url_is_provided() {
     let Ok(database_url) = std::env::var("DDD_CQRS_ES_POSTGRES_URL") else {
         eprintln!("skipping live Postgres idempotency test: DDD_CQRS_ES_POSTGRES_URL is not set");
@@ -162,6 +197,35 @@ fn mysql_store_passes_reusable_contract_when_url_is_provided() {
     assert_event_store_contract::<Counter, _>(
         store,
         "mysql-contract-counter".to_owned(),
+        CounterEvent::Created,
+        CounterEvent::Incremented { by: 1 },
+        EventStoreContractOptions::default(),
+    );
+}
+
+#[cfg(feature = "mysql")]
+#[test]
+fn mysql_pooled_store_passes_reusable_contract_when_url_is_provided() {
+    let _guard = MYSQL_TEST_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(db) = mysql_test_db_or_skip("pooled contract test") else {
+        return;
+    };
+    let table_name = unique_mysql_table("events_live_pool");
+    let _cleanup = MySqlTableCleanup::new(&db.test_url, vec![table_name.clone()]);
+
+    let store = ddd_cqrs_es::MySqlEventStore::<Counter>::connect_pooled_with_table_name(
+        &db.test_url,
+        table_name,
+        3,
+    )
+    .unwrap();
+    store.initialize_schema().unwrap();
+
+    assert_event_store_contract::<Counter, _>(
+        store,
+        "mysql-pooled-contract-counter".to_owned(),
         CounterEvent::Created,
         CounterEvent::Incremented { by: 1 },
         EventStoreContractOptions::default(),

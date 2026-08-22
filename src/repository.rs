@@ -29,8 +29,7 @@ where
     for attempt in 1..=MAX_ATTEMPTS {
         match idempotency_store.remove(idempotency_key) {
             Ok(()) => return,
-            Err(_) =>
-            {
+            Err(_) => {
                 #[cfg(feature = "tracing")]
                 if attempt == MAX_ATTEMPTS {
                     tracing::warn!(
@@ -45,6 +44,8 @@ where
                         "retrying failed idempotency-key release"
                     );
                 }
+                #[cfg(not(feature = "tracing"))]
+                let _ = attempt;
             }
         }
     }

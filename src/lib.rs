@@ -100,6 +100,8 @@ pub mod memory;
 pub mod metadata;
 #[cfg(feature = "mysql")]
 pub mod mysql;
+#[cfg(any(feature = "mysql", feature = "postgres"))]
+pub(crate) mod pool;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 pub mod process_manager;
