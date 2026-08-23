@@ -16,15 +16,25 @@ pub type Revision = u64;
 pub const INITIAL_REVISION: Revision = 0;
 
 /// Stable event type name stored with an event envelope.
+///
+/// Backed by `Cow<'static, str>` so names sourced from
+/// [`DomainEvent::event_type`]'s `&'static str` are borrowed instead of
+/// allocated on every append.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct EventType(String);
+pub struct EventType(std::borrow::Cow<'static, str>);
 
 impl EventType {
     /// Creates an event type from a stable event name.
     pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
+        Self(std::borrow::Cow::Owned(value.into()))
+    }
+
+    /// Creates an event type that borrows a static event name without
+    /// allocating.
+    pub const fn from_static(value: &'static str) -> Self {
+        Self(std::borrow::Cow::Borrowed(value))
     }
 
     /// Returns the event type as a string slice.
@@ -34,19 +44,19 @@ impl EventType {
 
     /// Consumes the event type and returns the owned string.
     pub fn into_string(self) -> String {
-        self.0
+        self.0.into_owned()
     }
 }
 
 impl From<&str> for EventType {
     fn from(value: &str) -> Self {
-        Self(value.to_owned())
+        Self(std::borrow::Cow::Owned(value.to_owned()))
     }
 }
 
 impl From<String> for EventType {
     fn from(value: String) -> Self {
-        Self(value)
+        Self(std::borrow::Cow::Owned(value))
     }
 }
 
@@ -241,7 +251,7 @@ impl<E> NewEvent<E> {
     where
         E: DomainEvent,
     {
-        let event_type = EventType::from(payload.event_type());
+        let event_type = EventType::from_static(payload.event_type());
         let event_version = payload.event_version();
 
         Self {
@@ -274,21 +284,18 @@ impl<E> NewEvent<E> {
 /// # Example
 ///
 /// ```rust
-/// use ddd_cqrs_es::{EventEnvelope, EventId, Metadata};
-/// use std::time::SystemTime;
+/// use ddd_cqrs_es::{EventEnvelope, EventId};
 ///
-/// let envelope = EventEnvelope::new(
+/// let envelope = EventEnvelope::builder(
 ///     EventId::from_string("evt-123"),
 ///     "aggregate-1".to_string(),
 ///     "my_aggregate",
 ///     5,
-///     Some(42),
 ///     "my_event",
-///     1,
 ///     "payload_data".to_string(),
-///     Metadata::default(),
-///     SystemTime::now(),
-/// );
+/// )
+/// .sequence(42)
+/// .build();
 /// assert_eq!(envelope.revision, 5);
 /// assert_eq!(envelope.sequence, Some(42));
 /// assert_eq!(envelope.event_id.as_str(), "evt-123");
@@ -347,6 +354,35 @@ impl<E, Id> EventEnvelope<E, Id> {
         }
     }
 
+    /// Starts building an envelope from its identity fields.
+    ///
+    /// Optional fields default: `sequence` to `None`, `event_version` to `1`,
+    /// `metadata` to empty, and `recorded_at` to the current time. Prefer
+    /// this over [`EventEnvelope::new`]'s ten positional arguments.
+    pub fn builder(
+        event_id: EventId,
+        aggregate_id: Id,
+        aggregate_type: impl Into<String>,
+        revision: Revision,
+        event_type: impl Into<EventType>,
+        payload: E,
+    ) -> EventEnvelopeBuilder<E, Id> {
+        EventEnvelopeBuilder {
+            envelope: Self {
+                event_id,
+                aggregate_id,
+                aggregate_type: aggregate_type.into(),
+                revision,
+                sequence: None,
+                event_type: event_type.into(),
+                event_version: 1,
+                payload,
+                metadata: Metadata::default(),
+                recorded_at: SystemTime::now(),
+            },
+        }
+    }
+
     /// Returns a reference to the domain event payload.
     pub fn event(&self) -> &E {
         &self.payload
@@ -396,5 +432,42 @@ impl<E, Id> EventEnvelope<E, Id> {
         serde_json::from_str(json).map_err(|error| {
             crate::error::EventStoreError::deserialization_with_source(error.to_string(), error)
         })
+    }
+}
+
+/// Builder returned by [`EventEnvelope::builder`].
+#[derive(Clone, Debug)]
+pub struct EventEnvelopeBuilder<E, Id> {
+    envelope: EventEnvelope<E, Id>,
+}
+
+impl<E, Id> EventEnvelopeBuilder<E, Id> {
+    /// Sets the global append order assigned by sequencing stores.
+    pub fn sequence(mut self, sequence: u64) -> Self {
+        self.envelope.sequence = Some(sequence);
+        self
+    }
+
+    /// Sets the event schema version (defaults to `1`).
+    pub fn event_version(mut self, event_version: u32) -> Self {
+        self.envelope.event_version = event_version;
+        self
+    }
+
+    /// Sets the audit and causality metadata (defaults to empty).
+    pub fn metadata(mut self, metadata: Metadata) -> Self {
+        self.envelope.metadata = metadata;
+        self
+    }
+
+    /// Sets the recording time (defaults to the current time).
+    pub fn recorded_at(mut self, recorded_at: SystemTime) -> Self {
+        self.envelope.recorded_at = recorded_at;
+        self
+    }
+
+    /// Finishes the envelope.
+    pub fn build(self) -> EventEnvelope<E, Id> {
+        self.envelope
     }
 }

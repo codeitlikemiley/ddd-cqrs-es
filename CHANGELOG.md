@@ -2,6 +2,22 @@
 
 ## 0.3.0-rc.7
 
+- **Dev-file format change:** `JsonFileEventStore` now stores events as JSON
+  Lines (one envelope per line) with fsync-before-acknowledge appends;
+  legacy whole-array files are migrated in place on first read. Appends are
+  O(1) writes instead of whole-file rewrites; `JsonFileCheckpointStore`
+  writes are also fsynced.
+- `EventEnvelope::builder(...)` replaces the ten-positional-argument
+  construction pattern in docs (`new` remains available); `EventType` is
+  backed by `Cow<'static, str>` with `EventType::from_static`, so
+  `DomainEvent::event_type()` names no longer allocate per event on append.
+- `InMemoryEventStore` stores each envelope once (per-stream indices into the
+  global log) and serves global replay polls with a binary search instead of
+  a full scan.
+- Schema migration errors from Postgres/MySQL carry the server's detailed
+  message and SQLSTATE/errno code instead of the client's vague Display.
+- The sync/async idempotency wait and release policies are shared code, so
+  the repository twins can no longer drift.
 - Multi-event SQL appends batch into one `INSERT` statement: Postgres uses a
   single `INSERT ... SELECT FROM UNNEST ... RETURNING` round trip; MySQL uses
   one multi-row `INSERT` plus one sequence read-back (two round trips

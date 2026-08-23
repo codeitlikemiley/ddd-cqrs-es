@@ -134,8 +134,8 @@ pub use command::{CommandBus, CommandHandler, QueryHandler};
 pub use error::{ConcurrencyError, EventStoreError, EventStoreFailure, RepositoryError};
 /// Shared event envelope and stream metadata types.
 pub use event::{
-    DomainEvent, EventEnvelope, EventId, EventType, ExpectedRevision, NewEvent, Revision,
-    INITIAL_REVISION,
+    DomainEvent, EventEnvelope, EventEnvelopeBuilder, EventId, EventType, ExpectedRevision,
+    NewEvent, Revision, INITIAL_REVISION,
 };
 /// Primary event store contracts and append semantics.
 pub use event_store::{
