@@ -20,7 +20,6 @@ use mysql::prelude::*;
 use mysql::{Conn, Error as MySqlError, Opts, Row, TxOpts};
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
-use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 /// MySQL-backed event store.
@@ -190,6 +189,54 @@ where
     /// Initializes the MySQL event table and indexes.
     pub fn initialize_schema(&self) -> Result<(), EventStoreError> {
         self.migrate_schema()
+    }
+
+    /// Creates a checkpoint store that shares this event store's connection
+    /// pool, using the default table name.
+    pub fn checkpoint_store(&self) -> Result<MySqlCheckpointStore, EventStoreError> {
+        self.checkpoint_store_with_table_name("projection_checkpoints")
+    }
+
+    /// Creates a pool-sharing checkpoint store with a custom table name.
+    pub fn checkpoint_store_with_table_name(
+        &self,
+        table_name: impl Into<String>,
+    ) -> Result<MySqlCheckpointStore, EventStoreError> {
+        MySqlCheckpointStore::from_pool(self.pool.clone(), table_name)
+    }
+
+    /// Creates an idempotency store that shares this event store's connection
+    /// pool, using the event store's idempotency table.
+    pub fn idempotency_store<V>(&self) -> Result<MySqlIdempotencyStore<V>, EventStoreError>
+    where
+        V: Clone,
+    {
+        self.idempotency_store_with_table_name(self.idempotency_table.clone())
+    }
+
+    /// Creates a pool-sharing idempotency store with a custom table name.
+    pub fn idempotency_store_with_table_name<V>(
+        &self,
+        table_name: impl Into<String>,
+    ) -> Result<MySqlIdempotencyStore<V>, EventStoreError>
+    where
+        V: Clone,
+    {
+        MySqlIdempotencyStore::from_pool(self.pool.clone(), table_name)
+    }
+
+    /// Creates a snapshot store that shares this event store's connection
+    /// pool, using the default table name.
+    pub fn snapshot_store(&self) -> Result<MySqlSnapshotStore<A>, EventStoreError> {
+        self.snapshot_store_with_table_name("snapshots")
+    }
+
+    /// Creates a pool-sharing snapshot store with a custom table name.
+    pub fn snapshot_store_with_table_name(
+        &self,
+        table_name: impl Into<String>,
+    ) -> Result<MySqlSnapshotStore<A>, EventStoreError> {
+        MySqlSnapshotStore::from_pool(self.pool.clone(), table_name)
     }
 }
 
@@ -916,7 +963,7 @@ fn map_mysql_insert_error(
 /// MySQL checkpoint store implementation.
 #[derive(Clone, Debug)]
 pub struct MySqlCheckpointStore {
-    connection: Arc<Mutex<Conn>>,
+    pool: ConnectionPool<Conn>,
     table_name: String,
 }
 
@@ -931,13 +978,17 @@ impl MySqlCheckpointStore {
         connection: Conn,
         table_name: impl Into<String>,
     ) -> Result<Self, EventStoreError> {
+        Self::from_pool(ConnectionPool::single(connection), table_name)
+    }
+
+    fn from_pool(
+        pool: ConnectionPool<Conn>,
+        table_name: impl Into<String>,
+    ) -> Result<Self, EventStoreError> {
         let table_name = table_name.into();
         validate_table_name(&table_name)?;
 
-        let store = Self {
-            connection: Arc::new(Mutex::new(connection)),
-            table_name,
-        };
+        let store = Self { pool, table_name };
         store.initialize_schema()?;
         Ok(store)
     }
@@ -947,11 +998,7 @@ impl MySqlCheckpointStore {
         let config = crate::schema::SqlSchemaConfig::new(crate::schema::SqlDialect::MySql)
             .with_checkpoints_table(&self.table_name)?;
         let migrator = crate::schema::SchemaMigrator::new(config);
-        let mut connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
-        migrator.run_mysql(&mut connection)
+        self.pool.write(|connection| migrator.run_mysql(connection))
     }
 }
 
@@ -959,42 +1006,40 @@ impl CheckpointStore for MySqlCheckpointStore {
     type Error = EventStoreError;
 
     fn load_checkpoint(&self, projection_name: &str) -> Result<Option<u64>, Self::Error> {
-        let mut connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
         let sql = format!(
             "SELECT sequence FROM {} WHERE projection_name = ?;",
             self.table_name
         );
-        let row_opt: Option<Row> = connection
-            .exec_first(&sql, (projection_name,))
-            .map_err(map_mysql_error)?;
+        self.pool.read(|connection| {
+            let row_opt: Option<Row> = connection
+                .exec_first(&sql, (projection_name,))
+                .map_err(map_mysql_error)?;
 
-        if let Some(row) = row_opt {
-            let sequence: u64 = row.get(0).ok_or_else(|| {
-                EventStoreError::Deserialization("missing sequence in checkpoint row".to_owned())
-            })?;
-            Ok(Some(sequence))
-        } else {
-            Ok(None)
-        }
+            if let Some(row) = row_opt {
+                let sequence: u64 = row.get(0).ok_or_else(|| {
+                    EventStoreError::Deserialization(
+                        "missing sequence in checkpoint row".to_owned(),
+                    )
+                })?;
+                Ok(Some(sequence))
+            } else {
+                Ok(None)
+            }
+        })
     }
 
     fn save_checkpoint(&self, projection_name: &str, sequence: u64) -> Result<(), Self::Error> {
-        let mut connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
         let sql = format!(
             "INSERT INTO {} (projection_name, sequence) VALUES (?, ?) \
              ON DUPLICATE KEY UPDATE sequence = GREATEST(sequence, VALUES(sequence));",
             self.table_name
         );
-        connection
-            .exec_drop(&sql, (projection_name, sequence))
-            .map_err(map_mysql_error)?;
-        Ok(())
+        self.pool.write(|connection| {
+            connection
+                .exec_drop(&sql, (projection_name, sequence))
+                .map_err(map_mysql_error)?;
+            Ok(())
+        })
     }
 }
 
@@ -1031,7 +1076,7 @@ pub struct MySqlIdempotencyStore<V>
 where
     V: Clone,
 {
-    connection: Arc<Mutex<Conn>>,
+    pool: ConnectionPool<Conn>,
     table_name: String,
     _marker: PhantomData<fn() -> V>,
 }
@@ -1042,7 +1087,7 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            connection: Arc::clone(&self.connection),
+            pool: self.pool.clone(),
             table_name: self.table_name.clone(),
             _marker: PhantomData,
         }
@@ -1074,11 +1119,18 @@ where
         connection: Conn,
         table_name: impl Into<String>,
     ) -> Result<Self, EventStoreError> {
+        Self::from_pool(ConnectionPool::single(connection), table_name)
+    }
+
+    fn from_pool(
+        pool: ConnectionPool<Conn>,
+        table_name: impl Into<String>,
+    ) -> Result<Self, EventStoreError> {
         let table_name = table_name.into();
         validate_table_name(&table_name)?;
 
         let store = Self {
-            connection: Arc::new(Mutex::new(connection)),
+            pool,
             table_name,
             _marker: PhantomData,
         };
@@ -1091,11 +1143,7 @@ where
         let config = crate::schema::SqlSchemaConfig::new(crate::schema::SqlDialect::MySql)
             .with_idempotency_table(&self.table_name)?;
         let migrator = crate::schema::SchemaMigrator::new(config);
-        let mut connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
-        migrator.run_mysql(&mut connection)
+        self.pool.write(|connection| migrator.run_mysql(connection))
     }
 }
 
@@ -1106,49 +1154,43 @@ where
     type Error = EventStoreError;
 
     fn load(&self, key: &IdempotencyKey) -> Result<Option<IdempotencyState<V>>, Self::Error> {
-        let mut connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
         let sql = format!(
             "SELECT state, value FROM {} WHERE idempotency_key = ?;",
             self.table_name
         );
-        let row_opt: Option<Row> = connection
-            .exec_first(&sql, (key.as_str(),))
-            .map_err(map_mysql_error)?;
+        self.pool.read(|connection| {
+            let row_opt: Option<Row> = connection
+                .exec_first(&sql, (key.as_str(),))
+                .map_err(map_mysql_error)?;
 
-        let Some(row) = row_opt else {
-            return Ok(None);
-        };
+            let Some(row) = row_opt else {
+                return Ok(None);
+            };
 
-        let state: String = row
-            .get(0)
-            .ok_or_else(|| EventStoreError::Deserialization("missing state column".to_owned()))?;
-        let value_str: Option<String> = row.get::<Option<String>, _>(1).flatten();
+            let state: String = row.get(0).ok_or_else(|| {
+                EventStoreError::Deserialization("missing state column".to_owned())
+            })?;
+            let value_str: Option<String> = row.get::<Option<String>, _>(1).flatten();
 
-        match (state.as_str(), value_str) {
-            ("pending", _) => Ok(Some(IdempotencyState::Pending)),
-            ("complete", Some(value_str)) => {
-                let value = serde_json::from_str(&value_str).map_err(|error| {
-                    EventStoreError::Deserialization(format!("idempotency value JSON: {error}"))
-                })?;
-                Ok(Some(IdempotencyState::Complete(value)))
+            match (state.as_str(), value_str) {
+                ("pending", _) => Ok(Some(IdempotencyState::Pending)),
+                ("complete", Some(value_str)) => {
+                    let value = serde_json::from_str(&value_str).map_err(|error| {
+                        EventStoreError::Deserialization(format!("idempotency value JSON: {error}"))
+                    })?;
+                    Ok(Some(IdempotencyState::Complete(value)))
+                }
+                ("complete", None) => Err(EventStoreError::Deserialization(
+                    "completed idempotency row is missing value".to_owned(),
+                )),
+                (state, _) => Err(EventStoreError::Deserialization(format!(
+                    "unknown idempotency state: {state}"
+                ))),
             }
-            ("complete", None) => Err(EventStoreError::Deserialization(
-                "completed idempotency row is missing value".to_owned(),
-            )),
-            (state, _) => Err(EventStoreError::Deserialization(format!(
-                "unknown idempotency state: {state}"
-            ))),
-        }
+        })
     }
 
     fn reserve(&self, key: IdempotencyKey) -> Result<bool, Self::Error> {
-        let mut connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
         let updated_at_ms = system_time_to_millis(SystemTime::now())?;
 
         // MySQL INSERT IGNORE behaves like INSERT OR IGNORE / ON CONFLICT DO NOTHING
@@ -1157,19 +1199,17 @@ where
              VALUES (?, 'pending', NULL, ?);",
             self.table_name
         );
-        connection
-            .exec_drop(&sql, (key.as_str(), updated_at_ms))
-            .map_err(map_mysql_error)?;
+        self.pool.write(|connection| {
+            connection
+                .exec_drop(&sql, (key.as_str(), updated_at_ms))
+                .map_err(map_mysql_error)?;
 
-        let affected = connection.affected_rows();
-        Ok(affected == 1)
+            let affected = connection.affected_rows();
+            Ok(affected == 1)
+        })
     }
 
     fn save(&self, key: IdempotencyKey, value: V) -> Result<(), Self::Error> {
-        let mut connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
         let updated_at_ms = system_time_to_millis(SystemTime::now())?;
         let value_json = serde_json::to_string(&value).map_err(|error| {
             EventStoreError::Serialization(format!("idempotency value JSON: {error}"))
@@ -1183,22 +1223,22 @@ where
                 updated_at_ms = VALUES(updated_at_ms);",
             self.table_name
         );
-        connection
-            .exec_drop(&sql, (key.as_str(), value_json, updated_at_ms))
-            .map_err(map_mysql_error)?;
-        Ok(())
+        self.pool.write(|connection| {
+            connection
+                .exec_drop(&sql, (key.as_str(), value_json, updated_at_ms))
+                .map_err(map_mysql_error)?;
+            Ok(())
+        })
     }
 
     fn remove(&self, key: &IdempotencyKey) -> Result<(), Self::Error> {
-        let mut connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
         let sql = format!("DELETE FROM {} WHERE idempotency_key = ?;", self.table_name);
-        connection
-            .exec_drop(&sql, (key.as_str(),))
-            .map_err(map_mysql_error)?;
-        Ok(())
+        self.pool.write(|connection| {
+            connection
+                .exec_drop(&sql, (key.as_str(),))
+                .map_err(map_mysql_error)?;
+            Ok(())
+        })
     }
 }
 
@@ -1207,7 +1247,7 @@ pub struct MySqlSnapshotStore<A>
 where
     A: Aggregate,
 {
-    connection: Arc<Mutex<Conn>>,
+    pool: ConnectionPool<Conn>,
     table_name: String,
     _marker: PhantomData<fn() -> A>,
 }
@@ -1218,7 +1258,7 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            connection: Arc::clone(&self.connection),
+            pool: self.pool.clone(),
             table_name: self.table_name.clone(),
             _marker: PhantomData,
         }
@@ -1250,11 +1290,18 @@ where
         connection: Conn,
         table_name: impl Into<String>,
     ) -> Result<Self, EventStoreError> {
+        Self::from_pool(ConnectionPool::single(connection), table_name)
+    }
+
+    fn from_pool(
+        pool: ConnectionPool<Conn>,
+        table_name: impl Into<String>,
+    ) -> Result<Self, EventStoreError> {
         let table_name = table_name.into();
         validate_table_name(&table_name)?;
 
         let store = Self {
-            connection: Arc::new(Mutex::new(connection)),
+            pool,
             table_name,
             _marker: PhantomData,
         };
@@ -1267,11 +1314,7 @@ where
         let config = crate::schema::SqlSchemaConfig::new(crate::schema::SqlDialect::MySql)
             .with_snapshots_table(&self.table_name)?;
         let migrator = crate::schema::SchemaMigrator::new(config);
-        let mut connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
-        migrator.run_mysql(&mut connection)
+        self.pool.write(|connection| migrator.run_mysql(connection))
     }
 }
 
@@ -1292,56 +1335,56 @@ where
         .entered();
 
         let aggregate_id = serialize_id(aggregate_id)?;
-        let mut connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
         let sql = format!(
             "SELECT revision, state, metadata, recorded_at_ms FROM {} \
              WHERE aggregate_type = ? AND aggregate_id = ?;",
             self.table_name
         );
-        let row_opt: Option<Row> = connection
-            .exec_first(&sql, (A::aggregate_type(), &aggregate_id))
-            .map_err(map_mysql_error)?;
-        let Some(row) = row_opt else {
-            return Ok(None);
-        };
+        self.pool.read(|connection| {
+            let row_opt: Option<Row> = connection
+                .exec_first(&sql, (A::aggregate_type(), &aggregate_id))
+                .map_err(map_mysql_error)?;
+            let Some(row) = row_opt else {
+                return Ok(None);
+            };
 
-        let revision: i64 = row.get(0).ok_or_else(|| {
-            EventStoreError::Deserialization("missing revision in snapshot row".to_owned())
-        })?;
-        let state_json: String = row.get(1).ok_or_else(|| {
-            EventStoreError::Deserialization("missing state in snapshot row".to_owned())
-        })?;
-        let metadata_json: String = row.get(2).ok_or_else(|| {
-            EventStoreError::Deserialization("missing metadata in snapshot row".to_owned())
-        })?;
-        let recorded_at_ms: i64 = row.get(3).ok_or_else(|| {
-            EventStoreError::Deserialization("missing recorded_at_ms in snapshot row".to_owned())
-        })?;
-        let revision = u64::try_from(revision).map_err(|_| {
-            EventStoreError::Deserialization(
-                "MySQL snapshot revision cannot be negative".to_owned(),
-            )
-        })?;
-        let state = serde_json::from_str(&state_json).map_err(|error| {
-            EventStoreError::Deserialization(format!("snapshot state JSON: {error}"))
-        })?;
-        let metadata = serde_json::from_str(&metadata_json).map_err(|error| {
-            EventStoreError::Deserialization(format!("snapshot metadata JSON: {error}"))
-        })?;
-        let recorded_at = millis_to_system_time(recorded_at_ms)?;
-        let aggregate_id = deserialize_id(&aggregate_id)?;
+            let revision: i64 = row.get(0).ok_or_else(|| {
+                EventStoreError::Deserialization("missing revision in snapshot row".to_owned())
+            })?;
+            let state_json: String = row.get(1).ok_or_else(|| {
+                EventStoreError::Deserialization("missing state in snapshot row".to_owned())
+            })?;
+            let metadata_json: String = row.get(2).ok_or_else(|| {
+                EventStoreError::Deserialization("missing metadata in snapshot row".to_owned())
+            })?;
+            let recorded_at_ms: i64 = row.get(3).ok_or_else(|| {
+                EventStoreError::Deserialization(
+                    "missing recorded_at_ms in snapshot row".to_owned(),
+                )
+            })?;
+            let revision = u64::try_from(revision).map_err(|_| {
+                EventStoreError::Deserialization(
+                    "MySQL snapshot revision cannot be negative".to_owned(),
+                )
+            })?;
+            let state = serde_json::from_str(&state_json).map_err(|error| {
+                EventStoreError::Deserialization(format!("snapshot state JSON: {error}"))
+            })?;
+            let metadata = serde_json::from_str(&metadata_json).map_err(|error| {
+                EventStoreError::Deserialization(format!("snapshot metadata JSON: {error}"))
+            })?;
+            let recorded_at = millis_to_system_time(recorded_at_ms)?;
+            let aggregate_id = deserialize_id(&aggregate_id)?;
 
-        Ok(Some(Snapshot {
-            aggregate_id,
-            aggregate_type: A::aggregate_type().to_owned(),
-            revision,
-            state,
-            metadata,
-            recorded_at,
-        }))
+            Ok(Some(Snapshot {
+                aggregate_id,
+                aggregate_type: A::aggregate_type().to_owned(),
+                revision,
+                state,
+                metadata,
+                recorded_at,
+            }))
+        })
     }
 
     fn save_snapshot(&self, snapshot: Snapshot<A>) -> Result<(), Self::Error> {
@@ -1365,10 +1408,6 @@ where
             EventStoreError::Serialization(format!("snapshot metadata JSON: {error}"))
         })?;
         let recorded_at_ms = system_time_to_millis(snapshot.recorded_at)?;
-        let mut connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
         let sql = format!(
             "INSERT INTO {} (aggregate_type, aggregate_id, revision, state, metadata, recorded_at_ms)
              VALUES (?, ?, ?, ?, ?, ?)
@@ -1379,20 +1418,22 @@ where
                 recorded_at_ms = IF(VALUES(revision) >= revision, VALUES(recorded_at_ms), recorded_at_ms);",
             self.table_name
         );
-        connection
-            .exec_drop(
-                &sql,
-                (
-                    A::aggregate_type(),
-                    aggregate_id,
-                    revision_i64,
-                    state_json,
-                    metadata_json,
-                    recorded_at_ms,
-                ),
-            )
-            .map_err(map_mysql_error)?;
-        Ok(())
+        self.pool.write(|connection| {
+            connection
+                .exec_drop(
+                    &sql,
+                    (
+                        A::aggregate_type(),
+                        aggregate_id,
+                        revision_i64,
+                        state_json,
+                        metadata_json,
+                        recorded_at_ms,
+                    ),
+                )
+                .map_err(map_mysql_error)?;
+            Ok(())
+        })
     }
 }
 

@@ -18,7 +18,6 @@ use crate::upcast::UpcasterRegistry;
 use ::postgres::{Client, NoTls};
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
-use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 /// PostgreSQL-backed event store.
@@ -188,6 +187,54 @@ where
     /// Initializes the PostgreSQL event table and indexes.
     pub fn initialize_schema(&self) -> Result<(), EventStoreError> {
         self.migrate_schema()
+    }
+
+    /// Creates a checkpoint store that shares this event store's connection
+    /// pool, using the default table name.
+    pub fn checkpoint_store(&self) -> Result<PostgresCheckpointStore, EventStoreError> {
+        self.checkpoint_store_with_table_name("projection_checkpoints")
+    }
+
+    /// Creates a pool-sharing checkpoint store with a custom table name.
+    pub fn checkpoint_store_with_table_name(
+        &self,
+        table_name: impl Into<String>,
+    ) -> Result<PostgresCheckpointStore, EventStoreError> {
+        PostgresCheckpointStore::from_pool(self.pool.clone(), table_name)
+    }
+
+    /// Creates an idempotency store that shares this event store's connection
+    /// pool, using the event store's idempotency table.
+    pub fn idempotency_store<V>(&self) -> Result<PostgresIdempotencyStore<V>, EventStoreError>
+    where
+        V: Clone,
+    {
+        self.idempotency_store_with_table_name(self.idempotency_table.clone())
+    }
+
+    /// Creates a pool-sharing idempotency store with a custom table name.
+    pub fn idempotency_store_with_table_name<V>(
+        &self,
+        table_name: impl Into<String>,
+    ) -> Result<PostgresIdempotencyStore<V>, EventStoreError>
+    where
+        V: Clone,
+    {
+        PostgresIdempotencyStore::from_pool(self.pool.clone(), table_name)
+    }
+
+    /// Creates a snapshot store that shares this event store's connection
+    /// pool, using the default table name.
+    pub fn snapshot_store(&self) -> Result<PostgresSnapshotStore<A>, EventStoreError> {
+        self.snapshot_store_with_table_name("snapshots")
+    }
+
+    /// Creates a pool-sharing snapshot store with a custom table name.
+    pub fn snapshot_store_with_table_name(
+        &self,
+        table_name: impl Into<String>,
+    ) -> Result<PostgresSnapshotStore<A>, EventStoreError> {
+        PostgresSnapshotStore::from_pool(self.pool.clone(), table_name)
     }
 }
 
@@ -895,7 +942,7 @@ fn map_postgres_error(error: ::postgres::Error) -> EventStoreError {
 /// Postgres checkpoint store implementation.
 #[derive(Clone)]
 pub struct PostgresCheckpointStore {
-    client: Arc<Mutex<::postgres::Client>>,
+    pool: ConnectionPool<::postgres::Client>,
     table_name: String,
 }
 
@@ -918,13 +965,17 @@ impl PostgresCheckpointStore {
         client: ::postgres::Client,
         table_name: impl Into<String>,
     ) -> Result<Self, EventStoreError> {
+        Self::from_pool(ConnectionPool::single(client), table_name)
+    }
+
+    fn from_pool(
+        pool: ConnectionPool<Client>,
+        table_name: impl Into<String>,
+    ) -> Result<Self, EventStoreError> {
         let table_name = table_name.into();
         validate_table_name(&table_name)?;
 
-        let store = Self {
-            client: Arc::new(Mutex::new(client)),
-            table_name,
-        };
+        let store = Self { pool, table_name };
         store.initialize_schema()?;
         Ok(store)
     }
@@ -934,8 +985,7 @@ impl PostgresCheckpointStore {
         let config = crate::schema::SqlSchemaConfig::new(crate::schema::SqlDialect::Postgres)
             .with_checkpoints_table(&self.table_name)?;
         let migrator = crate::schema::SchemaMigrator::new(config);
-        let mut client = self.client.lock().map_err(|_| EventStoreError::Poisoned)?;
-        migrator.run_postgres(&mut client)
+        self.pool.write(|client| migrator.run_postgres(client))
     }
 }
 
@@ -943,30 +993,30 @@ impl crate::projection::CheckpointStore for PostgresCheckpointStore {
     type Error = EventStoreError;
 
     fn load_checkpoint(&self, projection_name: &str) -> Result<Option<u64>, Self::Error> {
-        let mut client = self.client.lock().map_err(|_| EventStoreError::Poisoned)?;
         let sql = format!(
             "SELECT sequence FROM {} WHERE projection_name = $1;",
             self.table_name
         );
-        let rows = client
-            .query(&sql, &[&projection_name])
-            .map_err(map_postgres_error)?;
+        self.pool.read(|client| {
+            let rows = client
+                .query(&sql, &[&projection_name])
+                .map_err(map_postgres_error)?;
 
-        if let Some(row) = rows.first() {
-            let sequence: i64 = row.get(0);
-            let sequence = u64::try_from(sequence).map_err(|_| {
-                EventStoreError::Deserialization(
-                    "Postgres checkpoint cannot be negative".to_owned(),
-                )
-            })?;
-            Ok(Some(sequence))
-        } else {
-            Ok(None)
-        }
+            if let Some(row) = rows.first() {
+                let sequence: i64 = row.get(0);
+                let sequence = u64::try_from(sequence).map_err(|_| {
+                    EventStoreError::Deserialization(
+                        "Postgres checkpoint cannot be negative".to_owned(),
+                    )
+                })?;
+                Ok(Some(sequence))
+            } else {
+                Ok(None)
+            }
+        })
     }
 
     fn save_checkpoint(&self, projection_name: &str, sequence: u64) -> Result<(), Self::Error> {
-        let mut client = self.client.lock().map_err(|_| EventStoreError::Poisoned)?;
         let sql = format!(
             "INSERT INTO {} (projection_name, sequence) VALUES ($1, $2)
              ON CONFLICT (projection_name) DO UPDATE SET sequence = GREATEST({table}.sequence, EXCLUDED.sequence);",
@@ -975,10 +1025,12 @@ impl crate::projection::CheckpointStore for PostgresCheckpointStore {
         );
         let sequence_i64 = i64::try_from(sequence)
             .map_err(|_| EventStoreError::Deserialization("checkpoint exceeds i64".to_owned()))?;
-        client
-            .execute(&sql, &[&projection_name, &sequence_i64])
-            .map_err(map_postgres_error)?;
-        Ok(())
+        self.pool.write(|client| {
+            client
+                .execute(&sql, &[&projection_name, &sequence_i64])
+                .map_err(map_postgres_error)?;
+            Ok(())
+        })
     }
 }
 
@@ -1020,7 +1072,7 @@ pub struct PostgresIdempotencyStore<V>
 where
     V: Clone,
 {
-    client: Arc<Mutex<Client>>,
+    pool: ConnectionPool<Client>,
     table_name: String,
     _marker: PhantomData<fn() -> V>,
 }
@@ -1031,7 +1083,7 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            client: Arc::clone(&self.client),
+            pool: self.pool.clone(),
             table_name: self.table_name.clone(),
             _marker: PhantomData,
         }
@@ -1063,11 +1115,18 @@ where
         client: Client,
         table_name: impl Into<String>,
     ) -> Result<Self, EventStoreError> {
+        Self::from_pool(ConnectionPool::single(client), table_name)
+    }
+
+    fn from_pool(
+        pool: ConnectionPool<Client>,
+        table_name: impl Into<String>,
+    ) -> Result<Self, EventStoreError> {
         let table_name = table_name.into();
         validate_table_name(&table_name)?;
 
         let store = Self {
-            client: Arc::new(Mutex::new(client)),
+            pool,
             table_name,
             _marker: PhantomData,
         };
@@ -1080,8 +1139,7 @@ where
         let config = crate::schema::SqlSchemaConfig::new(crate::schema::SqlDialect::Postgres)
             .with_idempotency_table(&self.table_name)?;
         let migrator = crate::schema::SchemaMigrator::new(config);
-        let mut client = self.client.lock().map_err(|_| EventStoreError::Poisoned)?;
-        migrator.run_postgres(&mut client)
+        self.pool.write(|client| migrator.run_postgres(client))
     }
 }
 
@@ -1092,41 +1150,41 @@ where
     type Error = EventStoreError;
 
     fn load(&self, key: &IdempotencyKey) -> Result<Option<IdempotencyState<V>>, Self::Error> {
-        let mut client = self.client.lock().map_err(|_| EventStoreError::Poisoned)?;
         let sql = format!(
             "SELECT state, value FROM {} WHERE idempotency_key = $1;",
             self.table_name
         );
-        let row = client
-            .query_opt(&sql, &[&key.as_str()])
-            .map_err(map_postgres_error)?;
+        self.pool.read(|client| {
+            let row = client
+                .query_opt(&sql, &[&key.as_str()])
+                .map_err(map_postgres_error)?;
 
-        let Some(row) = row else {
-            return Ok(None);
-        };
+            let Some(row) = row else {
+                return Ok(None);
+            };
 
-        let state: String = row.try_get(0).map_err(map_postgres_error)?;
-        let value: Option<serde_json::Value> = row.try_get(1).map_err(map_postgres_error)?;
+            let state: String = row.try_get(0).map_err(map_postgres_error)?;
+            let value: Option<serde_json::Value> = row.try_get(1).map_err(map_postgres_error)?;
 
-        match (state.as_str(), value) {
-            ("pending", _) => Ok(Some(IdempotencyState::Pending)),
-            ("complete", Some(value)) => {
-                let value = serde_json::from_value(value).map_err(|error| {
-                    EventStoreError::Deserialization(format!("idempotency value JSON: {error}"))
-                })?;
-                Ok(Some(IdempotencyState::Complete(value)))
+            match (state.as_str(), value) {
+                ("pending", _) => Ok(Some(IdempotencyState::Pending)),
+                ("complete", Some(value)) => {
+                    let value = serde_json::from_value(value).map_err(|error| {
+                        EventStoreError::Deserialization(format!("idempotency value JSON: {error}"))
+                    })?;
+                    Ok(Some(IdempotencyState::Complete(value)))
+                }
+                ("complete", None) => Err(EventStoreError::Deserialization(
+                    "completed idempotency row is missing value".to_owned(),
+                )),
+                (state, _) => Err(EventStoreError::Deserialization(format!(
+                    "unknown idempotency state: {state}"
+                ))),
             }
-            ("complete", None) => Err(EventStoreError::Deserialization(
-                "completed idempotency row is missing value".to_owned(),
-            )),
-            (state, _) => Err(EventStoreError::Deserialization(format!(
-                "unknown idempotency state: {state}"
-            ))),
-        }
+        })
     }
 
     fn reserve(&self, key: IdempotencyKey) -> Result<bool, Self::Error> {
-        let mut client = self.client.lock().map_err(|_| EventStoreError::Poisoned)?;
         let updated_at_ms = system_time_to_millis(SystemTime::now())?;
         let sql = format!(
             "INSERT INTO {} (idempotency_key, state, value, updated_at_ms)
@@ -1134,14 +1192,15 @@ where
              ON CONFLICT (idempotency_key) DO NOTHING;",
             self.table_name
         );
-        let changed = client
-            .execute(&sql, &[&key.as_str(), &updated_at_ms])
-            .map_err(map_postgres_error)?;
-        Ok(changed == 1)
+        self.pool.write(|client| {
+            let changed = client
+                .execute(&sql, &[&key.as_str(), &updated_at_ms])
+                .map_err(map_postgres_error)?;
+            Ok(changed == 1)
+        })
     }
 
     fn save(&self, key: IdempotencyKey, value: V) -> Result<(), Self::Error> {
-        let mut client = self.client.lock().map_err(|_| EventStoreError::Poisoned)?;
         let updated_at_ms = system_time_to_millis(SystemTime::now())?;
         let value_json = serde_json::to_value(value).map_err(|error| {
             EventStoreError::Serialization(format!("idempotency value JSON: {error}"))
@@ -1155,22 +1214,25 @@ where
                 updated_at_ms = EXCLUDED.updated_at_ms;",
             self.table_name
         );
-        client
-            .execute(&sql, &[&key.as_str(), &value_json, &updated_at_ms])
-            .map_err(map_postgres_error)?;
-        Ok(())
+        self.pool.write(|client| {
+            client
+                .execute(&sql, &[&key.as_str(), &value_json, &updated_at_ms])
+                .map_err(map_postgres_error)?;
+            Ok(())
+        })
     }
 
     fn remove(&self, key: &IdempotencyKey) -> Result<(), Self::Error> {
-        let mut client = self.client.lock().map_err(|_| EventStoreError::Poisoned)?;
         let sql = format!(
             "DELETE FROM {} WHERE idempotency_key = $1;",
             self.table_name
         );
-        client
-            .execute(&sql, &[&key.as_str()])
-            .map_err(map_postgres_error)?;
-        Ok(())
+        self.pool.write(|client| {
+            client
+                .execute(&sql, &[&key.as_str()])
+                .map_err(map_postgres_error)?;
+            Ok(())
+        })
     }
 }
 
@@ -1179,7 +1241,7 @@ pub struct PostgresSnapshotStore<A>
 where
     A: Aggregate,
 {
-    client: Arc<Mutex<Client>>,
+    pool: ConnectionPool<Client>,
     table_name: String,
     _marker: PhantomData<fn() -> A>,
 }
@@ -1190,7 +1252,7 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            client: Arc::clone(&self.client),
+            pool: self.pool.clone(),
             table_name: self.table_name.clone(),
             _marker: PhantomData,
         }
@@ -1222,11 +1284,18 @@ where
         client: Client,
         table_name: impl Into<String>,
     ) -> Result<Self, EventStoreError> {
+        Self::from_pool(ConnectionPool::single(client), table_name)
+    }
+
+    fn from_pool(
+        pool: ConnectionPool<Client>,
+        table_name: impl Into<String>,
+    ) -> Result<Self, EventStoreError> {
         let table_name = table_name.into();
         validate_table_name(&table_name)?;
 
         let store = Self {
-            client: Arc::new(Mutex::new(client)),
+            pool,
             table_name,
             _marker: PhantomData,
         };
@@ -1239,8 +1308,7 @@ where
         let config = crate::schema::SqlSchemaConfig::new(crate::schema::SqlDialect::Postgres)
             .with_snapshots_table(&self.table_name)?;
         let migrator = crate::schema::SchemaMigrator::new(config);
-        let mut client = self.client.lock().map_err(|_| EventStoreError::Poisoned)?;
-        migrator.run_postgres(&mut client)
+        self.pool.write(|client| migrator.run_postgres(client))
     }
 }
 
@@ -1261,45 +1329,46 @@ where
         .entered();
 
         let aggregate_id = serialize_id(aggregate_id)?;
-        let mut client = self.client.lock().map_err(|_| EventStoreError::Poisoned)?;
         let sql = format!(
             "SELECT revision, state, metadata, recorded_at_ms FROM {} \
              WHERE aggregate_type = $1 AND aggregate_id = $2;",
             self.table_name
         );
-        let row = client
-            .query_opt(&sql, &[&A::aggregate_type(), &aggregate_id])
-            .map_err(map_postgres_error)?;
-        let Some(row) = row else {
-            return Ok(None);
-        };
+        self.pool.read(|client| {
+            let row = client
+                .query_opt(&sql, &[&A::aggregate_type(), &aggregate_id])
+                .map_err(map_postgres_error)?;
+            let Some(row) = row else {
+                return Ok(None);
+            };
 
-        let revision: i64 = row.try_get(0).map_err(map_postgres_error)?;
-        let state: serde_json::Value = row.try_get(1).map_err(map_postgres_error)?;
-        let metadata: serde_json::Value = row.try_get(2).map_err(map_postgres_error)?;
-        let recorded_at_ms: i64 = row.try_get(3).map_err(map_postgres_error)?;
-        let revision = u64::try_from(revision).map_err(|_| {
-            EventStoreError::Deserialization(
-                "Postgres snapshot revision cannot be negative".to_owned(),
-            )
-        })?;
-        let state = serde_json::from_value(state).map_err(|error| {
-            EventStoreError::Deserialization(format!("snapshot state JSON: {error}"))
-        })?;
-        let metadata = serde_json::from_value(metadata).map_err(|error| {
-            EventStoreError::Deserialization(format!("snapshot metadata JSON: {error}"))
-        })?;
-        let recorded_at = millis_to_system_time(recorded_at_ms)?;
-        let aggregate_id = deserialize_id(&aggregate_id)?;
+            let revision: i64 = row.try_get(0).map_err(map_postgres_error)?;
+            let state: serde_json::Value = row.try_get(1).map_err(map_postgres_error)?;
+            let metadata: serde_json::Value = row.try_get(2).map_err(map_postgres_error)?;
+            let recorded_at_ms: i64 = row.try_get(3).map_err(map_postgres_error)?;
+            let revision = u64::try_from(revision).map_err(|_| {
+                EventStoreError::Deserialization(
+                    "Postgres snapshot revision cannot be negative".to_owned(),
+                )
+            })?;
+            let state = serde_json::from_value(state).map_err(|error| {
+                EventStoreError::Deserialization(format!("snapshot state JSON: {error}"))
+            })?;
+            let metadata = serde_json::from_value(metadata).map_err(|error| {
+                EventStoreError::Deserialization(format!("snapshot metadata JSON: {error}"))
+            })?;
+            let recorded_at = millis_to_system_time(recorded_at_ms)?;
+            let aggregate_id = deserialize_id(&aggregate_id)?;
 
-        Ok(Some(Snapshot {
-            aggregate_id,
-            aggregate_type: A::aggregate_type().to_owned(),
-            revision,
-            state,
-            metadata,
-            recorded_at,
-        }))
+            Ok(Some(Snapshot {
+                aggregate_id,
+                aggregate_type: A::aggregate_type().to_owned(),
+                revision,
+                state,
+                metadata,
+                recorded_at,
+            }))
+        })
     }
 
     fn save_snapshot(&self, snapshot: Snapshot<A>) -> Result<(), Self::Error> {
@@ -1323,7 +1392,6 @@ where
             EventStoreError::Serialization(format!("snapshot metadata JSON: {error}"))
         })?;
         let recorded_at_ms = system_time_to_millis(snapshot.recorded_at)?;
-        let mut client = self.client.lock().map_err(|_| EventStoreError::Poisoned)?;
         let sql = format!(
             "INSERT INTO {} (aggregate_type, aggregate_id, revision, state, metadata, recorded_at_ms)
              VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6)
@@ -1335,20 +1403,22 @@ where
              WHERE EXCLUDED.revision >= {}.revision;",
             self.table_name, self.table_name
         );
-        client
-            .execute(
-                &sql,
-                &[
-                    &A::aggregate_type(),
-                    &aggregate_id,
-                    &revision_i64,
-                    &state_json,
-                    &metadata_json,
-                    &recorded_at_ms,
-                ],
-            )
-            .map_err(map_postgres_error)?;
-        Ok(())
+        self.pool.write(|client| {
+            client
+                .execute(
+                    &sql,
+                    &[
+                        &A::aggregate_type(),
+                        &aggregate_id,
+                        &revision_i64,
+                        &state_json,
+                        &metadata_json,
+                        &recorded_at_ms,
+                    ],
+                )
+                .map_err(map_postgres_error)?;
+            Ok(())
+        })
     }
 }
 
