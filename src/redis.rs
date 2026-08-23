@@ -84,12 +84,20 @@ redis.call('SET', KEYS[1], current + count)
 return {'OK', first_sequence, last_sequence, current + count}
 "#;
 
+/// Fetches every key's hash in one round trip as a flat scalar list: each
+/// hash is emitted as its item count followed by that many field/value
+/// entries. A flat reply avoids nested RESP arrays, which some executor
+/// backends (notably the Spin `redis-result` WIT variant) cannot represent.
 const FETCH_HASHES_LUA: &str = r#"
-local values = {}
+local out = {}
 for i = 1, #KEYS do
-    values[i] = redis.call('HGETALL', KEYS[i])
+    local hash = redis.call('HGETALL', KEYS[i])
+    out[#out + 1] = #hash
+    for j = 1, #hash do
+        out[#out + 1] = hash[j]
+    end
 end
-return values
+return out
 "#;
 
 /// Redis protocol value returned by [`RedisCommandExecutor`].
@@ -298,26 +306,7 @@ where
             .await
             .map_err(map_executor_error)?;
 
-        let replies = redis_array_items(&value)?;
-        if replies.len() != sequences.len() {
-            return Err(EventStoreError::Deserialization(format!(
-                "Redis hash batch returned {} of {} events",
-                replies.len(),
-                sequences.len()
-            )));
-        }
-
-        let mut hashes = Vec::with_capacity(sequences.len());
-        for (sequence, reply) in sequences.iter().zip(replies) {
-            let hash = redis_hash(reply)?;
-            if hash.is_empty() {
-                return Err(EventStoreError::Deserialization(format!(
-                    "Redis event sequence {sequence} is indexed but missing"
-                )));
-            }
-            hashes.push(hash);
-        }
-        Ok(hashes)
+        unpack_flat_hash_batch(&value, sequences)
     }
 }
 
@@ -1156,9 +1145,10 @@ fn redis_sequence_list(value: &RedisValue) -> Result<Vec<u64>, EventStoreError> 
         .collect()
 }
 
-fn redis_hash(value: &RedisValue) -> Result<BTreeMap<String, Vec<u8>>, EventStoreError> {
-    let items = redis_array_items(value)?;
-    if items.len() % 2 != 0 {
+fn redis_hash_from_items(
+    items: &[RedisValue],
+) -> Result<BTreeMap<String, Vec<u8>>, EventStoreError> {
+    if !items.len().is_multiple_of(2) {
         return Err(EventStoreError::Deserialization(
             "Redis hash reply has odd field count".to_owned(),
         ));
@@ -1172,6 +1162,63 @@ fn redis_hash(value: &RedisValue) -> Result<BTreeMap<String, Vec<u8>>, EventStor
     }
 
     Ok(hash)
+}
+
+/// Unpacks the flat length-prefixed reply of [`FETCH_HASHES_LUA`]: one item
+/// count followed by that many field/value entries per requested sequence.
+fn unpack_flat_hash_batch(
+    value: &RedisValue,
+    sequences: &[u64],
+) -> Result<Vec<BTreeMap<String, Vec<u8>>>, EventStoreError> {
+    let items = redis_array_items(value)?;
+    let mut cursor = 0_usize;
+    let mut hashes = Vec::with_capacity(sequences.len());
+
+    for sequence in sequences {
+        let Some(count) = items.get(cursor) else {
+            return Err(EventStoreError::Deserialization(format!(
+                "Redis hash batch ended after {} of {} events",
+                hashes.len(),
+                sequences.len()
+            )));
+        };
+        let RedisValue::Int(count) = count else {
+            return Err(EventStoreError::Deserialization(
+                "Redis hash batch length prefix is not an integer".to_owned(),
+            ));
+        };
+        let count = usize::try_from(*count).map_err(|_| {
+            EventStoreError::Deserialization(
+                "Redis hash batch length prefix is negative".to_owned(),
+            )
+        })?;
+        cursor += 1;
+
+        let Some(entries) = items.get(cursor..cursor + count) else {
+            return Err(EventStoreError::Deserialization(format!(
+                "Redis hash batch is truncated at event sequence {sequence}"
+            )));
+        };
+        cursor += count;
+
+        let hash = redis_hash_from_items(entries)?;
+        if hash.is_empty() {
+            return Err(EventStoreError::Deserialization(format!(
+                "Redis event sequence {sequence} is indexed but missing"
+            )));
+        }
+        hashes.push(hash);
+    }
+
+    if cursor != items.len() {
+        return Err(EventStoreError::Deserialization(format!(
+            "Redis hash batch has {} trailing items after {} events",
+            items.len() - cursor,
+            sequences.len()
+        )));
+    }
+
+    Ok(hashes)
 }
 
 fn redis_value_string(value: &RedisValue, label: &str) -> Result<String, EventStoreError> {
@@ -1454,19 +1501,16 @@ fn read_resp_value_at_depth(
 
 #[cfg(feature = "wasi-redis")]
 fn read_resp_line(reader: &mut impl BufRead) -> Result<String, RedisClientError> {
+    // A bounded `read_until` keeps the buffered memchr fast path while still
+    // refusing hostile over-long lines: the limit is one past the maximum so
+    // a line that fills it is detectably too long.
     let mut line = Vec::new();
-    let mut byte = [0_u8; 1];
-    loop {
-        reader.read_exact(&mut byte)?;
-        line.push(byte[0]);
-        if line.len() > MAX_RESP_LINE_BYTES {
-            return Err(RedisClientError::Protocol(
-                "RESP line exceeds the maximum length".to_owned(),
-            ));
-        }
-        if byte[0] == b'\n' {
-            break;
-        }
+    let limit = MAX_RESP_LINE_BYTES as u64 + 1;
+    reader.by_ref().take(limit).read_until(b'\n', &mut line)?;
+    if line.len() > MAX_RESP_LINE_BYTES {
+        return Err(RedisClientError::Protocol(
+            "RESP line exceeds the maximum length".to_owned(),
+        ));
     }
     if !line.ends_with(b"\r\n") {
         return Err(RedisClientError::Protocol(
@@ -1585,6 +1629,70 @@ mod tests {
                 RedisValue::Int(1),
             ]))
         }
+    }
+
+    fn bytes(value: &str) -> RedisValue {
+        RedisValue::Bytes(value.as_bytes().to_vec())
+    }
+
+    #[test]
+    fn flat_hash_batch_unpacks_length_prefixed_hashes() {
+        let reply = RedisValue::Array(vec![
+            RedisValue::Int(4),
+            bytes("event_id"),
+            bytes("e-1"),
+            bytes("payload"),
+            bytes("{}"),
+            RedisValue::Int(2),
+            bytes("event_id"),
+            bytes("e-2"),
+        ]);
+
+        let hashes = unpack_flat_hash_batch(&reply, &[1, 2]).unwrap();
+
+        assert_eq!(hashes.len(), 2);
+        assert_eq!(hashes[0].get("event_id"), Some(&b"e-1".to_vec()));
+        assert_eq!(hashes[0].get("payload"), Some(&b"{}".to_vec()));
+        assert_eq!(hashes[1].get("event_id"), Some(&b"e-2".to_vec()));
+    }
+
+    #[test]
+    fn flat_hash_batch_rejects_missing_indexed_event() {
+        let reply = RedisValue::Array(vec![RedisValue::Int(0)]);
+
+        let error = unpack_flat_hash_batch(&reply, &[7]).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("sequence 7 is indexed but missing"));
+    }
+
+    #[test]
+    fn flat_hash_batch_rejects_truncated_reply() {
+        let reply = RedisValue::Array(vec![RedisValue::Int(4), bytes("event_id"), bytes("e-1")]);
+
+        assert!(unpack_flat_hash_batch(&reply, &[1]).is_err());
+    }
+
+    #[test]
+    fn flat_hash_batch_rejects_short_batch_and_trailing_items() {
+        let empty = RedisValue::Array(Vec::new());
+        assert!(unpack_flat_hash_batch(&empty, &[1]).is_err());
+
+        let trailing = RedisValue::Array(vec![
+            RedisValue::Int(2),
+            bytes("event_id"),
+            bytes("e-1"),
+            bytes("junk"),
+        ]);
+        assert!(unpack_flat_hash_batch(&trailing, &[1]).is_err());
+    }
+
+    #[test]
+    fn flat_hash_batch_rejects_non_integer_length_prefix() {
+        let reply = RedisValue::Array(vec![bytes("2"), bytes("event_id"), bytes("e-1")]);
+
+        assert!(unpack_flat_hash_batch(&reply, &[1]).is_err());
     }
 
     #[test]
