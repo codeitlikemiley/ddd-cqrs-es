@@ -172,7 +172,6 @@ pub type AsyncAtomicIdempotentRepositoryResult<A, S, T> = Result<
 /// #     type Event = DummyEvent;
 /// #     type Error = DummyError;
 /// #     fn aggregate_type() -> &'static str { "dummy" }
-/// #     fn revision(&self) -> u64 { 0 }
 /// #     fn new() -> Self { MyAggregate }
 /// #     fn apply(&mut self, _event: &Self::Event) {}
 /// #     fn handle(&self, _command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> { Ok(vec![]) }

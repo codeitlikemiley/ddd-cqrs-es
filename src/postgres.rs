@@ -273,7 +273,7 @@ where
         revision: u64,
     ) -> Result<EventStream<A>, Self::Error> {
         let revision_i64 = i64::try_from(revision)
-            .map_err(|_| EventStoreError::Serialization("revision exceeds i64".to_owned()))?;
+            .map_err(|_| EventStoreError::serialization("revision exceeds i64".to_owned()))?;
         let aggregate_id = serialize_id(aggregate_id)?;
         let table_name = self.table_name.clone();
         let upcasters = self.upcasters.clone();
@@ -322,7 +322,7 @@ where
                 .and_then(|row| row.try_get(0))
                 .map_err(map_postgres_error)?;
             let actual_revision = u64::try_from(actual_revision).map_err(|_| {
-                EventStoreError::Deserialization("stored revision cannot be negative".to_owned())
+                EventStoreError::deserialization("stored revision cannot be negative".to_owned())
             })?;
             check_expected_revision(expected_revision, actual_revision)?;
 
@@ -343,10 +343,10 @@ where
             for (index, event) in prepared.into_iter().enumerate() {
                 let revision = actual_revision + index as u64 + 1;
                 let revision_i64 = i64::try_from(revision).map_err(|_| {
-                    EventStoreError::Serialization("revision exceeds BIGINT".to_owned())
+                    EventStoreError::serialization("revision exceeds BIGINT".to_owned())
                 })?;
                 let event_version_i32 = i32::try_from(event.event_version).map_err(|_| {
-                    EventStoreError::Serialization("event_version exceeds INT".to_owned())
+                    EventStoreError::serialization("event_version exceeds INT".to_owned())
                 })?;
                 let row = transaction
                     .query_one(
@@ -368,7 +368,7 @@ where
                     })?;
                 let sequence: i64 = row.try_get(0).map_err(map_postgres_error)?;
                 let sequence = u64::try_from(sequence).map_err(|_| {
-                    EventStoreError::Deserialization(
+                    EventStoreError::deserialization(
                         "PostgreSQL sequence cannot be negative".to_owned(),
                     )
                 })?;
@@ -395,7 +395,7 @@ where
     fn load_global_after(&self, sequence: Option<u64>) -> Result<EventStream<A>, Self::Error> {
         let sequence = sequence.unwrap_or_default();
         let sequence = i64::try_from(sequence).map_err(|_| {
-            EventStoreError::Deserialization("global sequence exceeds BIGINT".to_owned())
+            EventStoreError::deserialization("global sequence exceeds BIGINT".to_owned())
         })?;
         let table_name = self.table_name.clone();
         let upcasters = self.upcasters.clone();
@@ -423,10 +423,10 @@ where
     ) -> Result<EventStream<A>, Self::Error> {
         let sequence = sequence.unwrap_or_default();
         let sequence = i64::try_from(sequence).map_err(|_| {
-            EventStoreError::Deserialization("global sequence exceeds BIGINT".to_owned())
+            EventStoreError::deserialization("global sequence exceeds BIGINT".to_owned())
         })?;
         let limit = i64::try_from(limit.get()).map_err(|_| {
-            EventStoreError::Deserialization("event replay limit exceeds BIGINT".to_owned())
+            EventStoreError::deserialization("event replay limit exceeds BIGINT".to_owned())
         })?;
         let table_name = self.table_name.clone();
         let upcasters = self.upcasters.clone();
@@ -478,14 +478,14 @@ where
                     ("complete", Some(value)) => serde_json::from_value(value)
                         .map(IdempotencyState::Complete)
                         .map_err(|error| {
-                            EventStoreError::Deserialization(format!(
+                            EventStoreError::deserialization(format!(
                                 "idempotent committed events JSON: {error}"
                             ))
                         }),
-                    ("complete", None) => Err(EventStoreError::Deserialization(
+                    ("complete", None) => Err(EventStoreError::deserialization(
                         "completed idempotency row is missing value".to_owned(),
                     )),
-                    (state, _) => Err(EventStoreError::Deserialization(format!(
+                    (state, _) => Err(EventStoreError::deserialization(format!(
                         "unknown idempotency state: {state}"
                     ))),
                 }
@@ -570,7 +570,7 @@ where
         match (state.as_str(), value) {
             ("complete", Some(value)) => {
                 let committed = serde_json::from_value(value).map_err(|error| {
-                    EventStoreError::Deserialization(format!(
+                    EventStoreError::deserialization(format!(
                         "idempotent committed events JSON: {error}"
                     ))
                 })?;
@@ -579,7 +579,7 @@ where
             }
             ("complete", None) => {
                 return Ok(Err(IdempotentAppendError::Store(
-                    EventStoreError::Deserialization(
+                    EventStoreError::deserialization(
                         "completed idempotency row is missing value".to_owned(),
                     ),
                 )));
@@ -591,7 +591,7 @@ where
             }
             (state, _) => {
                 return Ok(Err(IdempotentAppendError::Store(
-                    EventStoreError::Deserialization(format!("unknown idempotency state: {state}")),
+                    EventStoreError::deserialization(format!("unknown idempotency state: {state}")),
                 )));
             }
         }
@@ -628,7 +628,7 @@ where
         .and_then(|row| row.try_get(0))
         .map_err(map_postgres_error)?;
     let actual_revision = u64::try_from(actual_revision).map_err(|_| {
-        EventStoreError::Deserialization("stored revision cannot be negative".to_owned())
+        EventStoreError::deserialization("stored revision cannot be negative".to_owned())
     })?;
     check_expected_revision(expected_revision, actual_revision)?;
 
@@ -644,9 +644,9 @@ where
     for (index, event) in prepared.into_iter().enumerate() {
         let revision = actual_revision + index as u64 + 1;
         let revision_i64 = i64::try_from(revision)
-            .map_err(|_| EventStoreError::Serialization("revision exceeds BIGINT".to_owned()))?;
+            .map_err(|_| EventStoreError::serialization("revision exceeds BIGINT".to_owned()))?;
         let event_version_i32 = i32::try_from(event.event_version)
-            .map_err(|_| EventStoreError::Serialization("event_version exceeds INT".to_owned()))?;
+            .map_err(|_| EventStoreError::serialization("event_version exceeds INT".to_owned()))?;
         let row = transaction
             .query_one(
                 &insert,
@@ -667,7 +667,7 @@ where
             })?;
         let sequence: i64 = row.try_get(0).map_err(map_postgres_error)?;
         let sequence = u64::try_from(sequence).map_err(|_| {
-            EventStoreError::Deserialization("PostgreSQL sequence cannot be negative".to_owned())
+            EventStoreError::deserialization("PostgreSQL sequence cannot be negative".to_owned())
         })?;
 
         committed.push(EventEnvelope::new(
@@ -685,7 +685,7 @@ where
     }
 
     let value_json = serde_json::to_value(&committed).map_err(|error| {
-        EventStoreError::Serialization(format!("idempotent committed events JSON: {error}"))
+        EventStoreError::serialization(format!("idempotent committed events JSON: {error}"))
     })?;
     let complete = format!(
         "UPDATE {idempotency_table} SET state = 'complete', value = $2::jsonb, updated_at_ms = $3
@@ -716,7 +716,7 @@ where
         let aggregate_id = aggregate_id.clone();
         tokio::task::spawn_blocking(move || EventStore::load(&this, &aggregate_id))
             .await
-            .map_err(|error| EventStoreError::Backend(error.to_string()))?
+            .map_err(|error| EventStoreError::backend(error.to_string()))?
     }
 
     async fn load_after_revision(
@@ -730,7 +730,7 @@ where
             EventStore::load_after_revision(&this, &aggregate_id, revision)
         })
         .await
-        .map_err(|error| EventStoreError::Backend(error.to_string()))?
+        .map_err(|error| EventStoreError::backend(error.to_string()))?
     }
 
     async fn append(
@@ -745,7 +745,7 @@ where
             EventStore::append(&this, &aggregate_id, expected_revision, events)
         })
         .await
-        .map_err(|error| EventStoreError::Backend(error.to_string()))?
+        .map_err(|error| EventStoreError::backend(error.to_string()))?
     }
 
     async fn load_global_after(
@@ -755,7 +755,7 @@ where
         let this = self.clone();
         tokio::task::spawn_blocking(move || EventStore::load_global_after(&this, sequence))
             .await
-            .map_err(|error| EventStoreError::Backend(error.to_string()))?
+            .map_err(|error| EventStoreError::backend(error.to_string()))?
     }
 
     async fn load_global_after_limited(
@@ -768,7 +768,7 @@ where
             EventStore::load_global_after_limited(&this, sequence, limit)
         })
         .await
-        .map_err(|error| EventStoreError::Backend(error.to_string()))?
+        .map_err(|error| EventStoreError::backend(error.to_string()))?
     }
 }
 
@@ -790,7 +790,7 @@ where
             AtomicIdempotentEventStore::load_idempotent(&this, &idempotency_key)
         })
         .await
-        .map_err(|error| EventStoreError::Backend(error.to_string()))?
+        .map_err(|error| EventStoreError::backend(error.to_string()))?
     }
 
     async fn append_idempotent(
@@ -813,7 +813,7 @@ where
         })
         .await
         .map_err(|error| {
-            IdempotentAppendError::Store(EventStoreError::Backend(error.to_string()))
+            IdempotentAppendError::Store(EventStoreError::backend(error.to_string()))
         })?
     }
 }
@@ -876,28 +876,28 @@ where
     let recorded_at_ms: i64 = row.try_get(9).map_err(map_postgres_error)?;
 
     let revision = u64::try_from(revision).map_err(|_| {
-        EventStoreError::Deserialization("stored revision cannot be negative".to_owned())
+        EventStoreError::deserialization("stored revision cannot be negative".to_owned())
     })?;
     let sequence = u64::try_from(sequence).map_err(|_| {
-        EventStoreError::Deserialization("PostgreSQL sequence cannot be negative".to_owned())
+        EventStoreError::deserialization("PostgreSQL sequence cannot be negative".to_owned())
     })?;
     let event_version = u32::try_from(event_version).map_err(|_| {
-        EventStoreError::Deserialization("event_version cannot be negative".to_owned())
+        EventStoreError::deserialization("event_version cannot be negative".to_owned())
     })?;
     let aggregate_id = deserialize_id(&aggregate_id)?;
 
     let payload_bytes = serde_json::to_vec(&payload_val).map_err(|error| {
-        EventStoreError::Deserialization(format!(
+        EventStoreError::deserialization(format!(
             "payload serialization for upcasting failed: {error}"
         ))
     })?;
 
     let (event_version, upcasted_bytes) = upcasters
         .upcast(&event_type, event_version, payload_bytes)
-        .map_err(|err| EventStoreError::Deserialization(err.to_string()))?;
+        .map_err(|err| EventStoreError::deserialization(err.to_string()))?;
 
     let payload = serde_json::from_slice(&upcasted_bytes)
-        .map_err(|error| EventStoreError::Deserialization(format!("payload JSON: {error}")))?;
+        .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
 
     let payload = deserialize_payload(&event_id, &event_type, payload)?;
     let metadata = deserialize_metadata(&event_id, metadata)?;
@@ -936,7 +936,12 @@ fn map_postgres_insert_error(
 }
 
 fn map_postgres_error(error: ::postgres::Error) -> EventStoreError {
-    EventStoreError::backend_with_source(error.to_string(), error)
+    let code = error.code().map(|state| state.code().to_owned());
+    let mapped = EventStoreError::backend_with_source(error.to_string(), error);
+    match code {
+        Some(code) => mapped.with_code(code),
+        None => mapped,
+    }
 }
 
 /// Postgres checkpoint store implementation.
@@ -1005,7 +1010,7 @@ impl crate::projection::CheckpointStore for PostgresCheckpointStore {
             if let Some(row) = rows.first() {
                 let sequence: i64 = row.get(0);
                 let sequence = u64::try_from(sequence).map_err(|_| {
-                    EventStoreError::Deserialization(
+                    EventStoreError::deserialization(
                         "Postgres checkpoint cannot be negative".to_owned(),
                     )
                 })?;
@@ -1024,7 +1029,7 @@ impl crate::projection::CheckpointStore for PostgresCheckpointStore {
             table = self.table_name
         );
         let sequence_i64 = i64::try_from(sequence)
-            .map_err(|_| EventStoreError::Deserialization("checkpoint exceeds i64".to_owned()))?;
+            .map_err(|_| EventStoreError::deserialization("checkpoint exceeds i64".to_owned()))?;
         self.pool.write(|client| {
             client
                 .execute(&sql, &[&projection_name, &sequence_i64])
@@ -1046,7 +1051,7 @@ impl crate::projection::AsyncCheckpointStore for PostgresCheckpointStore {
             crate::projection::CheckpointStore::load_checkpoint(&this, &name)
         })
         .await
-        .map_err(|e| EventStoreError::Backend(e.to_string()))?
+        .map_err(|e| EventStoreError::backend(e.to_string()))?
     }
 
     async fn save_checkpoint(
@@ -1060,7 +1065,7 @@ impl crate::projection::AsyncCheckpointStore for PostgresCheckpointStore {
             crate::projection::CheckpointStore::save_checkpoint(&this, &name, sequence)
         })
         .await
-        .map_err(|e| EventStoreError::Backend(e.to_string()))?
+        .map_err(|e| EventStoreError::backend(e.to_string()))?
     }
 }
 
@@ -1170,14 +1175,14 @@ where
                 ("pending", _) => Ok(Some(IdempotencyState::Pending)),
                 ("complete", Some(value)) => {
                     let value = serde_json::from_value(value).map_err(|error| {
-                        EventStoreError::Deserialization(format!("idempotency value JSON: {error}"))
+                        EventStoreError::deserialization(format!("idempotency value JSON: {error}"))
                     })?;
                     Ok(Some(IdempotencyState::Complete(value)))
                 }
-                ("complete", None) => Err(EventStoreError::Deserialization(
+                ("complete", None) => Err(EventStoreError::deserialization(
                     "completed idempotency row is missing value".to_owned(),
                 )),
-                (state, _) => Err(EventStoreError::Deserialization(format!(
+                (state, _) => Err(EventStoreError::deserialization(format!(
                     "unknown idempotency state: {state}"
                 ))),
             }
@@ -1203,7 +1208,7 @@ where
     fn save(&self, key: IdempotencyKey, value: V) -> Result<(), Self::Error> {
         let updated_at_ms = system_time_to_millis(SystemTime::now())?;
         let value_json = serde_json::to_value(value).map_err(|error| {
-            EventStoreError::Serialization(format!("idempotency value JSON: {error}"))
+            EventStoreError::serialization(format!("idempotency value JSON: {error}"))
         })?;
         let sql = format!(
             "INSERT INTO {} (idempotency_key, state, value, updated_at_ms)
@@ -1347,15 +1352,15 @@ where
             let metadata: serde_json::Value = row.try_get(2).map_err(map_postgres_error)?;
             let recorded_at_ms: i64 = row.try_get(3).map_err(map_postgres_error)?;
             let revision = u64::try_from(revision).map_err(|_| {
-                EventStoreError::Deserialization(
+                EventStoreError::deserialization(
                     "Postgres snapshot revision cannot be negative".to_owned(),
                 )
             })?;
             let state = serde_json::from_value(state).map_err(|error| {
-                EventStoreError::Deserialization(format!("snapshot state JSON: {error}"))
+                EventStoreError::deserialization(format!("snapshot state JSON: {error}"))
             })?;
             let metadata = serde_json::from_value(metadata).map_err(|error| {
-                EventStoreError::Deserialization(format!("snapshot metadata JSON: {error}"))
+                EventStoreError::deserialization(format!("snapshot metadata JSON: {error}"))
             })?;
             let recorded_at = millis_to_system_time(recorded_at_ms)?;
             let aggregate_id = deserialize_id(&aggregate_id)?;
@@ -1383,13 +1388,13 @@ where
 
         let aggregate_id = serialize_id(&snapshot.aggregate_id)?;
         let revision_i64 = i64::try_from(snapshot.revision).map_err(|_| {
-            EventStoreError::Serialization("snapshot revision exceeds i64".to_owned())
+            EventStoreError::serialization("snapshot revision exceeds i64".to_owned())
         })?;
         let state_json = serde_json::to_value(&snapshot.state).map_err(|error| {
-            EventStoreError::Serialization(format!("snapshot state JSON: {error}"))
+            EventStoreError::serialization(format!("snapshot state JSON: {error}"))
         })?;
         let metadata_json = serde_json::to_value(&snapshot.metadata).map_err(|error| {
-            EventStoreError::Serialization(format!("snapshot metadata JSON: {error}"))
+            EventStoreError::serialization(format!("snapshot metadata JSON: {error}"))
         })?;
         let recorded_at_ms = system_time_to_millis(snapshot.recorded_at)?;
         let sql = format!(
@@ -1439,14 +1444,14 @@ where
         let aggregate_id = aggregate_id.clone();
         tokio::task::spawn_blocking(move || SnapshotStore::load_snapshot(&this, &aggregate_id))
             .await
-            .map_err(|e| EventStoreError::Backend(e.to_string()))?
+            .map_err(|e| EventStoreError::backend(e.to_string()))?
     }
 
     async fn save_snapshot(&self, snapshot: Snapshot<A>) -> Result<(), Self::Error> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || SnapshotStore::save_snapshot(&this, snapshot))
             .await
-            .map_err(|e| EventStoreError::Backend(e.to_string()))?
+            .map_err(|e| EventStoreError::backend(e.to_string()))?
     }
 }
 
@@ -1463,21 +1468,21 @@ where
         let key = key.clone();
         tokio::task::spawn_blocking(move || IdempotencyStore::load(&this, &key))
             .await
-            .map_err(|e| EventStoreError::Backend(e.to_string()))?
+            .map_err(|e| EventStoreError::backend(e.to_string()))?
     }
 
     async fn reserve(&self, key: IdempotencyKey) -> Result<bool, Self::Error> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || IdempotencyStore::reserve(&this, key))
             .await
-            .map_err(|e| EventStoreError::Backend(e.to_string()))?
+            .map_err(|e| EventStoreError::backend(e.to_string()))?
     }
 
     async fn save(&self, key: IdempotencyKey, value: V) -> Result<(), Self::Error> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || IdempotencyStore::save(&this, key, value))
             .await
-            .map_err(|e| EventStoreError::Backend(e.to_string()))?
+            .map_err(|e| EventStoreError::backend(e.to_string()))?
     }
 
     async fn remove(&self, key: &IdempotencyKey) -> Result<(), Self::Error> {
@@ -1485,6 +1490,6 @@ where
         let key = key.clone();
         tokio::task::spawn_blocking(move || IdempotencyStore::remove(&this, &key))
             .await
-            .map_err(|e| EventStoreError::Backend(e.to_string()))?
+            .map_err(|e| EventStoreError::backend(e.to_string()))?
     }
 }

@@ -42,7 +42,6 @@ use ddd_cqrs_es::Aggregate;
 pub struct BankAccount {
     id: Option<String>,
     balance: u64,
-    revision: u64,
 }
 
 impl Aggregate for BankAccount {
@@ -55,15 +54,10 @@ impl Aggregate for BankAccount {
         "bank_account"
     }
 
-    fn revision(&self) -> u64 {
-        self.revision
-    }
-
     fn new() -> Self {
         Self {
             id: None,
             balance: 0,
-            revision: 0,
         }
     }
 

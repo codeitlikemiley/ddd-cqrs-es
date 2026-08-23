@@ -57,7 +57,6 @@ where
 /// #     type Event = MyEvent;
 /// #     type Error = ();
 /// #     fn aggregate_type() -> &'static str { "my_aggregate" }
-/// #     fn revision(&self) -> u64 { 0 }
 /// #     fn new() -> Self { MyAggregate }
 /// #     fn apply(&mut self, _event: &Self::Event) {}
 /// #     fn handle(&self, _command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> { Ok(vec![]) }

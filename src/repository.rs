@@ -106,16 +106,15 @@ pub type AtomicIdempotentRepositoryResult<A, S, T> = Result<
 /// # impl DomainEvent for CounterEvent {
 /// #     fn event_type(&self) -> &'static str { "counter_created" }
 /// # }
-/// # struct CounterAggregate { revision: u64 }
+/// # struct CounterAggregate;
 /// # impl Aggregate for CounterAggregate {
 /// #     type Id = String;
 /// #     type Command = ();
 /// #     type Event = CounterEvent;
 /// #     type Error = ();
 /// #     fn aggregate_type() -> &'static str { "counter" }
-/// #     fn revision(&self) -> u64 { self.revision }
-/// #     fn new() -> Self { CounterAggregate { revision: 0 } }
-/// #     fn apply(&mut self, _event: &Self::Event) { self.revision += 1; }
+/// #     fn new() -> Self { CounterAggregate }
+/// #     fn apply(&mut self, _event: &Self::Event) {}
 /// #     fn handle(&self, _command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> { Ok(vec![CounterEvent::Created]) }
 /// # }
 ///

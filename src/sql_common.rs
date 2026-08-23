@@ -24,13 +24,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 pub(crate) fn validate_table_name(table_name: &str) -> Result<(), EventStoreError> {
     let mut chars = table_name.chars();
     let Some(first) = chars.next() else {
-        return Err(EventStoreError::Backend(
+        return Err(EventStoreError::backend(
             "SQL event table name cannot be empty".to_owned(),
         ));
     };
 
     if !(first == '_' || first.is_ascii_alphabetic()) {
-        return Err(EventStoreError::Backend(format!(
+        return Err(EventStoreError::backend(format!(
             "invalid SQL event table name `{table_name}`"
         )));
     }
@@ -38,7 +38,7 @@ pub(crate) fn validate_table_name(table_name: &str) -> Result<(), EventStoreErro
     if chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric()) {
         Ok(())
     } else {
-        Err(EventStoreError::Backend(format!(
+        Err(EventStoreError::backend(format!(
             "invalid SQL event table name `{table_name}`"
         )))
     }
@@ -82,7 +82,7 @@ pub(crate) fn system_time_to_millis(recorded_at: SystemTime) -> Result<i64, Even
     })?;
 
     i64::try_from(duration.as_millis()).map_err(|_| {
-        EventStoreError::Serialization("recorded_at timestamp exceeds i64 millis".to_owned())
+        EventStoreError::serialization("recorded_at timestamp exceeds i64 millis".to_owned())
     })
 }
 
@@ -94,7 +94,7 @@ pub(crate) fn system_time_to_millis(recorded_at: SystemTime) -> Result<i64, Even
 ))]
 pub(crate) fn millis_to_system_time(millis: i64) -> Result<SystemTime, EventStoreError> {
     let millis = u64::try_from(millis).map_err(|_| {
-        EventStoreError::Deserialization("recorded_at_ms cannot be negative".to_owned())
+        EventStoreError::deserialization("recorded_at_ms cannot be negative".to_owned())
     })?;
 
     Ok(UNIX_EPOCH + Duration::from_millis(millis))

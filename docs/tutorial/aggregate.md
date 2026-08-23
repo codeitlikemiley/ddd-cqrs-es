@@ -11,7 +11,7 @@ The aggregate root maintains our application's internal state. This state is reb
 
 ## 1. Defining the Aggregate Root Struct
 
-Create your aggregate root struct. It should contain fields representing the internal state (such as `balance`, `owner`, or `id`) along with a `revision` counter that tracks the version of the event stream:
+Create your aggregate root struct. It should contain fields representing the internal state (such as `balance`, `owner`, or `id`). The framework tracks the stream revision for you via `LoadedAggregate`:
 
 ```rust
 // =========================================================================
@@ -24,7 +24,6 @@ pub struct BankAccount {
     id: Option<String>,
     owner: Option<String>,
     balance: u64,
-    revision: u64,
 }
 
 impl BankAccount {
@@ -55,11 +54,6 @@ impl Aggregate for BankAccount {
         "bank_account"
     }
 
-    /// Current version number of the aggregate (tracks replayed events count).
-    fn revision(&self) -> u64 {
-        self.revision
-    }
-
     /// Factory method to initialize an empty aggregate prior to state replay.
     fn new() -> Self {
         Self::default()
@@ -81,8 +75,6 @@ impl Aggregate for BankAccount {
                 self.balance -= amount;
             }
         }
-        // Increment the revision counter to track stream version
-        self.revision += 1;
     }
 
     /// Handles incoming commands against the current replayed state.

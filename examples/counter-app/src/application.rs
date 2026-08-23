@@ -104,7 +104,7 @@ fn is_retryable_counter_write_conflict(
 ) -> bool {
     match error {
         ddd_cqrs_es::RepositoryError::Concurrency(_) => true,
-        ddd_cqrs_es::RepositoryError::Store(ddd_cqrs_es::EventStoreError::Backend(message)) => {
+        ddd_cqrs_es::RepositoryError::Store(ddd_cqrs_es::EventStoreError::Backend { message, .. }) => {
             let message = message.to_ascii_lowercase();
             (message.contains("unique")
                 || message.contains("duplicate")

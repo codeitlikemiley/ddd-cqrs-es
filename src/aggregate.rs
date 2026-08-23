@@ -28,7 +28,6 @@ use std::hash::Hash;
 ///
 /// struct Counter {
 ///     value: u32,
-///     revision: u64,
 /// }
 ///
 /// impl Aggregate for Counter {
@@ -38,14 +37,12 @@ use std::hash::Hash;
 ///     type Error = &'static str;
 ///
 ///     fn aggregate_type() -> &'static str { "counter" }
-///     fn revision(&self) -> u64 { self.revision }
-///     fn new() -> Self { Self { value: 0, revision: 0 } }
+///     fn new() -> Self { Self { value: 0 } }
 ///
 ///     fn apply(&mut self, event: &Self::Event) {
 ///         match event {
 ///             CounterEvent::Incremented(by) => self.value += by,
 ///         }
-///         self.revision += 1;
 ///     }
 ///
 ///     fn handle(&self, command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> {
@@ -72,9 +69,6 @@ pub trait Aggregate: Sized {
 
     /// Stable aggregate type name used in event envelopes.
     fn aggregate_type() -> &'static str;
-
-    /// Returns the aggregate's own revision if it tracks one.
-    fn revision(&self) -> Revision;
 
     /// Evolves aggregate state from a previously decided domain event.
     fn apply(&mut self, event: &Self::Event);

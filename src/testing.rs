@@ -28,18 +28,16 @@ use std::fmt::Debug;
 /// #     fn event_type(&self) -> &'static str { "incremented" }
 /// # }
 /// # #[derive(Clone, Debug, Default, PartialEq)]
-/// # struct Counter { value: u32, revision: u64 }
+/// # struct Counter { value: u32 }
 /// # impl Aggregate for Counter {
 /// #     type Id = String;
 /// #     type Command = u32;
 /// #     type Event = CounterEvent;
 /// #     type Error = &'static str;
 /// #     fn aggregate_type() -> &'static str { "counter" }
-/// #     fn revision(&self) -> u64 { self.revision }
 /// #     fn new() -> Self { Self::default() }
 /// #     fn apply(&mut self, event: &Self::Event) {
 /// #         match event { CounterEvent::Incremented(by) => self.value += by }
-/// #         self.revision += 1;
 /// #     }
 /// #     fn handle(&self, command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> {
 /// #         if command == 0 { return Err("must be > 0"); }
