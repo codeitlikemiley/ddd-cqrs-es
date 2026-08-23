@@ -1155,7 +1155,7 @@ fn redis_hash_from_items(
     }
 
     let mut hash = BTreeMap::new();
-    for pair in items.chunks_exact(2) {
+    for pair in items.as_chunks::<2>().0 {
         let field = redis_value_string(&pair[0], "Redis hash field")?;
         let value = redis_value_bytes(&pair[1], "Redis hash value")?;
         hash.insert(field, value);
@@ -1361,7 +1361,7 @@ impl RedisAddress {
 
         let (username, password) = auth
             .map(|auth| {
-                let (username, password) = auth.split_once(':').map_or(("", auth), |parts| parts);
+                let (username, password) = auth.split_once(':').unwrap_or(("", auth));
                 (
                     (!username.is_empty()).then(|| username.to_owned()),
                     (!password.is_empty()).then(|| password.to_owned()),
