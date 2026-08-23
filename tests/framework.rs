@@ -2204,6 +2204,69 @@ fn test_postgres_checkpoint_store() {
     let _ = client.execute(&format!("DROP TABLE IF EXISTS {};", table_name), &[]);
 }
 
+#[cfg(feature = "postgres")]
+#[test]
+fn test_postgres_pool_sharing_auxiliary_stores() {
+    let Ok(database_url) = std::env::var("DDD_CQRS_ES_POSTGRES_URL") else {
+        eprintln!("skipping live Postgres pool-sharing test: DDD_CQRS_ES_POSTGRES_URL is not set");
+        return;
+    };
+    use ddd_cqrs_es::{assert_snapshot_store_contract, PostgresEventStore};
+
+    let pid = std::process::id();
+    let events_table = format!("shared_events_{pid}");
+    let checkpoints_table = format!("shared_checkpoints_{pid}");
+    let idempotency_table = format!("shared_idem_{pid}");
+    let snapshots_table = format!("shared_snapshots_{pid}");
+    let tables = [
+        events_table.clone(),
+        checkpoints_table.clone(),
+        idempotency_table.clone(),
+        snapshots_table.clone(),
+    ];
+    let drop_tables = |database_url: &str| {
+        let mut client = postgres::Client::connect(database_url, postgres::NoTls).unwrap();
+        for table in &tables {
+            let _ = client.execute(&format!("DROP TABLE IF EXISTS {};", table), &[]);
+        }
+    };
+    drop_tables(&database_url);
+
+    let store = PostgresEventStore::<Counter>::connect_pooled_with_table_name(
+        &database_url,
+        &events_table,
+        4,
+    )
+    .unwrap();
+
+    let checkpoints = store
+        .checkpoint_store_with_table_name(checkpoints_table.clone())
+        .unwrap();
+    assert_checkpoint_store_contract(checkpoints, "shared_pool_projection");
+
+    let idempotency = store
+        .idempotency_store_with_table_name::<StoredIdempotencyResult>(idempotency_table.clone())
+        .unwrap();
+    assert_sql_idempotency_store_contract(idempotency);
+
+    let snapshots = store
+        .snapshot_store_with_table_name(snapshots_table.clone())
+        .unwrap();
+    let older = Counter {
+        id: Some("shared-counter".to_owned()),
+        value: 1,
+        revision: 1,
+    };
+    let newer = Counter {
+        id: Some("shared-counter".to_owned()),
+        value: 2,
+        revision: 2,
+    };
+    assert_snapshot_store_contract(snapshots, "shared-counter".to_owned(), older, newer);
+
+    drop_tables(&database_url);
+}
+
 #[cfg(feature = "sqlite")]
 #[test]
 fn test_sqlite_sequential_custom_table_initialization() {
@@ -2543,4 +2606,59 @@ fn test_mysql_checkpoint_store() {
     let store = MySqlCheckpointStore::with_table_name(conn, table_name.clone()).unwrap();
 
     assert_checkpoint_store_contract(store, "proj1");
+}
+
+#[cfg(feature = "mysql")]
+#[test]
+fn test_mysql_pool_sharing_auxiliary_stores() {
+    let _guard = MYSQL_TEST_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(db) = mysql_test_db_or_skip("pool-sharing test") else {
+        return;
+    };
+    use ddd_cqrs_es::{assert_snapshot_store_contract, MySqlEventStore};
+
+    let events_table = unique_mysql_table("shared_events");
+    let checkpoints_table = unique_mysql_table("shared_checkpoints");
+    let idempotency_table = unique_mysql_table("shared_idem");
+    let snapshots_table = unique_mysql_table("shared_snapshots");
+    let _cleanup = MySqlTableCleanup::new(
+        &db.test_url,
+        vec![
+            events_table.clone(),
+            checkpoints_table.clone(),
+            idempotency_table.clone(),
+            snapshots_table.clone(),
+        ],
+    );
+
+    let store =
+        MySqlEventStore::<Counter>::connect_pooled_with_table_name(&db.test_url, &events_table, 4)
+            .unwrap();
+
+    let checkpoints = store
+        .checkpoint_store_with_table_name(checkpoints_table.clone())
+        .unwrap();
+    assert_checkpoint_store_contract(checkpoints, "shared_pool_projection");
+
+    let idempotency = store
+        .idempotency_store_with_table_name::<StoredIdempotencyResult>(idempotency_table.clone())
+        .unwrap();
+    assert_sql_idempotency_store_contract(idempotency);
+
+    let snapshots = store
+        .snapshot_store_with_table_name(snapshots_table.clone())
+        .unwrap();
+    let older = Counter {
+        id: Some("shared-counter".to_owned()),
+        value: 1,
+        revision: 1,
+    };
+    let newer = Counter {
+        id: Some("shared-counter".to_owned()),
+        value: 2,
+        revision: 2,
+    };
+    assert_snapshot_store_contract(snapshots, "shared-counter".to_owned(), older, newer);
 }
