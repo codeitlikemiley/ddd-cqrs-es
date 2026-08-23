@@ -333,60 +333,15 @@ where
                 return Ok(Vec::new());
             }
 
-            let insert = format!(
-                "INSERT INTO {table} \
-                 (event_id, aggregate_id, aggregate_type, revision, event_type, event_version, \
-                  payload, metadata, recorded_at_ms) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                table = table_name
-            );
-            let mut committed = Vec::with_capacity(prepared.len());
-
-            for (index, event) in prepared.into_iter().enumerate() {
-                let revision = actual_revision + index as u64 + 1;
-                let revision_i64 = i64::try_from(revision).map_err(|_| {
-                    EventStoreError::serialization("revision exceeds BIGINT".to_owned())
-                })?;
-                let event_version_i32 = i32::try_from(event.event_version).map_err(|_| {
-                    EventStoreError::serialization("event_version exceeds i32".to_owned())
-                })?;
-
-                transaction
-                    .exec_drop(
-                        &insert,
-                        (
-                            event.event_id.as_str(),
-                            &aggregate_id_key,
-                            A::aggregate_type(),
-                            revision_i64,
-                            &event.event_type,
-                            event_version_i32,
-                            &event.payload_json,
-                            &event.metadata_json,
-                            event.recorded_at_ms,
-                        ),
-                    )
-                    .map_err(|error| {
-                        map_mysql_insert_error(error, expected_revision, actual_revision)
-                    })?;
-
-                let sequence = transaction.last_insert_id().ok_or_else(|| {
-                    EventStoreError::backend("MySQL last_insert_id failed".to_owned())
-                })?;
-
-                committed.push(EventEnvelope::new(
-                    event.event_id,
-                    aggregate_id.clone(),
-                    A::aggregate_type(),
-                    revision,
-                    Some(sequence),
-                    event.event_type,
-                    event.event_version,
-                    event.payload,
-                    event.metadata,
-                    event.recorded_at,
-                ));
-            }
+            let committed = insert_prepared_mysql_events::<A>(
+                &mut transaction,
+                &table_name,
+                aggregate_id,
+                &aggregate_id_key,
+                actual_revision,
+                expected_revision,
+                prepared,
+            )?;
 
             transaction.commit().map_err(map_mysql_error)?;
             Ok(committed)
@@ -634,56 +589,15 @@ where
     })?;
     check_expected_revision(expected_revision, actual_revision)?;
 
-    let insert = format!(
-        "INSERT INTO {table} \
-         (event_id, aggregate_id, aggregate_type, revision, event_type, event_version, \
-          payload, metadata, recorded_at_ms) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        table = table_name
-    );
-    let mut committed = Vec::with_capacity(prepared.len());
-
-    for (index, event) in prepared.into_iter().enumerate() {
-        let revision = actual_revision + index as u64 + 1;
-        let revision_i64 = i64::try_from(revision)
-            .map_err(|_| EventStoreError::serialization("revision exceeds BIGINT".to_owned()))?;
-        let event_version_i32 = i32::try_from(event.event_version)
-            .map_err(|_| EventStoreError::serialization("event_version exceeds i32".to_owned()))?;
-
-        transaction
-            .exec_drop(
-                &insert,
-                (
-                    event.event_id.as_str(),
-                    aggregate_id_key,
-                    A::aggregate_type(),
-                    revision_i64,
-                    &event.event_type,
-                    event_version_i32,
-                    &event.payload_json,
-                    &event.metadata_json,
-                    event.recorded_at_ms,
-                ),
-            )
-            .map_err(|error| map_mysql_insert_error(error, expected_revision, actual_revision))?;
-
-        let sequence = transaction
-            .last_insert_id()
-            .ok_or_else(|| EventStoreError::backend("MySQL last_insert_id failed".to_owned()))?;
-
-        committed.push(EventEnvelope::new(
-            event.event_id,
-            aggregate_id.clone(),
-            A::aggregate_type(),
-            revision,
-            Some(sequence),
-            event.event_type,
-            event.event_version,
-            event.payload,
-            event.metadata,
-            event.recorded_at,
-        ));
-    }
+    let committed = insert_prepared_mysql_events::<A>(
+        &mut transaction,
+        table_name,
+        aggregate_id,
+        aggregate_id_key,
+        actual_revision,
+        expected_revision,
+        prepared,
+    )?;
 
     let value_json = serde_json::to_string(&committed).map_err(|error| {
         EventStoreError::serialization(format!("idempotent committed events JSON: {error}"))
@@ -854,6 +768,106 @@ where
             recorded_at_ms,
         })
     }
+}
+
+/// Inserts all prepared events with one multi-row `INSERT`, then reads the
+/// assigned sequences back in a second query, returning the committed
+/// envelopes. Two round trips regardless of event count.
+///
+/// Sequences are read back instead of derived from `last_insert_id` because
+/// InnoDB's interleaved auto-increment lock mode does not guarantee a
+/// consecutive block for every statement shape.
+fn insert_prepared_mysql_events<A>(
+    transaction: &mut mysql::Transaction<'_>,
+    table_name: &str,
+    aggregate_id: &A::Id,
+    aggregate_id_key: &str,
+    actual_revision: u64,
+    expected_revision: ExpectedRevision,
+    prepared: Vec<PreparedMySqlEvent<A::Event>>,
+) -> Result<EventStream<A>, EventStoreError>
+where
+    A: Aggregate,
+{
+    let count = prepared.len();
+    let actual_revision_i64 = i64::try_from(actual_revision)
+        .map_err(|_| EventStoreError::serialization("revision exceeds BIGINT".to_owned()))?;
+    let mut params: Vec<mysql::Value> = Vec::with_capacity(count * 9);
+    for (index, event) in prepared.iter().enumerate() {
+        let revision = actual_revision + index as u64 + 1;
+        let revision_i64 = i64::try_from(revision)
+            .map_err(|_| EventStoreError::serialization("revision exceeds BIGINT".to_owned()))?;
+        let event_version_i32 = i32::try_from(event.event_version)
+            .map_err(|_| EventStoreError::serialization("event_version exceeds i32".to_owned()))?;
+        params.push(event.event_id.as_str().into());
+        params.push(aggregate_id_key.into());
+        params.push(A::aggregate_type().into());
+        params.push(revision_i64.into());
+        params.push(event.event_type.as_str().into());
+        params.push(event_version_i32.into());
+        params.push(event.payload_json.as_str().into());
+        params.push(event.metadata_json.as_str().into());
+        params.push(event.recorded_at_ms.into());
+    }
+
+    let placeholders = vec!["(?, ?, ?, ?, ?, ?, ?, ?, ?)"; count].join(", ");
+    let insert = format!(
+        "INSERT INTO {table} \
+         (event_id, aggregate_id, aggregate_type, revision, event_type, event_version, \
+          payload, metadata, recorded_at_ms) \
+         VALUES {placeholders}",
+        table = table_name
+    );
+    transaction
+        .exec_drop(&insert, params)
+        .map_err(|error| map_mysql_insert_error(error, expected_revision, actual_revision))?;
+
+    let select = format!(
+        "SELECT revision, sequence FROM {table} \
+         WHERE aggregate_type = ? AND aggregate_id = ? AND revision > ?",
+        table = table_name
+    );
+    let rows: Vec<(i64, u64)> = transaction
+        .exec(
+            &select,
+            (A::aggregate_type(), aggregate_id_key, actual_revision_i64),
+        )
+        .map_err(map_mysql_error)?;
+    if rows.len() != count {
+        return Err(EventStoreError::backend(format!(
+            "multi-row insert returned {} of {} sequences",
+            rows.len(),
+            count
+        )));
+    }
+    let sequences: std::collections::HashMap<i64, u64> = rows.into_iter().collect();
+
+    let mut committed = Vec::with_capacity(count);
+    for (index, event) in prepared.into_iter().enumerate() {
+        let revision = actual_revision + index as u64 + 1;
+        let revision_i64 = i64::try_from(revision)
+            .map_err(|_| EventStoreError::serialization("revision exceeds BIGINT".to_owned()))?;
+        let sequence = sequences.get(&revision_i64).copied().ok_or_else(|| {
+            EventStoreError::backend(format!(
+                "multi-row insert returned no sequence for revision {revision}"
+            ))
+        })?;
+
+        committed.push(EventEnvelope::new(
+            event.event_id,
+            aggregate_id.clone(),
+            A::aggregate_type(),
+            revision,
+            Some(sequence),
+            event.event_type,
+            event.event_version,
+            event.payload,
+            event.metadata,
+            event.recorded_at,
+        ));
+    }
+
+    Ok(committed)
 }
 
 fn row_to_envelope<A>(

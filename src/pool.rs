@@ -44,8 +44,32 @@ type Connect<C> = Box<dyn Fn() -> Result<C, EventStoreError> + Send + Sync>;
 
 /// Transport-level failures justify discarding a pooled connection; domain
 /// outcomes (concurrency conflicts, serialization, deserialization) do not.
+///
+/// Backend errors carrying a machine-readable code are evicted only when the
+/// code is connection-related; a statement-level code (unique violation,
+/// syntax error, constraint failure) proves the connection delivered a round
+/// trip and stays pooled. Code-less backend errors are IO-level failures and
+/// keep the conservative eviction.
 fn is_transport_error(error: &EventStoreError) -> bool {
-    matches!(error, EventStoreError::Backend { .. })
+    match error {
+        EventStoreError::Backend {
+            code: Some(code), ..
+        } => is_transport_code(code),
+        EventStoreError::Backend { code: None, .. } => true,
+        _ => false,
+    }
+}
+
+/// Connection-related backend codes: SQLSTATE class 08 (connection
+/// exception), Postgres server-shutdown states, and MySQL connection errnos
+/// (server shutdown/gone, aborted connections, and net read/write timeouts).
+fn is_transport_code(code: &str) -> bool {
+    const MYSQL_TRANSPORT_ERRNOS: &[&str] = &[
+        "1053", "1152", "1159", "1160", "1161", "2002", "2003", "2006", "2013", "2055",
+    ];
+    code.starts_with("08")
+        || matches!(code, "57P01" | "57P02" | "57P03")
+        || MYSQL_TRANSPORT_ERRNOS.contains(&code)
 }
 
 struct PoolState<C> {
@@ -517,5 +541,40 @@ mod tests {
         let second: Result<(), EventStoreError> = pool.write(|_| Ok(()));
         assert!(second.is_ok());
         assert_eq!(connects.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn statement_level_backend_codes_keep_the_connection_pooled() {
+        let connects = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&connects);
+        let pool = ConnectionPool::<()>::pooled(2, move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        });
+
+        // A unique violation proves the server processed the statement, so
+        // the connection is healthy and must be recycled.
+        let result: Result<(), EventStoreError> =
+            pool.write(|_| Err(EventStoreError::backend("duplicate key").with_code("23505")));
+        assert!(result.is_err());
+        pool.write(|_| Ok(())).unwrap();
+        assert_eq!(connects.load(Ordering::SeqCst), 1);
+
+        // A connection-exception SQLSTATE evicts as before.
+        let result: Result<(), EventStoreError> =
+            pool.write(|_| Err(EventStoreError::backend("connection failure").with_code("08006")));
+        assert!(result.is_err());
+        pool.write(|_| Ok(())).unwrap();
+        assert_eq!(connects.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn transport_code_classification_covers_both_backends() {
+        for code in ["08000", "08006", "57P01", "2006", "2013", "1053"] {
+            assert!(super::is_transport_code(code), "{code} should evict");
+        }
+        for code in ["23505", "40001", "1062", "42601", "1213"] {
+            assert!(!super::is_transport_code(code), "{code} should stay pooled");
+        }
     }
 }

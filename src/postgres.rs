@@ -331,61 +331,15 @@ where
                 return Ok(Vec::new());
             }
 
-            let insert = format!(
-                "INSERT INTO {table} \
-                 (event_id, aggregate_id, aggregate_type, revision, event_type, event_version, \
-                  payload, metadata, recorded_at_ms) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING sequence",
-                table = table_name
-            );
-            let mut committed = Vec::with_capacity(prepared.len());
-
-            for (index, event) in prepared.into_iter().enumerate() {
-                let revision = actual_revision + index as u64 + 1;
-                let revision_i64 = i64::try_from(revision).map_err(|_| {
-                    EventStoreError::serialization("revision exceeds BIGINT".to_owned())
-                })?;
-                let event_version_i32 = i32::try_from(event.event_version).map_err(|_| {
-                    EventStoreError::serialization("event_version exceeds INT".to_owned())
-                })?;
-                let row = transaction
-                    .query_one(
-                        &insert,
-                        &[
-                            &event.event_id.as_str(),
-                            &aggregate_id_key,
-                            &A::aggregate_type(),
-                            &revision_i64,
-                            &event.event_type,
-                            &event_version_i32,
-                            &event.payload_json,
-                            &event.metadata_json,
-                            &event.recorded_at_ms,
-                        ],
-                    )
-                    .map_err(|error| {
-                        map_postgres_insert_error(error, expected_revision, actual_revision)
-                    })?;
-                let sequence: i64 = row.try_get(0).map_err(map_postgres_error)?;
-                let sequence = u64::try_from(sequence).map_err(|_| {
-                    EventStoreError::deserialization(
-                        "PostgreSQL sequence cannot be negative".to_owned(),
-                    )
-                })?;
-
-                committed.push(EventEnvelope::new(
-                    event.event_id,
-                    aggregate_id.clone(),
-                    A::aggregate_type(),
-                    revision,
-                    Some(sequence),
-                    event.event_type,
-                    event.event_version,
-                    event.payload,
-                    event.metadata,
-                    event.recorded_at,
-                ));
-            }
+            let committed = insert_prepared_postgres_events::<A>(
+                &mut transaction,
+                &table_name,
+                aggregate_id,
+                &aggregate_id_key,
+                actual_revision,
+                expected_revision,
+                prepared,
+            )?;
 
             transaction.commit().map_err(map_postgres_error)?;
             Ok(committed)
@@ -632,57 +586,15 @@ where
     })?;
     check_expected_revision(expected_revision, actual_revision)?;
 
-    let insert = format!(
-        "INSERT INTO {table} \
-         (event_id, aggregate_id, aggregate_type, revision, event_type, event_version, \
-          payload, metadata, recorded_at_ms) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING sequence",
-        table = table_name
-    );
-    let mut committed = Vec::with_capacity(prepared.len());
-
-    for (index, event) in prepared.into_iter().enumerate() {
-        let revision = actual_revision + index as u64 + 1;
-        let revision_i64 = i64::try_from(revision)
-            .map_err(|_| EventStoreError::serialization("revision exceeds BIGINT".to_owned()))?;
-        let event_version_i32 = i32::try_from(event.event_version)
-            .map_err(|_| EventStoreError::serialization("event_version exceeds INT".to_owned()))?;
-        let row = transaction
-            .query_one(
-                &insert,
-                &[
-                    &event.event_id.as_str(),
-                    &aggregate_id_key,
-                    &A::aggregate_type(),
-                    &revision_i64,
-                    &event.event_type,
-                    &event_version_i32,
-                    &event.payload_json,
-                    &event.metadata_json,
-                    &event.recorded_at_ms,
-                ],
-            )
-            .map_err(|error| {
-                map_postgres_insert_error(error, expected_revision, actual_revision)
-            })?;
-        let sequence: i64 = row.try_get(0).map_err(map_postgres_error)?;
-        let sequence = u64::try_from(sequence).map_err(|_| {
-            EventStoreError::deserialization("PostgreSQL sequence cannot be negative".to_owned())
-        })?;
-
-        committed.push(EventEnvelope::new(
-            event.event_id,
-            aggregate_id.clone(),
-            A::aggregate_type(),
-            revision,
-            Some(sequence),
-            event.event_type,
-            event.event_version,
-            event.payload,
-            event.metadata,
-            event.recorded_at,
-        ));
-    }
+    let committed = insert_prepared_postgres_events::<A>(
+        &mut transaction,
+        table_name,
+        aggregate_id,
+        aggregate_id_key,
+        actual_revision,
+        expected_revision,
+        prepared,
+    )?;
 
     let value_json = serde_json::to_value(&committed).map_err(|error| {
         EventStoreError::serialization(format!("idempotent committed events JSON: {error}"))
@@ -853,6 +765,126 @@ where
             recorded_at_ms,
         })
     }
+}
+
+/// Inserts all prepared events with one multi-row `INSERT ... RETURNING`
+/// round trip and returns the committed envelopes.
+///
+/// Sequences are matched back to events by revision, so no assumption is made
+/// about the ordering of `RETURNING` rows.
+fn insert_prepared_postgres_events<A>(
+    transaction: &mut ::postgres::Transaction<'_>,
+    table_name: &str,
+    aggregate_id: &A::Id,
+    aggregate_id_key: &str,
+    actual_revision: u64,
+    expected_revision: ExpectedRevision,
+    prepared: Vec<PreparedPostgresEvent<A::Event>>,
+) -> Result<EventStream<A>, EventStoreError>
+where
+    A: Aggregate,
+{
+    let count = prepared.len();
+    let mut event_ids = Vec::with_capacity(count);
+    let mut revisions = Vec::with_capacity(count);
+    let mut event_types = Vec::with_capacity(count);
+    let mut event_versions = Vec::with_capacity(count);
+    let mut payloads = Vec::with_capacity(count);
+    let mut metadata_values = Vec::with_capacity(count);
+    let mut recorded_at_values = Vec::with_capacity(count);
+
+    for (index, event) in prepared.iter().enumerate() {
+        let revision = actual_revision + index as u64 + 1;
+        revisions.push(
+            i64::try_from(revision).map_err(|_| {
+                EventStoreError::serialization("revision exceeds BIGINT".to_owned())
+            })?,
+        );
+        event_versions.push(
+            i32::try_from(event.event_version).map_err(|_| {
+                EventStoreError::serialization("event_version exceeds INT".to_owned())
+            })?,
+        );
+        event_ids.push(event.event_id.as_str());
+        event_types.push(event.event_type.as_str());
+        payloads.push(&event.payload_json);
+        metadata_values.push(&event.metadata_json);
+        recorded_at_values.push(event.recorded_at_ms);
+    }
+
+    let insert = format!(
+        "INSERT INTO {table} \
+         (event_id, aggregate_id, aggregate_type, revision, event_type, event_version, \
+          payload, metadata, recorded_at_ms) \
+         SELECT u.event_id, $2, $3, u.revision, u.event_type, u.event_version, \
+                u.payload, u.metadata, u.recorded_at_ms \
+         FROM UNNEST($1::text[], $4::bigint[], $5::text[], $6::int[], $7::jsonb[], \
+                     $8::jsonb[], $9::bigint[]) \
+              AS u(event_id, revision, event_type, event_version, payload, metadata, \
+                   recorded_at_ms) \
+         RETURNING revision, sequence",
+        table = table_name
+    );
+    let rows = transaction
+        .query(
+            &insert,
+            &[
+                &event_ids,
+                &aggregate_id_key,
+                &A::aggregate_type(),
+                &revisions,
+                &event_types,
+                &event_versions,
+                &payloads,
+                &metadata_values,
+                &recorded_at_values,
+            ],
+        )
+        .map_err(|error| map_postgres_insert_error(error, expected_revision, actual_revision))?;
+    if rows.len() != count {
+        return Err(EventStoreError::backend(format!(
+            "multi-row insert returned {} of {} sequences",
+            rows.len(),
+            count
+        )));
+    }
+
+    let mut sequences = std::collections::HashMap::with_capacity(count);
+    for row in rows {
+        let revision: i64 = row.try_get(0).map_err(map_postgres_error)?;
+        let sequence: i64 = row.try_get(1).map_err(map_postgres_error)?;
+        sequences.insert(revision, sequence);
+    }
+
+    let mut committed = Vec::with_capacity(count);
+    for (index, event) in prepared.into_iter().enumerate() {
+        let revision = actual_revision + index as u64 + 1;
+        let revision_i64 = i64::try_from(revision)
+            .map_err(|_| EventStoreError::serialization("revision exceeds BIGINT".to_owned()))?;
+        let sequence = sequences.get(&revision_i64).copied().ok_or_else(|| {
+            EventStoreError::backend(format!(
+                "multi-row insert returned no sequence for revision {revision}"
+            ))
+        })?;
+        let sequence = u64::try_from(sequence).map_err(|_| {
+            EventStoreError::deserialization("PostgreSQL sequence cannot be negative".to_owned())
+        })?;
+
+        committed.push(EventEnvelope::new(
+            event.event_id,
+            aggregate_id.clone(),
+            A::aggregate_type(),
+            revision,
+            Some(sequence),
+            event.event_type,
+            event.event_version,
+            event.payload,
+            event.metadata,
+            event.recorded_at,
+        ));
+    }
+
+    Ok(committed)
 }
 
 fn row_to_envelope<A>(
