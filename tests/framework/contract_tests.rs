@@ -51,12 +51,10 @@ fn sqlite_snapshot_store_persists_latest_snapshot() {
     let older = Counter {
         id: Some(counter_id.clone()),
         value: 1,
-        revision: 1,
     };
     let newer = Counter {
         id: Some(counter_id.clone()),
         value: 7,
-        revision: 2,
     };
 
     ddd_cqrs_es::assert_snapshot_store_contract::<Counter, _>(

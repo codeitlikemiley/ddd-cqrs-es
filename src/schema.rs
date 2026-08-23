@@ -467,7 +467,7 @@ impl SchemaMigrator {
             );",
         );
         conn.execute(&create_mig_table, [])
-            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+            .map_err(|e| EventStoreError::backend(e.to_string()))?;
 
         // Check if the 'table_name' column exists in SQLite migrations table
         let pragma_query = self
@@ -475,21 +475,21 @@ impl SchemaMigrator {
             .interpolate("PRAGMA table_info({migrations_table});");
         let mut stmt = conn
             .prepare(&pragma_query)
-            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+            .map_err(|e| EventStoreError::backend(e.to_string()))?;
         let columns: HashSet<String> = stmt
             .query_map([], |row| row.get::<_, String>(1))
-            .map_err(|e| EventStoreError::Backend(e.to_string()))?
+            .map_err(|e| EventStoreError::backend(e.to_string()))?
             .collect::<Result<HashSet<String>, _>>()
-            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+            .map_err(|e| EventStoreError::backend(e.to_string()))?;
 
         let has_col = columns.contains("table_name");
         if !has_col && !columns.is_empty() {
             // Drop and recreate table with the new schema
             let drop_table = self.config.interpolate("DROP TABLE {migrations_table};");
             conn.execute(&drop_table, [])
-                .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+                .map_err(|e| EventStoreError::backend(e.to_string()))?;
             conn.execute(&create_mig_table, [])
-                .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+                .map_err(|e| EventStoreError::backend(e.to_string()))?;
         }
 
         // 2. Fetch applied migrations
@@ -498,16 +498,16 @@ impl SchemaMigrator {
             .interpolate("SELECT version, table_name FROM {migrations_table};");
         let mut stmt = conn
             .prepare(&query_applied)
-            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+            .map_err(|e| EventStoreError::backend(e.to_string()))?;
         let applied_pairs: HashSet<(i32, String)> = stmt
             .query_map([], |row| {
                 let v: i32 = row.get(0)?;
                 let t: String = row.get(1)?;
                 Ok((v, t))
             })
-            .map_err(|e| EventStoreError::Backend(e.to_string()))?
+            .map_err(|e| EventStoreError::backend(e.to_string()))?
             .collect::<Result<HashSet<(i32, String)>, _>>()
-            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+            .map_err(|e| EventStoreError::backend(e.to_string()))?;
 
         // 3. Execute unapplied migrations
         let migrations = get_migrations(SqlDialect::Sqlite);
@@ -517,7 +517,7 @@ impl SchemaMigrator {
                 // Execute migration SQL (exec batch to support multiple statements like CREATE INDEX)
                 let sql = self.config.interpolate(m.up_sql);
                 conn.execute_batch(&sql)
-                    .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+                    .map_err(|e| EventStoreError::backend(e.to_string()))?;
 
                 // Version 2 compatibility copy
                 if m.version == 2 {
@@ -533,7 +533,7 @@ impl SchemaMigrator {
                              SELECT projection_name, last_sequence FROM checkpoints;"
                         );
                         conn.execute(&copy_sql, [])
-                            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+                            .map_err(|e| EventStoreError::backend(e.to_string()))?;
                     }
                 }
 
@@ -549,7 +549,7 @@ impl SchemaMigrator {
                     &insert_mig,
                     rusqlite::params![m.version, target_table, m.description, now_ms],
                 )
-                .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+                .map_err(|e| EventStoreError::backend(e.to_string()))?;
             }
         }
 
@@ -568,7 +568,7 @@ impl SchemaMigrator {
         // database-wide advisory lock.
         client
             .query("SELECT pg_advisory_lock($1);", &[&POSTGRES_SCHEMA_LOCK_KEY])
-            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+            .map_err(|e| EventStoreError::backend(e.to_string()))?;
         let result = self.run_postgres_locked(client);
         let unlock = client
             .query(
@@ -576,7 +576,7 @@ impl SchemaMigrator {
                 &[&POSTGRES_SCHEMA_LOCK_KEY],
             )
             .map(drop)
-            .map_err(|e| EventStoreError::Backend(e.to_string()));
+            .map_err(|e| EventStoreError::backend(e.to_string()));
         result.and(unlock)
     }
 
@@ -596,7 +596,7 @@ impl SchemaMigrator {
         );
         client
             .batch_execute(&create_mig_table)
-            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+            .map_err(|e| EventStoreError::backend(e.to_string()))?;
 
         // Check if table_name column exists
         let check_col = self.config.interpolate(
@@ -617,10 +617,10 @@ impl SchemaMigrator {
             let drop_table = self.config.interpolate("DROP TABLE {migrations_table};");
             client
                 .batch_execute(&drop_table)
-                .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+                .map_err(|e| EventStoreError::backend(e.to_string()))?;
             client
                 .batch_execute(&create_mig_table)
-                .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+                .map_err(|e| EventStoreError::backend(e.to_string()))?;
         }
 
         // 2. Fetch applied migrations
@@ -629,7 +629,7 @@ impl SchemaMigrator {
             .interpolate("SELECT version, table_name FROM {migrations_table};");
         let rows = client
             .query(&query_applied, &[])
-            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+            .map_err(|e| EventStoreError::backend(e.to_string()))?;
         let applied_pairs: HashSet<(i32, String)> = rows
             .into_iter()
             .map(|row| (row.get(0), row.get(1)))
@@ -643,7 +643,7 @@ impl SchemaMigrator {
                 let sql = self.config.interpolate(m.up_sql);
                 client
                     .batch_execute(&sql)
-                    .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+                    .map_err(|e| EventStoreError::backend(e.to_string()))?;
 
                 // Version 2 compatibility copy
                 if m.version == 2 {
@@ -659,7 +659,7 @@ impl SchemaMigrator {
                         );
                         client
                             .execute(&copy_sql, &[])
-                            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+                            .map_err(|e| EventStoreError::backend(e.to_string()))?;
                     }
                 }
 
@@ -676,7 +676,7 @@ impl SchemaMigrator {
                         &insert_mig,
                         &[&m.version, &target_table, &m.description, &now_ms],
                     )
-                    .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+                    .map_err(|e| EventStoreError::backend(e.to_string()))?;
             }
         }
 
@@ -698,16 +698,16 @@ impl SchemaMigrator {
             .query_first(format!(
                 "SELECT GET_LOCK('{MYSQL_SCHEMA_LOCK_NAME}', {MYSQL_SCHEMA_LOCK_TIMEOUT_SECS});"
             ))
-            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+            .map_err(|e| EventStoreError::backend(e.to_string()))?;
         if acquired != Some(Some(1)) {
-            return Err(EventStoreError::Backend(format!(
+            return Err(EventStoreError::backend(format!(
                 "timed out waiting for the `{MYSQL_SCHEMA_LOCK_NAME}` schema migration lock"
             )));
         }
         let result = self.run_mysql_locked(conn);
         let unlock = conn
             .query_drop(format!("SELECT RELEASE_LOCK('{MYSQL_SCHEMA_LOCK_NAME}');"))
-            .map_err(|e| EventStoreError::Backend(e.to_string()));
+            .map_err(|e| EventStoreError::backend(e.to_string()));
         result.and(unlock)
     }
 
@@ -727,7 +727,7 @@ impl SchemaMigrator {
             );",
         );
         conn.query_drop(&create_mig_table)
-            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+            .map_err(|e| EventStoreError::backend(e.to_string()))?;
 
         // Check if table_name column exists
         let check_col = self.config.interpolate(
@@ -752,9 +752,9 @@ impl SchemaMigrator {
             // Drop and recreate
             let drop_table = self.config.interpolate("DROP TABLE {migrations_table};");
             conn.query_drop(&drop_table)
-                .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+                .map_err(|e| EventStoreError::backend(e.to_string()))?;
             conn.query_drop(&create_mig_table)
-                .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+                .map_err(|e| EventStoreError::backend(e.to_string()))?;
         }
 
         // 2. Fetch applied migrations
@@ -763,7 +763,7 @@ impl SchemaMigrator {
             .interpolate("SELECT version, table_name FROM {migrations_table};");
         let rows: Vec<(i32, String)> = conn
             .query(&query_applied)
-            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+            .map_err(|e| EventStoreError::backend(e.to_string()))?;
         let applied_pairs: HashSet<(i32, String)> = rows.into_iter().collect();
 
         // 3. Execute unapplied migrations
@@ -793,7 +793,7 @@ impl SchemaMigrator {
                         .unwrap_or(false);
                     if !index_exists {
                         conn.query_drop(&sql)
-                            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+                            .map_err(|e| EventStoreError::backend(e.to_string()))?;
                     }
                 } else if m.version == 6 {
                     let events_table = self.config.events_table.as_str();
@@ -809,7 +809,7 @@ impl SchemaMigrator {
                     "#;
                     let duplicate_indexes: Vec<String> = conn
                         .exec(duplicate_indexes_query, (events_table,))
-                        .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+                        .map_err(|e| EventStoreError::backend(e.to_string()))?;
 
                     let quoted_events_table = format!("`{}`", events_table.replace('`', "``"));
                     for index_name in duplicate_indexes {
@@ -818,11 +818,11 @@ impl SchemaMigrator {
                             "ALTER TABLE {quoted_events_table} DROP INDEX {quoted_index_name};"
                         );
                         conn.query_drop(drop_index)
-                            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+                            .map_err(|e| EventStoreError::backend(e.to_string()))?;
                     }
                 } else {
                     conn.query_drop(&sql)
-                        .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+                        .map_err(|e| EventStoreError::backend(e.to_string()))?;
                 }
 
                 // Version 2 compatibility copy
@@ -837,7 +837,7 @@ impl SchemaMigrator {
                              SELECT projection_name, last_sequence FROM checkpoints;",
                         );
                         conn.query_drop(&copy_sql)
-                            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+                            .map_err(|e| EventStoreError::backend(e.to_string()))?;
                     }
                 }
 
@@ -853,7 +853,7 @@ impl SchemaMigrator {
                     &insert_mig,
                     (m.version, target_table, m.description, now_ms),
                 )
-                .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+                .map_err(|e| EventStoreError::backend(e.to_string()))?;
             }
         }
 

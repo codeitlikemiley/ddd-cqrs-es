@@ -56,7 +56,6 @@ impl DomainEvent for CounterEvent {
 pub struct Counter {
     pub id: CounterId,
     pub value: i32,
-    pub revision: u64,
 }
 
 impl Aggregate for Counter {
@@ -69,15 +68,10 @@ impl Aggregate for Counter {
         "counter"
     }
 
-    fn revision(&self) -> u64 {
-        self.revision
-    }
-
     fn new() -> Self {
         Self {
             id: CounterId(String::new()),
             value: 0,
-            revision: 0,
         }
     }
 
@@ -93,7 +87,6 @@ impl Aggregate for Counter {
                 self.value = *value;
             }
         }
-        self.revision += 1;
     }
 
     fn handle(&self, command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> {
@@ -159,7 +152,6 @@ mod tests {
     fn test_initial_state() {
         let counter = Counter::new();
         assert_eq!(counter.value, 0);
-        assert_eq!(counter.revision, 0);
         assert_eq!(counter.id, CounterId(String::new()));
     }
 
@@ -245,15 +237,12 @@ mod tests {
 
         counter.apply(&CounterEvent::Incremented { amount: 10 });
         assert_eq!(counter.value, 10);
-        assert_eq!(counter.revision, 1);
 
         counter.apply(&CounterEvent::Decremented { amount: 3 });
         assert_eq!(counter.value, 7);
-        assert_eq!(counter.revision, 2);
 
         counter.apply(&CounterEvent::ResetPerformed { value: 0 });
         assert_eq!(counter.value, 0);
-        assert_eq!(counter.revision, 3);
     }
 
     #[test]

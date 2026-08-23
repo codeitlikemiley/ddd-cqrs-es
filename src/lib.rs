@@ -37,7 +37,6 @@
 //! struct Counter {
 //!     exists: bool,
 //!     value: u64,
-//!     revision: u64,
 //! }
 //!
 //! #[derive(Debug)]
@@ -53,7 +52,6 @@
 //!     type Error = CounterError;
 //!
 //!     fn aggregate_type() -> &'static str { "counter" }
-//!     fn revision(&self) -> u64 { self.revision }
 //!     fn new() -> Self { Self::default() }
 //!
 //!     fn apply(&mut self, event: &Self::Event) {
@@ -61,7 +59,6 @@
 //!             CounterEvent::Created => self.exists = true,
 //!             CounterEvent::Incremented(by) => self.value += by,
 //!         }
-//!         self.revision += 1;
 //!     }
 //!
 //!     fn handle(&self, command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> {

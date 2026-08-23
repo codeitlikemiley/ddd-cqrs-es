@@ -228,7 +228,7 @@ impl CounterAppError {
 fn is_unavailable_store_error(error: &EventStoreError) -> bool {
     matches!(
         error,
-        EventStoreError::Connection(_) | EventStoreError::ConnectionWithSource { .. }
+        EventStoreError::Connection { .. }
     )
 }
 
@@ -260,7 +260,7 @@ mod tests {
 
     #[test]
     fn connection_store_error_maps_to_service_unavailable() {
-        let error = CounterAppError::from_event_store_error(EventStoreError::Connection(
+        let error = CounterAppError::from_event_store_error(EventStoreError::connection(
             "database is offline".to_string(),
         ));
 
@@ -269,7 +269,7 @@ mod tests {
 
     #[test]
     fn internal_store_error_hides_backend_message_from_public_response() {
-        let error = CounterAppError::from_event_store_error(EventStoreError::Backend(
+        let error = CounterAppError::from_event_store_error(EventStoreError::backend(
             "raw adapter failure".to_string(),
         ));
 
@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn server_function_error_uses_public_message() {
-        let error = CounterAppError::from_event_store_error(EventStoreError::Backend(
+        let error = CounterAppError::from_event_store_error(EventStoreError::backend(
             "raw adapter failure".to_string(),
         ));
 

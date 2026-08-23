@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.0-rc.7
+
+- **Breaking:** `Aggregate` no longer requires `fn revision(&self)`. The
+  framework always derived revisions from persisted envelopes
+  (`LoadedAggregate::revision`); aggregates no longer need to carry and bump a
+  shadow revision field. Delete the method (and the field, if nothing else
+  uses it) from your aggregates; read the stream revision from
+  `LoadedAggregate` instead. `ddd add aggregate` generates the new shape.
+- **Breaking:** `EventStoreError` consolidated: each `X(String)` /
+  `XWithSource { .. }` variant pair is now a single struct variant
+  `X { message, code, source }`. Construct via `EventStoreError::backend(..)`,
+  `backend_with_source(..)`, and the other per-kind constructors; match with
+  `EventStoreError::Backend { .. }` patterns. The new
+  `code: Option<String>` carries the backend's machine-readable error code
+  (SQLSTATE for Postgres, server errno for MySQL, extended result code for
+  SQLite), exposed via `EventStoreError::code()`. Display strings are
+  unchanged; equality compares kind, message, and code and ignores sources.
+
 ## 0.3.0-rc.6
 
 - Fullstack product domain: `ddd add aggregate` wires `src/domain_app` (InMemory

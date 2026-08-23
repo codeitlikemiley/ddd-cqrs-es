@@ -420,7 +420,7 @@ where
         let base_revision = next_revision
             .checked_sub(prepared.len() as u64)
             .ok_or_else(|| {
-                EventStoreError::Deserialization(
+                EventStoreError::deserialization(
                     "Redis append script returned revision smaller than event count".to_owned(),
                 )
             })?;
@@ -640,7 +640,7 @@ where
         T: serde::Serialize + Sync,
     {
         let payload = serde_json::to_vec(value)
-            .map_err(|error| EventStoreError::Serialization(error.to_string()))?;
+            .map_err(|error| EventStoreError::serialization(error.to_string()))?;
         self.publish(&payload).await
     }
 }
@@ -1066,9 +1066,9 @@ where
         let recorded_at = SystemTime::now();
         let recorded_at_ms = system_time_to_millis(recorded_at)?;
         let payload_json = serde_json::to_vec(&serialize_payload(&event.payload)?)
-            .map_err(|error| EventStoreError::Serialization(format!("event payload: {error}")))?;
+            .map_err(|error| EventStoreError::serialization(format!("event payload: {error}")))?;
         let metadata_json = serde_json::to_vec(&serialize_metadata(&event.metadata)?)
-            .map_err(|error| EventStoreError::Serialization(format!("metadata: {error}")))?;
+            .map_err(|error| EventStoreError::serialization(format!("metadata: {error}")))?;
 
         Ok(Self {
             event_id,
@@ -1145,7 +1145,7 @@ fn parse_append_eval_result(
 ) -> Result<AppendEvalResult, EventStoreError> {
     let items = redis_array_items(value)?;
     if items.len() < 3 {
-        return Err(EventStoreError::Deserialization(
+        return Err(EventStoreError::deserialization(
             "Redis append script returned too few fields".to_owned(),
         ));
     }
@@ -1154,7 +1154,7 @@ fn parse_append_eval_result(
     match status.as_str() {
         "OK" => {
             if items.len() < 4 {
-                return Err(EventStoreError::Deserialization(
+                return Err(EventStoreError::deserialization(
                     "Redis append script returned too few success fields".to_owned(),
                 ));
             }
@@ -1174,12 +1174,12 @@ fn parse_append_eval_result(
                 "wrong_revision" => Err(EventStoreError::Concurrency(
                     crate::ConcurrencyError::WrongExpectedRevision { expected, actual },
                 )),
-                _ => Err(EventStoreError::Backend(format!(
+                _ => Err(EventStoreError::backend(format!(
                     "Redis append script failed: {reason}"
                 ))),
             }
         }
-        _ => Err(EventStoreError::Deserialization(format!(
+        _ => Err(EventStoreError::deserialization(format!(
             "unknown Redis append status `{status}`"
         ))),
     }
@@ -1208,12 +1208,12 @@ where
     let aggregate_id = deserialize_id(&aggregate_id_json)?;
     let (event_version, upcasted_bytes) = upcasters
         .upcast(&event_type, event_version, payload_bytes)
-        .map_err(|error| EventStoreError::Deserialization(error.to_string()))?;
+        .map_err(|error| EventStoreError::deserialization(error.to_string()))?;
     let payload_value = serde_json::from_slice(&upcasted_bytes)
-        .map_err(|error| EventStoreError::Deserialization(format!("payload JSON: {error}")))?;
+        .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
     let payload = deserialize_payload(&event_id, &event_type, payload_value)?;
     let metadata_value = serde_json::from_slice(&metadata_bytes)
-        .map_err(|error| EventStoreError::Deserialization(format!("metadata JSON: {error}")))?;
+        .map_err(|error| EventStoreError::deserialization(format!("metadata JSON: {error}")))?;
     let metadata = deserialize_metadata(&event_id, metadata_value)?;
     let recorded_at = millis_to_system_time(recorded_at_ms)?;
 
@@ -1233,7 +1233,7 @@ where
 
 fn validate_redis_prefix(prefix: &str) -> Result<(), EventStoreError> {
     if prefix.is_empty() {
-        return Err(EventStoreError::Backend(
+        return Err(EventStoreError::backend(
             "Redis key prefix cannot be empty".to_owned(),
         ));
     }
@@ -1244,7 +1244,7 @@ fn validate_redis_prefix(prefix: &str) -> Result<(), EventStoreError> {
     {
         Ok(())
     } else {
-        Err(EventStoreError::Backend(format!(
+        Err(EventStoreError::backend(format!(
             "invalid Redis key prefix `{prefix}`"
         )))
     }
@@ -1254,14 +1254,14 @@ fn map_executor_error<E>(error: E) -> EventStoreError
 where
     E: Display,
 {
-    EventStoreError::Backend(error.to_string())
+    EventStoreError::backend(error.to_string())
 }
 
 fn redis_array_items(value: &RedisValue) -> Result<&[RedisValue], EventStoreError> {
     match value {
         RedisValue::Array(items) => Ok(items),
         RedisValue::Nil => Ok(&[]),
-        _ => Err(EventStoreError::Deserialization(format!(
+        _ => Err(EventStoreError::deserialization(format!(
             "expected Redis array, got {value:?}"
         ))),
     }
@@ -1292,7 +1292,7 @@ fn redis_hash_from_items(
     items: &[RedisValue],
 ) -> Result<BTreeMap<String, Vec<u8>>, EventStoreError> {
     if !items.len().is_multiple_of(2) {
-        return Err(EventStoreError::Deserialization(
+        return Err(EventStoreError::deserialization(
             "Redis hash reply has odd field count".to_owned(),
         ));
     }
@@ -1319,26 +1319,26 @@ fn unpack_flat_hash_batch(
 
     for sequence in sequences {
         let Some(count) = items.get(cursor) else {
-            return Err(EventStoreError::Deserialization(format!(
+            return Err(EventStoreError::deserialization(format!(
                 "Redis hash batch ended after {} of {} events",
                 hashes.len(),
                 sequences.len()
             )));
         };
         let RedisValue::Int(count) = count else {
-            return Err(EventStoreError::Deserialization(
+            return Err(EventStoreError::deserialization(
                 "Redis hash batch length prefix is not an integer".to_owned(),
             ));
         };
         let count = usize::try_from(*count).map_err(|_| {
-            EventStoreError::Deserialization(
+            EventStoreError::deserialization(
                 "Redis hash batch length prefix is negative".to_owned(),
             )
         })?;
         cursor += 1;
 
         let Some(entries) = items.get(cursor..cursor + count) else {
-            return Err(EventStoreError::Deserialization(format!(
+            return Err(EventStoreError::deserialization(format!(
                 "Redis hash batch is truncated at event sequence {sequence}"
             )));
         };
@@ -1346,7 +1346,7 @@ fn unpack_flat_hash_batch(
 
         let hash = redis_hash_from_items(entries)?;
         if hash.is_empty() {
-            return Err(EventStoreError::Deserialization(format!(
+            return Err(EventStoreError::deserialization(format!(
                 "Redis event sequence {sequence} is indexed but missing"
             )));
         }
@@ -1354,7 +1354,7 @@ fn unpack_flat_hash_batch(
     }
 
     if cursor != items.len() {
-        return Err(EventStoreError::Deserialization(format!(
+        return Err(EventStoreError::deserialization(format!(
             "Redis hash batch has {} trailing items after {} events",
             items.len() - cursor,
             sequences.len()
@@ -1367,7 +1367,7 @@ fn unpack_flat_hash_batch(
 fn redis_value_string(value: &RedisValue, label: &str) -> Result<String, EventStoreError> {
     let bytes = redis_value_bytes(value, label)?;
     String::from_utf8(bytes).map_err(|error| {
-        EventStoreError::Deserialization(format!("{label} is not valid UTF-8: {error}"))
+        EventStoreError::deserialization(format!("{label} is not valid UTF-8: {error}"))
     })
 }
 
@@ -1376,7 +1376,7 @@ fn redis_value_bytes(value: &RedisValue, label: &str) -> Result<Vec<u8>, EventSt
         RedisValue::Bytes(bytes) => Ok(bytes.clone()),
         RedisValue::Status(value) => Ok(value.as_bytes().to_vec()),
         RedisValue::Int(value) => Ok(value.to_string().into_bytes()),
-        _ => Err(EventStoreError::Deserialization(format!(
+        _ => Err(EventStoreError::deserialization(format!(
             "{label}: expected Redis scalar, got {value:?}"
         ))),
     }
@@ -1385,19 +1385,19 @@ fn redis_value_bytes(value: &RedisValue, label: &str) -> Result<Vec<u8>, EventSt
 fn redis_value_u64(value: &RedisValue, label: &str) -> Result<u64, EventStoreError> {
     match value {
         RedisValue::Int(value) => u64::try_from(*value)
-            .map_err(|_| EventStoreError::Deserialization(format!("{label} cannot be negative"))),
+            .map_err(|_| EventStoreError::deserialization(format!("{label} cannot be negative"))),
         RedisValue::Bytes(bytes) => {
             let text = std::str::from_utf8(bytes).map_err(|error| {
-                EventStoreError::Deserialization(format!("{label} is not valid UTF-8: {error}"))
+                EventStoreError::deserialization(format!("{label} is not valid UTF-8: {error}"))
             })?;
             text.parse::<u64>().map_err(|error| {
-                EventStoreError::Deserialization(format!("{label} is not a u64: {error}"))
+                EventStoreError::deserialization(format!("{label} is not a u64: {error}"))
             })
         }
         RedisValue::Status(text) => text.parse::<u64>().map_err(|error| {
-            EventStoreError::Deserialization(format!("{label} is not a u64: {error}"))
+            EventStoreError::deserialization(format!("{label} is not a u64: {error}"))
         }),
-        _ => Err(EventStoreError::Deserialization(format!(
+        _ => Err(EventStoreError::deserialization(format!(
             "{label}: expected Redis integer scalar, got {value:?}"
         ))),
     }
@@ -1408,7 +1408,7 @@ fn hash_field_bytes(
     field: &str,
 ) -> Result<Vec<u8>, EventStoreError> {
     hash.get(field).cloned().ok_or_else(|| {
-        EventStoreError::Deserialization(format!("Redis event hash missing `{field}`"))
+        EventStoreError::deserialization(format!("Redis event hash missing `{field}`"))
     })
 }
 
@@ -1418,28 +1418,28 @@ fn hash_field_string(
 ) -> Result<String, EventStoreError> {
     let value = hash_field_bytes(hash, field)?;
     String::from_utf8(value).map_err(|error| {
-        EventStoreError::Deserialization(format!("Redis event hash `{field}` UTF-8: {error}"))
+        EventStoreError::deserialization(format!("Redis event hash `{field}` UTF-8: {error}"))
     })
 }
 
 fn hash_field_u64(hash: &BTreeMap<String, Vec<u8>>, field: &str) -> Result<u64, EventStoreError> {
     let value = hash_field_string(hash, field)?;
     value.parse::<u64>().map_err(|error| {
-        EventStoreError::Deserialization(format!("Redis event hash `{field}` u64: {error}"))
+        EventStoreError::deserialization(format!("Redis event hash `{field}` u64: {error}"))
     })
 }
 
 fn hash_field_i64(hash: &BTreeMap<String, Vec<u8>>, field: &str) -> Result<i64, EventStoreError> {
     let value = hash_field_string(hash, field)?;
     value.parse::<i64>().map_err(|error| {
-        EventStoreError::Deserialization(format!("Redis event hash `{field}` i64: {error}"))
+        EventStoreError::deserialization(format!("Redis event hash `{field}` i64: {error}"))
     })
 }
 
 fn hash_field_u32(hash: &BTreeMap<String, Vec<u8>>, field: &str) -> Result<u32, EventStoreError> {
     let value = hash_field_u64(hash, field)?;
     u32::try_from(value).map_err(|_| {
-        EventStoreError::Deserialization(format!("Redis event hash `{field}` exceeds u32"))
+        EventStoreError::deserialization(format!("Redis event hash `{field}` exceeds u32"))
     })
 }
 
@@ -1725,10 +1725,6 @@ mod tests {
             "test_aggregate"
         }
 
-        fn revision(&self) -> u64 {
-            self.revision
-        }
-
         fn new() -> Self {
             Self::default()
         }
@@ -1737,7 +1733,6 @@ mod tests {
             self.value = match event {
                 TestEvent::Created { value } | TestEvent::Updated { value } => *value,
             };
-            self.revision += 1;
         }
 
         fn handle(&self, _command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> {

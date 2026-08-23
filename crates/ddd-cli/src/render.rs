@@ -359,7 +359,7 @@ fn render_fullstack(input: &InitRenderInput) -> Vec<FileOperation> {
         )
         .replace(
             // Keep in sync with templates/fullstack/Cargo.toml.template pin; rewritten to CLI version.
-            "ddd_cqrs_es = { version = \"=0.3.0-rc.6\"",
+            "ddd_cqrs_es = { version = \"=0.3.0-rc.7\"",
             &format!("ddd_cqrs_es = {{ version = \"={}\"", framework_version()),
         )
         .replace(
@@ -678,7 +678,6 @@ impl DomainEvent for {event_type} {{
 pub struct {aggregate} {{
     pub id: {id_type},
     pub name: Option<String>,
-    pub revision: u64,
 }}
 
 impl Aggregate for {aggregate} {{
@@ -691,15 +690,10 @@ impl Aggregate for {aggregate} {{
         "{module}"
     }}
 
-    fn revision(&self) -> u64 {{
-        self.revision
-    }}
-
     fn new() -> Self {{
         Self {{
             id: {id_type}(String::new()),
             name: None,
-            revision: 0,
         }}
     }}
 
@@ -709,7 +703,6 @@ impl Aggregate for {aggregate} {{
             // ddd:apply-events
             // ddd:apply-events:end
         }}
-        self.revision += 1;
     }}
 
     fn handle(&self, command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> {{
@@ -1009,7 +1002,7 @@ pub async fn get_{module}_view(id: {id_type}) -> Result<{aggregate}ViewDto, Stri
     Ok({aggregate}ViewDto {{
         id: stream_id,
         name: loaded.state.name.clone(),
-        revision: loaded.state.revision,
+        revision: loaded.revision,
     }})
 }}
 
@@ -1025,7 +1018,7 @@ pub async fn execute_{module}_command(
     Ok({aggregate}ViewDto {{
         id: stream_id,
         name: loaded.state.name.clone(),
-        revision: loaded.state.revision,
+        revision: loaded.revision,
     }})
 }}
 "#,

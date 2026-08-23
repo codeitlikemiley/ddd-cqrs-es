@@ -100,7 +100,6 @@ where
 struct Counter {
     id: Option<String>,
     value: u64,
-    revision: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -120,10 +119,6 @@ impl Aggregate for Counter {
         "counter"
     }
 
-    fn revision(&self) -> u64 {
-        self.revision
-    }
-
     fn apply(&mut self, event: &Self::Event) {
         match event {
             CounterEvent::Created => {
@@ -133,8 +128,6 @@ impl Aggregate for Counter {
                 self.value += by;
             }
         }
-
-        self.revision += 1;
     }
 
     fn handle(&self, command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> {
@@ -341,7 +334,6 @@ fn repository_executes_commands_and_replays_state() {
     let loaded = repo.load(&counter_id).unwrap();
     assert_eq!(loaded.state.value, 5);
     assert_eq!(loaded.revision, 3);
-    assert_eq!(loaded.state.revision(), 3);
 }
 
 #[test]
@@ -696,6 +688,20 @@ fn event_store_error_preserves_sources_without_changing_display() {
         "event store backend error: database unavailable"
     );
     assert!(error.source().is_some());
+    assert_eq!(error.code(), None);
+
+    let coded = EventStoreError::backend("duplicate key").with_code("23505");
+    assert_eq!(coded.code(), Some("23505"));
+    assert_eq!(
+        coded.to_string(),
+        "event store backend error: duplicate key"
+    );
+    // Codes participate in equality; sources do not.
+    assert_ne!(coded, EventStoreError::backend("duplicate key"));
+    assert_eq!(
+        EventStoreError::backend_with_source("same", "src"),
+        EventStoreError::backend("same")
+    );
 
     #[cfg(feature = "json")]
     {
@@ -898,8 +904,8 @@ fn aggregate_fixture_asserts_events_errors_state_and_revision() {
         .then_expect_events(vec![CounterEvent::Incremented { by: 2 }])
         .then_expect_state(|counter| {
             assert_eq!(counter.value, 2);
-            assert_eq!(counter.revision(), 2);
-        });
+        })
+        .then_expect_revision(1);
 
     AggregateFixture::<Counter>::new()
         .given(vec![CounterEvent::Created])
@@ -2255,12 +2261,10 @@ fn test_postgres_pool_sharing_auxiliary_stores() {
     let older = Counter {
         id: Some("shared-counter".to_owned()),
         value: 1,
-        revision: 1,
     };
     let newer = Counter {
         id: Some("shared-counter".to_owned()),
         value: 2,
-        revision: 2,
     };
     assert_snapshot_store_contract(snapshots, "shared-counter".to_owned(), older, newer);
 
@@ -2653,12 +2657,10 @@ fn test_mysql_pool_sharing_auxiliary_stores() {
     let older = Counter {
         id: Some("shared-counter".to_owned()),
         value: 1,
-        revision: 1,
     };
     let newer = Counter {
         id: Some("shared-counter".to_owned()),
         value: 2,
-        revision: 2,
     };
     assert_snapshot_store_contract(snapshots, "shared-counter".to_owned(), older, newer);
 }

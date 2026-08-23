@@ -142,7 +142,6 @@ fn projection_batch_outcome(
 /// #     type Event = UserEvent;
 /// #     type Error = ();
 /// #     fn aggregate_type() -> &'static str { "user" }
-/// #     fn revision(&self) -> u64 { 0 }
 /// #     fn new() -> Self { UserAggregate }
 /// #     fn apply(&mut self, _event: &Self::Event) {}
 /// #     fn handle(&self, _command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> { Ok(vec![]) }

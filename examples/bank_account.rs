@@ -47,7 +47,6 @@ struct Account {
     owner_name: Option<String>,
     balance: i64,
     is_open: bool,
-    revision: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,10 +66,6 @@ impl Aggregate for Account {
 
     fn aggregate_type() -> &'static str {
         "bank_account"
-    }
-
-    fn revision(&self) -> u64 {
-        self.revision
     }
 
     fn apply(&mut self, event: &Self::Event) {
@@ -93,8 +88,6 @@ impl Aggregate for Account {
                 self.is_open = false;
             }
         }
-
-        self.revision += 1;
     }
 
     fn handle(&self, command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> {

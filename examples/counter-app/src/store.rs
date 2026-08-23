@@ -462,7 +462,7 @@ where
                     all(feature = "wasi-redis", runtime_wasmtime)
                 )))]
                 {
-                    return Err(EventStoreError::Backend(
+                    return Err(EventStoreError::backend(
                         "redis backend requires WASI_RUNTIME=spin or WASI_RUNTIME=wasmtime"
                             .to_string(),
                     ));
@@ -470,7 +470,7 @@ where
             }
             #[cfg(not(feature = "redis"))]
             {
-                return Err(EventStoreError::Backend(
+                return Err(EventStoreError::backend(
                     "redis feature not enabled".to_string(),
                 ));
             }
@@ -483,26 +483,26 @@ where
                 {
                     let query = "SELECT sequence, event_id, aggregate_id, aggregate_type, revision, event_type, event_version, payload, metadata, recorded_at_ms FROM events WHERE aggregate_type = ? AND aggregate_id = ? ORDER BY revision ASC";
                     let agg_id_str = serde_json::to_string(aggregate_id)
-                        .map_err(|e| EventStoreError::Serialization(e.to_string()))?;
+                        .map_err(|e| EventStoreError::serialization(e.to_string()))?;
                     let params = vec![
                         serde_json::Value::String(A::aggregate_type().to_string()),
                         serde_json::Value::String(agg_id_str),
                     ];
                     let rows = ddd_cqrs_es::adapters::execute_spin_sqlite(query, params)
                         .await
-                        .map_err(EventStoreError::Backend)?;
+                        .map_err(EventStoreError::backend)?;
                     let mut envelopes = Vec::new();
                     for r in rows {
                         envelopes.push(
                             ddd_cqrs_es::adapters::row_to_envelope::<A::Event, A::Id>(&r)
-                                .map_err(EventStoreError::Deserialization)?,
+                                .map_err(EventStoreError::deserialization)?,
                         );
                     }
                     return Ok(envelopes);
                 }
                 #[cfg(not(feature = "sqlite"))]
                 {
-                    return Err(EventStoreError::Backend(
+                    return Err(EventStoreError::backend(
                         "sqlite feature not enabled".to_string(),
                     ));
                 }
@@ -523,7 +523,7 @@ where
         let query_postgres = "SELECT sequence, event_id, aggregate_id, aggregate_type, revision, event_type, event_version, payload, metadata, recorded_at_ms FROM events WHERE aggregate_type = $1 AND aggregate_id = $2 ORDER BY revision ASC";
 
         let agg_id_str = serde_json::to_string(aggregate_id)
-            .map_err(|e| EventStoreError::Serialization(e.to_string()))?;
+            .map_err(|e| EventStoreError::serialization(e.to_string()))?;
         let params = vec![
             serde_json::Value::String(A::aggregate_type().to_string()),
             serde_json::Value::String(agg_id_str),
@@ -531,13 +531,13 @@ where
 
         let rows = execute_query_routed(query_sqlite, query_postgres, params)
             .await
-            .map_err(EventStoreError::Backend)?;
+            .map_err(EventStoreError::backend)?;
 
         let mut envelopes = Vec::new();
         for r in rows {
             envelopes.push(
                 ddd_cqrs_es::adapters::row_to_envelope::<A::Event, A::Id>(&r)
-                    .map_err(EventStoreError::Deserialization)?,
+                    .map_err(EventStoreError::deserialization)?,
             );
         }
         Ok(envelopes)
@@ -567,7 +567,7 @@ where
                     all(feature = "wasi-redis", runtime_wasmtime)
                 )))]
                 {
-                    return Err(EventStoreError::Backend(
+                    return Err(EventStoreError::backend(
                         "redis backend requires WASI_RUNTIME=spin or WASI_RUNTIME=wasmtime"
                             .to_string(),
                     ));
@@ -575,7 +575,7 @@ where
             }
             #[cfg(not(feature = "redis"))]
             {
-                return Err(EventStoreError::Backend(
+                return Err(EventStoreError::backend(
                     "redis feature not enabled".to_string(),
                 ));
             }
@@ -589,7 +589,7 @@ where
                     // In spin SQLite, we query current revision first
                     let query_rev = "SELECT COALESCE(MAX(revision), 0) as max_rev FROM events WHERE aggregate_type = ? AND aggregate_id = ?";
                     let agg_id_str = serde_json::to_string(aggregate_id)
-                        .map_err(|e| EventStoreError::Serialization(e.to_string()))?;
+                        .map_err(|e| EventStoreError::serialization(e.to_string()))?;
                     let params_rev = vec![
                         serde_json::Value::String(A::aggregate_type().to_string()),
                         serde_json::Value::String(agg_id_str.clone()),
@@ -597,7 +597,7 @@ where
                     let rows_rev =
                         ddd_cqrs_es::adapters::execute_spin_sqlite(query_rev, params_rev)
                             .await
-                            .map_err(EventStoreError::Backend)?;
+                            .map_err(EventStoreError::backend)?;
 
                     let current_revision = rows_rev
                         .first()
@@ -637,9 +637,9 @@ where
 
                         let insert_query = "INSERT INTO events (event_id, aggregate_id, aggregate_type, revision, event_type, event_version, payload, metadata, recorded_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING sequence";
                         let payload_str = serde_json::to_string(&event.payload)
-                            .map_err(|e| EventStoreError::Serialization(e.to_string()))?;
+                            .map_err(|e| EventStoreError::serialization(e.to_string()))?;
                         let metadata_str = serde_json::to_string(&event.metadata)
-                            .map_err(|e| EventStoreError::Serialization(e.to_string()))?;
+                            .map_err(|e| EventStoreError::serialization(e.to_string()))?;
                         let params_insert = vec![
                             serde_json::Value::String(event_id.to_string()),
                             serde_json::Value::String(agg_id_str.clone()),
@@ -655,7 +655,7 @@ where
                         let insert_rows =
                             ddd_cqrs_es::adapters::execute_spin_sqlite(insert_query, params_insert)
                                 .await
-                                .map_err(EventStoreError::Backend)?;
+                                .map_err(EventStoreError::backend)?;
 
                         let sequence = insert_rows
                             .first()
@@ -687,7 +687,7 @@ where
                 }
                 #[cfg(not(feature = "sqlite"))]
                 {
-                    return Err(EventStoreError::Backend(
+                    return Err(EventStoreError::backend(
                         "sqlite feature not enabled".to_string(),
                     ));
                 }
@@ -705,7 +705,7 @@ where
         let query_postgres_rev = "SELECT COALESCE(MAX(revision), 0) as max_rev FROM events WHERE aggregate_type = $1 AND aggregate_id = $2";
 
         let agg_id_str = serde_json::to_string(aggregate_id)
-            .map_err(|e| EventStoreError::Serialization(e.to_string()))?;
+            .map_err(|e| EventStoreError::serialization(e.to_string()))?;
         let params_rev = vec![
             serde_json::Value::String(A::aggregate_type().to_string()),
             serde_json::Value::String(agg_id_str.clone()),
@@ -713,7 +713,7 @@ where
 
         let rows_rev = execute_query_routed(query_sqlite_rev, query_postgres_rev, params_rev)
             .await
-            .map_err(EventStoreError::Backend)?;
+            .map_err(EventStoreError::backend)?;
 
         let current_revision = rows_rev
             .first()
@@ -765,9 +765,9 @@ where
             let sql_postgres_insert = "INSERT INTO events (event_id, aggregate_id, aggregate_type, revision, event_type, event_version, payload, metadata, recorded_at_ms) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING sequence";
 
             let payload_val = serde_json::to_value(&event.payload)
-                .map_err(|e| EventStoreError::Serialization(e.to_string()))?;
+                .map_err(|e| EventStoreError::serialization(e.to_string()))?;
             let metadata_val = serde_json::to_value(&event.metadata)
-                .map_err(|e| EventStoreError::Serialization(e.to_string()))?;
+                .map_err(|e| EventStoreError::serialization(e.to_string()))?;
 
             let params_insert = vec![
                 serde_json::Value::String(event_id.to_string()),
@@ -784,7 +784,7 @@ where
             let insert_rows =
                 execute_query_routed(sql_sqlite_insert, sql_postgres_insert, params_insert)
                     .await
-                    .map_err(EventStoreError::Backend)?;
+                    .map_err(EventStoreError::backend)?;
 
             let sequence = insert_rows
                 .first()
@@ -843,7 +843,7 @@ where
                     all(feature = "wasi-redis", runtime_wasmtime)
                 )))]
                 {
-                    return Err(EventStoreError::Backend(
+                    return Err(EventStoreError::backend(
                         "redis backend requires WASI_RUNTIME=spin or WASI_RUNTIME=wasmtime"
                             .to_string(),
                     ));
@@ -851,7 +851,7 @@ where
             }
             #[cfg(not(feature = "redis"))]
             {
-                return Err(EventStoreError::Backend(
+                return Err(EventStoreError::backend(
                     "redis feature not enabled".to_string(),
                 ));
             }
@@ -866,19 +866,19 @@ where
                     let params = vec![serde_json::Value::Number(seq.into())];
                     let rows = ddd_cqrs_es::adapters::execute_spin_sqlite(query, params)
                         .await
-                        .map_err(EventStoreError::Backend)?;
+                        .map_err(EventStoreError::backend)?;
                     let mut envelopes = Vec::new();
                     for r in rows {
                         envelopes.push(
                             ddd_cqrs_es::adapters::row_to_envelope::<A::Event, A::Id>(&r)
-                                .map_err(EventStoreError::Deserialization)?,
+                                .map_err(EventStoreError::deserialization)?,
                         );
                     }
                     return Ok(envelopes);
                 }
                 #[cfg(not(feature = "sqlite"))]
                 {
-                    return Err(EventStoreError::Backend(
+                    return Err(EventStoreError::backend(
                         "sqlite feature not enabled".to_string(),
                     ));
                 }
@@ -901,13 +901,13 @@ where
         let params = vec![serde_json::Value::Number(seq.into())];
         let rows = execute_query_routed(query_sqlite, query_postgres, params)
             .await
-            .map_err(EventStoreError::Backend)?;
+            .map_err(EventStoreError::backend)?;
 
         let mut envelopes = Vec::new();
         for r in rows {
             envelopes.push(
                 ddd_cqrs_es::adapters::row_to_envelope::<A::Event, A::Id>(&r)
-                    .map_err(EventStoreError::Deserialization)?,
+                    .map_err(EventStoreError::deserialization)?,
             );
         }
         Ok(envelopes)
@@ -921,7 +921,7 @@ where
         let backend = get_backend();
         let seq = sequence.unwrap_or(0);
         let limit_u64 = u64::try_from(limit.get()).map_err(|_| {
-            EventStoreError::Backend("projection batch size exceeds u64".to_string())
+            EventStoreError::backend("projection batch size exceeds u64".to_string())
         })?;
 
         if backend == "redis" {
@@ -940,7 +940,7 @@ where
                     all(feature = "wasi-redis", runtime_wasmtime)
                 )))]
                 {
-                    return Err(EventStoreError::Backend(
+                    return Err(EventStoreError::backend(
                         "redis backend requires WASI_RUNTIME=spin or WASI_RUNTIME=wasmtime"
                             .to_string(),
                     ));
@@ -948,7 +948,7 @@ where
             }
             #[cfg(not(feature = "redis"))]
             {
-                return Err(EventStoreError::Backend(
+                return Err(EventStoreError::backend(
                     "redis feature not enabled".to_string(),
                 ));
             }
@@ -966,19 +966,19 @@ where
                     ];
                     let rows = ddd_cqrs_es::adapters::execute_spin_sqlite(query, params)
                         .await
-                        .map_err(EventStoreError::Backend)?;
+                        .map_err(EventStoreError::backend)?;
                     let mut envelopes = Vec::new();
                     for r in rows {
                         envelopes.push(
                             ddd_cqrs_es::adapters::row_to_envelope::<A::Event, A::Id>(&r)
-                                .map_err(EventStoreError::Deserialization)?,
+                                .map_err(EventStoreError::deserialization)?,
                         );
                     }
                     return Ok(envelopes);
                 }
                 #[cfg(not(feature = "sqlite"))]
                 {
-                    return Err(EventStoreError::Backend(
+                    return Err(EventStoreError::backend(
                         "sqlite feature not enabled".to_string(),
                     ));
                 }
@@ -1004,13 +1004,13 @@ where
         ];
         let rows = execute_query_routed(query_sqlite, query_postgres, params)
             .await
-            .map_err(EventStoreError::Backend)?;
+            .map_err(EventStoreError::backend)?;
 
         let mut envelopes = Vec::new();
         for r in rows {
             envelopes.push(
                 ddd_cqrs_es::adapters::row_to_envelope::<A::Event, A::Id>(&r)
-                    .map_err(EventStoreError::Deserialization)?,
+                    .map_err(EventStoreError::deserialization)?,
             );
         }
         Ok(envelopes)
@@ -1057,14 +1057,14 @@ impl MultiBackendCheckpointStore {
                     all(feature = "wasi-redis", runtime_wasmtime)
                 )))]
                 {
-                    return Err(EventStoreError::Backend(
+                    return Err(EventStoreError::backend(
                         "redis checkpoint store requires WASI_RUNTIME=spin or WASI_RUNTIME=wasmtime".to_string(),
                     ));
                 }
             }
             #[cfg(not(feature = "redis"))]
             {
-                return Err(EventStoreError::Backend(
+                return Err(EventStoreError::backend(
                     "redis feature not enabled".to_string(),
                 ));
             }
@@ -1079,7 +1079,7 @@ impl MultiBackendCheckpointStore {
                     let params = vec![serde_json::Value::String(projection_name.to_string())];
                     let rows = ddd_cqrs_es::adapters::execute_spin_sqlite(query, params)
                         .await
-                        .map_err(EventStoreError::Backend)?;
+                        .map_err(EventStoreError::backend)?;
                     if let Some(r) = rows.first()
                         && let Some(val) = r.get("last_sequence")
                         && let Some(u) = val.as_u64()
@@ -1090,7 +1090,7 @@ impl MultiBackendCheckpointStore {
                 }
                 #[cfg(not(feature = "sqlite"))]
                 {
-                    return Err(EventStoreError::Backend(
+                    return Err(EventStoreError::backend(
                         "sqlite feature not enabled".to_string(),
                     ));
                 }
@@ -1109,7 +1109,7 @@ impl MultiBackendCheckpointStore {
         let params = vec![serde_json::Value::String(projection_name.to_string())];
         let rows = execute_query_routed(query_sqlite, query_postgres, params)
             .await
-            .map_err(EventStoreError::Backend)?;
+            .map_err(EventStoreError::backend)?;
 
         if let Some(r) = rows.first()
             && let Some(val) = r.get("last_sequence")
@@ -1151,14 +1151,14 @@ impl MultiBackendCheckpointStore {
                     all(feature = "wasi-redis", runtime_wasmtime)
                 )))]
                 {
-                    return Err(EventStoreError::Backend(
+                    return Err(EventStoreError::backend(
                         "redis checkpoint store requires WASI_RUNTIME=spin or WASI_RUNTIME=wasmtime".to_string(),
                     ));
                 }
             }
             #[cfg(not(feature = "redis"))]
             {
-                return Err(EventStoreError::Backend(
+                return Err(EventStoreError::backend(
                     "redis feature not enabled".to_string(),
                 ));
             }
@@ -1176,12 +1176,12 @@ impl MultiBackendCheckpointStore {
                     ];
                     ddd_cqrs_es::adapters::execute_spin_sqlite(query, params)
                         .await
-                        .map_err(EventStoreError::Backend)?;
+                        .map_err(EventStoreError::backend)?;
                     return Ok(());
                 }
                 #[cfg(not(feature = "sqlite"))]
                 {
-                    return Err(EventStoreError::Backend(
+                    return Err(EventStoreError::backend(
                         "sqlite feature not enabled".to_string(),
                     ));
                 }
@@ -1204,7 +1204,7 @@ impl MultiBackendCheckpointStore {
 
             execute_query_routed(sql_mysql, sql_mysql, params)
                 .await
-                .map_err(EventStoreError::Backend)?;
+                .map_err(EventStoreError::backend)?;
 
             return Ok(());
         }
@@ -1219,7 +1219,7 @@ impl MultiBackendCheckpointStore {
 
         execute_query_routed(sql_sqlite, sql_postgres, params)
             .await
-            .map_err(EventStoreError::Backend)?;
+            .map_err(EventStoreError::backend)?;
 
         Ok(())
     }
@@ -1247,7 +1247,7 @@ impl MultiBackendCounterProjection {
         envelope: &EventEnvelope<crate::domain::CounterEvent, crate::domain::CounterId>,
     ) -> Result<(), EventStoreError> {
         let aggregate_id_str = serde_json::to_string(&envelope.aggregate_id)
-            .map_err(|e| EventStoreError::Serialization(e.to_string()))?;
+            .map_err(|e| EventStoreError::serialization(e.to_string()))?;
 
         let backend = get_backend();
 
@@ -1271,7 +1271,7 @@ impl MultiBackendCounterProjection {
                                     vec![key.into_bytes(), amount.to_string().into_bytes()],
                                 )
                                 .await
-                                .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+                                .map_err(|e| EventStoreError::backend(e.to_string()))?;
                         }
                         crate::domain::CounterEvent::Decremented { amount } => {
                             let delta = -amount;
@@ -1281,7 +1281,7 @@ impl MultiBackendCounterProjection {
                                     vec![key.into_bytes(), delta.to_string().into_bytes()],
                                 )
                                 .await
-                                .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+                                .map_err(|e| EventStoreError::backend(e.to_string()))?;
                         }
                         crate::domain::CounterEvent::ResetPerformed { value } => {
                             client
@@ -1290,7 +1290,7 @@ impl MultiBackendCounterProjection {
                                     vec![key.into_bytes(), value.to_string().into_bytes()],
                                 )
                                 .await
-                                .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+                                .map_err(|e| EventStoreError::backend(e.to_string()))?;
                         }
                     }
                     return Ok(());
@@ -1300,7 +1300,7 @@ impl MultiBackendCounterProjection {
                     all(feature = "wasi-redis", runtime_wasmtime)
                 )))]
                 {
-                    return Err(EventStoreError::Backend(
+                    return Err(EventStoreError::backend(
                         "redis projection requires WASI_RUNTIME=spin or WASI_RUNTIME=wasmtime"
                             .to_string(),
                     ));
@@ -1308,7 +1308,7 @@ impl MultiBackendCounterProjection {
             }
             #[cfg(not(feature = "redis"))]
             {
-                return Err(EventStoreError::Backend(
+                return Err(EventStoreError::backend(
                     "redis feature not enabled".to_string(),
                 ));
             }
@@ -1339,12 +1339,12 @@ impl MultiBackendCounterProjection {
                     ];
                     ddd_cqrs_es::adapters::execute_spin_sqlite(sql, params)
                         .await
-                        .map_err(EventStoreError::Backend)?;
+                        .map_err(EventStoreError::backend)?;
                     return Ok(());
                 }
                 #[cfg(not(feature = "sqlite"))]
                 {
-                    return Err(EventStoreError::Backend(
+                    return Err(EventStoreError::backend(
                         "sqlite feature not enabled".to_string(),
                     ));
                 }
@@ -1356,13 +1356,13 @@ impl MultiBackendCounterProjection {
                 use std::path::Path;
                 let path = Path::new("/data/counter_read_model.json");
                 let content = if path.exists() {
-                    fs::read_to_string(path).map_err(|e| EventStoreError::Backend(e.to_string()))?
+                    fs::read_to_string(path).map_err(|e| EventStoreError::backend(e.to_string()))?
                 } else {
                     "{}".to_string()
                 };
                 let mut map: std::collections::HashMap<String, i32> =
                     serde_json::from_str(&content)
-                        .map_err(|e| EventStoreError::Deserialization(e.to_string()))?;
+                        .map_err(|e| EventStoreError::deserialization(e.to_string()))?;
                 let current = map.get(&aggregate_id_str).copied().unwrap_or(0);
                 let updated = match envelope.payload {
                     crate::domain::CounterEvent::Incremented { amount } => current + amount,
@@ -1371,9 +1371,9 @@ impl MultiBackendCounterProjection {
                 };
                 map.insert(aggregate_id_str, updated);
                 let new_content = serde_json::to_string(&map)
-                    .map_err(|e| EventStoreError::Serialization(e.to_string()))?;
+                    .map_err(|e| EventStoreError::serialization(e.to_string()))?;
                 fs::write(path, new_content)
-                    .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+                    .map_err(|e| EventStoreError::backend(e.to_string()))?;
                 return Ok(());
             }
         }
@@ -1400,7 +1400,7 @@ impl MultiBackendCounterProjection {
 
             execute_query_routed(sql_mysql, sql_mysql, params)
                 .await
-                .map_err(EventStoreError::Backend)?;
+                .map_err(EventStoreError::backend)?;
 
             return Ok(());
         }
@@ -1430,7 +1430,7 @@ impl MultiBackendCounterProjection {
 
         execute_query_routed(sql_sqlite, sql_postgres, params_upsert)
             .await
-            .map_err(EventStoreError::Backend)?;
+            .map_err(EventStoreError::backend)?;
 
         Ok(())
     }

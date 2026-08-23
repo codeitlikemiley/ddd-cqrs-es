@@ -45,10 +45,7 @@ type Connect<C> = Box<dyn Fn() -> Result<C, EventStoreError> + Send + Sync>;
 /// Transport-level failures justify discarding a pooled connection; domain
 /// outcomes (concurrency conflicts, serialization, deserialization) do not.
 fn is_transport_error(error: &EventStoreError) -> bool {
-    matches!(
-        error,
-        EventStoreError::Backend(_) | EventStoreError::BackendWithSource { .. }
-    )
+    matches!(error, EventStoreError::Backend { .. })
 }
 
 struct PoolState<C> {
@@ -204,7 +201,7 @@ impl<C> ConnectionPool<C> {
             }
             if state.leased < self.shared.max_size {
                 let Some(connect) = self.shared.connect.as_ref() else {
-                    return Err(EventStoreError::Backend(
+                    return Err(EventStoreError::backend(
                         "no pooled connection is available and no reconnect factory is configured"
                             .to_owned(),
                     ));
@@ -231,7 +228,7 @@ impl<C> ConnectionPool<C> {
                 .checked_duration_since(now)
                 .filter(|d| !d.is_zero())
             else {
-                return Err(EventStoreError::Connection(format!(
+                return Err(EventStoreError::connection(format!(
                     "no pooled connection became available within {:?} \
                      ({} of {} connections leased)",
                     self.shared.acquire_timeout, state.leased, self.shared.max_size
@@ -400,7 +397,7 @@ mod tests {
         let result = pool.read(|_| {
             let attempt = counter.fetch_add(1, Ordering::SeqCst);
             if attempt == 0 {
-                Err(EventStoreError::Backend("broken pipe".to_owned()))
+                Err(EventStoreError::backend("broken pipe".to_owned()))
             } else {
                 Ok(attempt)
             }
@@ -420,7 +417,7 @@ mod tests {
             panic!("expected the exhausted pool to time out");
         };
 
-        assert!(matches!(error, EventStoreError::Connection(_)));
+        assert!(matches!(error, EventStoreError::Connection { .. }));
         assert!(error.to_string().contains("1 of 1 connections leased"));
 
         // Returning the lease makes the pool usable again.
@@ -438,7 +435,7 @@ mod tests {
         });
 
         let result: Result<(), _> =
-            pool.read(|_| Err(EventStoreError::Backend("broken pipe".to_owned())));
+            pool.read(|_| Err(EventStoreError::backend("broken pipe".to_owned())));
         assert!(result.is_err());
         assert_eq!(connects.load(Ordering::SeqCst), 2);
 
@@ -456,7 +453,7 @@ mod tests {
 
         let result: Result<(), EventStoreError> = pool.write(move |_| {
             counter.fetch_add(1, Ordering::SeqCst);
-            Err(EventStoreError::Backend("conflict".to_owned()))
+            Err(EventStoreError::backend("conflict".to_owned()))
         });
 
         assert!(result.is_err());
@@ -466,11 +463,11 @@ mod tests {
     #[test]
     fn factory_failures_surface_and_release_capacity() {
         let pool: ConnectionPool<()> =
-            ConnectionPool::pooled(2, || Err(EventStoreError::Backend("down".to_owned())));
+            ConnectionPool::pooled(2, || Err(EventStoreError::backend("down".to_owned())));
 
         match pool.acquire() {
             Ok(_) => panic!("expected factory failure to surface"),
-            Err(error) => assert!(matches!(error, EventStoreError::Backend(_))),
+            Err(error) => assert!(matches!(error, EventStoreError::Backend { .. })),
         }
         assert!(pool.acquire().is_err());
     }
@@ -494,7 +491,7 @@ mod tests {
 
         for _ in 0..3 {
             let result: Result<(), EventStoreError> =
-                pool.write(|_| Err(EventStoreError::Backend("connection reset".to_owned())));
+                pool.write(|_| Err(EventStoreError::backend("connection reset".to_owned())));
             assert!(result.is_err());
 
             // Must never hang or brick; each write acquires again.

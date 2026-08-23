@@ -126,10 +126,10 @@ where
         }
 
         let content = std::fs::read_to_string(&self.events_path)
-            .map_err(|e| crate::error::EventStoreError::Backend(e.to_string()))?;
+            .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?;
 
         let values: Vec<serde_json::Value> = serde_json::from_str(&content)
-            .map_err(|e| crate::error::EventStoreError::Deserialization(e.to_string()))?;
+            .map_err(|e| crate::error::EventStoreError::deserialization(e.to_string()))?;
 
         let mut envelopes = Vec::new();
         for val in values {
@@ -137,12 +137,12 @@ where
                 if let Some(agg_type_str) = agg_type_val.as_str() {
                     if agg_type_str == A::aggregate_type() {
                         let id_val = val.get("aggregate_id").ok_or_else(|| {
-                            crate::error::EventStoreError::Deserialization(
+                            crate::error::EventStoreError::deserialization(
                                 "missing aggregate_id".to_string(),
                             )
                         })?;
                         let id = serde_json::from_value::<A::Id>(id_val.clone()).map_err(|e| {
-                            crate::error::EventStoreError::Deserialization(format!(
+                            crate::error::EventStoreError::deserialization(format!(
                                 "failed to deserialize aggregate_id: {e}"
                             ))
                         })?;
@@ -151,7 +151,7 @@ where
                                 crate::event::EventEnvelope<A::Event, A::Id>,
                             >(val)
                             .map_err(|e| {
-                                crate::error::EventStoreError::Deserialization(format!(
+                                crate::error::EventStoreError::deserialization(format!(
                                     "failed to deserialize event envelope: {e}"
                                 ))
                             })?;
@@ -183,13 +183,13 @@ where
 
         let content = if self.events_path.exists() {
             std::fs::read_to_string(&self.events_path)
-                .map_err(|e| crate::error::EventStoreError::Backend(e.to_string()))?
+                .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?
         } else {
             "[]".to_string()
         };
 
         let mut all_values: Vec<serde_json::Value> = serde_json::from_str(&content)
-            .map_err(|e| crate::error::EventStoreError::Deserialization(e.to_string()))?;
+            .map_err(|e| crate::error::EventStoreError::deserialization(e.to_string()))?;
 
         let mut current_revision = 0u64;
         let mut max_sequence = 0u64;
@@ -205,12 +205,12 @@ where
                 if let Some(agg_type_str) = agg_type_val.as_str() {
                     if agg_type_str == A::aggregate_type() {
                         let id_val = val.get("aggregate_id").ok_or_else(|| {
-                            crate::error::EventStoreError::Deserialization(
+                            crate::error::EventStoreError::deserialization(
                                 "missing aggregate_id".to_string(),
                             )
                         })?;
                         let id = serde_json::from_value::<A::Id>(id_val.clone()).map_err(|e| {
-                            crate::error::EventStoreError::Deserialization(format!(
+                            crate::error::EventStoreError::deserialization(format!(
                                 "failed to deserialize aggregate_id: {e}"
                             ))
                         })?;
@@ -218,13 +218,13 @@ where
                             let rev = val
                                 .get("revision")
                                 .ok_or_else(|| {
-                                    crate::error::EventStoreError::Deserialization(
+                                    crate::error::EventStoreError::deserialization(
                                         "missing revision".to_string(),
                                     )
                                 })?
                                 .as_u64()
                                 .ok_or_else(|| {
-                                    crate::error::EventStoreError::Deserialization(
+                                    crate::error::EventStoreError::deserialization(
                                         "revision is not a valid u64".to_string(),
                                     )
                                 })?;
@@ -282,16 +282,16 @@ where
             );
 
             let val = serde_json::to_value(&envelope)
-                .map_err(|e| crate::error::EventStoreError::Serialization(e.to_string()))?;
+                .map_err(|e| crate::error::EventStoreError::serialization(e.to_string()))?;
 
             all_values.push(val);
             envelopes.push(envelope);
         }
 
         let new_content = serde_json::to_string(&all_values)
-            .map_err(|e| crate::error::EventStoreError::Serialization(e.to_string()))?;
+            .map_err(|e| crate::error::EventStoreError::serialization(e.to_string()))?;
         write_atomic(&self.events_path, &new_content)
-            .map_err(|e| crate::error::EventStoreError::Backend(e.to_string()))?;
+            .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?;
 
         Ok(envelopes)
     }
@@ -310,10 +310,10 @@ where
         }
 
         let content = std::fs::read_to_string(&self.events_path)
-            .map_err(|e| crate::error::EventStoreError::Backend(e.to_string()))?;
+            .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?;
 
         let values: Vec<serde_json::Value> = serde_json::from_str(&content)
-            .map_err(|e| crate::error::EventStoreError::Deserialization(e.to_string()))?;
+            .map_err(|e| crate::error::EventStoreError::deserialization(e.to_string()))?;
 
         let mut envelopes = Vec::new();
         let seq_num = sequence.unwrap_or(0);
@@ -325,7 +325,7 @@ where
                             crate::event::EventEnvelope<A::Event, A::Id>,
                         >(val)
                         .map_err(|e| {
-                            crate::error::EventStoreError::Deserialization(format!(
+                            crate::error::EventStoreError::deserialization(format!(
                                 "failed to deserialize event envelope: {e}"
                             ))
                         })?;
@@ -360,7 +360,7 @@ where
         let agg_id = aggregate_id.clone();
         tokio::task::spawn_blocking(move || crate::event_store::EventStore::load(&this, &agg_id))
             .await
-            .map_err(|e| crate::error::EventStoreError::Backend(e.to_string()))?
+            .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?
     }
 
     async fn append(
@@ -375,7 +375,7 @@ where
             crate::event_store::EventStore::append(&this, &agg_id, expected_revision, events)
         })
         .await
-        .map_err(|e| crate::error::EventStoreError::Backend(e.to_string()))?
+        .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?
     }
 
     async fn load_global_after(
@@ -387,7 +387,7 @@ where
             crate::event_store::EventStore::load_global_after(&this, sequence)
         })
         .await
-        .map_err(|e| crate::error::EventStoreError::Backend(e.to_string()))?
+        .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?
     }
 }
 
@@ -428,10 +428,10 @@ impl crate::projection::CheckpointStore for JsonFileCheckpointStore {
         }
 
         let content = std::fs::read_to_string(&self.checkpoints_path)
-            .map_err(|e| crate::error::EventStoreError::Backend(e.to_string()))?;
+            .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?;
 
         let map: std::collections::HashMap<String, u64> = serde_json::from_str(&content)
-            .map_err(|e| crate::error::EventStoreError::Deserialization(e.to_string()))?;
+            .map_err(|e| crate::error::EventStoreError::deserialization(e.to_string()))?;
 
         Ok(map.get(projection_name).copied())
     }
@@ -448,20 +448,20 @@ impl crate::projection::CheckpointStore for JsonFileCheckpointStore {
 
         let content = if self.checkpoints_path.exists() {
             std::fs::read_to_string(&self.checkpoints_path)
-                .map_err(|e| crate::error::EventStoreError::Backend(e.to_string()))?
+                .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?
         } else {
             "{}".to_string()
         };
 
         let mut map: std::collections::HashMap<String, u64> = serde_json::from_str(&content)
-            .map_err(|e| crate::error::EventStoreError::Deserialization(e.to_string()))?;
+            .map_err(|e| crate::error::EventStoreError::deserialization(e.to_string()))?;
 
         map.insert(projection_name.to_string(), sequence);
 
         let new_content = serde_json::to_string(&map)
-            .map_err(|e| crate::error::EventStoreError::Serialization(e.to_string()))?;
+            .map_err(|e| crate::error::EventStoreError::serialization(e.to_string()))?;
         write_atomic(&self.checkpoints_path, &new_content)
-            .map_err(|e| crate::error::EventStoreError::Backend(e.to_string()))?;
+            .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?;
 
         Ok(())
     }
@@ -479,7 +479,7 @@ impl crate::projection::AsyncCheckpointStore for JsonFileCheckpointStore {
             crate::projection::CheckpointStore::load_checkpoint(&this, &name)
         })
         .await
-        .map_err(|e| crate::error::EventStoreError::Backend(e.to_string()))?
+        .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?
     }
 
     async fn save_checkpoint(
@@ -493,6 +493,6 @@ impl crate::projection::AsyncCheckpointStore for JsonFileCheckpointStore {
             crate::projection::CheckpointStore::save_checkpoint(&this, &name, sequence)
         })
         .await
-        .map_err(|e| crate::error::EventStoreError::Backend(e.to_string()))?
+        .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?
     }
 }

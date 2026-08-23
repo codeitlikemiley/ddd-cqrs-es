@@ -95,7 +95,6 @@ impl DomainEvent for CounterEvent {
 pub struct Counter {
     pub id: CounterId,
     pub value: i32,
-    pub revision: u64,
 }
 
 impl Aggregate for Counter {
@@ -108,15 +107,10 @@ impl Aggregate for Counter {
         "counter"
     }
 
-    fn revision(&self) -> u64 {
-        self.revision
-    }
-
     fn new() -> Self {
         Self {
             id: CounterId(String::new()),
             value: 0,
-            revision: 0,
         }
     }
 
@@ -133,7 +127,6 @@ impl Aggregate for Counter {
                 self.value = *value;
             }
         }
-        self.revision += 1;
     }
 
     /// Validates a command against current state. Returns a vector of events if successful.
