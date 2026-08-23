@@ -1358,8 +1358,10 @@ pub fn execute_query_on_stream(
 #[cfg(feature = "wasi-postgres-tcp")]
 /// Execute SQL over raw Postgres TCP with a small connection cache.
 ///
-/// The cache is keyed by host/port/user/database only, so credentials are
-/// never retained in the global cache after connecting.
+/// The cache is keyed by host/port/user/database plus the effective transport
+/// mode, so credentials are never retained in the global cache after
+/// connecting and a plaintext connection cached under `sslmode=disable|allow`
+/// is never reused by a caller that requires TLS.
 ///
 /// Returns all rows as JSON arrays/objects in the framework's shared shape.
 pub fn execute_raw_tcp_postgres(
@@ -1369,9 +1371,16 @@ pub fn execute_raw_tcp_postgres(
 ) -> Result<Vec<serde_json::Value>, String> {
     let pg_params = parse_pg_url(url)?;
     let addr = format!("{}:{}", pg_params.host, pg_params.port);
+    // Mirrors the plaintext-fallback condition in `connect_and_auth_postgres`:
+    // only `sslmode=disable|allow` may ever ride a plaintext stream.
+    let transport = if matches!(url_sslmode(url).as_deref(), Some("disable") | Some("allow")) {
+        "plaintext-ok"
+    } else {
+        "tls-required"
+    };
     let cache_key = format!(
-        "{}:{}/{}?user={}",
-        pg_params.host, pg_params.port, pg_params.database, pg_params.user
+        "{}:{}/{}?user={}&tls={}",
+        pg_params.host, pg_params.port, pg_params.database, pg_params.user, transport
     );
 
     let mut guard = PG_CONN
