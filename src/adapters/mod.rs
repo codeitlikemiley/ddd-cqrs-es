@@ -176,8 +176,12 @@ where
             .ok_or_else(|| "Invalid recorded_at_ms type".to_string())?
     };
 
-    let duration = std::time::Duration::from_millis(recorded_at_ms as u64);
-    let recorded_at = std::time::UNIX_EPOCH + duration;
+    let recorded_at_ms = u64::try_from(recorded_at_ms)
+        .map_err(|_| "recorded_at_ms cannot be negative".to_string())?;
+    let duration = std::time::Duration::from_millis(recorded_at_ms);
+    let recorded_at = std::time::UNIX_EPOCH
+        .checked_add(duration)
+        .ok_or_else(|| "recorded_at_ms overflows the system clock".to_string())?;
 
     let aggregate_id: Id = serde_json::from_str(&aggregate_id_str)
         .or_else(|_| serde_json::from_value(serde_json::Value::String(aggregate_id_str.clone())))

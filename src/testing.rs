@@ -162,6 +162,15 @@ pub fn assert_event_store_contract<A, S>(
         assert_eq!(global.len(), 1);
         assert_eq!(global[0].revision, 2);
     }
+
+    let tail = store.load_after_revision(&aggregate_id, 1).unwrap();
+    assert_eq!(tail.len(), 1);
+    assert_eq!(tail[0].revision, 2);
+    assert_eq!(tail[0].payload, second_event);
+    assert!(store
+        .load_after_revision(&aggregate_id, 2)
+        .unwrap()
+        .is_empty());
 }
 
 /// Runs a focused global replay contract against a store implementation.
@@ -281,6 +290,16 @@ pub async fn assert_async_event_store_contract<A, S>(
         assert_eq!(global.len(), 1);
         assert_eq!(global[0].revision, 2);
     }
+
+    let tail = store.load_after_revision(&aggregate_id, 1).await.unwrap();
+    assert_eq!(tail.len(), 1);
+    assert_eq!(tail[0].revision, 2);
+    assert_eq!(tail[0].payload, second_event);
+    assert!(store
+        .load_after_revision(&aggregate_id, 2)
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 /// Runs a focused checkpoint-store contract.

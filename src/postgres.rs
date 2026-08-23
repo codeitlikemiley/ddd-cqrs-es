@@ -7,6 +7,7 @@ use crate::event_store::{
     AtomicIdempotentEventStore, EventStore, EventStream, IdempotentAppendError,
 };
 use crate::idempotency::{IdempotencyKey, IdempotencyState, IdempotencyStore};
+use crate::pool::{resolve_pool_size, ConnectionPool};
 use crate::snapshot::{Snapshot, SnapshotStore};
 use crate::sql_common::{
     check_expected_revision, deserialize_id, deserialize_metadata, deserialize_payload,
@@ -29,7 +30,7 @@ pub struct PostgresEventStore<A>
 where
     A: Aggregate,
 {
-    client: Arc<Mutex<Client>>,
+    pool: ConnectionPool<Client>,
     table_name: String,
     idempotency_table: String,
     upcasters: UpcasterRegistry,
@@ -42,7 +43,7 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            client: Arc::clone(&self.client),
+            pool: self.pool.clone(),
             table_name: self.table_name.clone(),
             idempotency_table: self.idempotency_table.clone(),
             upcasters: self.upcasters.clone(),
@@ -107,12 +108,58 @@ where
         validate_table_name(&idempotency_table)?;
 
         Ok(Self {
-            client: Arc::new(Mutex::new(client)),
+            pool: ConnectionPool::single(client),
             table_name,
             idempotency_table,
             upcasters: UpcasterRegistry::new(),
             _marker: PhantomData,
         })
+    }
+
+    /// Connects a bounded connection pool using [`NoTls`].
+    ///
+    /// Pool size resolves from `DDD_CQRS_ES_POOL_SIZE`, or the CPU count
+    /// clamped to `[2, 8]` when the variable is unset.
+    pub fn connect_pooled(params: &str) -> Result<Self, EventStoreError> {
+        Self::connect_pooled_with_table_name(params, "events", resolve_pool_size(None))
+    }
+
+    /// Connects a bounded pool with explicit size and custom table name.
+    ///
+    /// The size is clamped to `[1, 128]`; connections are opened lazily up to
+    /// that bound and reused across operations.
+    pub fn connect_pooled_with_table_name(
+        params: &str,
+        table_name: impl Into<String>,
+        max_size: usize,
+    ) -> Result<Self, EventStoreError> {
+        let table_name = table_name.into();
+        validate_table_name(&table_name)?;
+        validate_table_name("idempotency_keys")?;
+
+        let url = params.to_owned();
+        let store = Self::with_table_names_impl(
+            ConnectionPool::pooled(resolve_pool_size(Some(max_size)), move || {
+                Client::connect(&url, NoTls).map_err(map_postgres_error)
+            }),
+            table_name,
+            "idempotency_keys".to_owned(),
+        );
+        Ok(store)
+    }
+
+    fn with_table_names_impl(
+        pool: ConnectionPool<Client>,
+        table_name: String,
+        idempotency_table: String,
+    ) -> Self {
+        Self {
+            pool,
+            table_name,
+            idempotency_table,
+            upcasters: UpcasterRegistry::new(),
+            _marker: PhantomData,
+        }
     }
 
     /// Returns the upcaster registry.
@@ -135,8 +182,7 @@ where
             .with_events_table(&self.table_name)?
             .with_idempotency_table(&self.idempotency_table)?;
         let migrator = crate::schema::SchemaMigrator::new(config);
-        let mut client = self.client.lock().map_err(|_| EventStoreError::Poisoned)?;
-        migrator.run_postgres(&mut client)
+        self.pool.write(|client| migrator.run_postgres(client))
     }
 
     /// Initializes the PostgreSQL event table and indexes.
@@ -155,21 +201,54 @@ where
 
     fn load(&self, aggregate_id: &A::Id) -> Result<EventStream<A>, Self::Error> {
         let aggregate_id = serialize_id(aggregate_id)?;
-        let mut client = self.client.lock().map_err(|_| EventStoreError::Poisoned)?;
-        let query = format!(
-            "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
-             event_version, payload, metadata, recorded_at_ms FROM {table} \
-             WHERE aggregate_type = $1 AND aggregate_id = $2 ORDER BY revision ASC",
-            table = self.table_name
-        );
-        let rows = client
-            .query(&query, &[&A::aggregate_type(), &aggregate_id])
-            .map_err(map_postgres_error)?;
-
+        let table_name = self.table_name.clone();
         let upcasters = self.upcasters.clone();
-        rows.into_iter()
-            .map(|row| row_to_envelope::<A>(&upcasters, row))
-            .collect()
+        self.pool.read(move |client| {
+            let query = format!(
+                "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
+                 event_version, payload, metadata, recorded_at_ms FROM {table} \
+                 WHERE aggregate_type = $1 AND aggregate_id = $2 ORDER BY revision ASC",
+                table = table_name
+            );
+            let rows = client
+                .query(&query, &[&A::aggregate_type(), &aggregate_id])
+                .map_err(map_postgres_error)?;
+
+            rows.into_iter()
+                .map(|row| row_to_envelope::<A>(&upcasters, row))
+                .collect()
+        })
+    }
+
+    fn load_after_revision(
+        &self,
+        aggregate_id: &A::Id,
+        revision: u64,
+    ) -> Result<EventStream<A>, Self::Error> {
+        let revision_i64 = i64::try_from(revision)
+            .map_err(|_| EventStoreError::Serialization("revision exceeds i64".to_owned()))?;
+        let aggregate_id = serialize_id(aggregate_id)?;
+        let table_name = self.table_name.clone();
+        let upcasters = self.upcasters.clone();
+        self.pool.read(move |client| {
+            let query = format!(
+                "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
+                 event_version, payload, metadata, recorded_at_ms FROM {table} \
+                 WHERE aggregate_type = $1 AND aggregate_id = $2 AND revision > $3 \
+                 ORDER BY revision ASC",
+                table = table_name
+            );
+            let rows = client
+                .query(
+                    &query,
+                    &[&A::aggregate_type(), &aggregate_id, &revision_i64],
+                )
+                .map_err(map_postgres_error)?;
+
+            rows.into_iter()
+                .map(|row| row_to_envelope::<A>(&upcasters, row))
+                .collect()
+        })
     }
 
     fn append(
@@ -183,85 +262,87 @@ where
             .into_iter()
             .map(PreparedPostgresEvent::new)
             .collect::<Result<Vec<_>, _>>()?;
-        let mut client = self.client.lock().map_err(|_| EventStoreError::Poisoned)?;
-        let mut transaction = client.transaction().map_err(map_postgres_error)?;
-        let revision_query = format!(
-            "SELECT COALESCE(MAX(revision), 0)::BIGINT FROM {table} \
-             WHERE aggregate_type = $1 AND aggregate_id = $2",
-            table = self.table_name
-        );
-        let actual_revision: i64 = transaction
-            .query_one(&revision_query, &[&A::aggregate_type(), &aggregate_id_key])
-            .and_then(|row| row.try_get(0))
-            .map_err(map_postgres_error)?;
-        let actual_revision = u64::try_from(actual_revision).map_err(|_| {
-            EventStoreError::Deserialization("stored revision cannot be negative".to_owned())
-        })?;
-        check_expected_revision(expected_revision, actual_revision)?;
-
-        if prepared.is_empty() {
-            transaction.commit().map_err(map_postgres_error)?;
-            return Ok(Vec::new());
-        }
-
-        let insert = format!(
-            "INSERT INTO {table} \
-             (event_id, aggregate_id, aggregate_type, revision, event_type, event_version, \
-              payload, metadata, recorded_at_ms) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING sequence",
-            table = self.table_name
-        );
-        let mut committed = Vec::with_capacity(prepared.len());
-
-        for (index, event) in prepared.into_iter().enumerate() {
-            let revision = actual_revision + index as u64 + 1;
-            let revision_i64 = i64::try_from(revision).map_err(|_| {
-                EventStoreError::Serialization("revision exceeds BIGINT".to_owned())
+        let table_name = self.table_name.clone();
+        self.pool.write(move |client| {
+            let mut transaction = client.transaction().map_err(map_postgres_error)?;
+            let revision_query = format!(
+                "SELECT COALESCE(MAX(revision), 0)::BIGINT FROM {table} \
+                 WHERE aggregate_type = $1 AND aggregate_id = $2",
+                table = table_name
+            );
+            let actual_revision: i64 = transaction
+                .query_one(&revision_query, &[&A::aggregate_type(), &aggregate_id_key])
+                .and_then(|row| row.try_get(0))
+                .map_err(map_postgres_error)?;
+            let actual_revision = u64::try_from(actual_revision).map_err(|_| {
+                EventStoreError::Deserialization("stored revision cannot be negative".to_owned())
             })?;
-            let event_version_i32 = i32::try_from(event.event_version).map_err(|_| {
-                EventStoreError::Serialization("event_version exceeds INT".to_owned())
-            })?;
-            let row = transaction
-                .query_one(
-                    &insert,
-                    &[
-                        &event.event_id.as_str(),
-                        &aggregate_id_key,
-                        &A::aggregate_type(),
-                        &revision_i64,
-                        &event.event_type,
-                        &event_version_i32,
-                        &event.payload_json,
-                        &event.metadata_json,
-                        &event.recorded_at_ms,
-                    ],
-                )
-                .map_err(|error| {
-                    map_postgres_insert_error(error, expected_revision, actual_revision)
+            check_expected_revision(expected_revision, actual_revision)?;
+
+            if prepared.is_empty() {
+                transaction.commit().map_err(map_postgres_error)?;
+                return Ok(Vec::new());
+            }
+
+            let insert = format!(
+                "INSERT INTO {table} \
+                 (event_id, aggregate_id, aggregate_type, revision, event_type, event_version, \
+                  payload, metadata, recorded_at_ms) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING sequence",
+                table = table_name
+            );
+            let mut committed = Vec::with_capacity(prepared.len());
+
+            for (index, event) in prepared.into_iter().enumerate() {
+                let revision = actual_revision + index as u64 + 1;
+                let revision_i64 = i64::try_from(revision).map_err(|_| {
+                    EventStoreError::Serialization("revision exceeds BIGINT".to_owned())
                 })?;
-            let sequence: i64 = row.try_get(0).map_err(map_postgres_error)?;
-            let sequence = u64::try_from(sequence).map_err(|_| {
-                EventStoreError::Deserialization(
-                    "PostgreSQL sequence cannot be negative".to_owned(),
-                )
-            })?;
+                let event_version_i32 = i32::try_from(event.event_version).map_err(|_| {
+                    EventStoreError::Serialization("event_version exceeds INT".to_owned())
+                })?;
+                let row = transaction
+                    .query_one(
+                        &insert,
+                        &[
+                            &event.event_id.as_str(),
+                            &aggregate_id_key,
+                            &A::aggregate_type(),
+                            &revision_i64,
+                            &event.event_type,
+                            &event_version_i32,
+                            &event.payload_json,
+                            &event.metadata_json,
+                            &event.recorded_at_ms,
+                        ],
+                    )
+                    .map_err(|error| {
+                        map_postgres_insert_error(error, expected_revision, actual_revision)
+                    })?;
+                let sequence: i64 = row.try_get(0).map_err(map_postgres_error)?;
+                let sequence = u64::try_from(sequence).map_err(|_| {
+                    EventStoreError::Deserialization(
+                        "PostgreSQL sequence cannot be negative".to_owned(),
+                    )
+                })?;
 
-            committed.push(EventEnvelope::new(
-                event.event_id,
-                aggregate_id.clone(),
-                A::aggregate_type(),
-                revision,
-                Some(sequence),
-                event.event_type,
-                event.event_version,
-                event.payload,
-                event.metadata,
-                event.recorded_at,
-            ));
-        }
+                committed.push(EventEnvelope::new(
+                    event.event_id,
+                    aggregate_id.clone(),
+                    A::aggregate_type(),
+                    revision,
+                    Some(sequence),
+                    event.event_type,
+                    event.event_version,
+                    event.payload,
+                    event.metadata,
+                    event.recorded_at,
+                ));
+            }
 
-        transaction.commit().map_err(map_postgres_error)?;
-        Ok(committed)
+            transaction.commit().map_err(map_postgres_error)?;
+            Ok(committed)
+        })
     }
 
     fn load_global_after(&self, sequence: Option<u64>) -> Result<EventStream<A>, Self::Error> {
@@ -269,21 +350,23 @@ where
         let sequence = i64::try_from(sequence).map_err(|_| {
             EventStoreError::Deserialization("global sequence exceeds BIGINT".to_owned())
         })?;
-        let mut client = self.client.lock().map_err(|_| EventStoreError::Poisoned)?;
-        let query = format!(
-            "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
-             event_version, payload, metadata, recorded_at_ms FROM {table} \
-             WHERE aggregate_type = $1 AND sequence > $2 ORDER BY sequence ASC",
-            table = self.table_name
-        );
-        let rows = client
-            .query(&query, &[&A::aggregate_type(), &sequence])
-            .map_err(map_postgres_error)?;
-
+        let table_name = self.table_name.clone();
         let upcasters = self.upcasters.clone();
-        rows.into_iter()
-            .map(|row| row_to_envelope::<A>(&upcasters, row))
-            .collect()
+        self.pool.read(move |client| {
+            let query = format!(
+                "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
+                 event_version, payload, metadata, recorded_at_ms FROM {table} \
+                 WHERE aggregate_type = $1 AND sequence > $2 ORDER BY sequence ASC",
+                table = table_name
+            );
+            let rows = client
+                .query(&query, &[&A::aggregate_type(), &sequence])
+                .map_err(map_postgres_error)?;
+
+            rows.into_iter()
+                .map(|row| row_to_envelope::<A>(&upcasters, row))
+                .collect()
+        })
     }
 
     fn load_global_after_limited(
@@ -298,21 +381,23 @@ where
         let limit = i64::try_from(limit.get()).map_err(|_| {
             EventStoreError::Deserialization("event replay limit exceeds BIGINT".to_owned())
         })?;
-        let mut client = self.client.lock().map_err(|_| EventStoreError::Poisoned)?;
-        let query = format!(
-            "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
-             event_version, payload, metadata, recorded_at_ms FROM {table} \
-             WHERE aggregate_type = $1 AND sequence > $2 ORDER BY sequence ASC LIMIT $3",
-            table = self.table_name
-        );
-        let rows = client
-            .query(&query, &[&A::aggregate_type(), &sequence, &limit])
-            .map_err(map_postgres_error)?;
-
+        let table_name = self.table_name.clone();
         let upcasters = self.upcasters.clone();
-        rows.into_iter()
-            .map(|row| row_to_envelope::<A>(&upcasters, row))
-            .collect()
+        self.pool.read(move |client| {
+            let query = format!(
+                "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
+                 event_version, payload, metadata, recorded_at_ms FROM {table} \
+                 WHERE aggregate_type = $1 AND sequence > $2 ORDER BY sequence ASC LIMIT $3",
+                table = table_name
+            );
+            let rows = client
+                .query(&query, &[&A::aggregate_type(), &sequence, &limit])
+                .map_err(map_postgres_error)?;
+
+            rows.into_iter()
+                .map(|row| row_to_envelope::<A>(&upcasters, row))
+                .collect()
+        })
     }
 }
 
@@ -326,36 +411,40 @@ where
         &self,
         idempotency_key: &IdempotencyKey,
     ) -> Result<Option<IdempotencyState<EventStream<A>>>, Self::Error> {
-        let mut client = self.client.lock().map_err(|_| EventStoreError::Poisoned)?;
-        let query = format!(
-            "SELECT state, value FROM {} WHERE idempotency_key = $1;",
-            self.idempotency_table
-        );
-        let row = client
-            .query_opt(&query, &[&idempotency_key.as_str()])
-            .map_err(map_postgres_error)?;
+        let idempotency_table = self.idempotency_table.clone();
+        let key = idempotency_key.as_str().to_owned();
+        self.pool.read(move |client| {
+            let query = format!(
+                "SELECT state, value FROM {table} WHERE idempotency_key = $1;",
+                table = idempotency_table
+            );
+            let row = client
+                .query_opt(&query, &[&key])
+                .map_err(map_postgres_error)?;
 
-        row.map(|row| {
-            let state: String = row.try_get(0).map_err(map_postgres_error)?;
-            let value: Option<serde_json::Value> = row.try_get(1).map_err(map_postgres_error)?;
-            match (state.as_str(), value) {
-                ("pending", _) => Ok(IdempotencyState::Pending),
-                ("complete", Some(value)) => serde_json::from_value(value)
-                    .map(IdempotencyState::Complete)
-                    .map_err(|error| {
-                        EventStoreError::Deserialization(format!(
-                            "idempotent committed events JSON: {error}"
-                        ))
-                    }),
-                ("complete", None) => Err(EventStoreError::Deserialization(
-                    "completed idempotency row is missing value".to_owned(),
-                )),
-                (state, _) => Err(EventStoreError::Deserialization(format!(
-                    "unknown idempotency state: {state}"
-                ))),
-            }
+            row.map(|row| {
+                let state: String = row.try_get(0).map_err(map_postgres_error)?;
+                let value: Option<serde_json::Value> =
+                    row.try_get(1).map_err(map_postgres_error)?;
+                match (state.as_str(), value) {
+                    ("pending", _) => Ok(IdempotencyState::Pending),
+                    ("complete", Some(value)) => serde_json::from_value(value)
+                        .map(IdempotencyState::Complete)
+                        .map_err(|error| {
+                            EventStoreError::Deserialization(format!(
+                                "idempotent committed events JSON: {error}"
+                            ))
+                        }),
+                    ("complete", None) => Err(EventStoreError::Deserialization(
+                        "completed idempotency row is missing value".to_owned(),
+                    )),
+                    (state, _) => Err(EventStoreError::Deserialization(format!(
+                        "unknown idempotency state: {state}"
+                    ))),
+                }
+            })
+            .transpose()
         })
-        .transpose()
     }
 
     fn append_idempotent(
@@ -381,178 +470,188 @@ where
             .map(PreparedPostgresEvent::new)
             .collect::<Result<Vec<_>, _>>()
             .map_err(IdempotentAppendError::Store)?;
-        let mut client = self
-            .client
-            .lock()
-            .map_err(|_| IdempotentAppendError::Store(EventStoreError::Poisoned))?;
-        let mut transaction = client
-            .transaction()
-            .map_err(|error| IdempotentAppendError::Store(map_postgres_error(error)))?;
+        let table_name = self.table_name.clone();
+        let idempotency_table = self.idempotency_table.clone();
+        let aggregate_id = aggregate_id.clone();
 
-        let load_idempotency = format!(
-            "SELECT state, value FROM {} WHERE idempotency_key = $1;",
-            self.idempotency_table
-        );
-        let row = transaction
-            .query_opt(&load_idempotency, &[&idempotency_key.as_str()])
-            .map_err(|error| IdempotentAppendError::Store(map_postgres_error(error)))?;
-
-        if let Some(row) = row {
-            let state: String = row
-                .try_get(0)
-                .map_err(|error| IdempotentAppendError::Store(map_postgres_error(error)))?;
-            let value: Option<serde_json::Value> = row
-                .try_get(1)
-                .map_err(|error| IdempotentAppendError::Store(map_postgres_error(error)))?;
-            match (state.as_str(), value) {
-                ("complete", Some(value)) => {
-                    let committed = serde_json::from_value(value).map_err(|error| {
-                        IdempotentAppendError::Store(EventStoreError::Deserialization(format!(
-                            "idempotent committed events JSON: {error}"
-                        )))
-                    })?;
-                    transaction
-                        .commit()
-                        .map_err(|error| IdempotentAppendError::Store(map_postgres_error(error)))?;
-                    return Ok(committed);
-                }
-                ("complete", None) => {
-                    return Err(IdempotentAppendError::Store(
-                        EventStoreError::Deserialization(
-                            "completed idempotency row is missing value".to_owned(),
-                        ),
-                    ));
-                }
-                ("pending", _) => {
-                    return Err(IdempotentAppendError::Pending {
-                        key: idempotency_key,
-                    });
-                }
-                (state, _) => {
-                    return Err(IdempotentAppendError::Store(
-                        EventStoreError::Deserialization(format!(
-                            "unknown idempotency state: {state}"
-                        )),
-                    ));
-                }
-            }
-        }
-
-        let updated_at_ms =
-            system_time_to_millis(SystemTime::now()).map_err(IdempotentAppendError::Store)?;
-        let reserve = format!(
-            "INSERT INTO {} (idempotency_key, state, value, updated_at_ms)
-             VALUES ($1, 'pending', NULL, $2);",
-            self.idempotency_table
-        );
-        transaction
-            .execute(&reserve, &[&idempotency_key.as_str(), &updated_at_ms])
-            .map_err(|error| IdempotentAppendError::Store(map_postgres_error(error)))?;
-
-        let revision_query = format!(
-            "SELECT COALESCE(MAX(revision), 0)::BIGINT FROM {table} \
-             WHERE aggregate_type = $1 AND aggregate_id = $2",
-            table = self.table_name
-        );
-        let actual_revision: i64 = transaction
-            .query_one(&revision_query, &[&A::aggregate_type(), &aggregate_id_key])
-            .and_then(|row| row.try_get(0))
-            .map_err(|error| IdempotentAppendError::Store(map_postgres_error(error)))?;
-        let actual_revision = u64::try_from(actual_revision).map_err(|_| {
-            IdempotentAppendError::Store(EventStoreError::Deserialization(
-                "stored revision cannot be negative".to_owned(),
-            ))
-        })?;
-        check_expected_revision(expected_revision, actual_revision)
-            .map_err(IdempotentAppendError::Store)?;
-
-        let insert = format!(
-            "INSERT INTO {table} \
-             (event_id, aggregate_id, aggregate_type, revision, event_type, event_version, \
-              payload, metadata, recorded_at_ms) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING sequence",
-            table = self.table_name
-        );
-        let mut committed = Vec::with_capacity(prepared.len());
-
-        for (index, event) in prepared.into_iter().enumerate() {
-            let revision = actual_revision + index as u64 + 1;
-            let revision_i64 = i64::try_from(revision).map_err(|_| {
-                IdempotentAppendError::Store(EventStoreError::Serialization(
-                    "revision exceeds BIGINT".to_owned(),
-                ))
-            })?;
-            let event_version_i32 = i32::try_from(event.event_version).map_err(|_| {
-                IdempotentAppendError::Store(EventStoreError::Serialization(
-                    "event_version exceeds INT".to_owned(),
-                ))
-            })?;
-            let row = transaction
-                .query_one(
-                    &insert,
-                    &[
-                        &event.event_id.as_str(),
-                        &aggregate_id_key,
-                        &A::aggregate_type(),
-                        &revision_i64,
-                        &event.event_type,
-                        &event_version_i32,
-                        &event.payload_json,
-                        &event.metadata_json,
-                        &event.recorded_at_ms,
-                    ],
+        let committed = self
+            .pool
+            .write(move |client| {
+                run_idempotent_append::<A>(
+                    client,
+                    &table_name,
+                    &idempotency_table,
+                    &idempotency_key,
+                    &aggregate_id,
+                    &aggregate_id_key,
+                    expected_revision,
+                    prepared,
                 )
-                .map_err(|error| {
-                    IdempotentAppendError::Store(map_postgres_insert_error(
-                        error,
-                        expected_revision,
-                        actual_revision,
-                    ))
-                })?;
-            let sequence: i64 = row
-                .try_get(0)
-                .map_err(|error| IdempotentAppendError::Store(map_postgres_error(error)))?;
-            let sequence = u64::try_from(sequence).map_err(|_| {
-                IdempotentAppendError::Store(EventStoreError::Deserialization(
-                    "PostgreSQL sequence cannot be negative".to_owned(),
-                ))
-            })?;
-
-            committed.push(EventEnvelope::new(
-                event.event_id,
-                aggregate_id.clone(),
-                A::aggregate_type(),
-                revision,
-                Some(sequence),
-                event.event_type,
-                event.event_version,
-                event.payload,
-                event.metadata,
-                event.recorded_at,
-            ));
-        }
-
-        let value_json = serde_json::to_value(&committed).map_err(|error| {
-            IdempotentAppendError::Store(EventStoreError::Serialization(format!(
-                "idempotent committed events JSON: {error}"
-            )))
-        })?;
-        let complete = format!(
-            "UPDATE {} SET state = 'complete', value = $2::jsonb, updated_at_ms = $3
-             WHERE idempotency_key = $1;",
-            self.idempotency_table
-        );
-        transaction
-            .execute(
-                &complete,
-                &[&idempotency_key.as_str(), &value_json, &updated_at_ms],
-            )
-            .map_err(|error| IdempotentAppendError::Store(map_postgres_error(error)))?;
-        transaction
-            .commit()
-            .map_err(|error| IdempotentAppendError::Store(map_postgres_error(error)))?;
+            })
+            .map_err(IdempotentAppendError::Store)??;
         Ok(committed)
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_idempotent_append<A>(
+    client: &mut Client,
+    table_name: &str,
+    idempotency_table: &str,
+    idempotency_key: &IdempotencyKey,
+    aggregate_id: &A::Id,
+    aggregate_id_key: &str,
+    expected_revision: ExpectedRevision,
+    prepared: Vec<PreparedPostgresEvent<A::Event>>,
+) -> Result<Result<EventStream<A>, IdempotentAppendError<EventStoreError>>, EventStoreError>
+where
+    A: Aggregate + 'static,
+    A::Event: serde::Serialize + serde::de::DeserializeOwned,
+    A::Id: serde::Serialize + serde::de::DeserializeOwned,
+{
+    let mut transaction = client.transaction().map_err(map_postgres_error)?;
+
+    let load_idempotency =
+        format!("SELECT state, value FROM {idempotency_table} WHERE idempotency_key = $1;");
+    let row = transaction
+        .query_opt(&load_idempotency, &[&idempotency_key.as_str()])
+        .map_err(map_postgres_error)?;
+
+    if let Some(row) = row {
+        let state: String = row.try_get(0).map_err(map_postgres_error)?;
+        let value: Option<serde_json::Value> = row.try_get(1).map_err(map_postgres_error)?;
+        match (state.as_str(), value) {
+            ("complete", Some(value)) => {
+                let committed = serde_json::from_value(value).map_err(|error| {
+                    EventStoreError::Deserialization(format!(
+                        "idempotent committed events JSON: {error}"
+                    ))
+                })?;
+                transaction.commit().map_err(map_postgres_error)?;
+                return Ok(Ok(committed));
+            }
+            ("complete", None) => {
+                return Ok(Err(IdempotentAppendError::Store(
+                    EventStoreError::Deserialization(
+                        "completed idempotency row is missing value".to_owned(),
+                    ),
+                )));
+            }
+            ("pending", _) => {
+                return Ok(Err(IdempotentAppendError::Pending {
+                    key: idempotency_key.clone(),
+                }));
+            }
+            (state, _) => {
+                return Ok(Err(IdempotentAppendError::Store(
+                    EventStoreError::Deserialization(format!("unknown idempotency state: {state}")),
+                )));
+            }
+        }
+    }
+
+    let updated_at_ms = system_time_to_millis(SystemTime::now())?;
+    let reserve = format!(
+        "INSERT INTO {idempotency_table} (idempotency_key, state, value, updated_at_ms)
+         VALUES ($1, 'pending', NULL, $2);"
+    );
+    if let Err(error) = transaction.execute(&reserve, &[&idempotency_key.as_str(), &updated_at_ms])
+    {
+        // Another connection reserved the same key between our SELECT and this
+        // INSERT. Report Pending so the caller's wait loop re-polls and finds
+        // the winner's committed value instead of surfacing a fatal error.
+        if error
+            .code()
+            .is_some_and(|code| *code == ::postgres::error::SqlState::UNIQUE_VIOLATION)
+        {
+            return Ok(Err(IdempotentAppendError::Pending {
+                key: idempotency_key.clone(),
+            }));
+        }
+        return Err(map_postgres_error(error));
+    }
+
+    let revision_query = format!(
+        "SELECT COALESCE(MAX(revision), 0)::BIGINT FROM {table} \
+         WHERE aggregate_type = $1 AND aggregate_id = $2",
+        table = table_name
+    );
+    let actual_revision: i64 = transaction
+        .query_one(&revision_query, &[&A::aggregate_type(), &aggregate_id_key])
+        .and_then(|row| row.try_get(0))
+        .map_err(map_postgres_error)?;
+    let actual_revision = u64::try_from(actual_revision).map_err(|_| {
+        EventStoreError::Deserialization("stored revision cannot be negative".to_owned())
+    })?;
+    check_expected_revision(expected_revision, actual_revision)?;
+
+    let insert = format!(
+        "INSERT INTO {table} \
+         (event_id, aggregate_id, aggregate_type, revision, event_type, event_version, \
+          payload, metadata, recorded_at_ms) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING sequence",
+        table = table_name
+    );
+    let mut committed = Vec::with_capacity(prepared.len());
+
+    for (index, event) in prepared.into_iter().enumerate() {
+        let revision = actual_revision + index as u64 + 1;
+        let revision_i64 = i64::try_from(revision)
+            .map_err(|_| EventStoreError::Serialization("revision exceeds BIGINT".to_owned()))?;
+        let event_version_i32 = i32::try_from(event.event_version)
+            .map_err(|_| EventStoreError::Serialization("event_version exceeds INT".to_owned()))?;
+        let row = transaction
+            .query_one(
+                &insert,
+                &[
+                    &event.event_id.as_str(),
+                    &aggregate_id_key,
+                    &A::aggregate_type(),
+                    &revision_i64,
+                    &event.event_type,
+                    &event_version_i32,
+                    &event.payload_json,
+                    &event.metadata_json,
+                    &event.recorded_at_ms,
+                ],
+            )
+            .map_err(|error| {
+                map_postgres_insert_error(error, expected_revision, actual_revision)
+            })?;
+        let sequence: i64 = row.try_get(0).map_err(map_postgres_error)?;
+        let sequence = u64::try_from(sequence).map_err(|_| {
+            EventStoreError::Deserialization("PostgreSQL sequence cannot be negative".to_owned())
+        })?;
+
+        committed.push(EventEnvelope::new(
+            event.event_id,
+            aggregate_id.clone(),
+            A::aggregate_type(),
+            revision,
+            Some(sequence),
+            event.event_type,
+            event.event_version,
+            event.payload,
+            event.metadata,
+            event.recorded_at,
+        ));
+    }
+
+    let value_json = serde_json::to_value(&committed).map_err(|error| {
+        EventStoreError::Serialization(format!("idempotent committed events JSON: {error}"))
+    })?;
+    let complete = format!(
+        "UPDATE {idempotency_table} SET state = 'complete', value = $2::jsonb, updated_at_ms = $3
+         WHERE idempotency_key = $1;"
+    );
+    transaction
+        .execute(
+            &complete,
+            &[&idempotency_key.as_str(), &value_json, &updated_at_ms],
+        )
+        .map_err(map_postgres_error)?;
+    transaction.commit().map_err(map_postgres_error)?;
+    Ok(Ok(committed))
 }
 
 #[cfg(feature = "async")]
@@ -571,6 +670,20 @@ where
         tokio::task::spawn_blocking(move || EventStore::load(&this, &aggregate_id))
             .await
             .map_err(|error| EventStoreError::Backend(error.to_string()))?
+    }
+
+    async fn load_after_revision(
+        &self,
+        aggregate_id: &A::Id,
+        revision: u64,
+    ) -> Result<EventStream<A>, Self::Error> {
+        let this = self.clone();
+        let aggregate_id = aggregate_id.clone();
+        tokio::task::spawn_blocking(move || {
+            EventStore::load_after_revision(&this, &aggregate_id, revision)
+        })
+        .await
+        .map_err(|error| EventStoreError::Backend(error.to_string()))?
     }
 
     async fn append(

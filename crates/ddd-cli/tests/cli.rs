@@ -941,3 +941,180 @@ fn runtime_commands_dry_run_for_full_spin_matrix() {
         }
     }
 }
+
+#[test]
+fn add_aggregate_rejects_digit_leading_name() {
+    let temp = tempfile::tempdir().unwrap();
+    init_basic_project(&temp, "digits");
+
+    let mut command = Command::cargo_bin("ddd").unwrap();
+    command
+        .arg("--cwd")
+        .arg(temp.path().join("digits"))
+        .arg("add")
+        .arg("aggregate")
+        .arg("3d");
+
+    command.assert().failure().stderr(predicate::str::contains(
+        "must be a snake_case Rust identifier",
+    ));
+}
+
+#[test]
+fn add_aggregate_refuses_existing_module_without_force() {
+    let temp = tempfile::tempdir().unwrap();
+    init_basic_project(&temp, "refusals");
+    let mut first = Command::cargo_bin("ddd").unwrap();
+    first
+        .arg("--cwd")
+        .arg(temp.path().join("refusals"))
+        .arg("add")
+        .arg("aggregate")
+        .arg("Ledger");
+    first.assert().success();
+
+    let mut second = Command::cargo_bin("ddd").unwrap();
+    second
+        .arg("--cwd")
+        .arg(temp.path().join("refusals"))
+        .arg("add")
+        .arg("aggregate")
+        .arg("Ledger");
+
+    second.assert().failure().stderr(predicate::str::contains(
+        "already exists (use --force to overwrite)",
+    ));
+}
+
+#[test]
+fn add_event_fails_when_domain_markers_are_missing() {
+    let temp = tempfile::tempdir().unwrap();
+    init_basic_project_with_domain(&temp, "markers", "Invoice");
+    let domain_file = temp.path().join("markers/src/domain/invoice.rs");
+    let content = std::fs::read_to_string(&domain_file).unwrap();
+    let stripped = content.replace("// ddd:events:end", "");
+    std::fs::write(&domain_file, stripped).unwrap();
+
+    let mut command = Command::cargo_bin("ddd").unwrap();
+    command
+        .arg("--cwd")
+        .arg(temp.path().join("markers"))
+        .arg("add")
+        .arg("event")
+        .arg("Invoice")
+        .arg("Paid");
+
+    command
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("marker"));
+}
+
+#[test]
+fn add_route_rejects_unknown_method() {
+    let temp = tempfile::tempdir().unwrap();
+    init_basic_project(&temp, "routes-method");
+
+    let mut command = Command::cargo_bin("ddd").unwrap();
+    command
+        .arg("--cwd")
+        .arg(temp.path().join("routes-method"))
+        .arg("add")
+        .arg("route")
+        .arg("list")
+        .arg("--method")
+        .arg("FETCH");
+
+    command
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not supported"));
+}
+
+#[test]
+fn add_route_rejects_unsafe_path() {
+    let temp = tempfile::tempdir().unwrap();
+    init_basic_project(&temp, "routes-path");
+
+    let mut command = Command::cargo_bin("ddd").unwrap();
+    command
+        .arg("--cwd")
+        .arg(temp.path().join("routes-path"))
+        .arg("add")
+        .arg("route")
+        .arg("list")
+        .arg("--path")
+        .arg("api/no-leading-slash");
+
+    command
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("must start with `/`"));
+
+    let mut quoted = Command::cargo_bin("ddd").unwrap();
+    quoted
+        .arg("--cwd")
+        .arg(temp.path().join("routes-path"))
+        .arg("add")
+        .arg("route")
+        .arg("quoted")
+        .arg("--path")
+        .arg("/api/x\"; drop");
+
+    quoted
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be embedded in code"));
+}
+
+#[test]
+fn add_event_rejects_disallowed_field_type() {
+    let temp = tempfile::tempdir().unwrap();
+    init_basic_project_with_domain(&temp, "field-types", "Invoice");
+
+    let mut command = Command::cargo_bin("ddd").unwrap();
+    command
+        .arg("--cwd")
+        .arg(temp.path().join("field-types"))
+        .arg("add")
+        .arg("event")
+        .arg("Invoice")
+        .arg("Paid")
+        .arg("--field")
+        .arg("amount:i64; fn injected()");
+
+    command
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not allowed in generated code"));
+}
+
+#[test]
+fn doctor_reports_tool_presence_without_a_shell() {
+    let temp = tempfile::tempdir().unwrap();
+
+    let mut command = Command::cargo_bin("ddd").unwrap();
+    command.arg("--cwd").arg(temp.path()).arg("doctor");
+
+    command
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"tool\": \"cargo\""));
+}
+
+fn init_basic_project(temp: &tempfile::TempDir, name: &str) {
+    init_basic_project_with_domain(temp, name, "Counter");
+}
+
+fn init_basic_project_with_domain(temp: &tempfile::TempDir, name: &str, domain: &str) {
+    let mut init = Command::cargo_bin("ddd").unwrap();
+    init.arg("--cwd")
+        .arg(temp.path())
+        .arg("init")
+        .arg(name)
+        .arg("--preset")
+        .arg("basic")
+        .arg("--domain")
+        .arg(domain);
+    init.assert().success();
+}

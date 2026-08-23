@@ -134,6 +134,66 @@ pub fn sanitize_package_name(raw: &str) -> String {
     }
 }
 
+/// Rust keywords (strict plus reserved-for-future) that pass the character
+/// checks below but would still generate uncompilable code, e.g.
+/// `pub mod type;` from `ddd add aggregate Type`.
+const RUST_KEYWORDS: &[&str] = &[
+    "abstract", "as", "async", "await", "become", "box", "break", "const", "continue", "crate",
+    "do", "dyn", "else", "enum", "extern", "false", "final", "fn", "for", "gen", "if", "impl",
+    "in", "let", "loop", "macro", "match", "mod", "move", "mut", "override", "priv", "pub", "ref",
+    "return", "self", "Self", "static", "struct", "super", "trait", "true", "try", "type",
+    "typeof", "union", "unsafe", "unsized", "use", "virtual", "where", "while", "yield",
+];
+
+fn is_rust_keyword(value: &str) -> bool {
+    RUST_KEYWORDS.contains(&value)
+}
+
+/// Ensures a derived name is a valid Rust identifier.
+///
+/// heck conversions strip punctuation, so the realistic failures are
+/// digit-leading or empty results (for example `3d`) and names that collide
+/// with Rust keywords, all of which would generate uncompilable code.
+pub fn ensure_rust_identifier(value: &str, label: &str) -> anyhow::Result<()> {
+    if is_rust_keyword(value) {
+        anyhow::bail!("{label} `{value}` is a Rust keyword; use a different name");
+    }
+    let valid = !value.is_empty()
+        && value
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+    if valid {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "{label} `{value}` is not a usable Rust identifier; \
+             use a name that converts to an identifier not starting with a digit"
+        )
+    }
+}
+
+/// Ensures a derived snake_case name is safe as a module path segment and
+/// inside generated string literals (`[a-z_][a-z0-9_]*`).
+pub fn ensure_snake_identifier(value: &str, label: &str) -> anyhow::Result<()> {
+    if is_rust_keyword(value) {
+        anyhow::bail!("{label} `{value}` is a Rust keyword; use a different name");
+    }
+    let valid = !value.is_empty()
+        && value.starts_with(|first: char| first.is_ascii_lowercase() || first == '_')
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_');
+    if valid {
+        Ok(())
+    } else {
+        anyhow::bail!("{label} `{value}` must be a snake_case Rust identifier")
+    }
+}
+
 pub fn parse_field_specs(fields: &[String]) -> anyhow::Result<Vec<(String, String)>> {
     fields
         .iter()
@@ -144,7 +204,17 @@ pub fn parse_field_specs(fields: &[String]) -> anyhow::Result<Vec<(String, Strin
             if name.trim().is_empty() || ty.trim().is_empty() {
                 anyhow::bail!("field `{field}` must use non-empty name and type");
             }
-            Ok((name.trim().to_snake_case(), ty.trim().to_string()))
+            let ty = ty.trim();
+            let type_safe = ty
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || " _:<>[],&'*+|".contains(ch));
+            if !type_safe {
+                anyhow::bail!(
+                    "field type `{ty}` in `{field}` contains characters that are \
+                     not allowed in generated code"
+                );
+            }
+            Ok((name.trim().to_snake_case(), ty.to_string()))
         })
         .collect()
 }
@@ -167,12 +237,13 @@ pub fn render_command_variant(name: &str, fields: &[(String, String)]) -> String
     render_event_variant(name, fields)
 }
 
-pub fn render_event_type_arm(event_type: &str, variant: &str) -> String {
-    format!(
+pub fn render_event_type_arm(event_type: &str, variant: &str) -> anyhow::Result<String> {
+    ensure_snake_identifier(event_type, "event type")?;
+    Ok(format!(
         "            Self::{} {{ .. }} => \"{}\",\n",
         variant.to_upper_camel_case(),
         event_type
-    )
+    ))
 }
 
 pub fn render_command_handle_arm(command_type: &str, command: &str) -> String {
@@ -1126,4 +1197,23 @@ pub fn render_fullstack_domain_rest_arm(names: &NameParts) -> String {
         command_type = names.command_type,
         id_type = names.id_type
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ensure_rust_identifier, ensure_snake_identifier};
+
+    #[test]
+    fn rust_identifier_rejects_keywords() {
+        assert!(ensure_rust_identifier("Type", "aggregate name").is_ok());
+        let error = ensure_rust_identifier("Self", "aggregate name").unwrap_err();
+        assert!(error.to_string().contains("Rust keyword"));
+    }
+
+    #[test]
+    fn snake_identifier_rejects_keywords() {
+        assert!(ensure_snake_identifier("order", "aggregate module").is_ok());
+        let error = ensure_snake_identifier("type", "aggregate module").unwrap_err();
+        assert!(error.to_string().contains("Rust keyword"));
+    }
 }

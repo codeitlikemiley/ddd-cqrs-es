@@ -59,8 +59,14 @@ pub async fn wasi_http_post(
 // -------------------------------------------------------------------------
 /// Convert a JSON value into a SQL literal for PostgreSQL text interpolation.
 ///
-/// This helper is only for internal backend adapters that rely on raw SQL text
-/// substitution; callers should pass already validated values.
+/// # Safety contract
+///
+/// The returned literal is safe to embed only while the server runs with
+/// `standard_conforming_strings = on` (the default since PostgreSQL 9.1):
+/// single quotes are doubled and backslashes are treated as ordinary
+/// characters. Under legacy `E''` escape-string syntax, backslash sequences
+/// inside values would become escape characters, so untrusted input must be
+/// bound through a parameterized transport instead.
 pub fn format_pg_value(val: &serde_json::Value) -> Result<String, String> {
     match val {
         serde_json::Value::Null => Ok("NULL".to_string()),
@@ -80,7 +86,13 @@ pub fn format_pg_value(val: &serde_json::Value) -> Result<String, String> {
 
 /// Replace `$1`, `$2`, ... placeholders in a SQL template with interpolated literals.
 ///
-/// Returns an error when a placeholder index is invalid or out of bounds.
+/// Values are rendered by [`format_pg_value`] and substituted into the SQL
+/// text; inserted values are never rescanned, so placeholder-like text inside
+/// parameter data stays literal. Returns an error when a placeholder index is
+/// invalid or out of bounds.
+///
+/// Callers must guarantee the [`format_pg_value`] safety contract
+/// (`standard_conforming_strings = on`) or use a parameterized transport.
 pub fn interpolate_query(sql: &str, params: &[serde_json::Value]) -> Result<String, String> {
     let mut final_sql = String::new();
     let mut chars = sql.chars().peekable();
@@ -709,19 +721,24 @@ fn write_password_message(stream: &mut PgStream, password: &str) -> std::io::Res
 
 #[cfg(feature = "wasi-postgres-tcp")]
 fn generate_client_nonce() -> String {
-    use std::time::SystemTime;
-    let seed = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(42) as u64;
-
-    let mut rng = seed;
-    let chars = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    let mut nonce = String::with_capacity(24);
-    for _ in 0..24 {
-        rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
-        let idx = (rng % chars.len() as u64) as usize;
-        nonce.push(chars[idx] as char);
+    const NONCE_LEN: usize = 24;
+    const CHARS: &[u8; 62] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    // Rejection sampling keeps the character distribution unbiased.
+    let mut nonce = String::with_capacity(NONCE_LEN);
+    let mut buf = [0_u8; 64];
+    while nonce.len() < NONCE_LEN {
+        getrandom::fill(&mut buf)
+            .unwrap_or_else(|error| panic!("failed to generate SCRAM client nonce: {error}"));
+        for byte in buf {
+            if nonce.len() == NONCE_LEN {
+                break;
+            }
+            // 248 is the largest multiple of 62 within a byte, so values
+            // below it map uniformly onto the alphabet and the rest redrawn.
+            if byte < 248 {
+                nonce.push(CHARS[(byte % CHARS.len() as u8) as usize] as char);
+            }
+        }
     }
     nonce
 }
@@ -770,6 +787,24 @@ struct PgMessage {
 }
 
 #[cfg(feature = "wasi-postgres-tcp")]
+/// Extracts the `sslmode` query parameter value from a Postgres URL.
+fn url_sslmode(url: &str) -> Option<String> {
+    let query = url.split_once('?')?.1;
+    for pair in query.split('&') {
+        if let Some(value) = pair.strip_prefix("sslmode=") {
+            return Some(value.to_ascii_lowercase());
+        }
+    }
+    None
+}
+
+#[cfg(feature = "wasi-postgres-tcp")]
+/// Upper bound for a single Postgres protocol message payload; generous for
+/// event payloads while preventing multi-gigabyte allocations from hostile
+/// or corrupted length prefixes.
+const MAX_PG_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
+
+#[cfg(feature = "wasi-postgres-tcp")]
 fn read_message(stream: &mut PgStream) -> std::io::Result<PgMessage> {
     use std::io::Read;
     let mut type_buf = [0u8; 1];
@@ -788,6 +823,16 @@ fn read_message(stream: &mut PgStream) -> std::io::Result<PgMessage> {
     }
 
     let payload_len = (length - 4) as usize;
+    if payload_len > MAX_PG_MESSAGE_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "Postgres message payload of {payload_len} bytes exceeds the {} byte limit",
+                MAX_PG_MESSAGE_BYTES
+            ),
+        ));
+    }
+
     let mut payload = vec![0u8; payload_len];
     if payload_len > 0 {
         stream.read_exact(&mut payload)?;
@@ -965,7 +1010,8 @@ static PG_CONN: std::sync::Mutex<Option<(String, PgStream)>> = std::sync::Mutex:
 #[cfg(feature = "wasi-postgres-tcp")]
 /// Open and authenticate a PostgreSQL TCP connection and negotiate protocol handshakes.
 ///
-/// Handles optional SSL negotiation and returns a ready-to-use stream wrapper.
+/// TLS is required by default; the connection is refused if the server rejects
+/// SSL unless `sslmode=disable` (or `sslmode=allow`) is present in the URL.
 pub fn connect_and_auth_postgres(
     url: &str,
     pg_params: &PgConnParams,
@@ -1009,9 +1055,11 @@ pub fn connect_and_auth_postgres(
         let tls_stream = rustls::StreamOwned::new(conn, stream);
         PgStream::Tls(Box::new(tls_stream))
     } else if ssl_response[0] == b'N' {
-        if url.contains("sslmode=require") {
+        if !matches!(url_sslmode(url).as_deref(), Some("disable") | Some("allow")) {
             return Err(
-                "Server rejected SSL request, but sslmode=require was requested".to_string(),
+                "Server rejected SSL request; refusing to continue without TLS because credentials \
+                 would be sent in plaintext. Add sslmode=disable to the URL to explicitly allow plaintext."
+                    .to_string(),
             );
         }
         PgStream::Plain(stream)
@@ -1308,7 +1356,12 @@ pub fn execute_query_on_stream(
 }
 
 #[cfg(feature = "wasi-postgres-tcp")]
-/// Execute SQL over raw Postgres TCP with a small connection cache per URL.
+/// Execute SQL over raw Postgres TCP with a small connection cache.
+///
+/// The cache is keyed by host/port/user/database plus the effective transport
+/// mode, so credentials are never retained in the global cache after
+/// connecting and a plaintext connection cached under `sslmode=disable|allow`
+/// is never reused by a caller that requires TLS.
 ///
 /// Returns all rows as JSON arrays/objects in the framework's shared shape.
 pub fn execute_raw_tcp_postgres(
@@ -1318,13 +1371,24 @@ pub fn execute_raw_tcp_postgres(
 ) -> Result<Vec<serde_json::Value>, String> {
     let pg_params = parse_pg_url(url)?;
     let addr = format!("{}:{}", pg_params.host, pg_params.port);
+    // Mirrors the plaintext-fallback condition in `connect_and_auth_postgres`:
+    // only `sslmode=disable|allow` may ever ride a plaintext stream.
+    let transport = if matches!(url_sslmode(url).as_deref(), Some("disable") | Some("allow")) {
+        "plaintext-ok"
+    } else {
+        "tls-required"
+    };
+    let cache_key = format!(
+        "{}:{}/{}?user={}&tls={}",
+        pg_params.host, pg_params.port, pg_params.database, pg_params.user, transport
+    );
 
     let mut guard = PG_CONN
         .lock()
         .map_err(|_| "Failed to lock PG_CONN mutex".to_string())?;
 
-    let pg_stream = if let Some((ref cached_url, _)) = *guard {
-        if cached_url == url {
+    let pg_stream = if let Some((ref cached_key, _)) = *guard {
+        if *cached_key == cache_key {
             let (_, stream) = guard.take().unwrap();
             Some(stream)
         } else {
@@ -1338,7 +1402,7 @@ pub fn execute_raw_tcp_postgres(
     if let Some(mut stream) = pg_stream {
         match execute_query_on_stream(&mut stream, sql, params.clone()) {
             Ok(rows) => {
-                *guard = Some((url.to_string(), stream));
+                *guard = Some((cache_key, stream));
                 return Ok(rows);
             }
             Err(_) => {
@@ -1351,7 +1415,7 @@ pub fn execute_raw_tcp_postgres(
     let res = execute_query_on_stream(&mut fresh_stream, sql, params);
 
     if res.is_ok() {
-        *guard = Some((url.to_string(), fresh_stream));
+        *guard = Some((cache_key, fresh_stream));
     }
 
     res
@@ -1404,12 +1468,21 @@ struct MySqlColumn {
 #[cfg(feature = "wasi-mysql")]
 /// Execute SQL over raw MySQL TCP with minimal protocol parsing.
 ///
-/// Parameter placeholders are interpolated using `?` markers before transmission.
+/// Client-side parameter interpolation was removed as unsafe; only constant
+/// SQL without parameters may run over this experimental transport.
 pub fn execute_raw_tcp_mysql(
     url: &str,
     sql: &str,
     params: Vec<serde_json::Value>,
 ) -> Result<Vec<serde_json::Value>, String> {
+    if !params.is_empty() {
+        return Err(
+            "raw TCP MySQL no longer interpolates parameters client-side; \
+             use a parameterized backend or pass no parameters"
+                .to_string(),
+        );
+    }
+
     let mysql_params = parse_mysql_url(url)?;
     let addr = format!("{}:{}", mysql_params.host, mysql_params.port);
     let mut stream = std::net::TcpStream::connect(&addr)
@@ -1423,7 +1496,7 @@ pub fn execute_raw_tcp_mysql(
 
     mysql_authenticate(&mut stream, &mysql_params)?;
 
-    let interpolated = interpolate_mysql_query(sql, &params)?;
+    let interpolated = sql.to_string();
     let sql_upper = interpolated.trim_start().to_ascii_uppercase();
     let returns_rows = sql_upper.starts_with("SELECT") || sql_upper.contains("RETURNING");
 
@@ -2150,51 +2223,6 @@ fn mysql_error_packet(packet: &[u8]) -> String {
     };
     let message = String::from_utf8_lossy(packet.get(message_start..).unwrap_or_default());
     format!("MySQL error {code}: {message}")
-}
-
-#[cfg(feature = "wasi-mysql")]
-fn interpolate_mysql_query(sql: &str, params: &[serde_json::Value]) -> Result<String, String> {
-    let mut output = String::with_capacity(sql.len() + params.len() * 8);
-    let mut params_iter = params.iter();
-
-    for ch in sql.chars() {
-        if ch == '?' {
-            let value = params_iter
-                .next()
-                .ok_or_else(|| "not enough MySQL query parameters".to_string())?;
-            output.push_str(&format_mysql_value(value)?);
-        } else {
-            output.push(ch);
-        }
-    }
-
-    if params_iter.next().is_some() {
-        return Err("too many MySQL query parameters".to_string());
-    }
-
-    Ok(output)
-}
-
-#[cfg(feature = "wasi-mysql")]
-fn format_mysql_value(value: &serde_json::Value) -> Result<String, String> {
-    match value {
-        serde_json::Value::Null => Ok("NULL".to_string()),
-        serde_json::Value::Bool(value) => Ok(if *value { "TRUE" } else { "FALSE" }.to_string()),
-        serde_json::Value::Number(value) => Ok(value.to_string()),
-        serde_json::Value::String(value) => Ok(format!("'{}'", escape_mysql_string(value))),
-        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-            let value = serde_json::to_string(value).map_err(|error| error.to_string())?;
-            Ok(format!("'{}'", escape_mysql_string(&value)))
-        }
-    }
-}
-
-#[cfg(feature = "wasi-mysql")]
-fn escape_mysql_string(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('\0', "\\0")
-        .replace('\'', "''")
 }
 
 // -------------------------------------------------------------------------
@@ -2981,5 +3009,91 @@ fn spin_mysql_value_to_json(value: &spin_sdk::mysql::DbValue) -> serde_json::Val
             serde_json::Value::String(String::from_utf8_lossy(value).into_owned())
         }
         other => serde_json::Value::String(format!("{other:?}")),
+    }
+}
+
+#[cfg(test)]
+mod pg_interpolation_tests {
+    use super::{format_pg_value, interpolate_query};
+    use serde_json::json;
+
+    #[test]
+    fn doubles_single_quotes_inside_strings() {
+        assert_eq!(format_pg_value(&json!("O'Brien")).unwrap(), "'O''Brien'");
+    }
+
+    #[test]
+    fn injection_attempt_stays_within_one_literal() {
+        let value = json!("x'); DROP TABLE events; --");
+        let formatted = format_pg_value(&value).unwrap();
+        assert_eq!(formatted, "'x''); DROP TABLE events; --'");
+
+        let sql = interpolate_query("SELECT $1", &[value]).unwrap();
+        assert_eq!(sql, "SELECT 'x''); DROP TABLE events; --'");
+    }
+
+    #[test]
+    fn backslashes_are_literal_under_standard_conforming_strings() {
+        // Pins the documented contract: backslashes pass through unchanged and
+        // only single quotes are doubled.
+        let value = json!(r"\'; DELETE");
+        assert_eq!(format_pg_value(&value).unwrap(), "'\\''; DELETE'");
+    }
+
+    #[test]
+    fn formats_scalars() {
+        assert_eq!(format_pg_value(&json!(null)).unwrap(), "NULL");
+        assert_eq!(format_pg_value(&json!(true)).unwrap(), "true");
+        assert_eq!(format_pg_value(&json!(false)).unwrap(), "false");
+        assert_eq!(format_pg_value(&json!(42)).unwrap(), "42");
+        assert_eq!(format_pg_value(&json!(-1.5)).unwrap(), "-1.5");
+    }
+
+    #[test]
+    fn formats_json_containers_as_escaped_text() {
+        assert_eq!(
+            format_pg_value(&json!([1, "a'b"])).unwrap(),
+            "'[1,\"a''b\"]'"
+        );
+        assert_eq!(
+            format_pg_value(&json!({"k": "v'"})).unwrap(),
+            "'{\"k\":\"v''\"}'"
+        );
+    }
+
+    #[test]
+    fn substitutes_numbered_placeholders_in_any_order() {
+        let sql = "SELECT $2, $1";
+        let interpolated = interpolate_query(sql, &[json!("one"), json!(2)]).unwrap();
+        assert_eq!(interpolated, "SELECT 2, 'one'");
+    }
+
+    #[test]
+    fn handles_multi_digit_and_adjacent_placeholders() {
+        let mut params = vec![serde_json::Value::Null; 10];
+        params[9] = json!("tenth");
+        assert_eq!(interpolate_query("$10", &params).unwrap(), "'tenth'");
+        assert!(interpolate_query("$11", &params).is_err());
+
+        let adjacent = interpolate_query("$1$2", &[json!(1), json!(2)]).unwrap();
+        assert_eq!(adjacent, "12");
+    }
+
+    #[test]
+    fn placeholder_like_text_in_param_data_is_not_rescanned() {
+        // The template's quoted `$1` placeholder is substituted once; the
+        // inserted value's own `$1` text must not trigger another pass.
+        let interpolated = interpolate_query("SELECT '$1'", &[json!("$1")]).unwrap();
+        assert_eq!(interpolated, "SELECT ''$1''");
+    }
+
+    #[test]
+    fn rejects_invalid_placeholder_indexes() {
+        assert!(interpolate_query("SELECT $0", &[json!(1)]).is_err());
+        assert!(interpolate_query("SELECT $3", &[json!(1), json!(2)]).is_err());
+        assert_eq!(
+            interpolate_query("SELECT $$", &[json!(1)]).unwrap(),
+            "SELECT $$"
+        );
     }
 }
