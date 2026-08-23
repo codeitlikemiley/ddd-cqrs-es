@@ -1793,6 +1793,40 @@ mod async_tests {
             .unwrap();
         assert_eq!(cp, Some(1));
     }
+
+    #[tokio::test]
+    async fn async_persisted_projection_runner_checkpoints_once_per_pass() {
+        use ddd_cqrs_es::projection::AsyncPersistedProjectionRunner;
+
+        let store = InMemoryEventStore::<Counter>::new();
+        let repo = AsyncRepository::new(store.clone());
+        let counter_id = "counter-1".to_owned();
+
+        repo.execute(&counter_id, CounterCommand::Create, Metadata::default())
+            .await
+            .unwrap();
+        for _ in 0..4 {
+            repo.execute(
+                &counter_id,
+                CounterCommand::Increment { by: 1 },
+                Metadata::default(),
+            )
+            .await
+            .unwrap();
+        }
+
+        let checkpoint_store = CountingCheckpointStore::default();
+        let mut runner = AsyncPersistedProjectionRunner::new(
+            CounterProjection::default(),
+            checkpoint_store.clone(),
+        );
+
+        let applied = runner.run::<Counter, _>(&store).await.unwrap();
+
+        assert_eq!(applied, 5);
+        assert_eq!(checkpoint_store.checkpoint(), Some(5));
+        assert_eq!(checkpoint_store.saves(), 1);
+    }
 }
 
 #[cfg(feature = "sqlite")]
@@ -1915,6 +1949,156 @@ fn test_sync_persisted_projection_runner() {
         .load_checkpoint("counter_projection")
         .unwrap();
     assert_eq!(cp, Some(1));
+}
+
+/// In-memory checkpoint store that counts writes, for asserting the
+/// once-per-batch checkpoint flush behavior.
+#[derive(Clone, Default)]
+struct CountingCheckpointStore {
+    state: std::sync::Arc<std::sync::Mutex<(Option<u64>, usize)>>,
+}
+
+impl CountingCheckpointStore {
+    fn checkpoint(&self) -> Option<u64> {
+        self.state.lock().unwrap().0
+    }
+
+    fn saves(&self) -> usize {
+        self.state.lock().unwrap().1
+    }
+}
+
+impl ddd_cqrs_es::projection::CheckpointStore for CountingCheckpointStore {
+    type Error = std::convert::Infallible;
+
+    fn load_checkpoint(&self, _projection_name: &str) -> Result<Option<u64>, Self::Error> {
+        Ok(self.state.lock().unwrap().0)
+    }
+
+    fn save_checkpoint(&self, _projection_name: &str, sequence: u64) -> Result<(), Self::Error> {
+        let mut state = self.state.lock().unwrap();
+        state.0 = Some(sequence);
+        state.1 += 1;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "async")]
+#[async_trait::async_trait]
+impl ddd_cqrs_es::projection::AsyncCheckpointStore for CountingCheckpointStore {
+    type Error = std::convert::Infallible;
+
+    async fn load_checkpoint(&self, projection_name: &str) -> Result<Option<u64>, Self::Error> {
+        ddd_cqrs_es::projection::CheckpointStore::load_checkpoint(self, projection_name)
+    }
+
+    async fn save_checkpoint(
+        &self,
+        projection_name: &str,
+        sequence: u64,
+    ) -> Result<(), Self::Error> {
+        ddd_cqrs_es::projection::CheckpointStore::save_checkpoint(self, projection_name, sequence)
+    }
+}
+
+#[test]
+fn persisted_projection_runner_checkpoints_once_per_pass() {
+    use ddd_cqrs_es::projection::PersistedProjectionRunner;
+
+    let store = InMemoryEventStore::<Counter>::new();
+    let repo = Repository::new(store.clone());
+    let counter_id = "counter-1".to_owned();
+
+    repo.execute(&counter_id, CounterCommand::Create, Metadata::default())
+        .unwrap();
+    for _ in 0..4 {
+        repo.execute(
+            &counter_id,
+            CounterCommand::Increment { by: 1 },
+            Metadata::default(),
+        )
+        .unwrap();
+    }
+
+    let checkpoint_store = CountingCheckpointStore::default();
+    let mut runner =
+        PersistedProjectionRunner::new(CounterProjection::default(), checkpoint_store.clone());
+
+    let applied = runner.run::<Counter, _>(&store).unwrap();
+
+    assert_eq!(applied, 5);
+    assert_eq!(checkpoint_store.checkpoint(), Some(5));
+    assert_eq!(checkpoint_store.saves(), 1);
+
+    // A caught-up pass with no new events writes no checkpoint at all.
+    let applied = runner.run::<Counter, _>(&store).unwrap();
+    assert_eq!(applied, 0);
+    assert_eq!(checkpoint_store.saves(), 1);
+}
+
+#[test]
+fn persisted_projection_runner_flushes_progress_before_reporting_failure() {
+    use ddd_cqrs_es::projection::{PersistedProjectionRunner, ProjectionRunnerError};
+
+    /// Fails when the counter value would exceed the trip point.
+    struct TrippingProjection {
+        total: u64,
+        trip_at: u64,
+    }
+
+    impl Projection<CounterEvent, String> for TrippingProjection {
+        type Error = &'static str;
+
+        fn name(&self) -> &'static str {
+            "tripping_projection"
+        }
+
+        fn apply(
+            &mut self,
+            event: &ddd_cqrs_es::EventEnvelope<CounterEvent, String>,
+        ) -> Result<(), Self::Error> {
+            if let CounterEvent::Incremented { by } = event.payload {
+                if self.total + by > self.trip_at {
+                    return Err("tripped");
+                }
+                self.total += by;
+            }
+            Ok(())
+        }
+    }
+
+    let store = InMemoryEventStore::<Counter>::new();
+    let repo = Repository::new(store.clone());
+    let counter_id = "counter-1".to_owned();
+
+    repo.execute(&counter_id, CounterCommand::Create, Metadata::default())
+        .unwrap();
+    for _ in 0..4 {
+        repo.execute(
+            &counter_id,
+            CounterCommand::Increment { by: 1 },
+            Metadata::default(),
+        )
+        .unwrap();
+    }
+
+    let checkpoint_store = CountingCheckpointStore::default();
+    let projection = TrippingProjection {
+        total: 0,
+        trip_at: 2,
+    };
+    let mut runner = PersistedProjectionRunner::new(projection, checkpoint_store.clone());
+
+    // Events: Created (seq 1), then 4 increments (seq 2-5). The projection
+    // trips on seq 4, so progress through seq 3 must still be checkpointed.
+    let error = runner.run::<Counter, _>(&store).unwrap_err();
+
+    assert!(matches!(
+        error,
+        ProjectionRunnerError::Projection("tripped")
+    ));
+    assert_eq!(checkpoint_store.checkpoint(), Some(3));
+    assert_eq!(checkpoint_store.saves(), 1);
 }
 
 #[cfg(feature = "postgres")]
