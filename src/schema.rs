@@ -11,6 +11,19 @@ use std::collections::HashSet;
 #[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Fixed advisory-lock key serializing Postgres schema migration runs
+/// (the ASCII bytes of `ddd_sche` as a big-endian i64).
+#[cfg(feature = "postgres")]
+const POSTGRES_SCHEMA_LOCK_KEY: i64 = 0x6464_645f_7363_6865;
+
+/// Named lock serializing MySQL schema migration runs.
+#[cfg(feature = "mysql")]
+const MYSQL_SCHEMA_LOCK_NAME: &str = "ddd_cqrs_es_schema_migrations";
+
+/// How long a MySQL migration run waits for the named lock.
+#[cfg(feature = "mysql")]
+const MYSQL_SCHEMA_LOCK_TIMEOUT_SECS: i64 = 60;
+
 /// Supported SQL Database Dialects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SqlDialect {
@@ -549,6 +562,26 @@ impl SchemaMigrator {
         #[cfg(feature = "tracing")]
         let _span = tracing::debug_span!("schema.migrate", dialect = "postgres").entered();
 
+        // Concurrent migration runs (multiple stores initializing their
+        // schemas at once) race on CREATE TABLE IF NOT EXISTS and on the
+        // applied-migrations bookkeeping, so the whole run holds a
+        // database-wide advisory lock.
+        client
+            .query("SELECT pg_advisory_lock($1);", &[&POSTGRES_SCHEMA_LOCK_KEY])
+            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+        let result = self.run_postgres_locked(client);
+        let unlock = client
+            .query(
+                "SELECT pg_advisory_unlock($1);",
+                &[&POSTGRES_SCHEMA_LOCK_KEY],
+            )
+            .map(drop)
+            .map_err(|e| EventStoreError::Backend(e.to_string()));
+        result.and(unlock)
+    }
+
+    #[cfg(feature = "postgres")]
+    fn run_postgres_locked(&self, client: &mut postgres::Client) -> Result<(), EventStoreError> {
         self.validate_config()?;
 
         // 1. Ensure migrations table exists
@@ -656,6 +689,30 @@ impl SchemaMigrator {
         #[cfg(feature = "tracing")]
         let _span = tracing::debug_span!("schema.migrate", dialect = "mysql").entered();
 
+        use mysql::prelude::Queryable;
+
+        // Concurrent migration runs race on CREATE TABLE IF NOT EXISTS and on
+        // the applied-migrations bookkeeping, so the whole run holds a
+        // database-wide named lock.
+        let acquired: Option<Option<i64>> = conn
+            .query_first(format!(
+                "SELECT GET_LOCK('{MYSQL_SCHEMA_LOCK_NAME}', {MYSQL_SCHEMA_LOCK_TIMEOUT_SECS});"
+            ))
+            .map_err(|e| EventStoreError::Backend(e.to_string()))?;
+        if acquired != Some(Some(1)) {
+            return Err(EventStoreError::Backend(format!(
+                "timed out waiting for the `{MYSQL_SCHEMA_LOCK_NAME}` schema migration lock"
+            )));
+        }
+        let result = self.run_mysql_locked(conn);
+        let unlock = conn
+            .query_drop(format!("SELECT RELEASE_LOCK('{MYSQL_SCHEMA_LOCK_NAME}');"))
+            .map_err(|e| EventStoreError::Backend(e.to_string()));
+        result.and(unlock)
+    }
+
+    #[cfg(feature = "mysql")]
+    fn run_mysql_locked(&self, conn: &mut mysql::Conn) -> Result<(), EventStoreError> {
         use mysql::prelude::Queryable;
         self.validate_config()?;
 
