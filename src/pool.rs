@@ -233,7 +233,13 @@ impl<C> ConnectionPool<C> {
         lease.mark_broken();
         drop(lease);
         let mut fresh = self.acquire()?;
-        operation(&mut fresh)
+        let result = operation(&mut fresh);
+        if let Err(error) = &result {
+            if is_transport_error(error) {
+                fresh.mark_broken();
+            }
+        }
+        result
     }
 
     /// Runs an operation exactly once. The connection is discarded only when
@@ -370,6 +376,26 @@ mod tests {
 
         assert_eq!(result.unwrap(), 1);
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn read_evicts_the_fresh_connection_when_the_retry_also_fails() {
+        let connects = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&connects);
+        let pool = ConnectionPool::<()>::pooled(1, move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        });
+
+        let result: Result<(), _> =
+            pool.read(|_| Err(EventStoreError::Backend("broken pipe".to_owned())));
+        assert!(result.is_err());
+        assert_eq!(connects.load(Ordering::SeqCst), 2);
+
+        // Both failed connections must have been evicted, so the next read
+        // opens a third connection instead of recycling a broken one.
+        pool.read(|_| Ok(())).unwrap();
+        assert_eq!(connects.load(Ordering::SeqCst), 3);
     }
 
     #[test]

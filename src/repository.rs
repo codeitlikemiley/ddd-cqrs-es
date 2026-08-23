@@ -18,14 +18,15 @@ use std::marker::PhantomData;
 /// Releases a reserved idempotency key after a failed execution.
 ///
 /// A key left `Pending` blocks every retry until it is removed, so cleanup
-/// is retried and a final failure is logged loudly instead of being
-/// silently swallowed.
+/// is retried with backoff and a final failure is logged loudly instead of
+/// being silently swallowed.
 fn release_idempotency_key<I, V>(idempotency_store: &I, idempotency_key: &IdempotencyKey)
 where
     I: IdempotencyStore<V>,
     V: Clone,
 {
     const MAX_ATTEMPTS: usize = 3;
+    const RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(50);
     for attempt in 1..=MAX_ATTEMPTS {
         match idempotency_store.remove(idempotency_key) {
             Ok(()) => return,
@@ -44,8 +45,9 @@ where
                         "retrying failed idempotency-key release"
                     );
                 }
-                #[cfg(not(feature = "tracing"))]
-                let _ = attempt;
+                if attempt < MAX_ATTEMPTS {
+                    std::thread::sleep(RETRY_DELAY);
+                }
             }
         }
     }

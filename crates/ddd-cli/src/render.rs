@@ -134,12 +134,30 @@ pub fn sanitize_package_name(raw: &str) -> String {
     }
 }
 
+/// Rust keywords (strict plus reserved-for-future) that pass the character
+/// checks below but would still generate uncompilable code, e.g.
+/// `pub mod type;` from `ddd add aggregate Type`.
+const RUST_KEYWORDS: &[&str] = &[
+    "abstract", "as", "async", "await", "become", "box", "break", "const", "continue", "crate",
+    "do", "dyn", "else", "enum", "extern", "false", "final", "fn", "for", "gen", "if", "impl",
+    "in", "let", "loop", "macro", "match", "mod", "move", "mut", "override", "priv", "pub", "ref",
+    "return", "self", "Self", "static", "struct", "super", "trait", "true", "try", "type",
+    "typeof", "union", "unsafe", "unsized", "use", "virtual", "where", "while", "yield",
+];
+
+fn is_rust_keyword(value: &str) -> bool {
+    RUST_KEYWORDS.contains(&value)
+}
+
 /// Ensures a derived name is a valid Rust identifier.
 ///
-/// heck conversions strip punctuation, so the only realistic failures are
-/// digit-leading or empty results (for example `3d`), which would generate
-/// uncompilable code.
+/// heck conversions strip punctuation, so the realistic failures are
+/// digit-leading or empty results (for example `3d`) and names that collide
+/// with Rust keywords, all of which would generate uncompilable code.
 pub fn ensure_rust_identifier(value: &str, label: &str) -> anyhow::Result<()> {
+    if is_rust_keyword(value) {
+        anyhow::bail!("{label} `{value}` is a Rust keyword; use a different name");
+    }
     let valid = !value.is_empty()
         && value
             .chars()
@@ -161,6 +179,9 @@ pub fn ensure_rust_identifier(value: &str, label: &str) -> anyhow::Result<()> {
 /// Ensures a derived snake_case name is safe as a module path segment and
 /// inside generated string literals (`[a-z_][a-z0-9_]*`).
 pub fn ensure_snake_identifier(value: &str, label: &str) -> anyhow::Result<()> {
+    if is_rust_keyword(value) {
+        anyhow::bail!("{label} `{value}` is a Rust keyword; use a different name");
+    }
     let valid = !value.is_empty()
         && value.starts_with(|first: char| first.is_ascii_lowercase() || first == '_')
         && value
@@ -1176,4 +1197,23 @@ pub fn render_fullstack_domain_rest_arm(names: &NameParts) -> String {
         command_type = names.command_type,
         id_type = names.id_type
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ensure_rust_identifier, ensure_snake_identifier};
+
+    #[test]
+    fn rust_identifier_rejects_keywords() {
+        assert!(ensure_rust_identifier("Type", "aggregate name").is_ok());
+        let error = ensure_rust_identifier("Self", "aggregate name").unwrap_err();
+        assert!(error.to_string().contains("Rust keyword"));
+    }
+
+    #[test]
+    fn snake_identifier_rejects_keywords() {
+        assert!(ensure_snake_identifier("order", "aggregate module").is_ok());
+        let error = ensure_snake_identifier("type", "aggregate module").unwrap_err();
+        assert!(error.to_string().contains("Rust keyword"));
+    }
 }
