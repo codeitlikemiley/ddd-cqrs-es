@@ -5,7 +5,7 @@ use crate::event_store::{
     AtomicIdempotentEventStore, EventStore, EventStream, IdempotentAppendError,
 };
 use crate::idempotency::{
-    IdempotencyKey, IdempotencyState, IdempotencyStore, IdempotencyWaitConfig,
+    pending_wait_delay, IdempotencyKey, IdempotencyState, IdempotencyStore, IdempotencyWaitConfig,
     IdempotentRepositoryError,
 };
 use crate::metadata::Metadata;
@@ -25,28 +25,29 @@ where
     I: IdempotencyStore<V>,
     V: Clone,
 {
-    const MAX_ATTEMPTS: usize = 3;
-    const RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(50);
-    for attempt in 1..=MAX_ATTEMPTS {
+    use crate::repository_support::{RELEASE_MAX_ATTEMPTS, RELEASE_RETRY_DELAY};
+
+    for attempt in 1..=RELEASE_MAX_ATTEMPTS {
         match idempotency_store.remove(idempotency_key) {
             Ok(()) => return,
             Err(_) => {
                 #[cfg(feature = "tracing")]
-                if attempt == MAX_ATTEMPTS {
+                if attempt == RELEASE_MAX_ATTEMPTS {
                     tracing::warn!(
                         key = %idempotency_key,
-                        "failed to release idempotency key after execution failure; \
-                         the key stays Pending and will block retries until removed"
+                        "{}",
+                        crate::repository_support::RELEASE_FAILED_MESSAGE
                     );
                 } else {
                     tracing::debug!(
                         key = %idempotency_key,
                         attempt,
-                        "retrying failed idempotency-key release"
+                        "{}",
+                        crate::repository_support::RELEASE_RETRY_MESSAGE
                     );
                 }
-                if attempt < MAX_ATTEMPTS {
-                    std::thread::sleep(RETRY_DELAY);
+                if attempt < RELEASE_MAX_ATTEMPTS {
+                    std::thread::sleep(RELEASE_RETRY_DELAY);
                 }
             }
         }
@@ -405,12 +406,7 @@ where
                     return Ok(committed);
                 }
                 Some(IdempotencyState::Pending) => {
-                    let Some(delay) = wait_config.next_delay(started.elapsed()) else {
-                        return Err(IdempotentRepositoryError::IdempotencyPendingTimeout {
-                            key: idempotency_key,
-                            waited: started.elapsed(),
-                        });
-                    };
+                    let delay = pending_wait_delay(&wait_config, started, &idempotency_key)?;
                     std::thread::sleep(delay);
                     continue;
                 }
@@ -421,12 +417,7 @@ where
                     {
                         break;
                     }
-                    let Some(delay) = wait_config.next_delay(started.elapsed()) else {
-                        return Err(IdempotentRepositoryError::IdempotencyPendingTimeout {
-                            key: idempotency_key,
-                            waited: started.elapsed(),
-                        });
-                    };
+                    let delay = pending_wait_delay(&wait_config, started, &idempotency_key)?;
                     std::thread::sleep(delay);
                 }
             }
@@ -450,13 +441,7 @@ where
                 Ok(committed) => committed,
                 Err(err) => {
                     release_idempotency_key(idempotency_store, &idempotency_key);
-                    return Err(match err {
-                        RepositoryError::Domain(error) => IdempotentRepositoryError::Domain(error),
-                        RepositoryError::Concurrency(error) => {
-                            IdempotentRepositoryError::Concurrency(error)
-                        }
-                        RepositoryError::Store(error) => IdempotentRepositoryError::Store(error),
-                    });
+                    return Err(IdempotentRepositoryError::from_repository_error(err));
                 }
             };
 
@@ -524,23 +509,16 @@ where
             {
                 Some(crate::IdempotencyState::Complete(committed)) => return Ok(committed),
                 Some(crate::IdempotencyState::Pending) => {
-                    let Some(delay) = wait_config.next_delay(started.elapsed()) else {
-                        return Err(IdempotentRepositoryError::IdempotencyPendingTimeout {
-                            key: idempotency_key,
-                            waited: started.elapsed(),
-                        });
-                    };
+                    let delay = pending_wait_delay(&wait_config, started, &idempotency_key)?;
                     std::thread::sleep(delay);
                 }
                 None => break,
             }
         }
 
-        let loaded = self.load(aggregate_id).map_err(|error| match error {
-            RepositoryError::Domain(error) => IdempotentRepositoryError::Domain(error),
-            RepositoryError::Concurrency(error) => IdempotentRepositoryError::Concurrency(error),
-            RepositoryError::Store(error) => IdempotentRepositoryError::Store(error),
-        })?;
+        let loaded = self
+            .load(aggregate_id)
+            .map_err(IdempotentRepositoryError::from_repository_error)?;
         let events = handle_command_as_new_events::<A>(&loaded.state, command, &metadata)
             .map_err(IdempotentRepositoryError::Domain)?;
         let expected_revision = ExpectedRevision::Exact(loaded.revision);
@@ -553,12 +531,7 @@ where
             ) {
                 Ok(committed) => return Ok(committed),
                 Err(IdempotentAppendError::Pending { .. }) => {
-                    let Some(delay) = wait_config.next_delay(started.elapsed()) else {
-                        return Err(IdempotentRepositoryError::IdempotencyPendingTimeout {
-                            key: idempotency_key,
-                            waited: started.elapsed(),
-                        });
-                    };
+                    let delay = pending_wait_delay(&wait_config, started, &idempotency_key)?;
                     std::thread::sleep(delay);
                 }
                 Err(IdempotentAppendError::Store(error)) => {
