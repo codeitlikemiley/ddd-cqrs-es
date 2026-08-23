@@ -150,9 +150,9 @@ where
             table = table_name
         );
         let revision: i64 = connection
-            .query_row(&query, params![A::aggregate_type(), aggregate_id], |row| {
-                row.get(0)
-            })
+            .prepare_cached(&query)
+            .map_err(map_sqlite_error)?
+            .query_row(params![A::aggregate_type(), aggregate_id], |row| row.get(0))
             .map_err(map_sqlite_error)?;
 
         u64::try_from(revision).map_err(|_| {
@@ -181,7 +181,9 @@ where
              WHERE aggregate_type = ?1 AND aggregate_id = ?2 ORDER BY revision ASC",
             table = self.table_name
         );
-        let mut statement = connection.prepare(&query).map_err(map_sqlite_error)?;
+        let mut statement = connection
+            .prepare_cached(&query)
+            .map_err(map_sqlite_error)?;
         let upcasters = self.upcasters.clone();
         let rows = statement
             .query_map(params![A::aggregate_type(), aggregate_id], move |row| {
@@ -213,7 +215,9 @@ where
              ORDER BY revision ASC",
             table = self.table_name
         );
-        let mut statement = connection.prepare(&query).map_err(map_sqlite_error)?;
+        let mut statement = connection
+            .prepare_cached(&query)
+            .map_err(map_sqlite_error)?;
         let upcasters = self.upcasters.clone();
         let rows = statement
             .query_map(
@@ -259,6 +263,9 @@ where
             table = self.table_name
         );
         let mut committed = Vec::with_capacity(prepared.len());
+        let mut insert_statement = transaction
+            .prepare_cached(&insert)
+            .map_err(map_sqlite_error)?;
 
         for (index, event) in prepared.into_iter().enumerate() {
             let revision = actual_revision + index as u64 + 1;
@@ -267,21 +274,18 @@ where
             })?;
             let event_version_i64 = i64::from(event.event_version);
 
-            transaction
-                .execute(
-                    &insert,
-                    params![
-                        event.event_id.as_str(),
-                        aggregate_id_key,
-                        A::aggregate_type(),
-                        revision_i64,
-                        event.event_type,
-                        event_version_i64,
-                        event.payload_json,
-                        event.metadata_json,
-                        event.recorded_at_ms,
-                    ],
-                )
+            insert_statement
+                .execute(params![
+                    event.event_id.as_str(),
+                    aggregate_id_key,
+                    A::aggregate_type(),
+                    revision_i64,
+                    event.event_type,
+                    event_version_i64,
+                    event.payload_json,
+                    event.metadata_json,
+                    event.recorded_at_ms,
+                ])
                 .map_err(|error| {
                     map_sqlite_insert_error(error, expected_revision, actual_revision)
                 })?;
@@ -304,6 +308,7 @@ where
             ));
         }
 
+        drop(insert_statement);
         transaction.commit().map_err(map_sqlite_error)?;
         Ok(committed)
     }
@@ -323,7 +328,9 @@ where
              WHERE aggregate_type = ?1 AND sequence > ?2 ORDER BY sequence ASC",
             table = self.table_name
         );
-        let mut statement = connection.prepare(&query).map_err(map_sqlite_error)?;
+        let mut statement = connection
+            .prepare_cached(&query)
+            .map_err(map_sqlite_error)?;
         let upcasters = self.upcasters.clone();
         let rows = statement
             .query_map(params![A::aggregate_type(), sequence], move |row| {
@@ -357,7 +364,9 @@ where
              WHERE aggregate_type = ?1 AND sequence > ?2 ORDER BY sequence ASC LIMIT ?3",
             table = self.table_name
         );
-        let mut statement = connection.prepare(&query).map_err(map_sqlite_error)?;
+        let mut statement = connection
+            .prepare_cached(&query)
+            .map_err(map_sqlite_error)?;
         let upcasters = self.upcasters.clone();
         let rows = statement
             .query_map(params![A::aggregate_type(), sequence, limit], move |row| {
@@ -450,15 +459,13 @@ where
             self.idempotency_table
         );
         let row = transaction
-            .query_row(
-                &load_idempotency,
-                params![idempotency_key.as_str()],
-                |row| {
-                    let state: String = row.get(0)?;
-                    let value: Option<String> = row.get(1)?;
-                    Ok((state, value))
-                },
-            )
+            .prepare_cached(&load_idempotency)
+            .map_err(|error| IdempotentAppendError::Store(map_sqlite_error(error)))?
+            .query_row(params![idempotency_key.as_str()], |row| {
+                let state: String = row.get(0)?;
+                let value: Option<String> = row.get(1)?;
+                Ok((state, value))
+            })
             .optional()
             .map_err(|error| IdempotentAppendError::Store(map_sqlite_error(error)))?;
 
@@ -502,7 +509,9 @@ where
             self.idempotency_table
         );
         transaction
-            .execute(&reserve, params![idempotency_key.as_str(), updated_at_ms])
+            .prepare_cached(&reserve)
+            .map_err(|error| IdempotentAppendError::Store(map_sqlite_error(error)))?
+            .execute(params![idempotency_key.as_str(), updated_at_ms])
             .map_err(|error| IdempotentAppendError::Store(map_sqlite_error(error)))?;
 
         let actual_revision =
@@ -519,6 +528,9 @@ where
             table = self.table_name
         );
         let mut committed = Vec::with_capacity(prepared.len());
+        let mut insert_statement = transaction
+            .prepare_cached(&insert)
+            .map_err(|error| IdempotentAppendError::Store(map_sqlite_error(error)))?;
 
         for (index, event) in prepared.into_iter().enumerate() {
             let revision = actual_revision + index as u64 + 1;
@@ -529,21 +541,18 @@ where
             })?;
             let event_version_i64 = i64::from(event.event_version);
 
-            transaction
-                .execute(
-                    &insert,
-                    params![
-                        event.event_id.as_str(),
-                        aggregate_id_key,
-                        A::aggregate_type(),
-                        revision_i64,
-                        event.event_type,
-                        event_version_i64,
-                        event.payload_json,
-                        event.metadata_json,
-                        event.recorded_at_ms,
-                    ],
-                )
+            insert_statement
+                .execute(params![
+                    event.event_id.as_str(),
+                    aggregate_id_key,
+                    A::aggregate_type(),
+                    revision_i64,
+                    event.event_type,
+                    event_version_i64,
+                    event.payload_json,
+                    event.metadata_json,
+                    event.recorded_at_ms,
+                ])
                 .map_err(|error| {
                     IdempotentAppendError::Store(map_sqlite_insert_error(
                         error,
@@ -582,11 +591,11 @@ where
              WHERE idempotency_key = ?1;",
             self.idempotency_table
         );
+        drop(insert_statement);
         transaction
-            .execute(
-                &complete,
-                params![idempotency_key.as_str(), value_json, updated_at_ms],
-            )
+            .prepare_cached(&complete)
+            .map_err(|error| IdempotentAppendError::Store(map_sqlite_error(error)))?
+            .execute(params![idempotency_key.as_str(), value_json, updated_at_ms])
             .map_err(|error| IdempotentAppendError::Store(map_sqlite_error(error)))?;
         transaction
             .commit()
@@ -913,7 +922,7 @@ impl crate::projection::CheckpointStore for SqliteCheckpointStore {
             "SELECT sequence FROM {} WHERE projection_name = ?1;",
             self.table_name
         );
-        let mut stmt = connection.prepare(&sql).map_err(map_sqlite_error)?;
+        let mut stmt = connection.prepare_cached(&sql).map_err(map_sqlite_error)?;
         let mut rows = stmt
             .query(params![projection_name])
             .map_err(map_sqlite_error)?;
@@ -946,7 +955,9 @@ impl crate::projection::CheckpointStore for SqliteCheckpointStore {
         let sequence_i64 = i64::try_from(sequence)
             .map_err(|_| EventStoreError::Deserialization("checkpoint exceeds i64".to_owned()))?;
         connection
-            .execute(&sql, params![projection_name, sequence_i64])
+            .prepare_cached(&sql)
+            .map_err(map_sqlite_error)?
+            .execute(params![projection_name, sequence_i64])
             .map_err(map_sqlite_error)?;
         Ok(())
     }
