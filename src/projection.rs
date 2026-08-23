@@ -392,12 +392,16 @@ impl<P, C> PersistedProjectionRunner<P, C>
 where
     C: CheckpointStore,
 {
-    /// Loads global events after the current persistent checkpoint, applies them,
-    /// then saves each event sequence as the new checkpoint after successful
-    /// projection application.
+    /// Loads global events after the current persistent checkpoint, applies
+    /// them, then saves the last applied event sequence as the new checkpoint
+    /// once per pass. When a projection fails mid-pass, the sequence of the
+    /// last successfully applied event is still saved before the error is
+    /// returned, so a retry resumes where the failure happened.
     ///
     /// Projection side effects and checkpoint writes are not one transaction;
-    /// projection implementations must be idempotent for retry safety.
+    /// projection implementations must be idempotent for retry safety. Events
+    /// applied after the last persisted checkpoint are re-applied when the
+    /// process stops before the pass completes.
     #[allow(clippy::type_complexity)]
     pub fn run<A, S>(
         &mut self,
@@ -427,24 +431,39 @@ where
             .load_global_after(checkpoint)
             .map_err(ProjectionRunnerError::Store)?;
         let mut applied = 0;
+        let mut last_sequence = None;
+        let mut failure = None;
 
         for event in events {
-            self.projection
-                .apply(&event)
-                .map_err(ProjectionRunnerError::Projection)?;
-            if let Some(seq) = event.sequence {
-                self.checkpoint_store
-                    .save_checkpoint(name, seq)
-                    .map_err(ProjectionRunnerError::Checkpoint)?;
+            if let Err(error) = self.projection.apply(&event) {
+                failure = Some(ProjectionRunnerError::Projection(error));
+                break;
+            }
+            if event.sequence.is_some() {
+                last_sequence = event.sequence;
             }
             applied += 1;
         }
+
+        let flushed = match last_sequence {
+            Some(sequence) => self
+                .checkpoint_store
+                .save_checkpoint(name, sequence)
+                .map_err(ProjectionRunnerError::Checkpoint),
+            None => Ok(()),
+        };
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        flushed?;
 
         Ok(applied)
     }
 
     /// Loads at most `config.batch_size()` global events after the persistent
-    /// checkpoint, applies them, and saves checkpoints after successful events.
+    /// checkpoint, applies them, and saves the last applied sequence as the
+    /// checkpoint once per batch (also flushing progress before returning a
+    /// mid-batch projection error).
     #[allow(clippy::type_complexity)]
     pub fn run_batch<A, S>(
         &mut self,
@@ -477,19 +496,30 @@ where
             .map_err(ProjectionRunnerError::Store)?;
         let mut applied = 0;
         let mut last_sequence = None;
+        let mut failure = None;
 
         for event in events {
-            self.projection
-                .apply(&event)
-                .map_err(ProjectionRunnerError::Projection)?;
-            if let Some(seq) = event.sequence {
-                self.checkpoint_store
-                    .save_checkpoint(name, seq)
-                    .map_err(ProjectionRunnerError::Checkpoint)?;
+            if let Err(error) = self.projection.apply(&event) {
+                failure = Some(ProjectionRunnerError::Projection(error));
+                break;
             }
-            last_sequence = event.sequence;
+            if event.sequence.is_some() {
+                last_sequence = event.sequence;
+            }
             applied += 1;
         }
+
+        let flushed = match last_sequence {
+            Some(sequence) => self
+                .checkpoint_store
+                .save_checkpoint(name, sequence)
+                .map_err(ProjectionRunnerError::Checkpoint),
+            None => Ok(()),
+        };
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        flushed?;
 
         Ok(projection_batch_outcome(applied, last_sequence, config))
     }
@@ -534,12 +564,16 @@ impl<P, C> AsyncPersistedProjectionRunner<P, C>
 where
     C: AsyncCheckpointStore,
 {
-    /// Loads global events after the current persistent checkpoint, applies them,
-    /// then saves each event sequence as the new checkpoint after successful
-    /// projection application.
+    /// Loads global events after the current persistent checkpoint, applies
+    /// them, then saves the last applied event sequence as the new checkpoint
+    /// once per pass. When a projection fails mid-pass, the sequence of the
+    /// last successfully applied event is still saved before the error is
+    /// returned, so a retry resumes where the failure happened.
     ///
     /// Projection side effects and checkpoint writes are not one transaction;
-    /// projection implementations must be idempotent for retry safety.
+    /// projection implementations must be idempotent for retry safety. Events
+    /// applied after the last persisted checkpoint are re-applied when the
+    /// process stops before the pass completes.
     #[allow(clippy::type_complexity)]
     pub async fn run<A, S>(
         &mut self,
@@ -562,25 +596,40 @@ where
             .await
             .map_err(ProjectionRunnerError::Store)?;
         let mut applied = 0;
+        let mut last_sequence = None;
+        let mut failure = None;
 
         for event in events {
-            self.projection
-                .apply(&event)
-                .map_err(ProjectionRunnerError::Projection)?;
-            if let Some(seq) = event.sequence {
-                self.checkpoint_store
-                    .save_checkpoint(name, seq)
-                    .await
-                    .map_err(ProjectionRunnerError::Checkpoint)?;
+            if let Err(error) = self.projection.apply(&event) {
+                failure = Some(ProjectionRunnerError::Projection(error));
+                break;
+            }
+            if event.sequence.is_some() {
+                last_sequence = event.sequence;
             }
             applied += 1;
         }
+
+        let flushed = match last_sequence {
+            Some(sequence) => self
+                .checkpoint_store
+                .save_checkpoint(name, sequence)
+                .await
+                .map_err(ProjectionRunnerError::Checkpoint),
+            None => Ok(()),
+        };
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        flushed?;
 
         Ok(applied)
     }
 
     /// Loads at most `config.batch_size()` global events after the persistent
-    /// checkpoint, applies them, and saves checkpoints after successful events.
+    /// checkpoint, applies them, and saves the last applied sequence as the
+    /// checkpoint once per batch (also flushing progress before returning a
+    /// mid-batch projection error).
     #[allow(clippy::type_complexity)]
     pub async fn run_batch<A, S>(
         &mut self,
@@ -605,20 +654,31 @@ where
             .map_err(ProjectionRunnerError::Store)?;
         let mut applied = 0;
         let mut last_sequence = None;
+        let mut failure = None;
 
         for event in events {
-            self.projection
-                .apply(&event)
-                .map_err(ProjectionRunnerError::Projection)?;
-            if let Some(seq) = event.sequence {
-                self.checkpoint_store
-                    .save_checkpoint(name, seq)
-                    .await
-                    .map_err(ProjectionRunnerError::Checkpoint)?;
+            if let Err(error) = self.projection.apply(&event) {
+                failure = Some(ProjectionRunnerError::Projection(error));
+                break;
             }
-            last_sequence = event.sequence;
+            if event.sequence.is_some() {
+                last_sequence = event.sequence;
+            }
             applied += 1;
         }
+
+        let flushed = match last_sequence {
+            Some(sequence) => self
+                .checkpoint_store
+                .save_checkpoint(name, sequence)
+                .await
+                .map_err(ProjectionRunnerError::Checkpoint),
+            None => Ok(()),
+        };
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        flushed?;
 
         Ok(projection_batch_outcome(applied, last_sequence, config))
     }

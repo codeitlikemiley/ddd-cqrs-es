@@ -129,7 +129,7 @@ make db-up && make dev transport=both
 1. Copy `examples/fullstack-app/` into your repository.  
 2. Ensure `Cargo.toml` uses **crates.io versions** (not monorepo `path =` patches), e.g.:
    - `ddd_cqrs_es = "=0.3.0-rc.6"`
-   - `wasi-auth = "=0.1.0-rc.2"`
+   - `wasi-auth = "=0.1.0-rc.3"`
 3. Remove any `[patch.crates-io]` entries that point at sibling checkouts unless you keep those crates locally.  
 4. Run `make db-up && make dev transport=both`.
 

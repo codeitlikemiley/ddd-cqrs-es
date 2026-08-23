@@ -1,0 +1,10 @@
+# cargo-audit configuration. Keep the ignore list in sync with deny.toml.
+[advisories]
+ignore = [
+    # lru 0.16.x use-after-free requires a panicking Hash/Drop impl during
+    # LruCache::pop(); the only consumer is the mysql crate's statement cache
+    # with String keys, which cannot panic there. The patched lru (>= 0.18.2)
+    # is outside mysql 28.0.0's `lru ^0.16.3` requirement. Remove this ignore
+    # once a mysql release depends on lru >= 0.18.2.
+    "RUSTSEC-2026-0253",
+]

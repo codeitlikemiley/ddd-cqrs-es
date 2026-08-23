@@ -1,5 +1,8 @@
 [advisories]
 version = 2
+# RUSTSEC-2026-0253 (unsound lru 0.16.x via mysql) is ignored in
+# .cargo/audit.toml for cargo-audit; cargo-deny v2 does not act on unsound
+# advisories, so listing it here only triggers advisory-not-detected noise.
 
 [bans]
 multiple-versions = "warn"
