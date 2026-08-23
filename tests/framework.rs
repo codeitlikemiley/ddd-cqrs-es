@@ -2316,6 +2316,61 @@ fn test_sqlite_sequential_custom_table_initialization() {
 
 #[cfg(feature = "json-file")]
 #[test]
+fn json_file_store_migrates_legacy_array_files_to_json_lines() {
+    let dir = std::env::temp_dir();
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let events_path = dir.join(format!("test_events_legacy_{}.json", nanos));
+
+    // Write a legacy whole-array file the way older releases did.
+    let legacy = ddd_cqrs_es::EventEnvelope::builder(
+        ddd_cqrs_es::EventId::from_string("legacy-1"),
+        "counter-legacy".to_owned(),
+        "counter",
+        1,
+        "counter_created",
+        CounterEvent::Created,
+    )
+    .sequence(1)
+    .build();
+    let array = serde_json::to_string(&vec![&legacy]).unwrap();
+    std::fs::write(&events_path, array).unwrap();
+
+    let store = ddd_cqrs_es::JsonFileEventStore::<Counter>::new(events_path.clone());
+
+    // First read migrates the file to JSON Lines and returns the event.
+    let loaded = EventStore::load(&store, &"counter-legacy".to_owned()).unwrap();
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].event_id.as_str(), "legacy-1");
+    let migrated = std::fs::read_to_string(&events_path).unwrap();
+    assert!(migrated.trim_start().starts_with('{'));
+    assert_eq!(migrated.lines().count(), 1);
+
+    // Appends continue on the migrated file.
+    store
+        .append(
+            &"counter-legacy".to_owned(),
+            ExpectedRevision::Exact(1),
+            vec![ddd_cqrs_es::NewEvent::new(
+                CounterEvent::Incremented { by: 2 },
+                Metadata::default(),
+            )],
+        )
+        .unwrap();
+    let reloaded = EventStore::load(&store, &"counter-legacy".to_owned()).unwrap();
+    assert_eq!(reloaded.len(), 2);
+    assert_eq!(reloaded[1].revision, 2);
+    assert_eq!(reloaded[1].sequence, Some(2));
+    let content = std::fs::read_to_string(&events_path).unwrap();
+    assert_eq!(content.lines().count(), 2);
+
+    let _ = std::fs::remove_file(&events_path);
+}
+
+#[cfg(feature = "json-file")]
+#[test]
 fn test_json_file_concurrency_and_atomicity() {
     let dir = std::env::temp_dir();
     let nanos = SystemTime::now()

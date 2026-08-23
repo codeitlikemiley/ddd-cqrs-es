@@ -522,6 +522,8 @@ where
         let events = handle_command_as_new_events::<A>(&loaded.state, command, &metadata)
             .map_err(IdempotentRepositoryError::Domain)?;
         let expected_revision = ExpectedRevision::Exact(loaded.revision);
+        // append_idempotent takes the events by value (public trait), so each
+        // retry attempt inherently pays one clone; see the trait docs.
         loop {
             match self.store.append_idempotent(
                 idempotency_key.clone(),

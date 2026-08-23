@@ -15,7 +15,9 @@ struct MemoryState<A>
 where
     A: Aggregate,
 {
-    streams: HashMap<A::Id, EventStream<A>>,
+    /// Per-stream indices into `global`, so each envelope is stored once.
+    streams: HashMap<A::Id, Vec<usize>>,
+    /// All envelopes in global sequence order.
     global: EventStream<A>,
     next_sequence: u64,
 }
@@ -29,6 +31,23 @@ where
             streams: HashMap::new(),
             global: Vec::new(),
             next_sequence: 1,
+        }
+    }
+}
+
+impl<A> MemoryState<A>
+where
+    A: Aggregate,
+{
+    /// Index of the first global event with a sequence greater than
+    /// `checkpoint`. `global` is sorted by its always-assigned sequences, so
+    /// this is a binary search.
+    fn first_index_after(&self, checkpoint: Option<u64>) -> usize {
+        match checkpoint {
+            None => 0,
+            Some(checkpoint) => self
+                .global
+                .partition_point(|event| event.sequence.is_some_and(|s| s <= checkpoint)),
         }
     }
 }
@@ -140,7 +159,16 @@ where
 
     fn load(&self, aggregate_id: &A::Id) -> Result<EventStream<A>, Self::Error> {
         let state = self.state.read().map_err(|_| EventStoreError::Poisoned)?;
-        Ok(state.streams.get(aggregate_id).cloned().unwrap_or_default())
+        Ok(state
+            .streams
+            .get(aggregate_id)
+            .map(|indices| {
+                indices
+                    .iter()
+                    .map(|&index| state.global[index].clone())
+                    .collect()
+            })
+            .unwrap_or_default())
     }
 
     fn append(
@@ -180,6 +208,7 @@ where
         }
 
         let mut stream_events = Vec::with_capacity(events.len());
+        let mut new_indices = Vec::with_capacity(events.len());
         for new_event in events {
             let sequence = state.next_sequence;
             state.next_sequence += 1;
@@ -198,6 +227,7 @@ where
                 SystemTime::now(),
             );
 
+            new_indices.push(state.global.len());
             state.global.push(envelope.clone());
             stream_events.push(envelope);
         }
@@ -206,23 +236,15 @@ where
             .streams
             .entry(aggregate_id.clone())
             .or_default()
-            .extend(stream_events.iter().cloned());
+            .extend(new_indices);
 
         Ok(stream_events)
     }
 
     fn load_global_after(&self, sequence: Option<u64>) -> Result<EventStream<A>, Self::Error> {
         let state = self.state.read().map_err(|_| EventStoreError::Poisoned)?;
-        Ok(state
-            .global
-            .iter()
-            .filter(|event| match (sequence, event.sequence) {
-                (Some(checkpoint), Some(current)) => current > checkpoint,
-                (Some(_), None) => false,
-                (None, _) => true,
-            })
-            .cloned()
-            .collect())
+        let start = state.first_index_after(sequence);
+        Ok(state.global[start..].to_vec())
     }
 
     fn load_global_after_limited(
@@ -231,17 +253,9 @@ where
         limit: NonZeroUsize,
     ) -> Result<EventStream<A>, Self::Error> {
         let state = self.state.read().map_err(|_| EventStoreError::Poisoned)?;
-        Ok(state
-            .global
-            .iter()
-            .filter(|event| match (sequence, event.sequence) {
-                (Some(checkpoint), Some(current)) => current > checkpoint,
-                (Some(_), None) => false,
-                (None, _) => true,
-            })
-            .take(limit.get())
-            .cloned()
-            .collect())
+        let start = state.first_index_after(sequence);
+        let end = state.global.len().min(start + limit.get());
+        Ok(state.global[start..end].to_vec())
     }
 }
 

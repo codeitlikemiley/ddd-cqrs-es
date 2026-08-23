@@ -40,6 +40,8 @@ fn get_file_lock(
 
 #[cfg(feature = "json-file")]
 fn write_atomic(path: &std::path::Path, content: &str) -> std::io::Result<()> {
+    use std::io::Write as _;
+
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -53,16 +55,107 @@ fn write_atomic(path: &std::path::Path, content: &str) -> std::io::Result<()> {
         nanos
     );
     let tmp_path = path.with_file_name(tmp_name);
-    std::fs::write(&tmp_path, content)?;
-    if let Err(e) = std::fs::rename(&tmp_path, path) {
+    let result = (|| {
+        let mut file = std::fs::File::create(&tmp_path)?;
+        file.write_all(content.as_bytes())?;
+        // Flush to disk before the rename so a crash cannot publish an
+        // empty or truncated file under the final name.
+        file.sync_all()?;
+        std::fs::rename(&tmp_path, path)
+    })();
+    if let Err(e) = result {
         let _ = std::fs::remove_file(&tmp_path);
         return Err(e);
+    }
+    sync_parent_dir(path);
+    Ok(())
+}
+
+/// Best-effort fsync of the containing directory so a rename or newly
+/// created file survives a crash. Ignored on platforms where directories
+/// cannot be opened for syncing.
+#[cfg(feature = "json-file")]
+fn sync_parent_dir(path: &std::path::Path) {
+    if let Some(parent) = path.parent() {
+        if let Ok(dir) = std::fs::File::open(parent) {
+            let _ = dir.sync_all();
+        }
+    }
+}
+
+/// Reads every stored envelope as raw JSON, migrating legacy whole-array
+/// files to the JSON Lines format on first contact.
+#[cfg(feature = "json-file")]
+fn read_event_values(
+    path: &std::path::Path,
+) -> Result<Vec<serde_json::Value>, crate::error::EventStoreError> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?;
+
+    if content.trim_start().starts_with('[') {
+        // Legacy format: one JSON array holding every envelope. Parse it and
+        // durably rewrite the file as JSON Lines before returning.
+        let values: Vec<serde_json::Value> = serde_json::from_str(&content)
+            .map_err(|e| crate::error::EventStoreError::deserialization(e.to_string()))?;
+        let mut lines = String::new();
+        for value in &values {
+            lines.push_str(
+                &serde_json::to_string(value)
+                    .map_err(|e| crate::error::EventStoreError::serialization(e.to_string()))?,
+            );
+            lines.push('\n');
+        }
+        write_atomic(path, &lines)
+            .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?;
+        return Ok(values);
+    }
+
+    content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            serde_json::from_str(line)
+                .map_err(|e| crate::error::EventStoreError::deserialization(e.to_string()))
+        })
+        .collect()
+}
+
+/// Appends pre-serialized envelope lines and flushes them to disk before
+/// acknowledging.
+#[cfg(feature = "json-file")]
+fn append_event_lines(path: &std::path::Path, lines: &[String]) -> std::io::Result<()> {
+    use std::io::Write as _;
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let created = !path.exists();
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    for line in lines {
+        file.write_all(line.as_bytes())?;
+        file.write_all(b"\n")?;
+    }
+    file.sync_all()?;
+    if created {
+        sync_parent_dir(path);
     }
     Ok(())
 }
 
 #[cfg(feature = "json-file")]
 /// A JSON file-backed event store.
+///
+/// Events are stored as JSON Lines (one envelope per line); files written by
+/// older releases as a single JSON array are migrated in place on first
+/// read. Appends add lines and fsync before acknowledging, so committed
+/// events survive a crash; reads still scan the whole file (dev-tier).
 ///
 /// > [!WARNING]
 /// > This adapter is intended for **single-process development and testing purposes only**.
@@ -121,15 +214,7 @@ where
             .lock()
             .map_err(|_| crate::error::EventStoreError::Poisoned)?;
 
-        if !self.events_path.exists() {
-            return Ok(Vec::new());
-        }
-
-        let content = std::fs::read_to_string(&self.events_path)
-            .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?;
-
-        let values: Vec<serde_json::Value> = serde_json::from_str(&content)
-            .map_err(|e| crate::error::EventStoreError::deserialization(e.to_string()))?;
+        let values = read_event_values(&self.events_path)?;
 
         let mut envelopes = Vec::new();
         for val in values {
@@ -181,15 +266,7 @@ where
             let _ = std::fs::create_dir_all(parent);
         }
 
-        let content = if self.events_path.exists() {
-            std::fs::read_to_string(&self.events_path)
-                .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?
-        } else {
-            "[]".to_string()
-        };
-
-        let mut all_values: Vec<serde_json::Value> = serde_json::from_str(&content)
-            .map_err(|e| crate::error::EventStoreError::deserialization(e.to_string()))?;
+        let all_values = read_event_values(&self.events_path)?;
 
         let mut current_revision = 0u64;
         let mut max_sequence = 0u64;
@@ -261,6 +338,7 @@ where
         }
 
         let mut envelopes = Vec::new();
+        let mut new_lines = Vec::new();
         let now = std::time::SystemTime::now();
 
         for (i, event) in events.into_iter().enumerate() {
@@ -281,16 +359,14 @@ where
                 now,
             );
 
-            let val = serde_json::to_value(&envelope)
+            let line = serde_json::to_string(&envelope)
                 .map_err(|e| crate::error::EventStoreError::serialization(e.to_string()))?;
 
-            all_values.push(val);
+            new_lines.push(line);
             envelopes.push(envelope);
         }
 
-        let new_content = serde_json::to_string(&all_values)
-            .map_err(|e| crate::error::EventStoreError::serialization(e.to_string()))?;
-        write_atomic(&self.events_path, &new_content)
+        append_event_lines(&self.events_path, &new_lines)
             .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?;
 
         Ok(envelopes)
@@ -305,15 +381,7 @@ where
             .lock()
             .map_err(|_| crate::error::EventStoreError::Poisoned)?;
 
-        if !self.events_path.exists() {
-            return Ok(Vec::new());
-        }
-
-        let content = std::fs::read_to_string(&self.events_path)
-            .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?;
-
-        let values: Vec<serde_json::Value> = serde_json::from_str(&content)
-            .map_err(|e| crate::error::EventStoreError::deserialization(e.to_string()))?;
+        let values = read_event_values(&self.events_path)?;
 
         let mut envelopes = Vec::new();
         let seq_num = sequence.unwrap_or(0);
