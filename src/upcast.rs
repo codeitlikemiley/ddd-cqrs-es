@@ -112,6 +112,10 @@ impl UpcasterRegistry {
     }
 
     /// Registers an upcaster for a specific event type.
+    ///
+    /// Upcasters must strictly increase the version (`target_version >
+    /// source_version`); a non-advancing upcaster causes [`Self::upcast`] to
+    /// return an error when its source version is reached.
     pub fn register<U>(&self, event_type: impl Into<String>, upcaster: U)
     where
         U: EventUpcaster + Send + Sync + 'static,
@@ -128,6 +132,10 @@ impl UpcasterRegistry {
 
     /// Automatically chains matching upcasters sequentially to upgrade the payload
     /// from the current version to the highest possible version.
+    ///
+    /// Every hop must strictly increase the version; an upcaster whose target
+    /// version does not advance past its source version is reported as an
+    /// error instead of looping forever.
     pub fn upcast(
         &self,
         event_type: &str,
@@ -144,8 +152,16 @@ impl UpcasterRegistry {
                 let matching = list.iter().find(|u| u.source_version() == current_version);
 
                 if let Some(upcaster) = matching {
+                    let target_version = upcaster.target_version();
+                    if target_version <= current_version {
+                        return Err(Box::new(UpcastError(format!(
+                            "upcaster for `{event_type}` maps version {current_version} to \
+                             {target_version}, which does not advance the schema version; \
+                             refusing a non-terminating upcast chain"
+                        ))));
+                    }
                     raw_payload = upcaster.upcast(raw_payload)?;
-                    current_version = upcaster.target_version();
+                    current_version = target_version;
                 } else {
                     break;
                 }
@@ -158,5 +174,65 @@ impl UpcasterRegistry {
 impl std::fmt::Debug for UpcasterRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("UpcasterRegistry").finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EventUpcaster, UpcasterRegistry};
+
+    struct Step {
+        from: u32,
+        to: u32,
+    }
+
+    impl EventUpcaster for Step {
+        type Error = std::convert::Infallible;
+
+        fn source_version(&self) -> u32 {
+            self.from
+        }
+
+        fn target_version(&self) -> u32 {
+            self.to
+        }
+
+        fn upcast(&self, mut raw_payload: Vec<u8>) -> Result<Vec<u8>, Self::Error> {
+            raw_payload.push(self.to as u8);
+            Ok(raw_payload)
+        }
+    }
+
+    #[test]
+    fn upcast_chains_strictly_increasing_versions() {
+        let registry = UpcasterRegistry::new();
+        registry.register("evt", Step { from: 1, to: 2 });
+        registry.register("evt", Step { from: 2, to: 3 });
+
+        let (version, payload) = registry.upcast("evt", 1, vec![0]).unwrap();
+
+        assert_eq!(version, 3);
+        assert_eq!(payload, vec![0, 2, 3]);
+    }
+
+    #[test]
+    fn upcast_rejects_non_advancing_upcaster_instead_of_looping() {
+        let registry = UpcasterRegistry::new();
+        registry.register("evt", Step { from: 2, to: 2 });
+
+        let error = registry.upcast("evt", 2, Vec::new()).unwrap_err();
+
+        assert!(error.to_string().contains("does not advance"));
+    }
+
+    #[test]
+    fn upcast_rejects_version_cycle_instead_of_looping() {
+        let registry = UpcasterRegistry::new();
+        registry.register("evt", Step { from: 1, to: 2 });
+        registry.register("evt", Step { from: 2, to: 1 });
+
+        let error = registry.upcast("evt", 1, Vec::new()).unwrap_err();
+
+        assert!(error.to_string().contains("does not advance"));
     }
 }
