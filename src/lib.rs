@@ -103,6 +103,8 @@ pub(crate) mod pool;
 pub mod postgres;
 pub mod process_manager;
 pub mod projection;
+#[cfg(feature = "json")]
+pub mod raw_feed;
 #[cfg(feature = "redis")]
 pub mod redis;
 pub mod repository;
@@ -171,6 +173,13 @@ pub use projection::{
     AsyncPersistedProjectionRunner, AsyncTransactionalCheckpointedProjection,
     AsyncTransactionalCheckpointedProjectionRunner,
 };
+#[cfg(all(feature = "json", feature = "async"))]
+/// Async cross-aggregate untyped replay feed.
+pub use raw_feed::AsyncRawEventFeed;
+#[cfg(feature = "json")]
+/// Cross-aggregate untyped replay feed and its envelope alias.
+pub use raw_feed::{RawEventEnvelope, RawEventFeed};
+
 /// Projection runners, batch controls, and checkpoint integrations.
 pub use projection::{
     CheckpointStore, CheckpointedProjection, CheckpointedProjectionRunner,

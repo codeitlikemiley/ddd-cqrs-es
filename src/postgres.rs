@@ -402,6 +402,65 @@ where
     }
 }
 
+impl<A> crate::raw_feed::RawEventFeed for PostgresEventStore<A>
+where
+    A: Aggregate,
+{
+    type Error = EventStoreError;
+
+    fn load_raw_global_after_limited(
+        &self,
+        sequence: Option<u64>,
+        limit: NonZeroUsize,
+    ) -> Result<Vec<crate::raw_feed::RawEventEnvelope>, Self::Error> {
+        let sequence_i64 = i64::try_from(sequence.unwrap_or_default()).map_err(|_| {
+            EventStoreError::deserialization("global sequence exceeds BIGINT".to_owned())
+        })?;
+        let limit_i64 = i64::try_from(limit.get()).map_err(|_| {
+            EventStoreError::deserialization("event replay limit exceeds BIGINT".to_owned())
+        })?;
+        let table_name = self.table_name.clone();
+        let upcasters = self.upcasters.clone();
+        self.pool.read(move |client| {
+            let query = format!(
+                "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
+                 event_version, payload, metadata, recorded_at_ms FROM {table} \
+                 WHERE sequence > $1 ORDER BY sequence ASC LIMIT $2",
+                table = table_name
+            );
+            let rows = client
+                .query(&query, &[&sequence_i64, &limit_i64])
+                .map_err(map_postgres_error)?;
+
+            rows.into_iter()
+                .map(|row| row_to_raw_envelope(&upcasters, row))
+                .collect()
+        })
+    }
+}
+
+#[cfg(feature = "async")]
+#[async_trait::async_trait]
+impl<A> crate::raw_feed::AsyncRawEventFeed for PostgresEventStore<A>
+where
+    A: Aggregate + Send + Sync + 'static,
+{
+    type Error = EventStoreError;
+
+    async fn load_raw_global_after_limited(
+        &self,
+        sequence: Option<u64>,
+        limit: NonZeroUsize,
+    ) -> Result<Vec<crate::raw_feed::RawEventEnvelope>, Self::Error> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::raw_feed::RawEventFeed::load_raw_global_after_limited(&this, sequence, limit)
+        })
+        .await
+        .map_err(|error| EventStoreError::backend(error.to_string()))?
+    }
+}
+
 impl<A> AtomicIdempotentEventStore<A> for PostgresEventStore<A>
 where
     A: Aggregate + 'static,
@@ -885,6 +944,61 @@ where
     }
 
     Ok(committed)
+}
+
+/// Maps a full event row into an untyped envelope, applying upcasters but
+/// keeping the payload as raw JSON and the aggregate id as its stored string.
+fn row_to_raw_envelope(
+    upcasters: &UpcasterRegistry,
+    row: ::postgres::Row,
+) -> Result<crate::raw_feed::RawEventEnvelope, EventStoreError> {
+    let event_id: String = row.try_get(0).map_err(map_postgres_error)?;
+    let aggregate_id: String = row.try_get(1).map_err(map_postgres_error)?;
+    let aggregate_type: String = row.try_get(2).map_err(map_postgres_error)?;
+    let revision: i64 = row.try_get(3).map_err(map_postgres_error)?;
+    let sequence: i64 = row.try_get(4).map_err(map_postgres_error)?;
+    let event_type: String = row.try_get(5).map_err(map_postgres_error)?;
+    let event_version: i32 = row.try_get(6).map_err(map_postgres_error)?;
+    let payload_val: serde_json::Value = row.try_get(7).map_err(map_postgres_error)?;
+    let metadata: serde_json::Value = row.try_get(8).map_err(map_postgres_error)?;
+    let recorded_at_ms: i64 = row.try_get(9).map_err(map_postgres_error)?;
+
+    let revision = u64::try_from(revision).map_err(|_| {
+        EventStoreError::deserialization("stored revision cannot be negative".to_owned())
+    })?;
+    let sequence = u64::try_from(sequence).map_err(|_| {
+        EventStoreError::deserialization("PostgreSQL sequence cannot be negative".to_owned())
+    })?;
+    let event_version = u32::try_from(event_version).map_err(|_| {
+        EventStoreError::deserialization("event_version cannot be negative".to_owned())
+    })?;
+
+    let payload_bytes = serde_json::to_vec(&payload_val).map_err(|error| {
+        EventStoreError::deserialization(format!(
+            "payload serialization for upcasting failed: {error}"
+        ))
+    })?;
+    let (event_version, upcasted_bytes) = upcasters
+        .upcast(&event_type, event_version, payload_bytes)
+        .map_err(|err| EventStoreError::deserialization(err.to_string()))?;
+    let payload: serde_json::Value = serde_json::from_slice(&upcasted_bytes)
+        .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
+
+    let metadata = deserialize_metadata(&event_id, metadata)?;
+    let recorded_at = millis_to_system_time(recorded_at_ms)?;
+
+    Ok(EventEnvelope::new(
+        EventId::from_string(event_id),
+        aggregate_id,
+        aggregate_type,
+        revision,
+        Some(sequence),
+        event_type,
+        event_version,
+        payload,
+        metadata,
+        recorded_at,
+    ))
 }
 
 fn row_to_envelope<A>(

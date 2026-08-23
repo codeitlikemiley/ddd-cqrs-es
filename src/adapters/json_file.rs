@@ -564,3 +564,41 @@ impl crate::projection::AsyncCheckpointStore for JsonFileCheckpointStore {
         .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?
     }
 }
+
+#[cfg(feature = "json-file")]
+impl<A> crate::raw_feed::RawEventFeed for JsonFileEventStore<A> {
+    type Error = crate::error::EventStoreError;
+
+    /// Serves every stored envelope of any aggregate type in global sequence
+    /// order, payloads as raw JSON.
+    fn load_raw_global_after_limited(
+        &self,
+        sequence: Option<u64>,
+        limit: std::num::NonZeroUsize,
+    ) -> Result<Vec<crate::raw_feed::RawEventEnvelope>, Self::Error> {
+        let lock = get_file_lock(&self.events_path)?;
+        let _guard = lock
+            .lock()
+            .map_err(|_| crate::error::EventStoreError::Poisoned)?;
+
+        let values = read_event_values(&self.events_path)?;
+        let checkpoint = sequence.unwrap_or(0);
+
+        let mut envelopes = Vec::new();
+        for val in values {
+            let envelope = serde_json::from_value::<crate::raw_feed::RawEventEnvelope>(val)
+                .map_err(|e| {
+                    crate::error::EventStoreError::deserialization(format!(
+                        "failed to deserialize event envelope: {e}"
+                    ))
+                })?;
+            if envelope.sequence.unwrap_or(0) > checkpoint {
+                envelopes.push(envelope);
+            }
+        }
+
+        envelopes.sort_by_key(|e| e.sequence);
+        envelopes.truncate(limit.get());
+        Ok(envelopes)
+    }
+}

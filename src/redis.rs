@@ -507,6 +507,52 @@ where
     }
 }
 
+#[async_trait]
+impl<A, C> crate::raw_feed::AsyncRawEventFeed for RedisEventStore<A, C>
+where
+    A: Aggregate + Send + Sync + 'static,
+    A::Event: serde::Serialize + serde::de::DeserializeOwned + Send + Sync,
+    A::Id: serde::Serialize + serde::de::DeserializeOwned + Send + Sync + Clone,
+    C: RedisCommandExecutor,
+{
+    type Error = EventStoreError;
+
+    /// Serves every event under this store's key prefix in global sequence
+    /// order. Stores sharing one prefix share the global feed, so this
+    /// interleaves aggregate types persisted under that prefix.
+    async fn load_raw_global_after_limited(
+        &self,
+        sequence: Option<u64>,
+        limit: NonZeroUsize,
+    ) -> Result<Vec<crate::raw_feed::RawEventEnvelope>, Self::Error> {
+        let min_sequence = sequence.unwrap_or_default();
+        let value = self
+            .client
+            .execute(
+                "ZRANGEBYSCORE",
+                vec![
+                    self.global_key().into_bytes(),
+                    format!("({min_sequence}").into_bytes(),
+                    b"+inf".to_vec(),
+                    b"LIMIT".to_vec(),
+                    b"0".to_vec(),
+                    limit.get().to_string().into_bytes(),
+                ],
+            )
+            .await
+            .map_err(map_executor_error)?;
+
+        let sequences = redis_sequence_list(&value)?;
+        let hashes = self.load_sequence_hashes(&sequences).await?;
+        let mut events = Vec::with_capacity(hashes.len());
+        for hash in hashes {
+            events.push(hash_to_raw_envelope(&self.upcasters, hash)?);
+        }
+
+        Ok(events)
+    }
+}
+
 /// Experimental Redis-backed async checkpoint store.
 #[derive(Clone, Debug)]
 pub struct RedisCheckpointStore<C>
@@ -1231,6 +1277,47 @@ where
     ))
 }
 
+/// Maps a stored event hash into an untyped envelope, applying upcasters but
+/// keeping the payload as raw JSON and the aggregate id as its stored string.
+fn hash_to_raw_envelope(
+    upcasters: &UpcasterRegistry,
+    hash: BTreeMap<String, Vec<u8>>,
+) -> Result<crate::raw_feed::RawEventEnvelope, EventStoreError> {
+    let event_id = hash_field_string(&hash, "event_id")?;
+    let aggregate_id_json = hash_field_string(&hash, "aggregate_id")?;
+    let aggregate_type = hash_field_string(&hash, "aggregate_type")?;
+    let revision = hash_field_u64(&hash, "revision")?;
+    let sequence = hash_field_u64(&hash, "sequence")?;
+    let event_type = hash_field_string(&hash, "event_type")?;
+    let event_version = hash_field_u32(&hash, "event_version")?;
+    let payload_bytes = hash_field_bytes(&hash, "payload")?;
+    let metadata_bytes = hash_field_bytes(&hash, "metadata")?;
+    let recorded_at_ms = hash_field_i64(&hash, "recorded_at_ms")?;
+
+    let (event_version, upcasted_bytes) = upcasters
+        .upcast(&event_type, event_version, payload_bytes)
+        .map_err(|error| EventStoreError::deserialization(error.to_string()))?;
+    let payload: serde_json::Value = serde_json::from_slice(&upcasted_bytes)
+        .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
+    let metadata_value = serde_json::from_slice(&metadata_bytes)
+        .map_err(|error| EventStoreError::deserialization(format!("metadata JSON: {error}")))?;
+    let metadata = deserialize_metadata(&event_id, metadata_value)?;
+    let recorded_at = millis_to_system_time(recorded_at_ms)?;
+
+    Ok(EventEnvelope::new(
+        EventId::from_string(event_id),
+        aggregate_id_json,
+        aggregate_type,
+        revision,
+        Some(sequence),
+        event_type,
+        event_version,
+        payload,
+        metadata,
+        recorded_at,
+    ))
+}
+
 fn validate_redis_prefix(prefix: &str) -> Result<(), EventStoreError> {
     if prefix.is_empty() {
         return Err(EventStoreError::backend(
@@ -1831,6 +1918,30 @@ mod tests {
         let reply = RedisValue::Array(vec![bytes("2"), bytes("event_id"), bytes("e-1")]);
 
         assert!(unpack_flat_hash_batch(&reply, &[1]).is_err());
+    }
+
+    #[test]
+    fn raw_hash_mapping_keeps_payload_and_id_untyped() {
+        let mut hash = BTreeMap::new();
+        let mut put = |k: &str, v: &str| hash.insert(k.to_owned(), v.as_bytes().to_vec());
+        put("event_id", "evt-1");
+        put("aggregate_id", "\"counter-1\"");
+        put("aggregate_type", "test_aggregate");
+        put("revision", "3");
+        put("sequence", "7");
+        put("event_type", "created");
+        put("event_version", "1");
+        put("payload", "{\"Created\":{\"value\":9}}");
+        let metadata_json = serde_json::to_string(&Metadata::default()).unwrap();
+        put("metadata", &metadata_json);
+        put("recorded_at_ms", "1700000000000");
+
+        let raw = hash_to_raw_envelope(&UpcasterRegistry::new(), hash).unwrap();
+
+        assert_eq!(raw.aggregate_id, "\"counter-1\"");
+        assert_eq!(raw.aggregate_type, "test_aggregate");
+        assert_eq!(raw.sequence, Some(7));
+        assert_eq!(raw.payload["Created"]["value"], 9);
     }
 
     #[test]

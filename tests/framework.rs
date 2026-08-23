@@ -44,6 +44,50 @@ enum CounterCommand {
     Increment { by: u64 },
 }
 
+/// Second aggregate type for cross-aggregate raw feed tests.
+#[cfg(any(feature = "postgres", feature = "mysql"))]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum RawAuditEvent {
+    Recorded { note: String },
+}
+
+#[cfg(any(feature = "postgres", feature = "mysql"))]
+impl DomainEvent for RawAuditEvent {
+    fn event_type(&self) -> &'static str {
+        "raw_audit_recorded"
+    }
+}
+
+#[cfg(any(feature = "postgres", feature = "mysql"))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct RawAudit {
+    notes: u64,
+}
+
+#[cfg(any(feature = "postgres", feature = "mysql"))]
+impl Aggregate for RawAudit {
+    type Id = String;
+    type Command = String;
+    type Event = RawAuditEvent;
+    type Error = std::convert::Infallible;
+
+    fn aggregate_type() -> &'static str {
+        "raw_audit"
+    }
+
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn apply(&mut self, _event: &Self::Event) {
+        self.notes += 1;
+    }
+
+    fn handle(&self, command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> {
+        Ok(vec![RawAuditEvent::Recorded { note: command }])
+    }
+}
+
 #[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct StoredIdempotencyResult {
@@ -2212,6 +2256,62 @@ fn test_postgres_checkpoint_store() {
 
 #[cfg(feature = "postgres")]
 #[test]
+fn test_postgres_raw_feed_interleaves_aggregate_types() {
+    let Ok(database_url) = std::env::var("DDD_CQRS_ES_POSTGRES_URL") else {
+        eprintln!("skipping live Postgres raw-feed test: DDD_CQRS_ES_POSTGRES_URL is not set");
+        return;
+    };
+    use ddd_cqrs_es::raw_feed::RawEventFeed;
+    use ddd_cqrs_es::PostgresEventStore;
+
+    let table = format!("raw_feed_events_{}", std::process::id());
+    let drop_table = |database_url: &str| {
+        let mut client = postgres::Client::connect(database_url, postgres::NoTls).unwrap();
+        let _ = client.execute(&format!("DROP TABLE IF EXISTS {};", table), &[]);
+    };
+    drop_table(&database_url);
+
+    let counters =
+        PostgresEventStore::<Counter>::connect_with_table_name(&database_url, &table).unwrap();
+    counters.initialize_schema().unwrap();
+    let audits =
+        PostgresEventStore::<RawAudit>::connect_with_table_name(&database_url, &table).unwrap();
+
+    counters
+        .append(
+            &"counter-raw".to_owned(),
+            ExpectedRevision::NoStream,
+            vec![NewEvent::new(CounterEvent::Created, Metadata::default())],
+        )
+        .unwrap();
+    audits
+        .append(
+            &"audit-raw".to_owned(),
+            ExpectedRevision::NoStream,
+            vec![NewEvent::new(
+                RawAuditEvent::Recorded {
+                    note: "first".to_owned(),
+                },
+                Metadata::default(),
+            )],
+        )
+        .unwrap();
+
+    let raw = counters
+        .load_raw_global_after_limited(None, std::num::NonZeroUsize::new(10).unwrap())
+        .unwrap();
+    assert_eq!(raw.len(), 2);
+    assert_eq!(raw[0].aggregate_type, "counter");
+    assert_eq!(raw[1].aggregate_type, "raw_audit");
+    assert_eq!(raw[1].payload["Recorded"]["note"], "first");
+    let typed = EventStore::load_global_after(&counters, None).unwrap();
+    assert_eq!(typed.len(), 1);
+
+    drop_table(&database_url);
+}
+
+#[cfg(feature = "postgres")]
+#[test]
 fn test_postgres_pool_sharing_auxiliary_stores() {
     let Ok(database_url) = std::env::var("DDD_CQRS_ES_POSTGRES_URL") else {
         eprintln!("skipping live Postgres pool-sharing test: DDD_CQRS_ES_POSTGRES_URL is not set");
@@ -2273,6 +2373,163 @@ fn test_postgres_pool_sharing_auxiliary_stores() {
 
 #[cfg(feature = "sqlite")]
 #[test]
+fn sqlite_raw_feed_interleaves_aggregate_types_and_drives_raw_projections() {
+    use ddd_cqrs_es::projection::PersistedProjectionRunner;
+    use ddd_cqrs_es::raw_feed::RawEventFeed;
+
+    #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    enum AuditEvent {
+        Recorded { note: String },
+    }
+
+    impl DomainEvent for AuditEvent {
+        fn event_type(&self) -> &'static str {
+            "audit_recorded"
+        }
+    }
+
+    #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    struct Audit {
+        notes: u64,
+    }
+
+    impl Aggregate for Audit {
+        type Id = String;
+        type Command = String;
+        type Event = AuditEvent;
+        type Error = std::convert::Infallible;
+
+        fn aggregate_type() -> &'static str {
+            "audit"
+        }
+
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn apply(&mut self, _event: &Self::Event) {
+            self.notes += 1;
+        }
+
+        fn handle(&self, command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> {
+            Ok(vec![AuditEvent::Recorded { note: command }])
+        }
+    }
+
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let db_uri = format!("file:raw_feed_{nanos}?mode=memory&cache=shared");
+    // Keep the shared in-memory database alive for the whole test.
+    let _anchor = rusqlite::Connection::open(&db_uri).unwrap();
+
+    let counters =
+        ddd_cqrs_es::SqliteEventStore::<Counter>::new(rusqlite::Connection::open(&db_uri).unwrap())
+            .unwrap();
+    counters.initialize_schema().unwrap();
+    let audits =
+        ddd_cqrs_es::SqliteEventStore::<Audit>::new(rusqlite::Connection::open(&db_uri).unwrap())
+            .unwrap();
+
+    // Interleave appends across the two aggregate types in one events table.
+    counters
+        .append(
+            &"counter-1".to_owned(),
+            ExpectedRevision::NoStream,
+            vec![NewEvent::new(CounterEvent::Created, Metadata::default())],
+        )
+        .unwrap();
+    audits
+        .append(
+            &"audit-1".to_owned(),
+            ExpectedRevision::NoStream,
+            vec![NewEvent::new(
+                AuditEvent::Recorded {
+                    note: "first".to_owned(),
+                },
+                Metadata::default(),
+            )],
+        )
+        .unwrap();
+    counters
+        .append(
+            &"counter-1".to_owned(),
+            ExpectedRevision::Exact(1),
+            vec![NewEvent::new(
+                CounterEvent::Incremented { by: 2 },
+                Metadata::default(),
+            )],
+        )
+        .unwrap();
+
+    // The raw feed sees every event of both types in global sequence order,
+    // while the typed feed stays scoped to one aggregate type.
+    let raw = counters
+        .load_raw_global_after_limited(None, std::num::NonZeroUsize::new(10).unwrap())
+        .unwrap();
+    assert_eq!(raw.len(), 3);
+    assert_eq!(
+        raw.iter().map(|e| e.sequence.unwrap()).collect::<Vec<_>>(),
+        vec![1, 2, 3]
+    );
+    assert_eq!(raw[0].aggregate_type, "counter");
+    assert_eq!(raw[1].aggregate_type, "audit");
+    assert_eq!(raw[1].payload["Recorded"]["note"], "first");
+    assert_eq!(raw[1].aggregate_id, "\"audit-1\"");
+    let typed = EventStore::load_global_after(&counters, None).unwrap();
+    assert_eq!(typed.len(), 2);
+
+    // A raw projection is just Projection<serde_json::Value, String>; the
+    // persisted runner drives it with the shared checkpoint semantics.
+    #[derive(Default)]
+    struct TypeTally {
+        counters: usize,
+        audits: usize,
+    }
+
+    impl Projection<serde_json::Value, String> for TypeTally {
+        type Error = std::convert::Infallible;
+
+        fn name(&self) -> &'static str {
+            "raw_type_tally"
+        }
+
+        fn apply(
+            &mut self,
+            event: &ddd_cqrs_es::EventEnvelope<serde_json::Value, String>,
+        ) -> Result<(), Self::Error> {
+            match event.aggregate_type.as_str() {
+                "counter" => self.counters += 1,
+                _ => self.audits += 1,
+            }
+            Ok(())
+        }
+    }
+
+    let checkpoint_store = CountingCheckpointStore::default();
+    let mut runner = PersistedProjectionRunner::new(TypeTally::default(), checkpoint_store.clone());
+
+    let outcome = runner
+        .run_raw_batch(&counters, ddd_cqrs_es::ProjectionBatchConfig::default())
+        .unwrap();
+    assert_eq!(outcome.applied, 3);
+    assert!(outcome.caught_up);
+    assert_eq!(runner.projection().counters, 2);
+    assert_eq!(runner.projection().audits, 1);
+    assert_eq!(checkpoint_store.checkpoint(), Some(3));
+    assert_eq!(checkpoint_store.saves(), 1);
+
+    // Resumes from the checkpoint: nothing new, no checkpoint write.
+    let outcome = runner
+        .run_raw_batch(&counters, ddd_cqrs_es::ProjectionBatchConfig::default())
+        .unwrap();
+    assert_eq!(outcome.applied, 0);
+    assert_eq!(checkpoint_store.saves(), 1);
+}
+
+#[cfg(feature = "sqlite")]
+#[test]
 fn test_sqlite_sequential_custom_table_initialization() {
     let connection = rusqlite::Connection::open("file::memory:?cache=shared").unwrap();
 
@@ -2312,6 +2569,52 @@ fn test_sqlite_sequential_custom_table_initialization() {
         checkpoint_store.load_checkpoint("projection-a").unwrap(),
         Some(99)
     );
+}
+
+#[cfg(feature = "json-file")]
+#[test]
+fn in_memory_and_json_file_raw_feeds_serve_untyped_envelopes() {
+    use ddd_cqrs_es::raw_feed::RawEventFeed;
+
+    let limit = std::num::NonZeroUsize::new(10).unwrap();
+
+    let store = InMemoryEventStore::<Counter>::new();
+    store
+        .append(
+            &"counter-raw".to_owned(),
+            ExpectedRevision::NoStream,
+            vec![
+                NewEvent::new(CounterEvent::Created, Metadata::default()),
+                NewEvent::new(CounterEvent::Incremented { by: 4 }, Metadata::default()),
+            ],
+        )
+        .unwrap();
+    let raw = store.load_raw_global_after_limited(None, limit).unwrap();
+    assert_eq!(raw.len(), 2);
+    assert_eq!(raw[0].aggregate_id, "\"counter-raw\"");
+    assert_eq!(raw[1].payload["Incremented"]["by"], 4);
+    let resumed = store.load_raw_global_after_limited(Some(1), limit).unwrap();
+    assert_eq!(resumed.len(), 1);
+
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let events_path = std::env::temp_dir().join(format!("test_events_raw_{}.json", nanos));
+    let file_store = ddd_cqrs_es::JsonFileEventStore::<Counter>::new(events_path.clone());
+    file_store
+        .append(
+            &"counter-raw".to_owned(),
+            ExpectedRevision::NoStream,
+            vec![NewEvent::new(CounterEvent::Created, Metadata::default())],
+        )
+        .unwrap();
+    let raw = file_store
+        .load_raw_global_after_limited(None, limit)
+        .unwrap();
+    assert_eq!(raw.len(), 1);
+    assert_eq!(raw[0].aggregate_type, "counter");
+    let _ = std::fs::remove_file(&events_path);
 }
 
 #[cfg(feature = "json-file")]
@@ -2665,6 +2968,58 @@ fn test_mysql_checkpoint_store() {
     let store = MySqlCheckpointStore::with_table_name(conn, table_name.clone()).unwrap();
 
     assert_checkpoint_store_contract(store, "proj1");
+}
+
+#[cfg(feature = "mysql")]
+#[test]
+fn test_mysql_raw_feed_interleaves_aggregate_types() {
+    let _guard = MYSQL_TEST_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(db) = mysql_test_db_or_skip("raw-feed test") else {
+        return;
+    };
+    use ddd_cqrs_es::raw_feed::RawEventFeed;
+    use ddd_cqrs_es::MySqlEventStore;
+
+    let table = unique_mysql_table("raw_feed_events");
+    let _cleanup = MySqlTableCleanup::new(&db.test_url, vec![table.clone()]);
+
+    let counters =
+        MySqlEventStore::<Counter>::connect_with_table_name(&db.test_url, &table).unwrap();
+    counters.initialize_schema().unwrap();
+    let audits =
+        MySqlEventStore::<RawAudit>::connect_with_table_name(&db.test_url, &table).unwrap();
+
+    counters
+        .append(
+            &"counter-raw".to_owned(),
+            ExpectedRevision::NoStream,
+            vec![NewEvent::new(CounterEvent::Created, Metadata::default())],
+        )
+        .unwrap();
+    audits
+        .append(
+            &"audit-raw".to_owned(),
+            ExpectedRevision::NoStream,
+            vec![NewEvent::new(
+                RawAuditEvent::Recorded {
+                    note: "first".to_owned(),
+                },
+                Metadata::default(),
+            )],
+        )
+        .unwrap();
+
+    let raw = counters
+        .load_raw_global_after_limited(None, std::num::NonZeroUsize::new(10).unwrap())
+        .unwrap();
+    assert_eq!(raw.len(), 2);
+    assert_eq!(raw[0].aggregate_type, "counter");
+    assert_eq!(raw[1].aggregate_type, "raw_audit");
+    assert_eq!(raw[1].payload["Recorded"]["note"], "first");
+    let typed = EventStore::load_global_after(&counters, None).unwrap();
+    assert_eq!(typed.len(), 1);
 }
 
 #[cfg(feature = "mysql")]

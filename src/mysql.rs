@@ -404,6 +404,65 @@ where
     }
 }
 
+impl<A> crate::raw_feed::RawEventFeed for MySqlEventStore<A>
+where
+    A: Aggregate,
+{
+    type Error = EventStoreError;
+
+    fn load_raw_global_after_limited(
+        &self,
+        sequence: Option<u64>,
+        limit: NonZeroUsize,
+    ) -> Result<Vec<crate::raw_feed::RawEventEnvelope>, Self::Error> {
+        let sequence_i64 = i64::try_from(sequence.unwrap_or_default()).map_err(|_| {
+            EventStoreError::deserialization("global sequence exceeds BIGINT".to_owned())
+        })?;
+        let limit_u64 = u64::try_from(limit.get()).map_err(|_| {
+            EventStoreError::deserialization("event replay limit exceeds BIGINT".to_owned())
+        })?;
+        let table_name = self.table_name.clone();
+        let upcasters = self.upcasters.clone();
+        self.pool.read(move |connection| {
+            let query = format!(
+                "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
+                 event_version, payload, metadata, recorded_at_ms FROM {table} \
+                 WHERE sequence > ? ORDER BY sequence ASC LIMIT ?",
+                table = table_name
+            );
+            let rows: Vec<Row> = connection
+                .exec(&query, (sequence_i64, limit_u64))
+                .map_err(map_mysql_error)?;
+
+            rows.into_iter()
+                .map(|row| row_to_raw_envelope(&upcasters, row))
+                .collect()
+        })
+    }
+}
+
+#[cfg(feature = "async")]
+#[async_trait::async_trait]
+impl<A> crate::raw_feed::AsyncRawEventFeed for MySqlEventStore<A>
+where
+    A: Aggregate + Send + Sync + 'static,
+{
+    type Error = EventStoreError;
+
+    async fn load_raw_global_after_limited(
+        &self,
+        sequence: Option<u64>,
+        limit: NonZeroUsize,
+    ) -> Result<Vec<crate::raw_feed::RawEventEnvelope>, Self::Error> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::raw_feed::RawEventFeed::load_raw_global_after_limited(&this, sequence, limit)
+        })
+        .await
+        .map_err(|error| EventStoreError::backend(error.to_string()))?
+    }
+}
+
 impl<A> AtomicIdempotentEventStore<A> for MySqlEventStore<A>
 where
     A: Aggregate + 'static,
@@ -868,6 +927,75 @@ where
     }
 
     Ok(committed)
+}
+
+/// Maps a full event row into an untyped envelope, applying upcasters but
+/// keeping the payload as raw JSON and the aggregate id as its stored string.
+fn row_to_raw_envelope(
+    upcasters: &UpcasterRegistry,
+    row: Row,
+) -> Result<crate::raw_feed::RawEventEnvelope, EventStoreError> {
+    let event_id: String = row
+        .get(0)
+        .ok_or_else(|| EventStoreError::deserialization("missing event_id column".to_owned()))?;
+    let aggregate_id: String = row.get(1).ok_or_else(|| {
+        EventStoreError::deserialization("missing aggregate_id column".to_owned())
+    })?;
+    let aggregate_type: String = row.get(2).ok_or_else(|| {
+        EventStoreError::deserialization("missing aggregate_type column".to_owned())
+    })?;
+    let revision: i64 = row
+        .get(3)
+        .ok_or_else(|| EventStoreError::deserialization("missing revision column".to_owned()))?;
+    let sequence: u64 = row
+        .get(4)
+        .ok_or_else(|| EventStoreError::deserialization("missing sequence column".to_owned()))?;
+    let event_type: String = row
+        .get(5)
+        .ok_or_else(|| EventStoreError::deserialization("missing event_type column".to_owned()))?;
+    let event_version: i32 = row.get(6).ok_or_else(|| {
+        EventStoreError::deserialization("missing event_version column".to_owned())
+    })?;
+    let payload_str: String = row
+        .get(7)
+        .ok_or_else(|| EventStoreError::deserialization("missing payload column".to_owned()))?;
+    let metadata_str: String = row
+        .get(8)
+        .ok_or_else(|| EventStoreError::deserialization("missing metadata column".to_owned()))?;
+    let recorded_at_ms: i64 = row.get(9).ok_or_else(|| {
+        EventStoreError::deserialization("missing recorded_at_ms column".to_owned())
+    })?;
+
+    let revision = u64::try_from(revision).map_err(|_| {
+        EventStoreError::deserialization("stored revision cannot be negative".to_owned())
+    })?;
+    let event_version = u32::try_from(event_version).map_err(|_| {
+        EventStoreError::deserialization("event_version cannot be negative".to_owned())
+    })?;
+
+    let (event_version, upcasted_bytes) = upcasters
+        .upcast(&event_type, event_version, payload_str.into_bytes())
+        .map_err(|err| EventStoreError::deserialization(err.to_string()))?;
+    let payload: serde_json::Value = serde_json::from_slice(&upcasted_bytes)
+        .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
+
+    let metadata_val: serde_json::Value = serde_json::from_str(&metadata_str)
+        .map_err(|error| EventStoreError::deserialization(format!("metadata JSON: {error}")))?;
+    let metadata = deserialize_metadata(&event_id, metadata_val)?;
+    let recorded_at = millis_to_system_time(recorded_at_ms)?;
+
+    Ok(EventEnvelope::new(
+        EventId::from_string(event_id),
+        aggregate_id,
+        aggregate_type,
+        revision,
+        Some(sequence),
+        event_type,
+        event_version,
+        payload,
+        metadata,
+        recorded_at,
+    ))
 }
 
 fn row_to_envelope<A>(

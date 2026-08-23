@@ -522,6 +522,69 @@ where
 
         Ok(projection_batch_outcome(applied, last_sequence, config))
     }
+
+    /// Loads at most `config.batch_size()` events of **any aggregate type**
+    /// from a [`RawEventFeed`](crate::raw_feed::RawEventFeed) after the
+    /// persistent checkpoint and applies them as raw envelopes, with the same
+    /// once-per-batch checkpoint semantics as [`Self::run_batch`].
+    #[cfg(feature = "json")]
+    #[allow(clippy::type_complexity)]
+    pub fn run_raw_batch<S>(
+        &mut self,
+        feed: &S,
+        config: ProjectionBatchConfig,
+    ) -> Result<ProjectionBatchOutcome, ProjectionRunnerError<P::Error, S::Error, C::Error>>
+    where
+        S: crate::raw_feed::RawEventFeed,
+        P: Projection<serde_json::Value, String>,
+    {
+        let name = self.projection.name();
+        #[cfg(feature = "tracing")]
+        let _span = tracing::debug_span!(
+            "projection.run_raw_batch",
+            runner = "persisted",
+            projection = name,
+            batch_size = config.batch_size().get()
+        )
+        .entered();
+
+        let checkpoint = self
+            .checkpoint_store
+            .load_checkpoint(name)
+            .map_err(ProjectionRunnerError::Checkpoint)?;
+
+        let events = feed
+            .load_raw_global_after_limited(checkpoint, config.batch_size())
+            .map_err(ProjectionRunnerError::Store)?;
+        let mut applied = 0;
+        let mut last_sequence = None;
+        let mut failure = None;
+
+        for event in events {
+            if let Err(error) = self.projection.apply(&event) {
+                failure = Some(ProjectionRunnerError::Projection(error));
+                break;
+            }
+            if event.sequence.is_some() {
+                last_sequence = event.sequence;
+            }
+            applied += 1;
+        }
+
+        let flushed = match last_sequence {
+            Some(sequence) => self
+                .checkpoint_store
+                .save_checkpoint(name, sequence)
+                .map_err(ProjectionRunnerError::Checkpoint),
+            None => Ok(()),
+        };
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        flushed?;
+
+        Ok(projection_batch_outcome(applied, last_sequence, config))
+    }
 }
 
 /// An async projection runner that uses a persistent `AsyncCheckpointStore` to coordinate progress.
@@ -649,6 +712,64 @@ where
 
         let events = store
             .load_global_after_limited(checkpoint, config.batch_size())
+            .await
+            .map_err(ProjectionRunnerError::Store)?;
+        let mut applied = 0;
+        let mut last_sequence = None;
+        let mut failure = None;
+
+        for event in events {
+            if let Err(error) = self.projection.apply(&event) {
+                failure = Some(ProjectionRunnerError::Projection(error));
+                break;
+            }
+            if event.sequence.is_some() {
+                last_sequence = event.sequence;
+            }
+            applied += 1;
+        }
+
+        let flushed = match last_sequence {
+            Some(sequence) => self
+                .checkpoint_store
+                .save_checkpoint(name, sequence)
+                .await
+                .map_err(ProjectionRunnerError::Checkpoint),
+            None => Ok(()),
+        };
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        flushed?;
+
+        Ok(projection_batch_outcome(applied, last_sequence, config))
+    }
+
+    /// Loads at most `config.batch_size()` events of **any aggregate type**
+    /// from an [`AsyncRawEventFeed`](crate::raw_feed::AsyncRawEventFeed)
+    /// after the persistent checkpoint and applies them as raw envelopes,
+    /// with the same once-per-batch checkpoint semantics as
+    /// [`Self::run_batch`].
+    #[cfg(feature = "json")]
+    #[allow(clippy::type_complexity)]
+    pub async fn run_raw_batch<S>(
+        &mut self,
+        feed: &S,
+        config: ProjectionBatchConfig,
+    ) -> Result<ProjectionBatchOutcome, ProjectionRunnerError<P::Error, S::Error, C::Error>>
+    where
+        S: crate::raw_feed::AsyncRawEventFeed,
+        P: Projection<serde_json::Value, String>,
+    {
+        let name = self.projection.name();
+        let checkpoint = self
+            .checkpoint_store
+            .load_checkpoint(name)
+            .await
+            .map_err(ProjectionRunnerError::Checkpoint)?;
+
+        let events = feed
+            .load_raw_global_after_limited(checkpoint, config.batch_size())
             .await
             .map_err(ProjectionRunnerError::Store)?;
         let mut applied = 0;
