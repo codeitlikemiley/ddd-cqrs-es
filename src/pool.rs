@@ -19,6 +19,10 @@ const DEFAULT_MAX_SIZE: usize = 8;
 const OVERRIDE_MIN_SIZE: usize = 1;
 const OVERRIDE_MAX_SIZE: usize = 128;
 
+/// How long an acquisition waits on an exhausted pool before failing with a
+/// connection error instead of blocking indefinitely.
+const DEFAULT_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Resolves the pool size from an explicit override, the environment, or the
 /// CPU-count default.
 pub(crate) fn resolve_pool_size(explicit: Option<usize>) -> usize {
@@ -54,6 +58,7 @@ struct PoolState<C> {
 
 struct PoolShared<C> {
     max_size: usize,
+    acquire_timeout: Duration,
     state: Mutex<PoolState<C>>,
     available: Condvar,
     connect: Option<Connect<C>>,
@@ -162,6 +167,7 @@ impl<C> ConnectionPool<C> {
         Self {
             shared: Arc::new(PoolShared {
                 max_size,
+                acquire_timeout: DEFAULT_ACQUIRE_TIMEOUT,
                 state: Mutex::new(PoolState { idle, leased: 0 }),
                 available: Condvar::new(),
                 connect,
@@ -169,8 +175,23 @@ impl<C> ConnectionPool<C> {
         }
     }
 
+    /// Overrides how long an acquisition waits for a connection. Test-only:
+    /// production pools use [`DEFAULT_ACQUIRE_TIMEOUT`].
+    #[cfg(test)]
+    fn with_acquire_timeout(mut self, timeout: Duration) -> Self {
+        Arc::get_mut(&mut self.shared)
+            .expect("acquire timeout must be configured before the pool is shared")
+            .acquire_timeout = timeout;
+        self
+    }
+
     /// Rents a connection, opening a new one when capacity allows.
+    ///
+    /// Waits at most the pool's acquire timeout for a connection to be
+    /// returned, then fails with a connection error instead of blocking the
+    /// caller indefinitely on an exhausted pool.
     pub(crate) fn acquire(&self) -> Result<PoolLease<C>, EventStoreError> {
+        let deadline = std::time::Instant::now() + self.shared.acquire_timeout;
         let mut state = self
             .shared
             .state
@@ -205,10 +226,21 @@ impl<C> ConnectionPool<C> {
                     }
                 }
             }
+            let now = std::time::Instant::now();
+            let Some(remaining) = deadline
+                .checked_duration_since(now)
+                .filter(|d| !d.is_zero())
+            else {
+                return Err(EventStoreError::Connection(format!(
+                    "no pooled connection became available within {:?} \
+                     ({} of {} connections leased)",
+                    self.shared.acquire_timeout, state.leased, self.shared.max_size
+                )));
+            };
             state = self
                 .shared
                 .available
-                .wait_timeout(state, Duration::from_secs(60))
+                .wait_timeout(state, remaining)
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .0;
         }
@@ -376,6 +408,24 @@ mod tests {
 
         assert_eq!(result.unwrap(), 1);
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn acquire_fails_with_a_connection_error_when_the_pool_stays_exhausted() {
+        let pool = ConnectionPool::<()>::pooled(1, || Ok(()))
+            .with_acquire_timeout(std::time::Duration::from_millis(50));
+
+        let held = pool.acquire().unwrap();
+        let Err(error) = pool.acquire() else {
+            panic!("expected the exhausted pool to time out");
+        };
+
+        assert!(matches!(error, EventStoreError::Connection(_)));
+        assert!(error.to_string().contains("1 of 1 connections leased"));
+
+        // Returning the lease makes the pool usable again.
+        drop(held);
+        pool.acquire().unwrap();
     }
 
     #[test]
