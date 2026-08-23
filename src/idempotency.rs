@@ -275,6 +275,38 @@ where
     }
 }
 
+impl<DomainError, StoreError, IdempotencyError>
+    IdempotentRepositoryError<DomainError, StoreError, IdempotencyError>
+{
+    /// Converts a repository error into an idempotent repository error.
+    pub fn from_repository_error(error: RepositoryError<DomainError, StoreError>) -> Self {
+        match error {
+            RepositoryError::Domain(error) => IdempotentRepositoryError::Domain(error),
+            RepositoryError::Concurrency(error) => IdempotentRepositoryError::Concurrency(error),
+            RepositoryError::Store(error) => IdempotentRepositoryError::Store(error),
+        }
+    }
+}
+
+/// Returns the next delay of the pending-key wait loop, or the fully built
+/// timeout error once the wait budget is spent.
+///
+/// This is the single source of the wait policy shared by the sync and async
+/// repositories; callers only differ in how they sleep for the returned
+/// delay.
+pub(crate) fn pending_wait_delay<DomainError, StoreError, IdempotencyError>(
+    wait_config: &IdempotencyWaitConfig,
+    started: std::time::Instant,
+    idempotency_key: &IdempotencyKey,
+) -> Result<Duration, IdempotentRepositoryError<DomainError, StoreError, IdempotencyError>> {
+    wait_config.next_delay(started.elapsed()).ok_or_else(|| {
+        IdempotentRepositoryError::IdempotencyPendingTimeout {
+            key: idempotency_key.clone(),
+            waited: started.elapsed(),
+        }
+    })
+}
+
 impl<DomainError, StoreError, IdempotencyError> Display
     for IdempotentRepositoryError<DomainError, StoreError, IdempotencyError>
 where
@@ -339,5 +371,43 @@ where
 
     async fn remove(&self, key: &IdempotencyKey) -> Result<(), Self::Error> {
         IdempotencyStore::remove(self, key)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{pending_wait_delay, IdempotencyKey, IdempotencyWaitConfig};
+    use std::time::{Duration, Instant};
+
+    type TestError = super::IdempotentRepositoryError<(), crate::EventStoreError, ()>;
+
+    #[test]
+    fn pending_wait_delay_returns_capped_delays_within_the_budget() {
+        let config = IdempotencyWaitConfig::new(Duration::from_secs(30), Duration::from_millis(50));
+        let key = IdempotencyKey::new("wait-key");
+
+        let delay: Duration =
+            pending_wait_delay::<(), crate::EventStoreError, ()>(&config, Instant::now(), &key)
+                .unwrap();
+
+        assert!(delay <= Duration::from_millis(50));
+        assert!(!delay.is_zero());
+    }
+
+    #[test]
+    fn pending_wait_delay_times_out_once_the_budget_is_spent() {
+        let config = IdempotencyWaitConfig::new(Duration::ZERO, Duration::from_millis(50));
+        let key = IdempotencyKey::new("wait-key");
+        let started = Instant::now();
+
+        let error: TestError = pending_wait_delay(&config, started, &key).unwrap_err();
+
+        match error {
+            super::IdempotentRepositoryError::IdempotencyPendingTimeout {
+                key: timed_out_key,
+                ..
+            } => assert_eq!(timed_out_key, key),
+            other => panic!("expected pending timeout, got {other:?}"),
+        }
     }
 }

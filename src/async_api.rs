@@ -5,7 +5,8 @@ use crate::error::{EventStoreFailure, RepositoryError};
 use crate::event::{ExpectedRevision, NewEvent};
 use crate::event_store::{EventStream, IdempotentAppendError};
 use crate::idempotency::{
-    IdempotencyKey, IdempotencyState, IdempotencyWaitConfig, IdempotentRepositoryError,
+    pending_wait_delay, IdempotencyKey, IdempotencyState, IdempotencyWaitConfig,
+    IdempotentRepositoryError,
 };
 use crate::metadata::Metadata;
 use crate::repository_support::{
@@ -26,28 +27,29 @@ where
     I: AsyncIdempotencyStore<V>,
     V: Clone + Send + Sync + 'static,
 {
-    const MAX_ATTEMPTS: usize = 3;
-    const RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(50);
-    for attempt in 1..=MAX_ATTEMPTS {
+    use crate::repository_support::{RELEASE_MAX_ATTEMPTS, RELEASE_RETRY_DELAY};
+
+    for attempt in 1..=RELEASE_MAX_ATTEMPTS {
         match idempotency_store.remove(idempotency_key).await {
             Ok(()) => return,
             Err(_) => {
                 #[cfg(feature = "tracing")]
-                if attempt == MAX_ATTEMPTS {
+                if attempt == RELEASE_MAX_ATTEMPTS {
                     tracing::warn!(
                         key = %idempotency_key,
-                        "failed to release idempotency key after execution failure; \
-                         the key stays Pending and will block retries until removed"
+                        "{}",
+                        crate::repository_support::RELEASE_FAILED_MESSAGE
                     );
                 } else {
                     tracing::debug!(
                         key = %idempotency_key,
                         attempt,
-                        "retrying failed idempotency-key release"
+                        "{}",
+                        crate::repository_support::RELEASE_RETRY_MESSAGE
                     );
                 }
-                if attempt < MAX_ATTEMPTS {
-                    tokio::time::sleep(RETRY_DELAY).await;
+                if attempt < RELEASE_MAX_ATTEMPTS {
+                    tokio::time::sleep(RELEASE_RETRY_DELAY).await;
                 }
             }
         }
@@ -457,12 +459,7 @@ where
                     return Ok(committed);
                 }
                 Some(IdempotencyState::Pending) => {
-                    let Some(delay) = wait_config.next_delay(started.elapsed()) else {
-                        return Err(IdempotentRepositoryError::IdempotencyPendingTimeout {
-                            key: idempotency_key,
-                            waited: started.elapsed(),
-                        });
-                    };
+                    let delay = pending_wait_delay(&wait_config, started, &idempotency_key)?;
                     tokio::time::sleep(delay).await;
                     continue;
                 }
@@ -474,25 +471,17 @@ where
                     {
                         break;
                     }
-                    let Some(delay) = wait_config.next_delay(started.elapsed()) else {
-                        return Err(IdempotentRepositoryError::IdempotencyPendingTimeout {
-                            key: idempotency_key,
-                            waited: started.elapsed(),
-                        });
-                    };
+                    let delay = pending_wait_delay(&wait_config, started, &idempotency_key)?;
                     tokio::time::sleep(delay).await;
                 }
             }
         }
 
         let committed = match async {
-            let loaded = self.load(aggregate_id).await.map_err(|error| match error {
-                RepositoryError::Domain(error) => IdempotentRepositoryError::Domain(error),
-                RepositoryError::Concurrency(error) => {
-                    IdempotentRepositoryError::Concurrency(error)
-                }
-                RepositoryError::Store(error) => IdempotentRepositoryError::Store(error),
-            })?;
+            let loaded = self
+                .load(aggregate_id)
+                .await
+                .map_err(IdempotentRepositoryError::from_repository_error)?;
             let events = handle_command_as_new_events::<A>(&loaded.state, command, &metadata)
                 .map_err(IdempotentRepositoryError::Domain)?;
             let committed = self
@@ -574,23 +563,17 @@ where
             {
                 Some(IdempotencyState::Complete(committed)) => return Ok(committed),
                 Some(IdempotencyState::Pending) => {
-                    let Some(delay) = wait_config.next_delay(started.elapsed()) else {
-                        return Err(IdempotentRepositoryError::IdempotencyPendingTimeout {
-                            key: idempotency_key,
-                            waited: started.elapsed(),
-                        });
-                    };
+                    let delay = pending_wait_delay(&wait_config, started, &idempotency_key)?;
                     tokio::time::sleep(delay).await;
                 }
                 None => break,
             }
         }
 
-        let loaded = self.load(aggregate_id).await.map_err(|error| match error {
-            RepositoryError::Domain(error) => IdempotentRepositoryError::Domain(error),
-            RepositoryError::Concurrency(error) => IdempotentRepositoryError::Concurrency(error),
-            RepositoryError::Store(error) => IdempotentRepositoryError::Store(error),
-        })?;
+        let loaded = self
+            .load(aggregate_id)
+            .await
+            .map_err(IdempotentRepositoryError::from_repository_error)?;
         let events = handle_command_as_new_events::<A>(&loaded.state, command, &metadata)
             .map_err(IdempotentRepositoryError::Domain)?;
         let expected_revision = ExpectedRevision::Exact(loaded.revision);
@@ -607,12 +590,7 @@ where
             {
                 Ok(committed) => return Ok(committed),
                 Err(IdempotentAppendError::Pending { .. }) => {
-                    let Some(delay) = wait_config.next_delay(started.elapsed()) else {
-                        return Err(IdempotentRepositoryError::IdempotencyPendingTimeout {
-                            key: idempotency_key,
-                            waited: started.elapsed(),
-                        });
-                    };
+                    let delay = pending_wait_delay(&wait_config, started, &idempotency_key)?;
                     tokio::time::sleep(delay).await;
                 }
                 Err(IdempotentAppendError::Store(error)) => {
