@@ -379,6 +379,70 @@ where
     }
 }
 
+impl<A> crate::raw_feed::RawEventFeed for SqliteEventStore<A>
+where
+    A: Aggregate,
+{
+    type Error = EventStoreError;
+
+    fn load_raw_global_after_limited(
+        &self,
+        sequence: Option<u64>,
+        limit: NonZeroUsize,
+    ) -> Result<Vec<crate::raw_feed::RawEventEnvelope>, Self::Error> {
+        let sequence_i64 = i64::try_from(sequence.unwrap_or_default()).map_err(|_| {
+            EventStoreError::deserialization("global sequence exceeds SQLite INTEGER".to_owned())
+        })?;
+        let limit_i64 = i64::try_from(limit.get()).map_err(|_| {
+            EventStoreError::deserialization("event replay limit exceeds SQLite INTEGER".to_owned())
+        })?;
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| EventStoreError::Poisoned)?;
+        let query = format!(
+            "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
+             event_version, payload, metadata, recorded_at_ms FROM {table} \
+             WHERE sequence > ?1 ORDER BY sequence ASC LIMIT ?2",
+            table = self.table_name
+        );
+        let mut statement = connection
+            .prepare_cached(&query)
+            .map_err(map_sqlite_error)?;
+        let upcasters = self.upcasters.clone();
+        let rows = statement
+            .query_map(params![sequence_i64, limit_i64], move |row| {
+                row_to_raw_envelope(&upcasters, row)
+            })
+            .map_err(map_sqlite_error)?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(map_sqlite_error)
+    }
+}
+
+#[cfg(feature = "async")]
+#[async_trait::async_trait]
+impl<A> crate::raw_feed::AsyncRawEventFeed for SqliteEventStore<A>
+where
+    A: Aggregate + Send + Sync + 'static,
+{
+    type Error = EventStoreError;
+
+    async fn load_raw_global_after_limited(
+        &self,
+        sequence: Option<u64>,
+        limit: NonZeroUsize,
+    ) -> Result<Vec<crate::raw_feed::RawEventEnvelope>, Self::Error> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::raw_feed::RawEventFeed::load_raw_global_after_limited(&this, sequence, limit)
+        })
+        .await
+        .map_err(|error| EventStoreError::backend(error.to_string()))?
+    }
+}
+
 impl<A> AtomicIdempotentEventStore<A> for SqliteEventStore<A>
 where
     A: Aggregate + 'static,
@@ -756,6 +820,71 @@ where
             recorded_at_ms,
         })
     }
+}
+
+/// Maps a full event row into an untyped envelope, applying upcasters but
+/// keeping the payload as raw JSON and the aggregate id as its stored string.
+fn row_to_raw_envelope(
+    upcasters: &UpcasterRegistry,
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<crate::raw_feed::RawEventEnvelope> {
+    let event_id: String = row.get(0)?;
+    let aggregate_id: String = row.get(1)?;
+    let aggregate_type: String = row.get(2)?;
+    let revision: i64 = row.get(3)?;
+    let sequence: i64 = row.get(4)?;
+    let event_type: String = row.get(5)?;
+    let event_version: i64 = row.get(6)?;
+    let payload: String = row.get(7)?;
+    let metadata: String = row.get(8)?;
+    let recorded_at_ms: i64 = row.get(9)?;
+
+    let revision = u64::try_from(revision).map_err(|_| {
+        from_event_store_error(EventStoreError::deserialization(
+            "stored revision cannot be negative".to_owned(),
+        ))
+    })?;
+    let sequence = u64::try_from(sequence).map_err(|_| {
+        from_event_store_error(EventStoreError::deserialization(
+            "SQLite sequence cannot be negative".to_owned(),
+        ))
+    })?;
+    let event_version = u32::try_from(event_version).map_err(|_| {
+        from_event_store_error(EventStoreError::deserialization(
+            "event_version exceeds u32".to_owned(),
+        ))
+    })?;
+
+    let (event_version, upcasted_bytes) = upcasters
+        .upcast(&event_type, event_version, payload.into_bytes())
+        .map_err(|err| from_event_store_error(EventStoreError::deserialization(err.to_string())))?;
+    let payload: serde_json::Value = serde_json::from_slice(&upcasted_bytes).map_err(|error| {
+        from_event_store_error(EventStoreError::deserialization(format!(
+            "payload JSON: {error}"
+        )))
+    })?;
+
+    let metadata_value = serde_json::from_str(&metadata).map_err(|error| {
+        from_event_store_error(EventStoreError::deserialization(format!(
+            "metadata JSON: {error}"
+        )))
+    })?;
+    let metadata =
+        deserialize_metadata(&event_id, metadata_value).map_err(from_event_store_error)?;
+    let recorded_at = millis_to_system_time(recorded_at_ms).map_err(from_event_store_error)?;
+
+    Ok(EventEnvelope::new(
+        EventId::from_string(event_id),
+        aggregate_id,
+        aggregate_type,
+        revision,
+        Some(sequence),
+        event_type,
+        event_version,
+        payload,
+        metadata,
+        recorded_at,
+    ))
 }
 
 fn row_to_envelope<A>(

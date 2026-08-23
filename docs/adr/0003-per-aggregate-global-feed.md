@@ -1,8 +1,9 @@
 # ADR-0003: Global replay feeds are scoped per aggregate type
 
-- Status: Accepted (documented limitation; untyped feed deferred)
+- Status: Accepted; untyped feed implemented as `RawEventFeed` (0.3.0-rc.7)
 - Date: 2026-08-23
-- Scope: `src/event_store.rs`, `src/projection.rs`, all store backends
+- Scope: `src/event_store.rs`, `src/projection.rs`, `src/raw_feed.rs`, all
+  store backends
 
 ## Context
 
@@ -59,3 +60,23 @@ appear:
 The SQL schema already supports it: the global `sequence` column is assigned
 across aggregate types, so an untyped feed is a query change plus new API,
 not a migration.
+
+## Addendum: RawEventFeed (implemented)
+
+The untyped feed shipped in the same release cycle as `RawEventFeed` /
+`AsyncRawEventFeed` in `src/raw_feed.rs`:
+
+- `RawEventEnvelope = EventEnvelope<serde_json::Value, String>` — payloads
+  and metadata as raw JSON, `aggregate_id` as the stored serialized string.
+- `load_raw_global_after_limited(sequence, limit)` is the only method:
+  bounded batches by design, no unbounded tail.
+- Implemented for Postgres, MySQL, and SQLite (the global query without the
+  aggregate-type filter), Redis (every event under one key prefix), the
+  in-memory store, and the JSON file store. Upcasters apply per event type,
+  matching typed loads.
+- A raw projection is `Projection<serde_json::Value, String>`;
+  `PersistedProjectionRunner::run_raw_batch` (and the async twin) drive it
+  with the same once-per-batch checkpoint flush as typed runners.
+
+The typed `load_global_after` keeps its per-aggregate-type scoping; the
+sections above remain the rationale for that default.

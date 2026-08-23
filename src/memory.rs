@@ -295,3 +295,52 @@ where
         EventStore::load_global_after_limited(self, sequence, limit)
     }
 }
+
+#[cfg(feature = "json")]
+impl<A> crate::raw_feed::RawEventFeed for InMemoryEventStore<A>
+where
+    A: Aggregate + 'static,
+    A::Event: serde::Serialize,
+    A::Id: serde::Serialize,
+{
+    type Error = EventStoreError;
+
+    /// Serves this store's own global log as raw envelopes.
+    ///
+    /// An in-memory store holds exactly one aggregate type, so unlike the SQL
+    /// feeds this cannot interleave other types; it exists so raw projections
+    /// can be exercised without a database.
+    fn load_raw_global_after_limited(
+        &self,
+        sequence: Option<u64>,
+        limit: std::num::NonZeroUsize,
+    ) -> Result<Vec<crate::raw_feed::RawEventEnvelope>, Self::Error> {
+        let state = self.state.read().map_err(|_| EventStoreError::Poisoned)?;
+        let start = state.first_index_after(sequence);
+        let end = state.global.len().min(start + limit.get());
+        state.global[start..end]
+            .iter()
+            .map(|envelope| {
+                let payload = serde_json::to_value(&envelope.payload).map_err(|error| {
+                    EventStoreError::serialization(format!("payload JSON: {error}"))
+                })?;
+                let aggregate_id =
+                    serde_json::to_string(&envelope.aggregate_id).map_err(|error| {
+                        EventStoreError::serialization(format!("aggregate_id: {error}"))
+                    })?;
+                Ok(EventEnvelope::new(
+                    envelope.event_id.clone(),
+                    aggregate_id,
+                    envelope.aggregate_type.clone(),
+                    envelope.revision,
+                    envelope.sequence,
+                    envelope.event_type.clone(),
+                    envelope.event_version,
+                    payload,
+                    envelope.metadata.clone(),
+                    envelope.recorded_at,
+                ))
+            })
+            .collect()
+    }
+}

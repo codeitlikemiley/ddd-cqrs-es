@@ -2,6 +2,14 @@
 
 ## 0.3.0-rc.7
 
+- **New:** `RawEventFeed` / `AsyncRawEventFeed` — a bounded cross-aggregate
+  replay feed returning `RawEventEnvelope`
+  (`EventEnvelope<serde_json::Value, String>`) in global commit order with no
+  aggregate-type filter, implemented for Postgres, MySQL, SQLite, Redis, the
+  in-memory store, and the JSON file store. Raw projections are plain
+  `Projection<serde_json::Value, String>` driven by
+  `PersistedProjectionRunner::run_raw_batch` (sync and async) with the same
+  once-per-batch checkpointing as typed runners. See ADR-0003.
 - **Dev-file format change:** `JsonFileEventStore` now stores events as JSON
   Lines (one envelope per line) with fsync-before-acknowledge appends;
   legacy whole-array files are migrated in place on first read. Appends are
