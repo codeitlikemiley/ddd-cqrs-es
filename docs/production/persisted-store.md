@@ -97,7 +97,7 @@ Our framework supports multiple database options depending on your environment.
 | **PostgreSQL** | `"postgres"` | Native Sync (event, checkpoint, idempotency, snapshot, atomic idempotent append) | Yes (via SSE polling/polling stream) | Yes |
 | **LibSQL / Turso** | `"wasi-libsql"` | Async HTTP / Hrana SQL query helpers | Counter app supports SSE polling or Redis wake | Experimental / WASM |
 | **Redis** | `"redis"` | Async (event, checkpoint, pub/sub) | Yes (via Pub/Sub / SSE notifications) | Experimental / WASM |
-| **MySQL** | `"mysql"`, `"wasi-mysql"`, `"spin-mysql"` | Native Sync stores plus raw TCP Wasmtime and Spin SDK query helpers | Counter app supports SSE polling or Redis wake | Yes for native stores; runtime helpers are experimental / WASM |
+| **MySQL** | `"mysql"`, `"spin-mysql"` | Native Sync stores plus a Spin SDK query helper | Counter app supports SSE polling or Redis wake | Yes for native stores; runtime helpers are experimental / WASM |
 
 #### To Enable Durable Database Adapters:
 
@@ -110,7 +110,6 @@ let config = ddd_cqrs_es::SqlSchemaConfig::new(ddd_cqrs_es::SqlDialect::Postgres
 * **SQLite Support:** Enable the `"sqlite"` feature.
 * **PostgreSQL Support:** Enable the `"postgres"` feature.
 * **MySQL Support:** Enable the `"mysql"` feature.
-* **WASI MySQL Helper:** Enable `"wasi-mysql"` for raw TCP MySQL query execution from generic Wasmtime/WASI runtimes.
 * **Spin MySQL Helper:** Enable `"spin-mysql"` for Spin SDK MySQL query execution.
 * **LibSQL Support:** Enable the `"wasi-libsql"` feature.
 * **Redis Support:** Enable the `"redis"` feature with `"wasi-redis"` or `"spin-redis"`.
