@@ -27,6 +27,8 @@ use std::marker::PhantomData;
 #[cfg(feature = "wasi-redis")]
 use std::net::TcpStream;
 use std::num::NonZeroUsize;
+#[cfg(any(feature = "wasi-redis", feature = "spin-redis"))]
+use std::sync::{Arc, Mutex as StdMutex};
 #[cfg(feature = "wasi-redis")]
 use std::time::Duration;
 use std::time::SystemTime;
@@ -644,22 +646,60 @@ where
 }
 
 /// Spin SDK Redis command executor.
+///
+/// The established host connection is cached per client (clones share it), so
+/// repeated commands skip the open handshake. A command that fails drops the
+/// cached connection and surfaces the error; the next command reopens.
 #[cfg(feature = "spin-redis")]
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct SpinRedisClient {
     url: String,
+    cached_connection: Arc<StdMutex<Option<spin_sdk::redis::Connection>>>,
+}
+
+#[cfg(feature = "spin-redis")]
+impl std::fmt::Debug for SpinRedisClient {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SpinRedisClient")
+            .field("url", &self.url)
+            .finish_non_exhaustive()
+    }
 }
 
 #[cfg(feature = "spin-redis")]
 impl SpinRedisClient {
     /// Creates a Spin Redis client for a Redis URL.
     pub fn new(url: impl Into<String>) -> Self {
-        Self { url: url.into() }
+        Self {
+            url: url.into(),
+            cached_connection: Arc::new(StdMutex::new(None)),
+        }
     }
 
     /// Returns the Redis URL.
     pub fn url(&self) -> &str {
         &self.url
+    }
+
+    /// Takes the cached connection or opens a new one.
+    async fn connection(&self) -> Result<spin_sdk::redis::Connection, SpinRedisError> {
+        let cached = self
+            .cached_connection
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        match cached {
+            Some(connection) => Ok(connection),
+            None => Ok(spin_sdk::redis::Connection::open(&self.url).await?),
+        }
+    }
+
+    /// Returns a connection to the cache after a successful command.
+    fn store_connection(&self, connection: spin_sdk::redis::Connection) {
+        *self
+            .cached_connection
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(connection);
     }
 }
 
@@ -691,20 +731,22 @@ impl RedisCommandExecutor for SpinRedisClient {
     type Error = SpinRedisError;
 
     async fn execute(&self, command: &str, args: Vec<Vec<u8>>) -> Result<RedisValue, Self::Error> {
-        let connection = spin_sdk::redis::Connection::open(&self.url).await?;
+        let connection = self.connection().await?;
         let args = args
             .into_iter()
             .map(spin_sdk::redis::RedisParameter::Binary)
             .collect::<Vec<_>>();
         let values = connection.execute(command, args).await?;
+        self.store_connection(connection);
         Ok(RedisValue::Array(
             values.into_iter().map(spin_result_to_value).collect(),
         ))
     }
 
     async fn publish(&self, channel: &str, payload: &[u8]) -> Result<(), Self::Error> {
-        let connection = spin_sdk::redis::Connection::open(&self.url).await?;
+        let connection = self.connection().await?;
         connection.publish(channel, payload).await?;
+        self.store_connection(connection);
         Ok(())
     }
 }
@@ -713,12 +755,32 @@ impl RedisCommandExecutor for SpinRedisClient {
 ///
 /// This client supports plain `redis://` TCP URLs. It is deliberately small and
 /// does not implement TLS, Sentinel, Cluster, or RESP3-specific behavior.
+///
+/// # Connection reuse
+///
+/// Commands reuse one cached TCP connection per client (clones share it), so
+/// repeated commands skip the connect/AUTH/SELECT handshake. Reuse is guarded
+/// conservatively:
+///
+/// - before reuse, a non-blocking probe discards connections the server has
+///   closed while idle;
+/// - a command whose write fails on the cached connection is retried once on a
+///   fresh connection (the incomplete command was never executable);
+/// - any failure after the command was fully written surfaces to the caller
+///   and discards the connection, because the server may have executed it —
+///   retrying is left to the caller's idempotency/concurrency handling;
+/// - a connection is returned to the cache only after a complete
+///   command/reply cycle with no trailing buffered bytes.
+///
+/// Commands on one client are serialized; use separately constructed clients
+/// for independent parallel connections.
 #[cfg(feature = "wasi-redis")]
 #[derive(Clone, Debug)]
 pub struct WasiRedisClient {
     url: String,
     read_timeout: Option<Duration>,
     nonblocking_subscription_reads: bool,
+    cached_connection: Arc<StdMutex<Option<BufReader<TcpStream>>>>,
 }
 
 #[cfg(feature = "wasi-redis")]
@@ -729,12 +791,17 @@ impl WasiRedisClient {
             url: url.into(),
             read_timeout: Some(Duration::from_secs(5)),
             nonblocking_subscription_reads: false,
+            cached_connection: Arc::new(StdMutex::new(None)),
         }
     }
 
     /// Sets the read timeout used by newly opened TCP connections.
+    ///
+    /// The cached connection is discarded so the next command opens a
+    /// connection with the new timeout.
     pub fn with_read_timeout(mut self, timeout: Option<Duration>) -> Self {
         self.read_timeout = timeout;
+        self.clear_cached_connection();
         self
     }
 
@@ -793,6 +860,58 @@ impl WasiRedisClient {
 
         Ok(reader)
     }
+
+    fn clear_cached_connection(&self) {
+        *self
+            .cached_connection
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
+
+    /// Takes the cached connection when it still looks healthy.
+    fn take_cached_connection(&self) -> Option<BufReader<TcpStream>> {
+        let reader = self
+            .cached_connection
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()?;
+        cached_connection_is_reusable(&reader).then_some(reader)
+    }
+
+    /// Returns a connection to the cache after a complete command/reply cycle.
+    ///
+    /// A reader with buffered bytes left over is out of protocol sync and is
+    /// dropped instead of cached.
+    fn store_cached_connection(&self, reader: BufReader<TcpStream>) {
+        if !reader.buffer().is_empty() {
+            return;
+        }
+        *self
+            .cached_connection
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(reader);
+    }
+}
+
+/// Probes an idle cached connection without blocking.
+///
+/// A healthy idle connection has nothing to read, so a readable socket means
+/// the server closed it (EOF) or left desync bytes behind; both are discarded.
+/// Runtimes without non-blocking or peek support skip the probe and reuse the
+/// connection — write failures still fall back to a fresh connection.
+#[cfg(feature = "wasi-redis")]
+fn cached_connection_is_reusable(reader: &BufReader<TcpStream>) -> bool {
+    let stream = reader.get_ref();
+    if let Err(error) = stream.set_nonblocking(true) {
+        return error.kind() == ErrorKind::Unsupported;
+    }
+    let mut probe = [0_u8; 1];
+    let healthy = match stream.peek(&mut probe) {
+        // EOF or stray reply bytes: the connection is dead or desynced.
+        Ok(_) => false,
+        Err(error) => matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::Unsupported),
+    };
+    healthy && stream.set_nonblocking(false).is_ok()
 }
 
 #[cfg(feature = "wasi-redis")]
@@ -801,9 +920,33 @@ impl RedisCommandExecutor for WasiRedisClient {
     type Error = RedisClientError;
 
     async fn execute(&self, command: &str, args: Vec<Vec<u8>>) -> Result<RedisValue, Self::Error> {
+        if let Some(mut reader) = self.take_cached_connection() {
+            match write_command(reader.get_mut(), command, &args) {
+                Ok(()) => {
+                    let result = read_resp_value(&mut reader);
+                    if result.is_ok() {
+                        self.store_cached_connection(reader);
+                    }
+                    // A failed read is not retried: the fully written command
+                    // may have executed server-side. The connection is dropped
+                    // and the error surfaces to the caller.
+                    return result;
+                }
+                Err(RedisClientError::Io(_) | RedisClientError::Timeout) => {
+                    // The cached connection went stale before a complete
+                    // command reached the server; retry once on a fresh one.
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
         let mut reader = self.open_reader()?;
         write_command(reader.get_mut(), command, &args)?;
-        read_resp_value(&mut reader)
+        let result = read_resp_value(&mut reader);
+        if result.is_ok() {
+            self.store_cached_connection(reader);
+        }
+        result
     }
 }
 
@@ -1747,6 +1890,86 @@ mod tests {
         assert_eq!(args[6], b"no_stream");
         assert_eq!(args[8], b"1");
         assert_eq!(args[12], b"test_aggregate");
+    }
+
+    /// Fake single-threaded RESP server: serves `replies_per_connection`
+    /// command/`+PONG` cycles per accepted connection, then closes it, for up
+    /// to `max_connections` connections. Returns the URL and an accepted-
+    /// connection counter.
+    #[cfg(feature = "wasi-redis")]
+    fn spawn_fake_redis_server(
+        replies_per_connection: usize,
+        max_connections: usize,
+    ) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        use std::io::Read as _;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("redis://{}", listener.local_addr().unwrap());
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&accepted);
+
+        std::thread::spawn(move || {
+            for stream in listener.incoming().take(max_connections) {
+                let Ok(mut stream) = stream else { break };
+                counter.fetch_add(1, Ordering::SeqCst);
+                for _ in 0..replies_per_connection {
+                    // Read one full RESP command (terminated by the trailing
+                    // CRLF of its last bulk argument).
+                    let mut request = Vec::new();
+                    let mut byte = [0_u8; 1];
+                    while !request.ends_with(b"PING\r\n") {
+                        match stream.read(&mut byte) {
+                            Ok(1) => request.push(byte[0]),
+                            _ => return,
+                        }
+                    }
+                    if stream.write_all(b"+PONG\r\n").is_err() {
+                        return;
+                    }
+                }
+                // Dropping the stream closes the connection.
+            }
+        });
+
+        (url, accepted)
+    }
+
+    #[cfg(feature = "wasi-redis")]
+    #[tokio::test]
+    async fn wasi_client_reuses_the_connection_across_commands() {
+        use std::sync::atomic::Ordering;
+
+        let (url, accepted) = spawn_fake_redis_server(3, 4);
+        let client = WasiRedisClient::new(url).with_read_timeout(Some(Duration::from_secs(2)));
+
+        for _ in 0..3 {
+            let reply = client.execute("PING", Vec::new()).await.unwrap();
+            assert_eq!(reply, RedisValue::Status("PONG".to_owned()));
+        }
+
+        assert_eq!(accepted.load(Ordering::SeqCst), 1);
+    }
+
+    #[cfg(feature = "wasi-redis")]
+    #[tokio::test]
+    async fn wasi_client_reconnects_after_the_server_closes_the_idle_connection() {
+        use std::sync::atomic::Ordering;
+
+        let (url, accepted) = spawn_fake_redis_server(1, 4);
+        let client = WasiRedisClient::new(url).with_read_timeout(Some(Duration::from_secs(2)));
+
+        let reply = client.execute("PING", Vec::new()).await.unwrap();
+        assert_eq!(reply, RedisValue::Status("PONG".to_owned()));
+
+        // Let the server-side close (FIN) reach the cached connection so the
+        // reuse probe can observe it.
+        std::thread::sleep(Duration::from_millis(100));
+
+        let reply = client.execute("PING", Vec::new()).await.unwrap();
+        assert_eq!(reply, RedisValue::Status("PONG".to_owned()));
+
+        assert_eq!(accepted.load(Ordering::SeqCst), 2);
     }
 
     #[cfg(feature = "wasi-redis")]
