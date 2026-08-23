@@ -116,6 +116,13 @@ where
     ) -> Result<EventStream<A>, Self::Error>;
 
     /// Loads globally ordered events after a global sequence number.
+    ///
+    /// "Global" order is scoped to this store's aggregate type `A`: backends
+    /// filter the feed by aggregate type, so a read model spanning several
+    /// aggregate types needs one projection runner (and checkpoint) per type
+    /// and must not assume ordering across those feeds. See
+    /// ADR-0003 (per-aggregate global feeds) in `docs/adr/` for the
+    /// rationale and workarounds.
     fn load_global_after(&self, sequence: Option<u64>) -> Result<EventStream<A>, Self::Error>;
 
     /// Loads at most `limit` globally ordered events after a global sequence number.

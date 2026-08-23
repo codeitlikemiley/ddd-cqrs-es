@@ -116,7 +116,8 @@
         "group": "8. Architecture Decisions",
         "pages": [
           "adr/0001-connection-pooling",
-          "adr/0002-snapshot-load-after-revision"
+          "adr/0002-snapshot-load-after-revision",
+          "adr/0003-per-aggregate-global-feed"
         ]
       }
     ]
