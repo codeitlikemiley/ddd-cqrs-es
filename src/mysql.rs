@@ -474,6 +474,7 @@ where
             .map_err(IdempotentAppendError::Store)?;
         let table_name = self.table_name.clone();
         let idempotency_table = self.idempotency_table.clone();
+        let aggregate_id = aggregate_id.clone();
 
         let committed = self
             .pool
@@ -483,6 +484,7 @@ where
                     &table_name,
                     &idempotency_table,
                     &idempotency_key,
+                    &aggregate_id,
                     &aggregate_id_key,
                     expected_revision,
                     prepared,
@@ -493,11 +495,13 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_idempotent_append<A>(
     connection: &mut Conn,
     table_name: &str,
     idempotency_table: &str,
     idempotency_key: &IdempotencyKey,
+    aggregate_id: &A::Id,
     aggregate_id_key: &str,
     expected_revision: ExpectedRevision,
     prepared: Vec<PreparedMySqlEvent<A::Event>>,
@@ -557,9 +561,17 @@ where
         "INSERT INTO {idempotency_table} (idempotency_key, state, value, updated_at_ms) \
          VALUES (?, 'pending', NULL, ?);"
     );
-    transaction
-        .exec_drop(&reserve, (idempotency_key.as_str(), updated_at_ms))
-        .map_err(map_mysql_error)?;
+    if let Err(error) = transaction.exec_drop(&reserve, (idempotency_key.as_str(), updated_at_ms)) {
+        // Another connection reserved the same key between our SELECT and this
+        // INSERT. Report Pending so the caller's wait loop re-polls and finds
+        // the winner's committed value instead of surfacing a fatal error.
+        if matches!(&error, MySqlError::MySqlError(e) if e.code == 1062) {
+            return Ok(Err(IdempotentAppendError::Pending {
+                key: idempotency_key.clone(),
+            }));
+        }
+        return Err(map_mysql_error(error));
+    }
 
     let revision_query = format!(
         "SELECT COALESCE(MAX(revision), 0) FROM {table} \
@@ -583,7 +595,6 @@ where
         table = table_name
     );
     let mut committed = Vec::with_capacity(prepared.len());
-    let aggregate_id: A::Id = deserialize_id(aggregate_id_key)?;
 
     for (index, event) in prepared.into_iter().enumerate() {
         let revision = actual_revision + index as u64 + 1;

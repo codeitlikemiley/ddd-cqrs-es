@@ -472,6 +472,7 @@ where
             .map_err(IdempotentAppendError::Store)?;
         let table_name = self.table_name.clone();
         let idempotency_table = self.idempotency_table.clone();
+        let aggregate_id = aggregate_id.clone();
 
         let committed = self
             .pool
@@ -481,6 +482,7 @@ where
                     &table_name,
                     &idempotency_table,
                     &idempotency_key,
+                    &aggregate_id,
                     &aggregate_id_key,
                     expected_revision,
                     prepared,
@@ -491,11 +493,13 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_idempotent_append<A>(
     client: &mut Client,
     table_name: &str,
     idempotency_table: &str,
     idempotency_key: &IdempotencyKey,
+    aggregate_id: &A::Id,
     aggregate_id_key: &str,
     expected_revision: ExpectedRevision,
     prepared: Vec<PreparedPostgresEvent<A::Event>>,
@@ -551,9 +555,21 @@ where
         "INSERT INTO {idempotency_table} (idempotency_key, state, value, updated_at_ms)
          VALUES ($1, 'pending', NULL, $2);"
     );
-    transaction
-        .execute(&reserve, &[&idempotency_key.as_str(), &updated_at_ms])
-        .map_err(map_postgres_error)?;
+    if let Err(error) = transaction.execute(&reserve, &[&idempotency_key.as_str(), &updated_at_ms])
+    {
+        // Another connection reserved the same key between our SELECT and this
+        // INSERT. Report Pending so the caller's wait loop re-polls and finds
+        // the winner's committed value instead of surfacing a fatal error.
+        if error
+            .code()
+            .is_some_and(|code| *code == ::postgres::error::SqlState::UNIQUE_VIOLATION)
+        {
+            return Ok(Err(IdempotentAppendError::Pending {
+                key: idempotency_key.clone(),
+            }));
+        }
+        return Err(map_postgres_error(error));
+    }
 
     let revision_query = format!(
         "SELECT COALESCE(MAX(revision), 0)::BIGINT FROM {table} \
@@ -577,7 +593,6 @@ where
         table = table_name
     );
     let mut committed = Vec::with_capacity(prepared.len());
-    let aggregate_id: A::Id = deserialize_id(aggregate_id_key)?;
 
     for (index, event) in prepared.into_iter().enumerate() {
         let revision = actual_revision + index as u64 + 1;
