@@ -1,5 +1,5 @@
+# cargo-audit configuration. Keep the ignore list in sync with deny.toml.
 [advisories]
-version = 2
 ignore = [
     # lru 0.16.x use-after-free requires a panicking Hash/Drop impl during
     # LruCache::pop(); the only consumer is the mysql crate's statement cache
@@ -8,20 +8,3 @@ ignore = [
     # once a mysql release depends on lru >= 0.18.2.
     "RUSTSEC-2026-0253",
 ]
-
-[bans]
-multiple-versions = "warn"
-wildcards = "deny"
-
-[licenses]
-version = 2
-confidence-threshold = 0.93
-allow = [
-    "Apache-2.0",
-    "LGPL-2.1-or-later",
-    "MIT",
-]
-
-[sources]
-unknown-git = "deny"
-unknown-registry = "deny"
