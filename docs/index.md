@@ -26,13 +26,12 @@ Our framework is highly modular. You can enable specific adapters and engines de
 * **SQLite Support:** Enable the `"sqlite"` feature (uses the `rusqlite` driver under the hood).
 * **PostgreSQL Support:** Enable the `"postgres"` feature (uses the `postgres` driver under the hood).
 * **MySQL Support:** Enable the `"mysql"` feature (uses the `mysql` driver under the hood).
-* **WASI MySQL Helper:** Enable `"wasi-mysql"` for raw TCP MySQL query execution from generic Wasmtime/WASI runtimes.
 * **Spin MySQL Helper:** Enable `"spin-mysql"` for Spin SDK MySQL query execution.
 
 #### Supported Backends:
 * **SQLite / Local File:** Standard local embedded SQL.
 * **PostgreSQL:** Stable high-performance relational database.
-* **MySQL:** High-performance relational database with native stores plus runtime query helpers for Wasmtime (`"wasi-mysql"`) and Spin (`"spin-mysql"`).
+* **MySQL:** High-performance relational database with native stores plus a Spin runtime query helper (`"spin-mysql"`).
 * **LibSQL / Turso:** Supported for distributed edge SQL via the `"wasi-libsql"` query helper.
 * **Redis:** Supported for async event store, checkpoints, and pub/sub notifications via `"redis"` / `"wasi-redis"` / `"spin-redis"`.
 
@@ -56,7 +55,6 @@ The root crate provides durable stores, checkpoints, idempotency stores, and not
 | **`sqlite`** | Stable SQLite event store, checkpoint store, idempotency store, snapshot store, and atomic idempotent append. | `rusqlite` |
 | **`postgres`** | Stable PostgreSQL event store, checkpoint store, idempotency store, snapshot store, and atomic idempotent append. | `postgres` |
 | **`mysql`** | Stable MySQL event store, checkpoint store, idempotency store, snapshot store, and atomic idempotent append. | `mysql` |
-| **`wasi-mysql`** | Experimental raw TCP MySQL query helper for generic Wasmtime/WASI runtimes. | `rsa`, `sha1`, `sha2`, `getrandom` |
 | **`spin-mysql`** | Experimental Spin SDK MySQL query helper. | `spin-sdk` |
 | **`redis`** | Experimental async Redis event store, checkpoint store, pub/sub publisher, and command executor trait. | None |
 | **`wasi-redis`** | Experimental raw RESP Redis client for generic Wasmtime/WASI runtimes. | `redis` |
@@ -64,7 +62,6 @@ The root crate provides durable stores, checkpoints, idempotency stores, and not
 | **`wasi-http`** | Experimental outbound HTTP helper foundation for WASI runtimes. | `wasip3`, `http`, `http-body-util`, `bytes` |
 | **`wasi-neon`** | Experimental Neon HTTP SQL query helper. | `wasi-http` |
 | **`wasi-libsql`** | Experimental LibSQL/Turso Hrana HTTP query helper. | `wasi-http` |
-| **`wasi-postgres-tcp`** | Experimental raw PostgreSQL TCP query helper for WASI-style runtimes. | `md5`, `base64`, `pbkdf2`, `hmac`, `sha2`, `rustls` |
 | **`spin-sqlite`** | Experimental Spin SQLite host-call query helper. | `spin-sdk` |
 | **`spin-postgres`** | Experimental Spin PostgreSQL host-call query helper. | `spin-sdk` |
 | **`wasi-supabase-rpc`** | Experimental Supabase RPC query helper. | `wasi-http` |

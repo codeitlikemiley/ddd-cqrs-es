@@ -11,13 +11,41 @@
 //! general-purpose SQL parameterization APIs and are not full event-store or
 //! checkpoint-store backends until they implement the reusable library traits.
 
+#[cfg(feature = "wasi-http")]
+mod http;
 #[cfg(feature = "json-file")]
 mod json_file;
-mod runtime;
+#[cfg(feature = "wasi-libsql")]
+mod libsql;
+#[cfg(feature = "wasi-neon")]
+mod neon;
+#[cfg(any(
+    feature = "spin-sqlite",
+    feature = "spin-postgres",
+    feature = "spin-mysql"
+))]
+mod spin;
+mod sql_text;
+#[cfg(feature = "wasi-supabase-rpc")]
+mod supabase;
 
+#[cfg(feature = "wasi-http")]
+pub use http::wasi_http_post;
 #[cfg(feature = "json-file")]
 pub use json_file::{JsonFileCheckpointStore, JsonFileEventStore};
-pub use runtime::*;
+#[cfg(feature = "wasi-libsql")]
+pub use libsql::*;
+#[cfg(feature = "wasi-neon")]
+pub use neon::execute_neon_query;
+#[cfg(any(
+    feature = "spin-sqlite",
+    feature = "spin-postgres",
+    feature = "spin-mysql"
+))]
+pub use spin::*;
+pub use sql_text::{base64_encode, format_pg_value, interpolate_query};
+#[cfg(feature = "wasi-supabase-rpc")]
+pub use supabase::execute_supabase_query;
 
 /// SQL schema for the Postgres `events` table used by framework-owned migrations.
 pub const EVENTS_TABLE_SCHEMA_POSTGRES: &str = r#"
