@@ -119,8 +119,13 @@ fn read_event_values(
 }
 
 #[cfg(feature = "json-file")]
-fn parse_json_lines(content: &str) -> Result<Vec<serde_json::Value>, crate::error::EventStoreError> {
-    let mut lines: Vec<&str> = content.lines().filter(|line| !line.trim().is_empty()).collect();
+fn parse_json_lines(
+    content: &str,
+) -> Result<Vec<serde_json::Value>, crate::error::EventStoreError> {
+    let mut lines: Vec<&str> = content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
     if lines.is_empty() {
         return Ok(Vec::new());
     }
@@ -155,7 +160,9 @@ fn file_is_legacy_array(path: &std::path::Path) -> Result<bool, crate::error::Ev
 }
 
 #[cfg(feature = "json-file")]
-fn json_lines_from_values(values: &[serde_json::Value]) -> Result<String, crate::error::EventStoreError> {
+fn json_lines_from_values(
+    values: &[serde_json::Value],
+) -> Result<String, crate::error::EventStoreError> {
     let mut lines = String::new();
     for value in values {
         lines.push_str(
@@ -185,9 +192,10 @@ fn append_event_lines(
     if file_is_legacy_array(path)? || !path.exists() {
         let mut all_values = existing.to_vec();
         for line in new_lines {
-            all_values.push(serde_json::from_str(line).map_err(|e| {
-                crate::error::EventStoreError::serialization(e.to_string())
-            })?);
+            all_values.push(
+                serde_json::from_str(line)
+                    .map_err(|e| crate::error::EventStoreError::serialization(e.to_string()))?,
+            );
         }
         let content = json_lines_from_values(&all_values)?;
         write_atomic(path, &content)
@@ -651,7 +659,9 @@ impl crate::projection::CheckpointStore for JsonFileCheckpointStore {
         let key = projection_name.to_string();
         map.insert(
             key.clone(),
-            map.get(&key).copied().map_or(sequence, |existing| existing.max(sequence)),
+            map.get(&key)
+                .copied()
+                .map_or(sequence, |existing| existing.max(sequence)),
         );
 
         let new_content = serde_json::to_string(&map)

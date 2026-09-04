@@ -220,7 +220,12 @@ mod tests {
 
         let operations = vec![
             write_operation("src/domain/new.rs", "new\n", false, "new module"),
-            write_operation("src/domain/existing.rs", "newer\n", false, "blocked overwrite"),
+            write_operation(
+                "src/domain/existing.rs",
+                "newer\n",
+                false,
+                "blocked overwrite",
+            ),
         ];
 
         let error = apply_operations(&root, &operations, false, false).unwrap_err();

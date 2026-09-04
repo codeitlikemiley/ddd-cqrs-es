@@ -283,8 +283,8 @@ where
 mod tests {
     use super::*;
     use crate::event::{ExpectedRevision, NewEvent};
-    use crate::Metadata;
     use crate::event_store::EventStore;
+    use crate::Metadata;
 
     #[derive(Clone, Debug, PartialEq, Eq)]
     enum TestEvent {

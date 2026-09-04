@@ -148,9 +148,7 @@ mod tests {
 
     #[test]
     fn neon_endpoint_redacts_userinfo_in_errors() {
-        let redacted = redact_url_userinfo(
-            "postgres://user:secret@ep-example.neon.tech/neondb",
-        );
+        let redacted = redact_url_userinfo("postgres://user:secret@ep-example.neon.tech/neondb");
         assert!(!redacted.contains("secret"));
         assert!(redacted.contains("***@"));
     }

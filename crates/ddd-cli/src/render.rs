@@ -1241,8 +1241,8 @@ mod tests {
     #[test]
     fn field_specs_reject_duplicates_commas_and_invalid_names() {
         assert!(parse_field_specs(&["amount:i64".to_string()]).is_ok());
-        let duplicate = parse_field_specs(&["amount:i64".to_string(), "amount:u64".to_string()])
-            .unwrap_err();
+        let duplicate =
+            parse_field_specs(&["amount:i64".to_string(), "amount:u64".to_string()]).unwrap_err();
         assert!(duplicate.to_string().contains("duplicate field name"));
         let comma = parse_field_specs(&["amount,total:i64".to_string()]).unwrap_err();
         assert!(comma.to_string().contains("must not contain commas"));

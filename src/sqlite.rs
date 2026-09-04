@@ -21,7 +21,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime};
 
 fn lock_connection(mutex: &Mutex<Connection>) -> MutexGuard<'_, Connection> {
-    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Applies production-oriented pragmas for file-backed and in-memory SQLite
@@ -295,18 +297,13 @@ where
                     event.recorded_at_ms,
                 ])
                 .map_err(|error| {
-                    map_sqlite_insert_error(
-                        error,
-                        expected_revision,
-                        actual_revision,
-                        || {
-                            Self::current_revision_locked(
-                                &self.table_name,
-                                &transaction,
-                                &aggregate_id_key,
-                            )
-                        },
-                    )
+                    map_sqlite_insert_error(error, expected_revision, actual_revision, || {
+                        Self::current_revision_locked(
+                            &self.table_name,
+                            &transaction,
+                            &aggregate_id_key,
+                        )
+                    })
                 })?;
             let sequence = transaction.last_insert_rowid();
             let sequence = u64::try_from(sequence).map_err(|_| {
@@ -465,33 +462,46 @@ where
     ) -> Result<Option<IdempotencyState<EventStream<A>>>, Self::Error> {
         let connection = lock_connection(&self.connection);
         let query = format!(
-            "SELECT state, value FROM {} WHERE idempotency_key = ?1;",
+            "SELECT state, value, owner, expires_at_ms FROM {} WHERE idempotency_key = ?1;",
             self.idempotency_table
         );
         let row = connection
             .query_row(&query, params![idempotency_key.as_str()], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                ))
             })
             .optional()
             .map_err(map_sqlite_error)?;
 
-        row.map(|(state, value)| match (state.as_str(), value) {
-            ("pending", _) => Ok(IdempotencyState::Pending),
-            ("complete", Some(value)) => serde_json::from_str(&value)
-                .map(IdempotencyState::Complete)
-                .map_err(|error| {
-                    EventStoreError::deserialization(format!(
-                        "idempotent committed events JSON: {error}"
-                    ))
-                }),
-            ("complete", None) => Err(EventStoreError::deserialization(
-                "completed idempotency row is missing value".to_owned(),
-            )),
-            (state, _) => Err(EventStoreError::deserialization(format!(
-                "unknown idempotency state: {state}"
-            ))),
-        })
-        .transpose()
+        match row {
+            None => Ok(None),
+            Some((state, value, owner, expires_at_ms)) => match state.as_str() {
+                "pending" => Ok(pending_state_from_row(owner, expires_at_ms, now_ms())
+                    .map(IdempotencyState::Pending)),
+                "complete" => {
+                    let Some(value) = value else {
+                        return Err(EventStoreError::deserialization(
+                            "completed idempotency row is missing value".to_owned(),
+                        ));
+                    };
+                    serde_json::from_str(&value)
+                        .map(IdempotencyState::Complete)
+                        .map(Some)
+                        .map_err(|error| {
+                            EventStoreError::deserialization(format!(
+                                "idempotent committed events JSON: {error}"
+                            ))
+                        })
+                }
+                state => Err(EventStoreError::deserialization(format!(
+                    "unknown idempotency state: {state}"
+                ))),
+            },
+        }
     }
 
     fn append_idempotent(
@@ -1487,9 +1497,11 @@ where
                 self.table_name
             );
             if let Some(current) = connection
-                .query_row(&current_sql, params![A::aggregate_type(), aggregate_id], |row| {
-                    row.get::<_, i64>(0)
-                })
+                .query_row(
+                    &current_sql,
+                    params![A::aggregate_type(), aggregate_id],
+                    |row| row.get::<_, i64>(0),
+                )
                 .optional()
                 .map_err(map_sqlite_error)?
             {

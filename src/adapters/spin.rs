@@ -678,11 +678,9 @@ fn mysql_parameters(params: Vec<serde_json::Value>) -> Vec<spin_sdk::mysql::Para
         .into_iter()
         .map(|value| match value {
             serde_json::Value::Null => spin_sdk::mysql::ParameterValue::DbNull,
-            serde_json::Value::Bool(value) => spin_sdk::mysql::ParameterValue::Int8(if value {
-                1
-            } else {
-                0
-            }),
+            serde_json::Value::Bool(value) => {
+                spin_sdk::mysql::ParameterValue::Int8(if value { 1 } else { 0 })
+            }
             serde_json::Value::Number(value) => {
                 if let Some(value) = value.as_i64() {
                     spin_sdk::mysql::ParameterValue::Int64(value)
@@ -738,7 +736,8 @@ pub async fn execute_spin_mysql(
         .map_err(|error| format!("MySQL connection error: {error:?}"))?;
 
     if let Some((insert_sql, limit)) = spin_mysql_insert_returning_limit(sql) {
-        return spin_mysql_insert_and_read_sequences(&conn, &insert_sql, &mysql_params, limit).await;
+        return spin_mysql_insert_and_read_sequences(&conn, &insert_sql, &mysql_params, limit)
+            .await;
     }
 
     if spin_mysql_returns_rows(sql) {
@@ -942,4 +941,3 @@ mod spin_mysql_tests {
         assert_eq!(limit, 1);
     }
 }
-

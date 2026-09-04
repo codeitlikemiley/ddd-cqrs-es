@@ -205,7 +205,13 @@ impl<C> ConnectionPool<C> {
         max_size: usize,
         connect: impl Fn() -> Result<C, EventStoreError> + Send + Sync + 'static,
     ) -> Self {
-        Self::build(None, max_size, Some(Box::new(connect)), None, Some(DEFAULT_MAX_IDLE_AGE))
+        Self::build(
+            None,
+            max_size,
+            Some(Box::new(connect)),
+            None,
+            Some(DEFAULT_MAX_IDLE_AGE),
+        )
     }
 
     /// Creates a pool with checkout validation and optional seed connection.
@@ -652,10 +658,11 @@ mod tests {
             Ok(())
         });
 
-        let result: Result<(), EventStoreError> =
-            pool.write(|_| Err(EventStoreError::Concurrency(
+        let result: Result<(), EventStoreError> = pool.write(|_| {
+            Err(EventStoreError::Concurrency(
                 crate::ConcurrencyError::StreamAlreadyExists,
-            )));
+            ))
+        });
         assert!(result.is_err());
 
         let second: Result<(), EventStoreError> = pool.write(|_| Ok(()));

@@ -19,7 +19,10 @@ const ERROR_BODY_SNIPPET_MAX: usize = 512;
 /// local development.
 pub fn validate_https_url(url: &str) -> Result<(), String> {
     let scheme_end = url.find("://").ok_or_else(|| {
-        format!("HTTP URL must include a scheme (got {})", redact_url_userinfo(url))
+        format!(
+            "HTTP URL must include a scheme (got {})",
+            redact_url_userinfo(url)
+        )
     })?;
     let scheme = &url[..scheme_end];
     if scheme.eq_ignore_ascii_case("https") {

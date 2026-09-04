@@ -964,19 +964,14 @@ where
             ],
         )
         .map_err(|error| {
-            map_postgres_insert_error(
-                error,
-                expected_revision,
-                actual_revision,
-                || {
-                    current_revision_postgres(
-                        transaction,
-                        table_name,
-                        A::aggregate_type(),
-                        aggregate_id_key,
-                    )
-                },
-            )
+            map_postgres_insert_error(error, expected_revision, actual_revision, || {
+                current_revision_postgres(
+                    transaction,
+                    table_name,
+                    A::aggregate_type(),
+                    aggregate_id_key,
+                )
+            })
         })?;
     if rows.len() != count {
         return Err(EventStoreError::backend(format!(
@@ -1110,7 +1105,8 @@ where
     })?;
     let aggregate_id = deserialize_id(&aggregate_id)?;
 
-    let (event_version, payload) = if upcasters.is_empty() || !upcasters.has_upcasters(&event_type) {
+    let (event_version, payload) = if upcasters.is_empty() || !upcasters.has_upcasters(&event_type)
+    {
         (event_version, payload_val)
     } else {
         let payload_bytes = serde_json::to_vec(&payload_val).map_err(|error| {
@@ -1121,9 +1117,8 @@ where
         let (event_version, upcasted_bytes) = upcasters
             .prepare_payload(&event_type, event_version, payload_bytes)
             .map_err(|err| EventStoreError::deserialization(err.to_string()))?;
-        let payload = serde_json::from_slice(&upcasted_bytes).map_err(|error| {
-            EventStoreError::deserialization(format!("payload JSON: {error}"))
-        })?;
+        let payload = serde_json::from_slice(&upcasted_bytes)
+            .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
         (event_version, payload)
     };
 

@@ -73,10 +73,7 @@ pub(crate) fn map_stream_unique_violation(
     feature = "redis"
 ))]
 /// Returns an error when a snapshot save did not advance stored revision.
-pub(crate) fn stale_snapshot_revision_error(
-    offered: u64,
-    current: u64,
-) -> EventStoreError {
+pub(crate) fn stale_snapshot_revision_error(offered: u64, current: u64) -> EventStoreError {
     EventStoreError::Concurrency(ConcurrencyError::StaleSnapshotRevision { offered, current })
 }
 

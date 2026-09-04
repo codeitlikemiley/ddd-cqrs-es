@@ -937,23 +937,16 @@ where
          VALUES {placeholders}",
         table = table_name
     );
-    transaction
-        .exec_drop(&insert, params)
-        .map_err(|error| {
-            map_mysql_insert_error(
-                error,
-                expected_revision,
-                actual_revision,
-                || {
-                    current_revision_mysql(
-                        transaction,
-                        table_name,
-                        A::aggregate_type(),
-                        aggregate_id_key,
-                    )
-                },
+    transaction.exec_drop(&insert, params).map_err(|error| {
+        map_mysql_insert_error(error, expected_revision, actual_revision, || {
+            current_revision_mysql(
+                transaction,
+                table_name,
+                A::aggregate_type(),
+                aggregate_id_key,
             )
-        })?;
+        })
+    })?;
 
     let select = format!(
         "SELECT revision, sequence FROM {table} \
@@ -1123,7 +1116,8 @@ where
     let payload_val: serde_json::Value = serde_json::from_str(&payload_str)
         .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
 
-    let (event_version, payload) = if upcasters.is_empty() || !upcasters.has_upcasters(&event_type) {
+    let (event_version, payload) = if upcasters.is_empty() || !upcasters.has_upcasters(&event_type)
+    {
         (event_version, payload_val)
     } else {
         let payload_bytes = serde_json::to_vec(&payload_val).map_err(|error| {
@@ -1134,9 +1128,8 @@ where
         let (event_version, upcasted_bytes) = upcasters
             .prepare_payload(&event_type, event_version, payload_bytes)
             .map_err(|err| EventStoreError::deserialization(err.to_string()))?;
-        let payload = serde_json::from_slice(&upcasted_bytes).map_err(|error| {
-            EventStoreError::deserialization(format!("payload JSON: {error}"))
-        })?;
+        let payload = serde_json::from_slice(&upcasted_bytes)
+            .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
         (event_version, payload)
     };
 
@@ -1195,8 +1188,7 @@ fn current_revision_mysql(
 fn is_mysql_stream_revision_unique_violation(error: &MySqlError) -> bool {
     match error {
         MySqlError::MySqlError(server) => {
-            server.message.contains("aggregate_type")
-                || server.message.contains("revision")
+            server.message.contains("aggregate_type") || server.message.contains("revision")
         }
         _ => false,
     }
