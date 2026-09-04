@@ -581,7 +581,11 @@ impl crate::projection::CheckpointStore for JsonFileCheckpointStore {
         let mut map: std::collections::HashMap<String, u64> = serde_json::from_str(&content)
             .map_err(|e| crate::error::EventStoreError::deserialization(e.to_string()))?;
 
-        map.insert(projection_name.to_string(), sequence);
+        let key = projection_name.to_string();
+        map.insert(
+            key.clone(),
+            map.get(&key).copied().map_or(sequence, |existing| existing.max(sequence)),
+        );
 
         let new_content = serde_json::to_string(&map)
             .map_err(|e| crate::error::EventStoreError::serialization(e.to_string()))?;

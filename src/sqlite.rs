@@ -18,7 +18,22 @@ use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
+
+/// Applies production-oriented pragmas for file-backed and in-memory SQLite
+/// connections used by the event and checkpoint stores.
+pub fn configure_sqlite_connection(connection: &Connection) -> Result<(), EventStoreError> {
+    connection
+        .busy_timeout(Duration::from_secs(5))
+        .map_err(map_sqlite_error)?;
+    connection
+        .pragma_update(None, "journal_mode", "WAL")
+        .map_err(map_sqlite_error)?;
+    connection
+        .pragma_update(None, "synchronous", "NORMAL")
+        .map_err(map_sqlite_error)?;
+    Ok(())
+}
 
 /// SQLite-backed event store.
 ///
@@ -97,6 +112,7 @@ where
         let idempotency_table = idempotency_table.into();
         validate_table_name(&table_name)?;
         validate_table_name(&idempotency_table)?;
+        configure_sqlite_connection(&connection)?;
 
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
@@ -1025,6 +1041,7 @@ impl SqliteCheckpointStore {
     ) -> Result<Self, EventStoreError> {
         let table_name = table_name.into();
         validate_table_name(&table_name)?;
+        configure_sqlite_connection(&connection)?;
 
         let store = Self {
             connection: Arc::new(Mutex::new(connection)),

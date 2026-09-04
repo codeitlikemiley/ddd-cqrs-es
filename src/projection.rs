@@ -294,8 +294,10 @@ impl<P> InMemoryProjectionRunner<P> {
             self.projection
                 .apply(&event)
                 .map_err(ProjectionRunnerError::Projection)?;
-            self.checkpoint = event.sequence;
-            last_sequence = event.sequence;
+            if let Some(sequence) = event.sequence {
+                self.checkpoint = Some(sequence);
+                last_sequence = Some(sequence);
+            }
             applied += 1;
         }
 
@@ -1049,7 +1051,9 @@ impl<P> CheckpointedProjectionRunner<P> {
             self.projection
                 .apply_and_checkpoint(&event)
                 .map_err(ProjectionRunnerError::Projection)?;
-            last_sequence = event.sequence;
+            if let Some(sequence) = event.sequence {
+                last_sequence = Some(sequence);
+            }
             applied += 1;
         }
 
@@ -1189,7 +1193,9 @@ impl<P> TransactionalCheckpointedProjectionRunner<P> {
             self.projection
                 .apply_and_checkpoint_transactionally(&event)
                 .map_err(ProjectionRunnerError::Projection)?;
-            last_sequence = event.sequence;
+            if let Some(sequence) = event.sequence {
+                last_sequence = Some(sequence);
+            }
             applied += 1;
         }
 
@@ -1352,7 +1358,9 @@ impl<P> AsyncTransactionalCheckpointedProjectionRunner<P> {
                 .apply_and_checkpoint_transactionally(&event)
                 .await
                 .map_err(ProjectionRunnerError::Projection)?;
-            last_sequence = event.sequence;
+            if let Some(sequence) = event.sequence {
+                last_sequence = Some(sequence);
+            }
             applied += 1;
         }
 
@@ -1447,7 +1455,9 @@ impl<P> AsyncCheckpointedProjectionRunner<P> {
                 .apply_and_checkpoint(&event)
                 .await
                 .map_err(ProjectionRunnerError::Projection)?;
-            last_sequence = event.sequence;
+            if let Some(sequence) = event.sequence {
+                last_sequence = Some(sequence);
+            }
             applied += 1;
         }
 

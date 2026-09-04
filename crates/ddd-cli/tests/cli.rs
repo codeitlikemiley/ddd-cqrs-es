@@ -468,8 +468,8 @@ fn fullstack_add_aggregate_bootstraps_product_domain() {
     assert!(project.join("src/domain_rest.rs").exists());
     let lib = std::fs::read_to_string(project.join("src/lib.rs")).unwrap();
     assert!(
-        lib.contains("pub mod domain;"),
-        "lib.rs must register product domain"
+        lib.contains("#[cfg(feature = \"ssr\")]\npub mod domain;"),
+        "lib.rs must register ssr-gated product domain"
     );
     assert!(
         lib.contains("mod domain_app;") && lib.contains("mod domain_rest;"),
@@ -493,6 +493,35 @@ fn fullstack_add_aggregate_bootstraps_product_domain() {
     assert!(domain_rest.contains("/api/domain/billing/"));
     let manifest = std::fs::read_to_string(project.join("ddd.toml")).unwrap();
     assert!(manifest.contains("Billing") || manifest.contains("billing"));
+
+    let mut check = Command::cargo_bin("ddd").unwrap();
+    check.arg("--cwd").arg(&project).arg("check");
+    check.assert().success();
+}
+
+#[test]
+fn fullstack_second_aggregate_compiles() {
+    let temp = tempfile::tempdir().unwrap();
+    init_fullstack_app(&temp, "saas-two-agg");
+    let project = temp.path().join("saas-two-agg");
+
+    for aggregate in ["Billing", "Invoice"] {
+        let mut command = Command::cargo_bin("ddd").unwrap();
+        command
+            .arg("--cwd")
+            .arg(&project)
+            .arg("add")
+            .arg("aggregate")
+            .arg(aggregate);
+        command.assert().success();
+    }
+
+    let domain_rest = std::fs::read_to_string(project.join("src/domain_rest.rs")).unwrap();
+    assert_eq!(domain_rest.matches("json_ok(&view)").count(), 4);
+    assert!(!domain_rest.contains("json_ok(view)"));
+
+    let billing_test = std::fs::read_to_string(project.join("tests/billing_domain.rs")).unwrap();
+    assert!(billing_test.starts_with("#![cfg(feature = \"ssr\")]"));
 
     let mut check = Command::cargo_bin("ddd").unwrap();
     check.arg("--cwd").arg(&project).arg("check");

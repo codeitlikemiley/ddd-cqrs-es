@@ -118,6 +118,16 @@ end
 return out
 "#;
 
+/// Atomically advances a projection checkpoint only when the new sequence is
+/// greater than the stored value.
+const CHECKPOINT_SAVE_LUA: &str = r#"
+local current = redis.call('GET', KEYS[1])
+if current == false or tonumber(current) < tonumber(ARGV[1]) then
+    redis.call('SET', KEYS[1], ARGV[1])
+end
+return 1
+"#;
+
 /// Redis protocol value returned by [`RedisCommandExecutor`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RedisValue {
@@ -654,21 +664,13 @@ where
         projection_name: &str,
         sequence: u64,
     ) -> Result<(), Self::Error> {
-        // Checkpoints must be monotonic: a lagging writer (for example after a
-        // rebalance) must never regress a newer checkpoint. Redis offers no
-        // compare-and-set over plain GET/SET here, so guard with a read first;
-        // the remaining race window only affects concurrent writers of the
-        // same projection.
-        if let Some(existing) = self.load_checkpoint(projection_name).await? {
-            if sequence <= existing {
-                return Ok(());
-            }
-        }
         let _ = self
             .client
             .execute(
-                "SET",
+                "EVAL",
                 vec![
+                    CHECKPOINT_SAVE_LUA.as_bytes().to_vec(),
+                    "1".into(),
                     self.checkpoint_key(projection_name).into_bytes(),
                     sequence.to_string().into_bytes(),
                 ],
