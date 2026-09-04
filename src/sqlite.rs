@@ -995,12 +995,11 @@ fn map_sqlite_insert_error(
                     failure.extended_code,
                     rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
                         | rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY
-                ) =>
+                )
+                && is_sqlite_stream_revision_unique_violation(message.as_deref()) =>
         {
-            if is_sqlite_stream_revision_unique_violation(message.as_deref()) {
-                let current_revision = reread_revision().unwrap_or(stale_actual);
-                return crate::sql_common::map_stream_unique_violation(expected, current_revision);
-            }
+            let current_revision = reread_revision().unwrap_or(stale_actual);
+            return crate::sql_common::map_stream_unique_violation(expected, current_revision);
         }
         _ => {}
     }

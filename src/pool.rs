@@ -201,6 +201,7 @@ impl<C> ConnectionPool<C> {
     }
 
     /// Creates a growable pool that opens connections through `connect`.
+    #[allow(dead_code)] // used by pool unit tests; adapters use pooled_validated
     pub(crate) fn pooled(
         max_size: usize,
         connect: impl Fn() -> Result<C, EventStoreError> + Send + Sync + 'static,
