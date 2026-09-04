@@ -129,11 +129,11 @@ make db-up && make dev transport=both
 1. Copy `examples/fullstack-app/` into your repository.  
 2. Ensure `Cargo.toml` uses **crates.io versions** (not monorepo `path =` patches), e.g.:
    - `ddd_cqrs_es = "=0.3.0-rc.7"`
-   - `wasi-auth = "=0.1.0-rc.3"`
+   - `wasi-auth = "=0.1.0-rc.4"`
 3. Remove any `[patch.crates-io]` entries that point at sibling checkouts unless you keep those crates locally.  
 4. Run `make db-up && make dev transport=both`.
 
-Local monorepo development may patch `wasi-auth` to a sibling path in `Cargo.toml` until the next published rc — that is intentional for contributors, not for a forked product.
+The only `[patch.crates-io]` entry this manifest ships pins `spin-sdk` to an audited revision; every other dependency resolves from crates.io, so a copied directory builds without a sibling checkout.
 
 ---
 
@@ -234,11 +234,32 @@ Manifest name for shipping: `Cargo.toml.template` in the template (Cargo cannot 
 Default Make profile uses **`transport=both`** (HTTP UI + gRPC).  
 Common env (see `.env.example`):
 
+- `AUTH_ROOT_KEY_BASE64` (**required**; 32 random bytes written into `.env` by `ddd init`)
 - `AUTH_MAIL_TRANSPORT=capture|resend`
 - `AUTH_ENABLE_OAUTH` / provider credentials  
 - `AUTH_ENABLE_PASSKEYS`  
 - `AUTH_VAULT_KEY_BASE64` (secrets vault)  
 - Dashboard connectors: `AUTH_DASHBOARD_HTTP_*` (see below)
+
+### Keys
+
+`AUTH_ROOT_KEY_BASE64` is the only secret a project must supply. The vault,
+refresh, flow, MFA, recovery-pepper, OAuth-binding, CSRF, and development JWT
+keys are HKDF-SHA256 derived from it under distinct `info` labels, so they are
+per project and never equal to each other. Setting a specific variable
+(`AUTH_VAULT_KEY_BASE64`, `AUTH_CSRF_SECRET`, …) overrides its derived key.
+There is no built-in fallback: the app refuses to start without a root key.
+
+### Development tools
+
+`AUTH_DEV_TOOLS`, `AUTH_OAUTH_DEVELOPMENT_CALLBACK_BYPASS`, and
+`AUTH_MAIL_TRANSPORT=capture` are unauthenticated account-takeover primitives.
+They default to off, require a loopback `AUTH_PUBLIC_BASE_URL` (the app refuses
+to start otherwise), and the mail-capture endpoint additionally requires a debug
+build with the `mail-capture` feature plus the `system.user.manage` permission.
+Smoke scripts that read `/api/auth/dev/mail/latest` must therefore run with
+`AUTH_DEV_TOOLS=true` and present a bootstrap-administrator session (see
+`scripts/agent_dev_login.mjs`).
 
 ---
 
@@ -325,7 +346,7 @@ Start from `spin.production.toml.example`:
 3. Distinct ingress, vault, outbox, recovery, CSRF secrets  
 4. Trusted ingress (`AUTH_REQUIRE_TRUSTED_INGRESS`) when fronting with `wasi-auth-ingress`  
 5. Migrations as a deploy step (`make db-migrate` / `wasi-auth-migrate apply`)  
-6. Outbox worker always running; production rejects capture + dev outbox key  
+6. Outbox worker always running; production rejects capture mail, `AUTH_DEV_TOOLS`, and the OAuth callback bypass  
 7. `AUTH_COOKIE_SECURE=true`  
 8. Exact OAuth callbacks + passkey rpId/origin  
 9. Smoke against real `BASE_URL`  

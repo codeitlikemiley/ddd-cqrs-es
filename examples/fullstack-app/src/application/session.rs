@@ -117,6 +117,39 @@ pub fn expired_session_cookie_header_value(secure: bool) -> String {
     session_cookie_header_value("", Some(0), secure)
 }
 
+/// Short-lived cookie that binds an in-flight OAuth `state` to this browser.
+/// `Lax` so the provider's top-level callback redirect still carries it.
+pub fn oauth_flow_cookie_header_value(value: &str, max_age_seconds: u64, secure: bool) -> String {
+    let name = if secure {
+        "__Host-oauth_flow"
+    } else {
+        "wasi_auth_dev_oauth_flow"
+    };
+    let mut cookie = format!("{name}={value}; Path=/; HttpOnly; SameSite=Lax");
+    cookie.push_str(&format!("; Max-Age={max_age_seconds}"));
+    if secure {
+        cookie.push_str("; Secure");
+    }
+    cookie
+}
+
+pub fn expired_oauth_flow_cookie_header_value(secure: bool) -> String {
+    oauth_flow_cookie_header_value("", 0, secure)
+}
+
+pub fn oauth_flow_value_from_cookie_header(cookie_header: &str) -> Option<String> {
+    cookie_header.split(';').find_map(|part| {
+        let (name, value) = part.trim().split_once('=')?;
+        if matches!(name, "__Host-oauth_flow" | "wasi_auth_dev_oauth_flow")
+            && !value.trim().is_empty()
+        {
+            Some(value.trim().to_owned())
+        } else {
+            None
+        }
+    })
+}
+
 pub async fn require_authenticated_route_for(
     session_id: Option<String>,
 ) -> AuthStackResult<SessionView> {
@@ -134,7 +167,7 @@ pub async fn require_authorized_route_for(
 ) -> AuthStackResult<SessionView> {
     let session = require_authenticated_route_for(session_id).await?;
     if session.permissions.iter().any(|value| value == permission)
-        || system_administrator_may(permission, &session)
+        || system_administrator_may(permission, &session).await
     {
         Ok(session)
     } else {
@@ -157,7 +190,7 @@ pub async fn require_permission_for(
         .await?;
         if verified.scopes.iter().any(|scope| scope == permission)
             || (verified.system_administrator
-                && verified.assurance == "aal2"
+                && step_up_satisfied(&verified.assurance).await
                 && is_system_administration_permission(permission))
         {
             return Ok(SessionView {
@@ -185,9 +218,9 @@ pub async fn require_step_up_permission_for(
     auth: RequestAuth,
 ) -> AuthStackResult<SessionView> {
     let session = require_permission_for(permission, auth).await?;
-    if session.assurance == "aal2" {
+    if step_up_satisfied(&session.assurance).await {
         Ok(session)
     } else {
-        Err(AuthStackError::Forbidden)
+        Err(step_up_required_error())
     }
 }

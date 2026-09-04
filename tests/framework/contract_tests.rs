@@ -81,7 +81,7 @@ fn sqlite_snapshot_store_persists_latest_snapshot() {
 #[test]
 fn postgres_store_passes_reusable_contract_when_url_is_provided() {
     let Ok(database_url) = std::env::var("DDD_CQRS_ES_POSTGRES_URL") else {
-        eprintln!("skipping live Postgres contract test: DDD_CQRS_ES_POSTGRES_URL is not set");
+        skip_live_test("Postgres contract test", "DDD_CQRS_ES_POSTGRES_URL");
         return;
     };
     let table_name = format!(
@@ -113,9 +113,7 @@ fn postgres_store_passes_reusable_contract_when_url_is_provided() {
 #[test]
 fn postgres_pooled_store_passes_reusable_contract_when_url_is_provided() {
     let Ok(database_url) = std::env::var("DDD_CQRS_ES_POSTGRES_URL") else {
-        eprintln!(
-            "skipping live pooled Postgres contract test: DDD_CQRS_ES_POSTGRES_URL is not set"
-        );
+        skip_live_test("pooled Postgres contract test", "DDD_CQRS_ES_POSTGRES_URL");
         return;
     };
     let table_name = format!(
@@ -148,7 +146,7 @@ fn postgres_pooled_store_passes_reusable_contract_when_url_is_provided() {
 #[test]
 fn postgres_idempotency_store_passes_contract_when_url_is_provided() {
     let Ok(database_url) = std::env::var("DDD_CQRS_ES_POSTGRES_URL") else {
-        eprintln!("skipping live Postgres idempotency test: DDD_CQRS_ES_POSTGRES_URL is not set");
+        skip_live_test("Postgres idempotency test", "DDD_CQRS_ES_POSTGRES_URL");
         return;
     };
     let table_name = format!(

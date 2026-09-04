@@ -142,6 +142,7 @@ pub use event::{
 /// Primary event store contracts and append semantics.
 pub use event_store::{
     AtomicIdempotentEventStore, EventStore, EventStream, IdempotentAppendError, StandardEventStore,
+    GLOBAL_REPLAY_PAGE_SIZE,
 };
 /// Idempotency APIs and error types shared across adapters.
 pub use idempotency::{
@@ -182,10 +183,11 @@ pub use raw_feed::{RawEventEnvelope, RawEventFeed};
 
 /// Projection runners, batch controls, and checkpoint integrations.
 pub use projection::{
-    CheckpointStore, CheckpointedProjection, CheckpointedProjectionRunner,
-    InMemoryProjectionRunner, PersistedProjectionRunner, Projection, ProjectionBatchConfig,
-    ProjectionBatchOutcome, ProjectionRunnerError, TransactionalCheckpointedProjection,
-    TransactionalCheckpointedProjectionRunner, DEFAULT_PROJECTION_BATCH_SIZE,
+    aggregate_scoped_checkpoint_key, raw_checkpoint_key, CheckpointStore, CheckpointedProjection,
+    CheckpointedProjectionRunner, InMemoryProjectionRunner, PersistedProjectionRunner, Projection,
+    ProjectionBatchConfig, ProjectionBatchOutcome, ProjectionRunnerError,
+    TransactionalCheckpointedProjection, TransactionalCheckpointedProjectionRunner,
+    DEFAULT_PROJECTION_BATCH_SIZE,
 };
 #[cfg(feature = "spin-redis")]
 /// Spin Redis client handle when the Spin Redis client feature is enabled.

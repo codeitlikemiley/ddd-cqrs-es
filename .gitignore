@@ -27,8 +27,15 @@ Thumbs.db
 *.lock
 !/Cargo.lock
 
+# Snapshot written by a redis-server started from the repo root for live tests
+/dump.rdb
+
 # Local UI audit dumps (not product assets)
 examples/fullstack-app/.audit-shots/
+
+# Per-project secrets persisted by the fullstack Makefile
+.auth-root-key
+.auth-outbox-key
 
 # Accidental duplicate of src/app.rs at template root (source of truth is src/)
 crates/ddd-cli/templates/fullstack/app.rs

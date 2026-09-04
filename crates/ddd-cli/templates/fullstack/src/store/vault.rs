@@ -115,39 +115,10 @@ pub(crate) fn vault_secret_aad(org_id: &str) -> Vec<u8> {
     aad
 }
 
+/// Shares the auth vault key so the dashboard vault and MFA vault can never
+/// drift apart, and inherits its per-project HKDF derivation.
 pub(crate) async fn dashboard_vault_key_material() -> AuthStackResult<(String, [u8; 32])> {
-    let production = store_config_value(AUTH_PRODUCTION_MODE)
-        .await
-        .map(|v| {
-            matches!(
-                v.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false);
-    let configured = store_config_value(MFA_VAULT_KEY)
-        .await
-        .filter(|value| !value.trim().is_empty());
-    let key: [u8; 32] = match configured {
-        Some(encoded) => STANDARD
-            .decode(encoded.trim())
-            .ok()
-            .and_then(|bytes| bytes.try_into().ok())
-            .ok_or_else(|| {
-                AuthStackError::configuration("AUTH_VAULT_KEY_BASE64 must decode to 32 bytes")
-            })?,
-        None if production => {
-            return Err(AuthStackError::configuration(
-                "AUTH_VAULT_KEY_BASE64 is required in production",
-            ));
-        }
-        None => Sha256::digest(b"fullstack-development-outbox-key").into(),
-    };
-    let key_version = store_config_value("AUTH_VAULT_KEY_VERSION")
-        .await
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "development-v1".to_owned());
-    Ok((key_version, key))
+    crate::auth_product::vault_key_material().await
 }
 
 pub(crate) async fn dashboard_vault_key_ring()

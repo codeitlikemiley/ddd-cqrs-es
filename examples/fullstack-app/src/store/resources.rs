@@ -64,46 +64,63 @@ pub async fn load_resources(
     }
 }
 
-pub async fn save_resources(
+/// Insert or update exactly one resource row.
+///
+/// Single-item edits never touch sibling rows, so a stale client view cannot
+/// delete resources it did not know about.
+pub async fn upsert_resource_row(
     org_id: &str,
-    resources: &[crate::contracts::DashboardResource],
+    resource: &crate::contracts::DashboardResource,
 ) -> AuthStackResult<()> {
-    if resources.len() > MAX_RESOURCES {
-        return Err(AuthStackError::validation(format!(
-            "at most {MAX_RESOURCES} resources"
-        )));
-    }
     #[cfg(all(feature = "postgres", runtime_spin))]
     {
-        let payload = serde_json::to_value(resources)
+        let payload = serde_json::to_value(resource)
             .map_err(|error| AuthStackError::serialization(error.to_string()))?;
         execute_postgres(
-            "WITH incoming AS ( \
-                 SELECT item->>'id' AS resource_id, item AS payload \
-                 FROM jsonb_array_elements(?1::text::jsonb) AS item \
-             ), deleted AS ( \
-                 DELETE FROM fullstack_app.resources existing \
-                 WHERE existing.organization_id = ?2::text::uuid \
-                   AND NOT EXISTS (SELECT 1 FROM incoming WHERE incoming.resource_id = existing.resource_id) \
-             ) \
-             INSERT INTO fullstack_app.resources \
-                 (organization_id, resource_id, payload) \
-             SELECT ?2::text::uuid, resource_id, payload FROM incoming \
+            "INSERT INTO fullstack_app.resources (organization_id, resource_id, payload) \
+             VALUES (?1::text::uuid, ?2, ?3::text::jsonb) \
              ON CONFLICT (organization_id, resource_id) DO UPDATE SET \
                  payload = EXCLUDED.payload, \
                  revision = fullstack_app.resources.revision + 1, \
                  updated_at = CURRENT_TIMESTAMP",
-            vec![payload, Value::String(org_id.to_owned())],
+            vec![
+                Value::String(org_id.to_owned()),
+                Value::String(resource.id.clone()),
+                payload,
+            ],
         )
         .await
         .map(|_| ())
     }
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
-        let _ = (org_id, resources);
+        let _ = (org_id, resource);
         Err(AuthStackError::configuration(
             "dashboard storage requires Spin key-value",
         ))
+    }
+}
+
+/// Delete one resource row. Returns `false` when the row was already gone.
+pub async fn delete_resource_row(org_id: &str, resource_id: &str) -> AuthStackResult<bool> {
+    #[cfg(all(feature = "postgres", runtime_spin))]
+    {
+        let rows = execute_postgres(
+            "DELETE FROM fullstack_app.resources \
+             WHERE organization_id = ?1::text::uuid AND resource_id = ?2 \
+             RETURNING resource_id",
+            vec![
+                Value::String(org_id.to_owned()),
+                Value::String(resource_id.to_owned()),
+            ],
+        )
+        .await?;
+        Ok(!rows.is_empty())
+    }
+    #[cfg(not(all(feature = "postgres", runtime_spin)))]
+    {
+        let _ = (org_id, resource_id);
+        Ok(false)
     }
 }
 
@@ -130,47 +147,85 @@ pub async fn load_queries(org_id: &str) -> AuthStackResult<Vec<crate::contracts:
     }
 }
 
-pub async fn save_queries(
+/// Insert or update exactly one query row.
+pub async fn upsert_query_row(
     org_id: &str,
-    queries: &[crate::contracts::DashboardQuery],
+    query: &crate::contracts::DashboardQuery,
 ) -> AuthStackResult<()> {
-    if queries.len() > MAX_QUERIES {
-        return Err(AuthStackError::validation(format!(
-            "at most {MAX_QUERIES} queries"
-        )));
-    }
     #[cfg(all(feature = "postgres", runtime_spin))]
     {
-        let payload = serde_json::to_value(queries)
+        let payload = serde_json::to_value(query)
             .map_err(|error| AuthStackError::serialization(error.to_string()))?;
         execute_postgres(
-            "WITH incoming AS ( \
-                 SELECT item->>'id' AS query_id, item->>'resource_id' AS resource_id, item AS payload \
-                 FROM jsonb_array_elements(?1::text::jsonb) AS item \
-             ), deleted AS ( \
-                 DELETE FROM fullstack_app.queries existing \
-                 WHERE existing.organization_id = ?2::text::uuid \
-                   AND NOT EXISTS (SELECT 1 FROM incoming WHERE incoming.query_id = existing.query_id) \
-             ) \
-             INSERT INTO fullstack_app.queries \
+            "INSERT INTO fullstack_app.queries \
                  (organization_id, query_id, resource_id, payload) \
-             SELECT ?2::text::uuid, query_id, resource_id, payload FROM incoming \
+             VALUES (?1::text::uuid, ?2, ?3, ?4::text::jsonb) \
              ON CONFLICT (organization_id, query_id) DO UPDATE SET \
                  resource_id = EXCLUDED.resource_id, \
                  payload = EXCLUDED.payload, \
                  revision = fullstack_app.queries.revision + 1, \
                  updated_at = CURRENT_TIMESTAMP",
-            vec![payload, Value::String(org_id.to_owned())],
+            vec![
+                Value::String(org_id.to_owned()),
+                Value::String(query.id.clone()),
+                Value::String(query.resource_id.clone()),
+                payload,
+            ],
         )
         .await
         .map(|_| ())
     }
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
-        let _ = (org_id, queries);
+        let _ = (org_id, query);
         Err(AuthStackError::configuration(
             "dashboard storage requires Spin key-value",
         ))
+    }
+}
+
+/// Delete one query row. Returns `false` when the row was already gone.
+pub async fn delete_query_row(org_id: &str, query_id: &str) -> AuthStackResult<bool> {
+    #[cfg(all(feature = "postgres", runtime_spin))]
+    {
+        let rows = execute_postgres(
+            "DELETE FROM fullstack_app.queries \
+             WHERE organization_id = ?1::text::uuid AND query_id = ?2 \
+             RETURNING query_id",
+            vec![
+                Value::String(org_id.to_owned()),
+                Value::String(query_id.to_owned()),
+            ],
+        )
+        .await?;
+        Ok(!rows.is_empty())
+    }
+    #[cfg(not(all(feature = "postgres", runtime_spin)))]
+    {
+        let _ = (org_id, query_id);
+        Ok(false)
+    }
+}
+
+/// Delete every query bound to one resource (scoped to that resource only).
+pub async fn delete_queries_for_resource(org_id: &str, resource_id: &str) -> AuthStackResult<()> {
+    #[cfg(all(feature = "postgres", runtime_spin))]
+    {
+        execute_postgres(
+            "DELETE FROM fullstack_app.queries \
+             WHERE organization_id = ?1::text::uuid AND resource_id = ?2",
+            vec![
+                Value::String(org_id.to_owned()),
+                Value::String(resource_id.to_owned()),
+            ],
+        )
+        .await
+        .map(|_| ())
+    }
+    #[cfg(not(all(feature = "postgres", runtime_spin)))]
+    {
+        let _ = (org_id, resource_id);
+        Ok(())
     }
 }
 
@@ -626,16 +681,11 @@ pub async fn upsert_resource(
             "resource kind does not match config",
         ));
     }
-    let mut resources = load_resources(org_id).await?;
-    if let Some(slot) = resources.iter_mut().find(|r| r.id == id) {
-        *slot = resource.clone();
-    } else {
-        if resources.len() >= MAX_RESOURCES {
-            return Err(AuthStackError::validation("too many resources"));
-        }
-        resources.push(resource.clone());
+    let existing = load_resources(org_id).await?;
+    if !existing.iter().any(|r| r.id == id) && existing.len() >= MAX_RESOURCES {
+        return Err(AuthStackError::validation("too many resources"));
     }
-    save_resources(org_id, &resources).await?;
+    upsert_resource_row(org_id, &resource).await?;
     Ok(resource_to_summary(&resource))
 }
 
@@ -662,41 +712,29 @@ pub async fn upsert_query(
         transform: request.transform,
         config: request.config,
     };
-    let mut queries = load_queries(org_id).await?;
-    if let Some(slot) = queries.iter_mut().find(|q| q.id == id) {
-        *slot = query.clone();
-    } else {
-        if queries.len() >= MAX_QUERIES {
-            return Err(AuthStackError::validation("too many queries"));
-        }
-        queries.push(query.clone());
+    let existing = load_queries(org_id).await?;
+    if !existing.iter().any(|q| q.id == id) && existing.len() >= MAX_QUERIES {
+        return Err(AuthStackError::validation("too many queries"));
     }
-    save_queries(org_id, &queries).await?;
+    upsert_query_row(org_id, &query).await?;
     Ok(query_to_summary(&query, &resources))
 }
 
 pub async fn delete_resource(org_id: &str, resource_id: &str) -> AuthStackResult<()> {
-    let mut resources = load_resources(org_id).await?;
-    let before = resources.len();
-    resources.retain(|r| r.id != resource_id);
-    if resources.len() == before {
+    // Bound queries first: the schema cascades on the resource delete, but doing
+    // it explicitly keeps the intent readable and scoped to this resource.
+    delete_queries_for_resource(org_id, resource_id).await?;
+    if !delete_resource_row(org_id, resource_id).await? {
         return Err(AuthStackError::not_found("resource not found"));
     }
-    // Drop queries bound to this resource.
-    let mut queries = load_queries(org_id).await?;
-    queries.retain(|q| q.resource_id != resource_id);
-    save_resources(org_id, &resources).await?;
-    save_queries(org_id, &queries).await
+    Ok(())
 }
 
 pub async fn delete_query(org_id: &str, query_id: &str) -> AuthStackResult<()> {
-    let mut queries = load_queries(org_id).await?;
-    let before = queries.len();
-    queries.retain(|q| q.id != query_id);
-    if queries.len() == before {
+    if !delete_query_row(org_id, query_id).await? {
         return Err(AuthStackError::not_found("query not found"));
     }
-    save_queries(org_id, &queries).await
+    Ok(())
 }
 
 pub async fn delete_data_source(user_id: &str, source_id: &str) -> AuthStackResult<()> {

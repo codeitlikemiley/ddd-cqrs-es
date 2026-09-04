@@ -8,11 +8,13 @@ use crate::model::{
     defaults_for_preset, AppSelection, DbBackend, OAuthProviderKind, OutputFormat, Preset,
     Realtime, Runtime, Transport, Ui,
 };
-use crate::operation::{apply_operations, write_operation, CommandReport, FileOperation};
+use crate::operation::{
+    apply_operations, contained_join, write_operation, CommandReport, FileOperation,
+};
 use crate::render::{
-    available_template_names, ensure_rust_identifier, ensure_snake_identifier, parse_field_specs,
-    render_aggregate, render_command_handle_arm, render_command_variant, render_domain_mod,
-    render_domain_test, render_event_type_arm, render_event_variant,
+    available_template_names, ensure_package_name, ensure_rust_identifier, ensure_snake_identifier,
+    parse_field_specs, render_aggregate, render_command_handle_arm, render_command_variant,
+    render_domain_mod, render_domain_test, render_event_type_arm, render_event_variant,
     render_fullstack_domain_app_mod, render_fullstack_domain_app_module,
     render_fullstack_domain_rest_arm, render_fullstack_domain_rest_bootstrap, render_init,
     sanitize_package_name, InitRenderInput, NameParts,
@@ -257,6 +259,9 @@ fn init_project(ctx: &ExecutionContext, args: InitArgs) -> Result<CommandReport>
         .and_then(|name| name.to_str())
         .map(sanitize_package_name)
         .unwrap_or_else(|| "ddd-app".to_string());
+    // Refuse now rather than writing a manifest that every later command
+    // (which re-reads and re-validates `project.name`) would reject.
+    ensure_package_name(&package_name, "project name")?;
     let input = InitRenderInput {
         package_name,
         domain_name: args.domain,
@@ -286,12 +291,12 @@ fn init_project(ctx: &ExecutionContext, args: InitArgs) -> Result<CommandReport>
             "preset": "fullstack",
             "next_steps": [
                 format!("cd {dir_name}"),
-                "cp .env.example .env",
                 "make db-up",
                 "make dev transport=both",
                 "open http://localhost:3008  # or visit in a browser"
             ],
             "notes": [
+                ".env is generated with a per-project AUTH_ROOT_KEY_BASE64; keep it out of version control",
                 "make dev starts Spin plus the wasi-auth outbox worker (required for verification mail)",
                 "ddd add aggregate wires src/domain + domain_app + /api/domain REST (InMemory demo store)",
                 "replace InMemoryEventStore for production; domain routes are not Cedar-gated by default"
@@ -1236,7 +1241,7 @@ impl DomainRecordNames for DomainRecord {
 }
 
 fn read_project_file(root: &Path, path: &Path) -> Result<String> {
-    let full_path = root.join(path);
+    let full_path = contained_join(root, path)?;
     std::fs::read_to_string(&full_path)
         .with_context(|| format!("failed to read {}", full_path.display()))
 }

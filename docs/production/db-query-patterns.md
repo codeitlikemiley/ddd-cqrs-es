@@ -35,9 +35,12 @@ duplicate `{events_table}_stream_idx` index when it exists:
 
 ## Bounded Projection Replay
 
-`EventStore::load_global_after` and projection runner `run(...)` methods remain
-available for compatibility, but they load the full backlog after the
-checkpoint. Production workers should prefer the bounded APIs:
+`load_global_after_limited` is the replay primitive every store implements, and
+it is the only global read a projection runner performs. `run(...)` repeats a
+default-sized `run_batch(...)` until a batch reports `caught_up`, so catching up
+on a large backlog costs one batch of memory at a time rather than the whole
+tail. Production workers should still call `run_batch(...)` directly when they
+need to interleave catch-up with other work or bound a single poll's duration:
 
 ```rust
 use ddd_cqrs_es::ProjectionBatchConfig;
@@ -50,9 +53,17 @@ if !outcome.caught_up {
 }
 ```
 
-The default batch size is `500`. SQL adapters apply `LIMIT`, Redis uses
-`ZRANGEBYSCORE ... LIMIT`, and the in-memory store uses iterator `take`, so the
-bounded path avoids fetching an unbounded tail in production adapters.
+The default batch size is `500`. SQL adapters apply `LIMIT`, Redis pages
+`ZRANGEBYSCORE ... WITHSCORES LIMIT` and fetches event hashes 256 keys per
+`EVAL`, and the in-memory store slices its log, so no adapter answers a replay
+read with a reply that grows without bound.
+
+`EventStore::load_global_after` still exists and still returns the entire
+backlog after the checkpoint in one allocation. Keep it to tests, small
+fixtures, and explicit maintenance jobs. Stores that do not override it get a
+provided implementation that pages through `load_global_after_limited`, so the
+unbounded API costs unbounded *client* memory but never an unbounded backend
+query or protocol reply.
 
 ## Read Models Own Product Queries
 

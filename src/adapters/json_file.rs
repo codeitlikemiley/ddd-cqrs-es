@@ -376,37 +376,81 @@ where
         &self,
         sequence: Option<u64>,
     ) -> Result<crate::event_store::EventStream<A>, Self::Error> {
+        self.load_global_range(sequence, None)
+    }
+
+    fn load_global_after_limited(
+        &self,
+        sequence: Option<u64>,
+        limit: std::num::NonZeroUsize,
+    ) -> Result<crate::event_store::EventStream<A>, Self::Error> {
+        self.load_global_range(sequence, Some(limit.get()))
+    }
+}
+
+#[cfg(feature = "json-file")]
+impl<A> JsonFileEventStore<A>
+where
+    A: crate::aggregate::Aggregate,
+    A::Event: serde::Serialize + serde::de::DeserializeOwned + Clone,
+    A::Id: serde::Serialize + serde::de::DeserializeOwned + Clone + PartialEq,
+{
+    /// Reads the global feed after `sequence`, deserializing at most `limit`
+    /// envelopes.
+    ///
+    /// The dev-only file store has no index, so the line scan itself is
+    /// unavoidable; the bound applies to envelope deserialization and to the
+    /// returned allocation, which is what projection replay pays for.
+    fn load_global_range(
+        &self,
+        sequence: Option<u64>,
+        limit: Option<usize>,
+    ) -> Result<crate::event_store::EventStream<A>, crate::error::EventStoreError> {
         let lock = get_file_lock(&self.events_path)?;
         let _guard = lock
             .lock()
             .map_err(|_| crate::error::EventStoreError::Poisoned)?;
 
         let values = read_event_values(&self.events_path)?;
-
-        let mut envelopes = Vec::new();
         let seq_num = sequence.unwrap_or(0);
-        for val in values {
-            if let Some(agg_type_val) = val.get("aggregate_type") {
-                if let Some(agg_type_str) = agg_type_val.as_str() {
-                    if agg_type_str == A::aggregate_type() {
-                        let envelope = serde_json::from_value::<
-                            crate::event::EventEnvelope<A::Event, A::Id>,
-                        >(val)
-                        .map_err(|e| {
-                            crate::error::EventStoreError::deserialization(format!(
-                                "failed to deserialize event envelope: {e}"
-                            ))
-                        })?;
-                        if envelope.sequence.unwrap_or(0) > seq_num {
-                            envelopes.push(envelope);
-                        }
-                    }
-                }
+
+        // Lines are appended in commit order, but a legacy file could be out of
+        // order, so select by sequence first and only then deserialize the
+        // bounded window.
+        let mut selected = Vec::new();
+        for value in values {
+            let matches_type = value
+                .get("aggregate_type")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|aggregate_type| aggregate_type == A::aggregate_type());
+            if !matches_type {
+                continue;
+            }
+            let event_sequence = value
+                .get("sequence")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            if event_sequence > seq_num {
+                selected.push((event_sequence, value));
             }
         }
 
-        envelopes.sort_by_key(|e| e.sequence);
-        Ok(envelopes)
+        selected.sort_by_key(|(sequence, _)| *sequence);
+        if let Some(limit) = limit {
+            selected.truncate(limit);
+        }
+
+        selected
+            .into_iter()
+            .map(|(_, value)| {
+                serde_json::from_value::<crate::event::EventEnvelope<A::Event, A::Id>>(value)
+                    .map_err(|e| {
+                        crate::error::EventStoreError::deserialization(format!(
+                            "failed to deserialize event envelope: {e}"
+                        ))
+                    })
+            })
+            .collect()
     }
 }
 
@@ -453,6 +497,19 @@ where
         let this = self.clone();
         tokio::task::spawn_blocking(move || {
             crate::event_store::EventStore::load_global_after(&this, sequence)
+        })
+        .await
+        .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?
+    }
+
+    async fn load_global_after_limited(
+        &self,
+        sequence: Option<u64>,
+        limit: std::num::NonZeroUsize,
+    ) -> Result<crate::event_store::EventStream<A>, Self::Error> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::event_store::EventStore::load_global_after_limited(&this, sequence, limit)
         })
         .await
         .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?

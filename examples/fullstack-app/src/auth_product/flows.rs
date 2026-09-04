@@ -12,6 +12,7 @@ use base64::{
     Engine as _,
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
+use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 #[cfg(feature = "mail-capture")]
 use wasi_auth::mail::{EmailKind, Recipient};
@@ -86,6 +87,63 @@ use crate::{
 };
 
 use super::*;
+
+type OAuthFlowBindingMac = Hmac<Sha256>;
+
+/// Ties an OAuth `state` to the browser that started the flow.
+///
+/// `wasi-auth` owns the pending-flow record and exposes no field for a browser
+/// binding, so the binding travels in a cookie whose value is a random nonce
+/// plus an HMAC over `(nonce, provider, state)`. Recomputing the tag on the
+/// callback proves the same browser started and finished the flow, which is
+/// what a cookie hash stored on the flow record would prove.
+pub async fn issue_oauth_flow_binding(provider_id: &str, state: &str) -> AuthStackResult<String> {
+    let mut bytes = [0_u8; 32];
+    RuntimeRandom
+        .fill_bytes(&mut bytes)
+        .map_err(|_| AuthStackError::store("cryptographic randomness is unavailable"))?;
+    let nonce = URL_SAFE_NO_PAD.encode(bytes);
+    let tag = oauth_flow_binding_mac(&nonce, provider_id, state)
+        .await?
+        .finalize()
+        .into_bytes();
+    Ok(format!("{nonce}.{}", URL_SAFE_NO_PAD.encode(tag)))
+}
+
+pub async fn verify_oauth_flow_binding(
+    provider_id: &str,
+    state: &str,
+    presented: Option<&str>,
+) -> AuthStackResult<()> {
+    let presented = presented
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            AuthStackError::validation(
+                "this sign-in was not started in this browser; start OAuth login again",
+            )
+        })?;
+    let (nonce, tag) = presented.split_once('.').ok_or(AuthStackError::Forbidden)?;
+    let tag = URL_SAFE_NO_PAD
+        .decode(tag)
+        .map_err(|_| AuthStackError::Forbidden)?;
+    oauth_flow_binding_mac(nonce, provider_id, state)
+        .await?
+        .verify_slice(&tag)
+        .map_err(|_| AuthStackError::Forbidden)
+}
+
+async fn oauth_flow_binding_mac(
+    nonce: &str,
+    provider_id: &str,
+    state: &str,
+) -> AuthStackResult<OAuthFlowBindingMac> {
+    let key = derived_key(OAUTH_FLOW_BINDING_INFO).await?;
+    let mut mac = <OAuthFlowBindingMac as Mac>::new_from_slice(&key)
+        .map_err(|_| AuthStackError::configuration("OAuth flow binding key is invalid"))?;
+    mac.update(format!("{nonce}\u{0}{provider_id}\u{0}{state}").as_bytes());
+    Ok(mac)
+}
 
 pub async fn start_oauth_flow(
     provider_id: &str,

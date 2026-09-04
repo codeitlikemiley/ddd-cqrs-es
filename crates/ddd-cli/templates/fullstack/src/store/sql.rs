@@ -245,17 +245,15 @@ pub async fn verify_atomic_rollback_probe() -> AuthStackResult<Value> {
 }
 
 pub async fn csrf_token_for_session(session_id: &str) -> AuthStackResult<String> {
-    let secret = if let Some(value) = store_config_value("AUTH_CSRF_SECRET")
+    let secret = match store_config_value("AUTH_CSRF_SECRET")
         .await
         .filter(|value| !value.trim().is_empty())
     {
-        value
-    } else {
-        tracing::warn!(
-            "AUTH_CSRF_SECRET is not set; deriving CSRF tokens from the public development \
-             secret. Set AUTH_CSRF_SECRET before exposing this app."
-        );
-        "dev-fullstack-csrf-secret-change-me".to_owned()
+        Some(value) => value,
+        // Derived per project, so an unset secret is still unique to this
+        // deployment instead of a published constant.
+        None => URL_SAFE_NO_PAD
+            .encode(crate::auth_product::derived_key(crate::auth_product::CSRF_KEY_INFO).await?),
     };
     let digest = Sha256::digest(format!("csrf:{secret}:{session_id}").as_bytes());
     Ok(URL_SAFE_NO_PAD.encode(digest))

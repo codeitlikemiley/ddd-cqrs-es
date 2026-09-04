@@ -251,20 +251,32 @@ where
         Ok(committed)
     }
 
-    fn load_global_after(&self, sequence: Option<u64>) -> Result<EventStream<A>, Self::Error> {
+    // `load_global_after_limited` is the required replay primitive: push the
+    // limit into the query so a projection runner never pulls an unbounded
+    // backlog into memory. The unbounded `load_global_after` comes for free
+    // from the trait, which pages through this method.
+    fn load_global_after_limited(
+        &self,
+        sequence: Option<u64>,
+        limit: std::num::NonZeroUsize,
+    ) -> Result<EventStream<A>, Self::Error> {
         let conn = self.get_connection();
         let seq_val = sequence.unwrap_or(0) as i64;
 
         let query = format!(
             "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
              payload, metadata, recorded_at_ms FROM {table} \
-             WHERE aggregate_type = ? AND sequence > ? ORDER BY sequence ASC",
+             WHERE aggregate_type = ? AND sequence > ? ORDER BY sequence ASC LIMIT ?",
             table = self.table_name
         );
 
         let row_set = conn.execute(
             &query,
-            &[Value::Text(A::aggregate_type().to_string()), Value::Integer(seq_val)]
+            &[
+                Value::Text(A::aggregate_type().to_string()),
+                Value::Integer(seq_val),
+                Value::Integer(limit.get() as i64),
+            ]
         ).map_err(|e| format!("Database load global error: {:?}", e))?;
 
         let mut stream = Vec::new();

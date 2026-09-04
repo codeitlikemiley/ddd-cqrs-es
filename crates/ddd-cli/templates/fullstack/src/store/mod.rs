@@ -118,6 +118,7 @@ mod tests {
     fn layout_v1_migrates_to_nodes_with_12_col_spans() {
         let mut layout = DashboardLayout {
             version: 1,
+            revision: 0,
             nodes: Vec::new(),
             widgets: vec![
                 LegacyDashboardWidget {

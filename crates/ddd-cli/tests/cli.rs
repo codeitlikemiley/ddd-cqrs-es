@@ -146,7 +146,8 @@ fn fullstack_dry_run_json_lists_auth_template_operations() {
         .stdout(predicate::str::contains(
             "\"path\": \"proto/authorization.proto\"",
         ))
-        .stdout(predicate::str::contains("\"path\": \".env.example\""));
+        .stdout(predicate::str::contains("\"path\": \".env.example\""))
+        .stdout(predicate::str::contains("\"path\": \".env\""));
 }
 
 #[test]
@@ -175,6 +176,7 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
         "spin.toml",
         "spin.production.toml.example",
         ".env.example",
+        ".env",
         "src/app/mod.rs",
         "src/application/mod.rs",
         "src/contracts/mod.rs",
@@ -234,7 +236,7 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
     assert!(!cargo_toml.contains("ddd-auth ="));
     assert!(!cargo_toml.contains("ddd-authz ="));
     assert!(cargo_toml.contains("=0.4.2-rc.1"));
-    assert!(cargo_toml.contains("=0.1.0-rc.3")); // wasi-auth (independent cadence)
+    assert!(cargo_toml.contains("=0.1.0-rc.4")); // wasi-auth (independent cadence)
     assert!(cargo_toml.contains(&format!("={}", env!("CARGO_PKG_VERSION")))); // ddd_cqrs_es
     assert!(cargo_toml.contains("=0.7.0"));
     assert!(cargo_toml.contains("=0.57.1"));
@@ -312,7 +314,9 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
     assert!(spin_toml.contains("auth_password_kdf = { default = \"argon2id\" }"));
     assert!(spin_toml.contains("auth_bootstrap_admin_emails = { default = \"\" }"));
     assert!(spin_toml.contains("auth_csrf_secret = { default = \"\" }"));
-    assert!(spin_toml.contains("auth_dev_tools = { default = \"true\" }"));
+    assert!(spin_toml.contains("auth_root_key_base64 = { default = \"\" }"));
+    assert!(spin_toml.contains("auth_root_key_base64 = \"{{ auth_root_key_base64 }}\""));
+    assert!(spin_toml.contains("auth_dev_tools = { default = \"false\" }"));
     assert!(spin_toml.contains("auth_spicedb_enabled = { default = \"false\" }"));
     assert!(spin_toml.contains("auth_spicedb_check_token = { default = \"\" }"));
     assert!(!spin_toml.contains("auth_spicedb_write_url"));
@@ -373,12 +377,30 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
     assert!(env_example.contains("AUTH_PASSWORD_KDF=argon2id"));
     assert!(env_example.contains("AUTH_BOOTSTRAP_ADMIN_EMAILS="));
     assert!(env_example.contains("AUTH_CSRF_SECRET="));
-    assert!(env_example.contains("AUTH_DEV_TOOLS=true"));
-    assert!(env_example.contains("AUTH_OUTBOX_KEY_BASE64="));
+    assert!(env_example.contains("AUTH_DEV_TOOLS=false"));
+    assert!(env_example.contains("AUTH_ROOT_KEY_BASE64=\n"));
+    assert!(env_example.contains("AUTH_OUTBOX_KEY_BASE64=\n"));
     assert!(env_example.contains("AUTH_OUTBOX_KEY_VERSION=development-v1"));
     assert!(env_example.contains("AUTH_SPICEDB_CHECK_TOKEN="));
     assert!(env_example.contains("DATABASE_BACKEND=postgres"));
     assert!(env_example.contains("POSTGRES_URL="));
+
+    // Every project gets its own keys; the app refuses to start without a root key.
+    let env_file = std::fs::read_to_string(project.join(".env")).unwrap();
+    let generated_key = |prefix: &str| {
+        let value = env_file
+            .lines()
+            .find_map(|line| line.strip_prefix(prefix))
+            .unwrap()
+            .to_owned();
+        // 32 bytes standard-base64 is 44 characters with a single pad.
+        assert_eq!(value.len(), 44, "unexpected {prefix} value: {value}");
+        assert!(value.ends_with('='), "unexpected {prefix} value: {value}");
+        value
+    };
+    let root_key = generated_key("AUTH_ROOT_KEY_BASE64=");
+    let outbox_key = generated_key("AUTH_OUTBOX_KEY_BASE64=");
+    assert_ne!(root_key, outbox_key);
 
     let compose = std::fs::read_to_string(project.join("compose.yaml")).unwrap();
     assert!(compose.contains("postgres:17-alpine"));
@@ -1100,6 +1122,109 @@ fn doctor_reports_tool_presence_without_a_shell() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\"tool\": \"cargo\""));
+}
+
+/// A cloned repository can ship any `ddd.toml`; a `[domains]` key that walks
+/// out of the project root must be refused before codegen touches the disk.
+#[test]
+fn add_refuses_domain_module_that_escapes_the_project_root() {
+    let temp = tempfile::tempdir().unwrap();
+    init_basic_project_with_domain(&temp, "traversal", "Invoice");
+    let project = temp.path().join("traversal");
+    let escape = "../../../outside/pwned";
+    std::fs::write(
+        project.join("ddd.toml"),
+        format!(
+            r#"[project]
+name = "traversal"
+preset = "basic"
+runtime = "spin"
+db = "sqlite"
+realtime = "off"
+transport = "http"
+ui = "none"
+
+[capabilities]
+enabled = []
+
+[domains."{escape}"]
+aggregate = "Invoice"
+module = "{escape}"
+commands = ["CreateInvoice"]
+events = ["InvoiceCreated"]
+"#
+        ),
+    )
+    .unwrap();
+
+    let mut command = Command::cargo_bin("ddd").unwrap();
+    command
+        .arg("--cwd")
+        .arg(&project)
+        .arg("add")
+        .arg("event")
+        .arg(escape)
+        .arg("Paid");
+
+    command
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("domain module"));
+
+    assert!(
+        !temp.path().join("outside").exists(),
+        "no file may be written outside the project root"
+    );
+}
+
+/// Defense in depth for the same threat model: even if a traversing path
+/// reaches the writer, the write itself is contained.
+#[test]
+fn write_operations_stay_inside_the_project_root() {
+    let temp = tempfile::tempdir().unwrap();
+    init_basic_project_with_domain(&temp, "contained", "Invoice");
+    let project = temp.path().join("contained");
+
+    let mut command = Command::cargo_bin("ddd").unwrap();
+    command
+        .arg("--cwd")
+        .arg(&project)
+        .arg("add")
+        .arg("aggregate")
+        .arg("Ledger");
+    command.assert().success();
+
+    assert!(project.join("src/domain/ledger.rs").exists());
+    assert!(!temp.path().join("src").exists());
+}
+
+#[test]
+fn add_rejects_manifest_project_name_that_is_not_a_crate_name() {
+    let temp = tempfile::tempdir().unwrap();
+    init_basic_project_with_domain(&temp, "bad-name", "Invoice");
+    let project = temp.path().join("bad-name");
+    let manifest = std::fs::read_to_string(project.join("ddd.toml")).unwrap();
+    std::fs::write(
+        project.join("ddd.toml"),
+        manifest.replace(
+            r#"name = "bad-name""#,
+            r#"name = "x\"; fn injected() {} //""#,
+        ),
+    )
+    .unwrap();
+
+    let mut command = Command::cargo_bin("ddd").unwrap();
+    command
+        .arg("--cwd")
+        .arg(&project)
+        .arg("add")
+        .arg("aggregate")
+        .arg("Ledger");
+
+    command.assert().failure().stderr(
+        predicate::str::contains("project.name")
+            .and(predicate::str::contains("snake_case Rust identifier")),
+    );
 }
 
 fn init_basic_project(temp: &tempfile::TempDir, name: &str) {

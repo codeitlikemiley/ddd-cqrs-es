@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use serde::Serialize;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 #[derive(Clone, Debug)]
 pub struct FileOperation {
@@ -56,6 +56,32 @@ impl CommandReport {
     }
 }
 
+/// Joins a generated relative path onto the project root, refusing anything
+/// that could resolve outside it.
+///
+/// Generated paths are derived from names in `ddd.toml`, which is untrusted
+/// input in a cloned repository, so every read and write goes through this
+/// containment check instead of a bare `root.join(..)`.
+pub fn contained_join(root: &Path, relative: &Path) -> Result<PathBuf> {
+    if relative.as_os_str().is_empty() {
+        anyhow::bail!("generated path is empty");
+    }
+    for component in relative.components() {
+        match component {
+            Component::Normal(_) | Component::CurDir => {}
+            Component::ParentDir => anyhow::bail!(
+                "generated path {} escapes the project root via `..`",
+                relative.display()
+            ),
+            Component::RootDir | Component::Prefix(_) => anyhow::bail!(
+                "generated path {} must be relative to the project root",
+                relative.display()
+            ),
+        }
+    }
+    Ok(root.join(relative))
+}
+
 pub fn apply_operations(
     root: &Path,
     operations: &[FileOperation],
@@ -64,7 +90,7 @@ pub fn apply_operations(
 ) -> Result<Vec<FileOperationReport>> {
     let mut reports = Vec::with_capacity(operations.len());
     for operation in operations {
-        let absolute_path = root.join(&operation.path);
+        let absolute_path = contained_join(root, &operation.path)?;
         let exists = absolute_path.exists();
         if exists && !operation.overwrite && !force {
             anyhow::bail!(
@@ -103,5 +129,50 @@ pub fn write_operation(
         content: content.into(),
         overwrite,
         description: description.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_operations, contained_join, write_operation};
+    use std::path::Path;
+
+    #[test]
+    fn contained_join_accepts_relative_project_paths() {
+        let joined =
+            contained_join(Path::new("/project"), Path::new("src/domain/order.rs")).unwrap();
+
+        assert_eq!(joined, Path::new("/project/src/domain/order.rs"));
+    }
+
+    #[test]
+    fn contained_join_rejects_traversal_and_absolute_paths() {
+        for path in [
+            "../outside.rs",
+            "src/domain/../../../outside.rs",
+            "/etc/passwd",
+        ] {
+            assert!(
+                contained_join(Path::new("/project"), Path::new(path)).is_err(),
+                "{path} should be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn apply_operations_refuses_to_write_outside_the_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        let operations = vec![write_operation(
+            "src/domain/../../../outside.rs",
+            "// escaped\n",
+            false,
+            "traversal attempt",
+        )];
+
+        let error = apply_operations(&root, &operations, false, true).unwrap_err();
+
+        assert!(error.to_string().contains("escapes the project root"));
+        assert!(!temp.path().join("outside.rs").exists());
     }
 }

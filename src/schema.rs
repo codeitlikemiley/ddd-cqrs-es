@@ -54,6 +54,24 @@ fn map_mysql_schema_error(error: mysql::Error) -> EventStoreError {
     }
 }
 
+/// Refusal returned when the migrations bookkeeping table exists without the
+/// composite `(version, table_name)` layout this version records against.
+///
+/// Older releases dropped the table here. That is destructive whenever the
+/// probe was wrong (a failed probe, a same-named table in another schema, or an
+/// unrelated application table), so the decision belongs to the operator.
+#[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
+fn legacy_migrations_table_error(table: &str) -> EventStoreError {
+    EventStoreError::backend(format!(
+        "`{table}` exists without the `table_name` column that schema migration \
+         bookkeeping requires, and this migrator will not drop it. If it is this \
+         framework's pre-0.3 bookkeeping table, run `DROP TABLE {table};` and \
+         rerun the migration (framework migrations are idempotent and re-record \
+         themselves). If it belongs to your application, point the migrator at \
+         another name with `SqlSchemaConfig::with_migrations_table`."
+    ))
+}
+
 /// Supported SQL Database Dialects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SqlDialect {
@@ -512,14 +530,8 @@ impl SchemaMigrator {
             .collect::<Result<HashSet<String>, _>>()
             .map_err(|e| EventStoreError::backend(e.to_string()))?;
 
-        let has_col = columns.contains("table_name");
-        if !has_col && !columns.is_empty() {
-            // Drop and recreate table with the new schema
-            let drop_table = self.config.interpolate("DROP TABLE {migrations_table};");
-            conn.execute(&drop_table, [])
-                .map_err(|e| EventStoreError::backend(e.to_string()))?;
-            conn.execute(&create_mig_table, [])
-                .map_err(|e| EventStoreError::backend(e.to_string()))?;
+        if !columns.contains("table_name") && !columns.is_empty() {
+            return Err(legacy_migrations_table_error(&self.config.migrations_table));
         }
 
         // 2. Fetch applied migrations
@@ -628,29 +640,28 @@ impl SchemaMigrator {
             .batch_execute(&create_mig_table)
             .map_err(map_postgres_schema_error)?;
 
-        // Check if table_name column exists
+        // Check if table_name column exists. `to_regclass` resolves the name
+        // through `search_path`, so the probe reads the same relation the
+        // SELECT/INSERT statements below write to instead of matching any
+        // same-named table in another schema. Dropped columns keep their
+        // `pg_attribute` row, hence `NOT attisdropped`.
         let check_col = self.config.interpolate(
             "SELECT EXISTS (
                 SELECT 1
                 FROM pg_attribute a
-                JOIN pg_class c ON a.attrelid = c.oid
-                WHERE c.relname = '{migrations_table}' AND a.attname = 'table_name'
+                WHERE a.attrelid = to_regclass('{migrations_table}')
+                  AND a.attname = 'table_name'
+                  AND a.attnum > 0
+                  AND NOT a.attisdropped
             );",
         );
         let has_col: bool = client
             .query_one(&check_col, &[])
             .map(|row| row.get(0))
-            .unwrap_or(false);
+            .map_err(map_postgres_schema_error)?;
 
         if !has_col {
-            // Drop and recreate
-            let drop_table = self.config.interpolate("DROP TABLE {migrations_table};");
-            client
-                .batch_execute(&drop_table)
-                .map_err(map_postgres_schema_error)?;
-            client
-                .batch_execute(&create_mig_table)
-                .map_err(map_postgres_schema_error)?;
+            return Err(legacy_migrations_table_error(&self.config.migrations_table));
         }
 
         // 2. Fetch applied migrations
@@ -771,20 +782,12 @@ impl SchemaMigrator {
         );
         let has_col: bool = conn
             .query_first(&check_col)
-            .map(|row_opt| {
-                row_opt
-                    .and_then(|r: mysql::Row| r.get::<bool, _>(0))
-                    .unwrap_or(false)
-            })
+            .map_err(map_mysql_schema_error)?
+            .and_then(|row: mysql::Row| row.get::<bool, _>(0))
             .unwrap_or(false);
 
         if !has_col {
-            // Drop and recreate
-            let drop_table = self.config.interpolate("DROP TABLE {migrations_table};");
-            conn.query_drop(&drop_table)
-                .map_err(map_mysql_schema_error)?;
-            conn.query_drop(&create_mig_table)
-                .map_err(map_mysql_schema_error)?;
+            return Err(legacy_migrations_table_error(&self.config.migrations_table));
         }
 
         // 2. Fetch applied migrations

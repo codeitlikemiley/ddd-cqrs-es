@@ -89,23 +89,61 @@ where
         events: Vec<NewEvent<A::Event>>,
     ) -> Result<EventStream<A>, Self::Error>;
 
-    /// Loads globally ordered events after a global sequence number.
-    async fn load_global_after(&self, sequence: Option<u64>)
-        -> Result<EventStream<A>, Self::Error>;
-
     /// Loads at most `limit` globally ordered events after a global sequence number.
     ///
-    /// Adapters should override this with backend-native limits. The default
-    /// implementation preserves compatibility for custom stores by loading the
-    /// unbounded tail and truncating it.
+    /// This is the bounded replay primitive every store must provide, and the
+    /// only global-feed read projection runners perform. Implementations must
+    /// push `limit` down to the backend rather than materializing the tail and
+    /// truncating it. See
+    /// [`EventStore::load_global_after_limited`](crate::EventStore::load_global_after_limited)
+    /// for how "global" order is scoped to this store's aggregate type.
     async fn load_global_after_limited(
         &self,
         sequence: Option<u64>,
         limit: NonZeroUsize,
+    ) -> Result<EventStream<A>, Self::Error>;
+
+    /// Loads **every** globally ordered event after a global sequence number.
+    ///
+    /// > [!WARNING]
+    /// > The result is unbounded: the whole backlog after `sequence` is held in
+    /// > memory at once. Use it for tests, small fixtures, and explicit
+    /// > maintenance jobs only. Production replay should call
+    /// > [`Self::load_global_after_limited`], or a projection runner, which
+    /// > pages through it.
+    ///
+    /// The provided implementation drains the feed in
+    /// [`GLOBAL_REPLAY_PAGE_SIZE`](crate::event_store::GLOBAL_REPLAY_PAGE_SIZE)
+    /// pages so a store never has to answer one unbounded backend query;
+    /// adapters that can stream the tail in a single query may override it.
+    /// Paging is not a consistent snapshot — events committed between pages are
+    /// included.
+    async fn load_global_after(
+        &self,
+        sequence: Option<u64>,
     ) -> Result<EventStream<A>, Self::Error> {
-        let mut events = self.load_global_after(sequence).await?;
-        events.truncate(limit.get());
-        Ok(events)
+        let page_size = crate::event_store::GLOBAL_REPLAY_PAGE_SIZE;
+        let mut cursor = sequence;
+        let mut all = Vec::new();
+
+        loop {
+            let page = self.load_global_after_limited(cursor, page_size).await?;
+            let page_len = page.len();
+            let last_sequence = page.last().and_then(|event| event.sequence);
+            all.extend(page);
+
+            if page_len < page_size.get() {
+                return Ok(all);
+            }
+            // A full page whose cursor does not advance would be re-read
+            // forever; stop instead of looping on it.
+            match last_sequence {
+                Some(sequence) if cursor.is_none_or(|cursor| sequence > cursor) => {
+                    cursor = Some(sequence);
+                }
+                _ => return Ok(all),
+            }
+        }
     }
 }
 
@@ -186,7 +224,7 @@ pub type AsyncAtomicIdempotentRepositoryResult<A, S, T> = Result<
 /// #     type Error = ddd_cqrs_es::error::EventStoreError;
 /// #     async fn load(&self, _id: &String) -> Result<EventStream<MyAggregate>, Self::Error> { Ok(vec![]) }
 /// #     async fn append(&self, _id: &String, _exp: ExpectedRevision, _evts: Vec<NewEvent<DummyEvent>>) -> Result<EventStream<MyAggregate>, Self::Error> { Ok(vec![]) }
-/// #     async fn load_global_after(&self, _seq: Option<u64>) -> Result<EventStream<MyAggregate>, Self::Error> { Ok(vec![]) }
+/// #     async fn load_global_after_limited(&self, _seq: Option<u64>, _limit: std::num::NonZeroUsize) -> Result<EventStream<MyAggregate>, Self::Error> { Ok(vec![]) }
 /// # }
 ///
 /// # async fn doc_example() -> Result<(), Box<dyn std::error::Error>> {

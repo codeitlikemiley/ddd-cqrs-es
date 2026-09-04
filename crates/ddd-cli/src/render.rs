@@ -194,6 +194,14 @@ pub fn ensure_snake_identifier(value: &str, label: &str) -> anyhow::Result<()> {
     }
 }
 
+/// Ensures a `ddd.toml` `project.name` is usable as a crate name.
+///
+/// The module-path form (dashes replaced by underscores) is embedded verbatim
+/// in generated `use` statements, so it has to be a snake_case identifier.
+pub fn ensure_package_name(value: &str, label: &str) -> anyhow::Result<()> {
+    ensure_snake_identifier(&value.replace('-', "_"), label)
+}
+
 pub fn parse_field_specs(fields: &[String]) -> anyhow::Result<Vec<(String, String)>> {
     fields
         .iter()
@@ -361,10 +369,6 @@ fn render_fullstack(input: &InitRenderInput) -> Vec<FileOperation> {
             // Keep in sync with templates/fullstack/Cargo.toml.template pin; rewritten to CLI version.
             "ddd_cqrs_es = { version = \"=0.3.0-rc.7\"",
             &format!("ddd_cqrs_es = {{ version = \"={}\"", framework_version()),
-        )
-        .replace(
-            "# Local wasi-auth for HTML mail templates until the next published rc.\nwasi-auth = { path = \"../../../wasi-auth/crates/wasi-auth\" }\n",
-            "",
         );
     let mut operations = vec![write_operation(
         "Cargo.toml",
@@ -373,7 +377,44 @@ fn render_fullstack(input: &InitRenderInput) -> Vec<FileOperation> {
         "fullstack Cargo manifest",
     )];
     append_fullstack_template_operations(fullstack_template_dir(), input, &mut operations);
+    operations.push(write_operation(
+        ".env",
+        render_fullstack_env_file(input),
+        false,
+        "fullstack local environment with a generated root key",
+    ));
     operations
+}
+
+/// `.env` is generated rather than copied so every project gets its own
+/// `AUTH_ROOT_KEY_BASE64`. The app derives its vault, refresh, flow, MFA, CSRF,
+/// and JWT keys from it and refuses to start when it is missing, which is what
+/// keeps one published constant from being every deployment's key. The outbox
+/// key is emitted too because the native outbox worker cannot run that
+/// derivation itself.
+fn render_fullstack_env_file(input: &InitRenderInput) -> String {
+    let raw = TEMPLATE_DIR
+        .get_file("fullstack/.env.example")
+        .expect("fullstack .env.example must be embedded")
+        .contents_utf8()
+        .expect("fullstack .env.example must be UTF-8");
+    render_fullstack_template_content(".env.example", raw, input)
+        .replace(
+            "AUTH_ROOT_KEY_BASE64=\n",
+            &format!("AUTH_ROOT_KEY_BASE64={}\n", generated_key()),
+        )
+        .replace(
+            "AUTH_OUTBOX_KEY_BASE64=\n",
+            &format!("AUTH_OUTBOX_KEY_BASE64={}\n", generated_key()),
+        )
+}
+
+fn generated_key() -> String {
+    use base64::Engine as _;
+
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes).expect("the host must provide cryptographic randomness");
+    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 fn fullstack_template_dir() -> &'static Dir<'static> {

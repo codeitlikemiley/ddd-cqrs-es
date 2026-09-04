@@ -33,6 +33,8 @@ auth_jwt_private_key_der_base64 = { default = "" }
 auth_jwt_public_jwks_json = { default = "" }
 auth_jwt_key_ring_json = { default = "" }
 auth_bootstrap_admin_emails = { default = "" }
+# Per-project root secret; every sealing key/pepper/MAC is HKDF-derived from it.
+auth_root_key_base64 = { required = true }
 auth_csrf_secret = { default = "" }
 auth_vault_key_base64 = { default = "" }
 auth_vault_key_version = { default = "production-v1" }
@@ -148,6 +150,7 @@ auth_jwt_private_key_der_base64 = "{{ auth_jwt_private_key_der_base64 }}"
 auth_jwt_public_jwks_json = "{{ auth_jwt_public_jwks_json }}"
 auth_jwt_key_ring_json = "{{ auth_jwt_key_ring_json }}"
 auth_bootstrap_admin_emails = "{{ auth_bootstrap_admin_emails }}"
+auth_root_key_base64 = "{{ auth_root_key_base64 }}"
 auth_csrf_secret = "{{ auth_csrf_secret }}"
 auth_vault_key_base64 = "{{ auth_vault_key_base64 }}"
 auth_vault_key_version = "{{ auth_vault_key_version }}"
@@ -245,6 +248,7 @@ auth_jwt_private_key_der_base64 = "{{ auth_jwt_private_key_der_base64 }}"
 auth_jwt_public_jwks_json = "{{ auth_jwt_public_jwks_json }}"
 auth_jwt_key_ring_json = "{{ auth_jwt_key_ring_json }}"
 auth_bootstrap_admin_emails = "{{ auth_bootstrap_admin_emails }}"
+auth_root_key_base64 = "{{ auth_root_key_base64 }}"
 auth_csrf_secret = "{{ auth_csrf_secret }}"
 auth_vault_key_base64 = "{{ auth_vault_key_base64 }}"
 auth_vault_key_version = "{{ auth_vault_key_version }}"
@@ -348,6 +352,7 @@ auth_jwt_private_key_der_base64 = "{{ auth_jwt_private_key_der_base64 }}"
 auth_jwt_public_jwks_json = "{{ auth_jwt_public_jwks_json }}"
 auth_jwt_key_ring_json = "{{ auth_jwt_key_ring_json }}"
 auth_bootstrap_admin_emails = "{{ auth_bootstrap_admin_emails }}"
+auth_root_key_base64 = "{{ auth_root_key_base64 }}"
 auth_csrf_secret = "{{ auth_csrf_secret }}"
 auth_vault_key_base64 = "{{ auth_vault_key_base64 }}"
 auth_vault_key_version = "{{ auth_vault_key_version }}"

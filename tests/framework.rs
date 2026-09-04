@@ -8,6 +8,7 @@ use ddd_cqrs_es::{
     ExpectedRevision, IdempotencyKey, IdempotencyStore, IdempotencyWaitConfig, InMemoryEventStore,
     InMemoryIdempotencyStore, InMemoryProjectionRunner, InMemorySnapshotStore, Metadata, NewEvent,
     Projection, ProjectionBatchConfig, Repository, RepositoryError, Snapshot, SnapshotStore,
+    DEFAULT_PROJECTION_BATCH_SIZE,
 };
 use std::collections::HashMap;
 use std::error::Error;
@@ -21,6 +22,30 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[path = "framework/contract_tests.rs"]
 mod contract_tests;
+
+/// Returns `true` when the suite is running under a CI provider.
+#[cfg(any(feature = "postgres", feature = "mysql"))]
+fn running_in_ci() -> bool {
+    std::env::var("CI").is_ok_and(|value| {
+        let value = value.trim();
+        !value.is_empty() && !value.eq_ignore_ascii_case("false") && value != "0"
+    })
+}
+
+/// Reports a live-backend test that cannot run because its connection URL is
+/// unset, and lets the caller return early.
+///
+/// Locally this only prints a skip notice. Under CI it panics: the workflow
+/// starts the backing service and exports the URL, so an unset variable means
+/// the service is missing and a silent skip would hide backend regressions.
+#[cfg(any(feature = "postgres", feature = "mysql"))]
+fn skip_live_test(test_name: &str, env_var: &str) {
+    assert!(
+        !running_in_ci(),
+        "live {test_name} cannot be skipped in CI: {env_var} is not set"
+    );
+    eprintln!("skipping live {test_name}: {env_var} is not set");
+}
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -203,6 +228,7 @@ impl Aggregate for Counter {
 struct LoadCountingStore {
     inner: InMemoryEventStore<Counter>,
     load_count: Arc<AtomicUsize>,
+    unbounded_global_load_count: Arc<AtomicUsize>,
     limited_global_load_count: Arc<AtomicUsize>,
     last_limited_global_limit: Arc<AtomicUsize>,
 }
@@ -212,6 +238,7 @@ impl LoadCountingStore {
         Self {
             inner,
             load_count: Arc::new(AtomicUsize::new(0)),
+            unbounded_global_load_count: Arc::new(AtomicUsize::new(0)),
             limited_global_load_count: Arc::new(AtomicUsize::new(0)),
             last_limited_global_limit: Arc::new(AtomicUsize::new(0)),
         }
@@ -219,6 +246,10 @@ impl LoadCountingStore {
 
     fn load_count(&self) -> usize {
         self.load_count.load(Ordering::SeqCst)
+    }
+
+    fn unbounded_global_load_count(&self) -> usize {
+        self.unbounded_global_load_count.load(Ordering::SeqCst)
     }
 
     fn limited_global_load_count(&self) -> usize {
@@ -251,6 +282,8 @@ impl EventStore<Counter> for LoadCountingStore {
         &self,
         sequence: Option<u64>,
     ) -> Result<EventStream<Counter>, Self::Error> {
+        self.unbounded_global_load_count
+            .fetch_add(1, Ordering::SeqCst);
         self.inner.load_global_after(sequence)
     }
 
@@ -343,13 +376,14 @@ impl EventStore<Counter> for OffsetSequenceStore {
             .map(|events| self.map_sequences(events))
     }
 
-    fn load_global_after(
+    fn load_global_after_limited(
         &self,
         sequence: Option<u64>,
+        limit: NonZeroUsize,
     ) -> Result<EventStream<Counter>, Self::Error> {
         let inner_sequence = sequence.map(|sequence| sequence.saturating_sub(self.offset));
         self.inner
-            .load_global_after(inner_sequence)
+            .load_global_after_limited(inner_sequence, limit)
             .map(|events| self.map_sequences(events))
     }
 }
@@ -521,7 +555,7 @@ fn sqlite_atomic_idempotent_pending_key_times_out() {
 #[test]
 fn postgres_query_plans_use_expected_indexes_when_url_is_provided() {
     let Ok(database_url) = std::env::var("DDD_CQRS_ES_POSTGRES_URL") else {
-        eprintln!("skipping live Postgres query-plan test: DDD_CQRS_ES_POSTGRES_URL is not set");
+        skip_live_test("Postgres query-plan test", "DDD_CQRS_ES_POSTGRES_URL");
         return;
     };
     let table_name = format!(
@@ -1050,6 +1084,221 @@ fn projection_runner_batch_applies_only_configured_limit() {
     assert_eq!(runner.projection().values[&counter_id], 3);
 }
 
+/// Backlog larger than two default batches, so a runner that pages is
+/// distinguishable from one that reads the tail in a single load.
+const BACKLOG_EVENT_COUNT: usize = DEFAULT_PROJECTION_BATCH_SIZE * 2 + 1;
+
+/// Number of bounded loads a paging runner performs over `BACKLOG_EVENT_COUNT`
+/// events: two full batches plus the short batch that reports `caught_up`.
+const BACKLOG_BOUNDED_LOADS: usize = 3;
+
+/// Appends `count` events to one counter stream in a single append.
+fn seed_counter_backlog(store: &InMemoryEventStore<Counter>, count: usize) -> String {
+    let aggregate_id = "counter-backlog".to_owned();
+    let events = std::iter::once(NewEvent::new(CounterEvent::Created, Metadata::default()))
+        .chain(
+            (1..count)
+                .map(|_| NewEvent::new(CounterEvent::Incremented { by: 1 }, Metadata::default())),
+        )
+        .collect::<Vec<_>>();
+
+    store
+        .append(&aggregate_id, ExpectedRevision::NoStream, events)
+        .unwrap();
+    aggregate_id
+}
+
+#[test]
+fn projection_run_pages_the_backlog_instead_of_loading_the_whole_tail() {
+    let inner = InMemoryEventStore::<Counter>::new();
+    let counter_id = seed_counter_backlog(&inner, BACKLOG_EVENT_COUNT);
+    let store = LoadCountingStore::new(inner);
+    let observed_store = store.clone();
+    let mut runner = InMemoryProjectionRunner::new(CounterProjection::default());
+
+    let applied = runner.run::<Counter, _>(&store).unwrap();
+
+    assert_eq!(applied, BACKLOG_EVENT_COUNT);
+    assert_eq!(runner.checkpoint(), Some(BACKLOG_EVENT_COUNT as u64));
+    assert_eq!(
+        runner.projection().values[&counter_id],
+        BACKLOG_EVENT_COUNT as u64 - 1
+    );
+    assert_eq!(observed_store.unbounded_global_load_count(), 0);
+    assert_eq!(
+        observed_store.limited_global_load_count(),
+        BACKLOG_BOUNDED_LOADS
+    );
+    assert_eq!(
+        observed_store.last_limited_global_limit(),
+        DEFAULT_PROJECTION_BATCH_SIZE
+    );
+}
+
+#[test]
+fn persisted_projection_run_pages_the_backlog_and_checkpoints_each_batch() {
+    use ddd_cqrs_es::projection::PersistedProjectionRunner;
+
+    let inner = InMemoryEventStore::<Counter>::new();
+    seed_counter_backlog(&inner, BACKLOG_EVENT_COUNT);
+    let store = LoadCountingStore::new(inner);
+    let observed_store = store.clone();
+    let checkpoint_store = CountingCheckpointStore::default();
+    let mut runner =
+        PersistedProjectionRunner::new(CounterProjection::default(), checkpoint_store.clone());
+
+    let applied = runner.run::<Counter, _>(&store).unwrap();
+
+    assert_eq!(applied, BACKLOG_EVENT_COUNT);
+    assert_eq!(
+        checkpoint_store.checkpoint(),
+        Some(BACKLOG_EVENT_COUNT as u64)
+    );
+    assert_eq!(checkpoint_store.saves(), BACKLOG_BOUNDED_LOADS);
+    assert_eq!(observed_store.unbounded_global_load_count(), 0);
+    assert_eq!(
+        observed_store.limited_global_load_count(),
+        BACKLOG_BOUNDED_LOADS
+    );
+}
+
+/// Store that implements only the bounded global-replay primitive, so the
+/// `EventStore::load_global_after` default implementation is exercised.
+#[derive(Clone, Debug)]
+struct BoundedOnlyStore {
+    inner: InMemoryEventStore<Counter>,
+    limited_load_count: Arc<AtomicUsize>,
+    largest_requested_limit: Arc<AtomicUsize>,
+}
+
+impl BoundedOnlyStore {
+    fn new(inner: InMemoryEventStore<Counter>) -> Self {
+        Self {
+            inner,
+            limited_load_count: Arc::new(AtomicUsize::new(0)),
+            largest_requested_limit: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+}
+
+impl EventStore<Counter> for BoundedOnlyStore {
+    type Error = EventStoreError;
+
+    fn load(&self, aggregate_id: &String) -> Result<EventStream<Counter>, Self::Error> {
+        self.inner.load(aggregate_id)
+    }
+
+    fn append(
+        &self,
+        aggregate_id: &String,
+        expected_revision: ExpectedRevision,
+        events: Vec<NewEvent<CounterEvent>>,
+    ) -> Result<EventStream<Counter>, Self::Error> {
+        self.inner.append(aggregate_id, expected_revision, events)
+    }
+
+    fn load_global_after_limited(
+        &self,
+        sequence: Option<u64>,
+        limit: NonZeroUsize,
+    ) -> Result<EventStream<Counter>, Self::Error> {
+        self.limited_load_count.fetch_add(1, Ordering::SeqCst);
+        self.largest_requested_limit
+            .fetch_max(limit.get(), Ordering::SeqCst);
+        self.inner.load_global_after_limited(sequence, limit)
+    }
+}
+
+#[test]
+fn unbounded_global_load_default_pages_through_the_bounded_primitive() {
+    use ddd_cqrs_es::event_store::GLOBAL_REPLAY_PAGE_SIZE;
+
+    let inner = InMemoryEventStore::<Counter>::new();
+    seed_counter_backlog(&inner, BACKLOG_EVENT_COUNT);
+    let store = BoundedOnlyStore::new(inner);
+
+    let events = store.load_global_after(None).unwrap();
+
+    assert_eq!(events.len(), BACKLOG_EVENT_COUNT);
+    assert_eq!(events[0].sequence, Some(1));
+    assert_eq!(
+        events[BACKLOG_EVENT_COUNT - 1].sequence,
+        Some(BACKLOG_EVENT_COUNT as u64)
+    );
+    assert_eq!(
+        store.limited_load_count.load(Ordering::SeqCst),
+        BACKLOG_BOUNDED_LOADS
+    );
+    assert_eq!(
+        store.largest_requested_limit.load(Ordering::SeqCst),
+        GLOBAL_REPLAY_PAGE_SIZE.get()
+    );
+}
+
+/// Store whose bounded load always returns a full batch of events with no
+/// global sequence, so a naive catch-up loop would never make progress.
+#[derive(Clone, Debug)]
+struct SequencelessStore;
+
+impl EventStore<Counter> for SequencelessStore {
+    type Error = EventStoreError;
+
+    fn load(&self, _aggregate_id: &String) -> Result<EventStream<Counter>, Self::Error> {
+        Ok(Vec::new())
+    }
+
+    fn append(
+        &self,
+        _aggregate_id: &String,
+        _expected_revision: ExpectedRevision,
+        _events: Vec<NewEvent<CounterEvent>>,
+    ) -> Result<EventStream<Counter>, Self::Error> {
+        Ok(Vec::new())
+    }
+
+    fn load_global_after_limited(
+        &self,
+        _sequence: Option<u64>,
+        limit: NonZeroUsize,
+    ) -> Result<EventStream<Counter>, Self::Error> {
+        Ok((0..limit.get())
+            .map(|_| {
+                ddd_cqrs_es::EventEnvelope::new(
+                    ddd_cqrs_es::EventId::new(),
+                    "counter-sequenceless".to_owned(),
+                    "counter",
+                    1,
+                    None,
+                    "counter_created",
+                    1,
+                    CounterEvent::Created,
+                    Metadata::default(),
+                    std::time::SystemTime::now(),
+                )
+            })
+            .collect())
+    }
+}
+
+#[test]
+fn projection_run_stops_when_a_full_batch_does_not_advance_the_feed() {
+    let mut runner = InMemoryProjectionRunner::new(CounterProjection::default());
+
+    let applied = runner.run::<Counter, _>(&SequencelessStore).unwrap();
+
+    assert_eq!(applied, DEFAULT_PROJECTION_BATCH_SIZE);
+    assert_eq!(runner.checkpoint(), None);
+}
+
+#[test]
+fn unbounded_global_load_default_stops_when_a_full_page_does_not_advance() {
+    use ddd_cqrs_es::event_store::GLOBAL_REPLAY_PAGE_SIZE;
+
+    let events = EventStore::<Counter>::load_global_after(&SequencelessStore, None).unwrap();
+
+    assert_eq!(events.len(), GLOBAL_REPLAY_PAGE_SIZE.get());
+}
+
 #[cfg(feature = "sqlite")]
 #[test]
 fn transactional_projection_rolls_back_read_model_and_checkpoint_together() {
@@ -1383,6 +1632,159 @@ fn sqlite_schema_migration_v6_drops_legacy_duplicate_stream_index() {
 
     assert_eq!(legacy_stream_index_count, 0);
     assert_eq!(replay_index_count, 1);
+}
+
+/// The migrator used to answer "does the bookkeeping table have a
+/// `table_name` column?" with `DROP TABLE`, so a probe error or a name
+/// collision with an application table destroyed data. It must refuse instead.
+#[cfg(feature = "sqlite")]
+#[test]
+fn sqlite_schema_refuses_to_drop_an_unexpected_migrations_table() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        r#"
+        CREATE TABLE legacy_migrations (
+            version INTEGER PRIMARY KEY,
+            description TEXT NOT NULL,
+            applied_at_ms INTEGER NOT NULL
+        );
+        INSERT INTO legacy_migrations (version, description, applied_at_ms)
+            VALUES (1, 'create_events_table', 0);
+        "#,
+    )
+    .unwrap();
+
+    let config = ddd_cqrs_es::SqlSchemaConfig::new(ddd_cqrs_es::SqlDialect::Sqlite)
+        .with_migrations_table("legacy_migrations")
+        .unwrap();
+    let error = ddd_cqrs_es::SchemaMigrator::new(config)
+        .run_sqlite(&conn)
+        .unwrap_err();
+
+    assert!(
+        error.to_string().contains("will not drop it"),
+        "unexpected error: {error}"
+    );
+
+    let surviving_rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM legacy_migrations", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(surviving_rows, 1);
+}
+
+#[cfg(feature = "postgres")]
+#[test]
+fn postgres_schema_refuses_to_drop_an_unexpected_migrations_table() {
+    let Ok(database_url) = std::env::var("DDD_CQRS_ES_POSTGRES_URL") else {
+        skip_live_test(
+            "Postgres migrations table refusal test",
+            "DDD_CQRS_ES_POSTGRES_URL",
+        );
+        return;
+    };
+    use postgres::{Client, NoTls};
+
+    let mut client = Client::connect(&database_url, NoTls).unwrap();
+    let table_name = format!(
+        "legacy_migrations_{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    client
+        .batch_execute(&format!(
+            "DROP TABLE IF EXISTS {table_name};
+             CREATE TABLE {table_name} (
+                 version INT PRIMARY KEY,
+                 description TEXT NOT NULL,
+                 applied_at_ms BIGINT NOT NULL
+             );
+             INSERT INTO {table_name} (version, description, applied_at_ms)
+                 VALUES (1, 'create_events_table', 0);"
+        ))
+        .unwrap();
+
+    let config = ddd_cqrs_es::SqlSchemaConfig::new(ddd_cqrs_es::SqlDialect::Postgres)
+        .with_migrations_table(table_name.clone())
+        .unwrap();
+    let error = ddd_cqrs_es::SchemaMigrator::new(config)
+        .run_postgres(&mut client)
+        .unwrap_err();
+
+    assert!(
+        error.to_string().contains("will not drop it"),
+        "unexpected error: {error}"
+    );
+
+    let surviving_rows: i64 = client
+        .query_one(&format!("SELECT COUNT(*) FROM {table_name}"), &[])
+        .unwrap()
+        .get(0);
+    assert_eq!(surviving_rows, 1);
+
+    client
+        .batch_execute(&format!("DROP TABLE IF EXISTS {table_name};"))
+        .unwrap();
+}
+
+#[cfg(feature = "mysql")]
+#[test]
+fn mysql_schema_refuses_to_drop_an_unexpected_migrations_table() {
+    let Ok(database_url) = std::env::var("DDD_CQRS_ES_MYSQL_URL") else {
+        skip_live_test(
+            "MySQL migrations table refusal test",
+            "DDD_CQRS_ES_MYSQL_URL",
+        );
+        return;
+    };
+    use mysql::prelude::Queryable;
+
+    let mut conn = mysql::Conn::new(mysql::Opts::from_url(&database_url).unwrap()).unwrap();
+    let table_name = format!(
+        "legacy_migrations_{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    conn.query_drop(format!("DROP TABLE IF EXISTS {table_name};"))
+        .unwrap();
+    conn.query_drop(format!(
+        "CREATE TABLE {table_name} (
+             version INT PRIMARY KEY,
+             description VARCHAR(255) NOT NULL,
+             applied_at_ms BIGINT NOT NULL
+         );"
+    ))
+    .unwrap();
+    conn.query_drop(format!(
+        "INSERT INTO {table_name} (version, description, applied_at_ms)
+             VALUES (1, 'create_events_table', 0);"
+    ))
+    .unwrap();
+
+    let config = ddd_cqrs_es::SqlSchemaConfig::new(ddd_cqrs_es::SqlDialect::MySql)
+        .with_migrations_table(table_name.clone())
+        .unwrap();
+    let error = ddd_cqrs_es::SchemaMigrator::new(config)
+        .run_mysql(&mut conn)
+        .unwrap_err();
+
+    assert!(
+        error.to_string().contains("will not drop it"),
+        "unexpected error: {error}"
+    );
+
+    let surviving_rows: Option<i64> = conn
+        .query_first(format!("SELECT COUNT(*) FROM {table_name}"))
+        .unwrap();
+    assert_eq!(surviving_rows, Some(1));
+
+    conn.query_drop(format!("DROP TABLE IF EXISTS {table_name};"))
+        .unwrap();
 }
 
 #[cfg(feature = "sqlite")]
@@ -2086,6 +2488,225 @@ fn persisted_projection_runner_checkpoints_once_per_pass() {
     assert_eq!(checkpoint_store.saves(), 1);
 }
 
+/// Checkpoint store that honours the projection key, so checkpoint collisions
+/// between two feeds of the same projection are observable.
+#[derive(Clone, Default)]
+struct KeyedCheckpointStore {
+    checkpoints: std::sync::Arc<std::sync::Mutex<HashMap<String, u64>>>,
+}
+
+impl KeyedCheckpointStore {
+    fn keys(&self) -> Vec<String> {
+        let mut keys = self
+            .checkpoints
+            .lock()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        keys.sort();
+        keys
+    }
+}
+
+impl ddd_cqrs_es::projection::CheckpointStore for KeyedCheckpointStore {
+    type Error = std::convert::Infallible;
+
+    fn load_checkpoint(&self, projection_name: &str) -> Result<Option<u64>, Self::Error> {
+        Ok(self
+            .checkpoints
+            .lock()
+            .unwrap()
+            .get(projection_name)
+            .copied())
+    }
+
+    fn save_checkpoint(&self, projection_name: &str, sequence: u64) -> Result<(), Self::Error> {
+        self.checkpoints
+            .lock()
+            .unwrap()
+            .insert(projection_name.to_owned(), sequence);
+        Ok(())
+    }
+}
+
+/// Two aggregate types share one events table, so their global sequences
+/// interleave while each typed feed is filtered to its own type. A projection
+/// registered against both types therefore needs one checkpoint per type:
+/// keying on `Projection::name()` alone lets the further-along feed hide the
+/// other's events forever.
+#[cfg(feature = "sqlite")]
+#[test]
+fn persisted_runner_needs_aggregate_scoped_checkpoints_across_aggregate_types() {
+    use ddd_cqrs_es::projection::PersistedProjectionRunner;
+
+    #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    enum LedgerEvent {
+        Posted,
+    }
+
+    impl DomainEvent for LedgerEvent {
+        fn event_type(&self) -> &'static str {
+            "ledger_posted"
+        }
+    }
+
+    #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    struct Ledger;
+
+    impl Aggregate for Ledger {
+        type Id = String;
+        type Command = ();
+        type Event = LedgerEvent;
+        type Error = std::convert::Infallible;
+
+        fn aggregate_type() -> &'static str {
+            "ledger"
+        }
+
+        fn new() -> Self {
+            Self
+        }
+
+        fn apply(&mut self, _event: &Self::Event) {}
+
+        fn handle(&self, _command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> {
+            Ok(vec![LedgerEvent::Posted])
+        }
+    }
+
+    /// One read model fed by both aggregate types, so both runs report the
+    /// same `name()`.
+    #[derive(Default)]
+    struct EventTally {
+        applied: usize,
+    }
+
+    impl Projection<CounterEvent, String> for EventTally {
+        type Error = std::convert::Infallible;
+
+        fn name(&self) -> &'static str {
+            "event_tally"
+        }
+
+        fn apply(
+            &mut self,
+            _event: &ddd_cqrs_es::EventEnvelope<CounterEvent, String>,
+        ) -> Result<(), Self::Error> {
+            self.applied += 1;
+            Ok(())
+        }
+    }
+
+    impl Projection<LedgerEvent, String> for EventTally {
+        type Error = std::convert::Infallible;
+
+        fn name(&self) -> &'static str {
+            "event_tally"
+        }
+
+        fn apply(
+            &mut self,
+            _event: &ddd_cqrs_es::EventEnvelope<LedgerEvent, String>,
+        ) -> Result<(), Self::Error> {
+            self.applied += 1;
+            Ok(())
+        }
+    }
+
+    /// Appends counter (sequence 1), ledger (sequence 2), counter (sequence 3)
+    /// into one shared events table and returns both typed stores.
+    fn seed_interleaved_stores(
+        label: &str,
+    ) -> (
+        ddd_cqrs_es::SqliteEventStore<Counter>,
+        ddd_cqrs_es::SqliteEventStore<Ledger>,
+        rusqlite::Connection,
+    ) {
+        let db_uri = format!("file:checkpoint_scope_{label}?mode=memory&cache=shared");
+        // Keep the shared in-memory database alive for the whole test.
+        let anchor = rusqlite::Connection::open(&db_uri).unwrap();
+
+        let counters = ddd_cqrs_es::SqliteEventStore::<Counter>::new(
+            rusqlite::Connection::open(&db_uri).unwrap(),
+        )
+        .unwrap();
+        counters.initialize_schema().unwrap();
+        let ledgers = ddd_cqrs_es::SqliteEventStore::<Ledger>::new(
+            rusqlite::Connection::open(&db_uri).unwrap(),
+        )
+        .unwrap();
+
+        counters
+            .append(
+                &"counter-1".to_owned(),
+                ExpectedRevision::NoStream,
+                vec![NewEvent::new(CounterEvent::Created, Metadata::default())],
+            )
+            .unwrap();
+        ledgers
+            .append(
+                &"ledger-1".to_owned(),
+                ExpectedRevision::NoStream,
+                vec![NewEvent::new(LedgerEvent::Posted, Metadata::default())],
+            )
+            .unwrap();
+        counters
+            .append(
+                &"counter-1".to_owned(),
+                ExpectedRevision::Exact(1),
+                vec![NewEvent::new(
+                    CounterEvent::Incremented { by: 1 },
+                    Metadata::default(),
+                )],
+            )
+            .unwrap();
+
+        (counters, ledgers, anchor)
+    }
+
+    // Name-only keying (the 0.3 default): replaying the counter feed advances
+    // the shared row to sequence 3, which is past the ledger event at
+    // sequence 2, so the ledger feed reports nothing to do.
+    let (counters, ledgers, _anchor) = seed_interleaved_stores("shared");
+    let shared = KeyedCheckpointStore::default();
+    let mut counter_runner = PersistedProjectionRunner::new(EventTally::default(), shared.clone());
+    let mut ledger_runner = PersistedProjectionRunner::new(EventTally::default(), shared.clone());
+
+    assert_eq!(counter_runner.run::<Counter, _>(&counters).unwrap(), 2);
+    assert_eq!(
+        ledger_runner.run::<Ledger, _>(&ledgers).unwrap(),
+        0,
+        "the shared checkpoint row hides the ledger event"
+    );
+    assert_eq!(shared.keys(), vec!["event_tally".to_owned()]);
+
+    // Aggregate-scoped keying: one row per feed, so both events land and the
+    // skip does not come back on a later pass either.
+    let (counters, ledgers, _anchor) = seed_interleaved_stores("scoped");
+    let scoped = KeyedCheckpointStore::default();
+    let mut counter_runner = PersistedProjectionRunner::with_aggregate_scoped_checkpoints(
+        EventTally::default(),
+        scoped.clone(),
+    );
+    let mut ledger_runner = PersistedProjectionRunner::with_aggregate_scoped_checkpoints(
+        EventTally::default(),
+        scoped.clone(),
+    );
+
+    assert_eq!(counter_runner.run::<Counter, _>(&counters).unwrap(), 2);
+    assert_eq!(ledger_runner.run::<Ledger, _>(&ledgers).unwrap(), 1);
+    assert_eq!(counter_runner.run::<Counter, _>(&counters).unwrap(), 0);
+    assert_eq!(ledger_runner.run::<Ledger, _>(&ledgers).unwrap(), 0);
+    assert_eq!(
+        scoped.keys(),
+        vec![
+            ddd_cqrs_es::aggregate_scoped_checkpoint_key("event_tally", "counter"),
+            ddd_cqrs_es::aggregate_scoped_checkpoint_key("event_tally", "ledger"),
+        ]
+    );
+}
+
 #[test]
 fn persisted_projection_runner_flushes_progress_before_reporting_failure() {
     use ddd_cqrs_es::projection::{PersistedProjectionRunner, ProjectionRunnerError};
@@ -2155,7 +2776,7 @@ fn persisted_projection_runner_flushes_progress_before_reporting_failure() {
 #[test]
 fn postgres_store_upcasts_chained_event_versions_on_load() {
     let Ok(database_url) = std::env::var("DDD_CQRS_ES_POSTGRES_URL") else {
-        eprintln!("skipping live Postgres upcaster test: DDD_CQRS_ES_POSTGRES_URL is not set");
+        skip_live_test("Postgres upcaster test", "DDD_CQRS_ES_POSTGRES_URL");
         return;
     };
     use ddd_cqrs_es::EventUpcaster;
@@ -2237,7 +2858,7 @@ fn postgres_store_upcasts_chained_event_versions_on_load() {
 #[test]
 fn test_postgres_checkpoint_store() {
     let Ok(database_url) = std::env::var("DDD_CQRS_ES_POSTGRES_URL") else {
-        eprintln!("skipping live Postgres checkpoint test: DDD_CQRS_ES_POSTGRES_URL is not set");
+        skip_live_test("Postgres checkpoint test", "DDD_CQRS_ES_POSTGRES_URL");
         return;
     };
     use ddd_cqrs_es::PostgresCheckpointStore;
@@ -2258,7 +2879,7 @@ fn test_postgres_checkpoint_store() {
 #[test]
 fn test_postgres_raw_feed_interleaves_aggregate_types() {
     let Ok(database_url) = std::env::var("DDD_CQRS_ES_POSTGRES_URL") else {
-        eprintln!("skipping live Postgres raw-feed test: DDD_CQRS_ES_POSTGRES_URL is not set");
+        skip_live_test("Postgres raw-feed test", "DDD_CQRS_ES_POSTGRES_URL");
         return;
     };
     use ddd_cqrs_es::raw_feed::RawEventFeed;
@@ -2314,7 +2935,7 @@ fn test_postgres_raw_feed_interleaves_aggregate_types() {
 #[test]
 fn test_postgres_pool_sharing_auxiliary_stores() {
     let Ok(database_url) = std::env::var("DDD_CQRS_ES_POSTGRES_URL") else {
-        eprintln!("skipping live Postgres pool-sharing test: DDD_CQRS_ES_POSTGRES_URL is not set");
+        skip_live_test("Postgres pool-sharing test", "DDD_CQRS_ES_POSTGRES_URL");
         return;
     };
     use ddd_cqrs_es::{assert_snapshot_store_contract, PostgresEventStore};
@@ -2526,6 +3147,27 @@ fn sqlite_raw_feed_interleaves_aggregate_types_and_drives_raw_projections() {
         .unwrap();
     assert_eq!(outcome.applied, 0);
     assert_eq!(checkpoint_store.saves(), 1);
+
+    // Cross-aggregate replay is a different position from any typed feed, so
+    // under aggregate-scoped keying it gets its own checkpoint row.
+    let keyed = KeyedCheckpointStore::default();
+    let mut scoped_runner = PersistedProjectionRunner::with_aggregate_scoped_checkpoints(
+        TypeTally::default(),
+        keyed.clone(),
+    );
+    scoped_runner
+        .run_raw_batch(&counters, ddd_cqrs_es::ProjectionBatchConfig::default())
+        .unwrap();
+    let mut typed_runner = PersistedProjectionRunner::with_aggregate_scoped_checkpoints(
+        CounterProjection::default(),
+        keyed.clone(),
+    );
+    typed_runner.run::<Counter, _>(&counters).unwrap();
+
+    assert!(keyed
+        .keys()
+        .contains(&ddd_cqrs_es::raw_checkpoint_key("raw_type_tally")));
+    assert!(!keyed.keys().contains(&"raw_type_tally".to_owned()));
 }
 
 #[cfg(feature = "sqlite")]
@@ -2823,7 +3465,7 @@ fn mysql_test_db_or_skip(test_name: &str) -> Option<MySqlTestDb> {
     match MySqlTestDb::new() {
         Ok(Some(db)) => Some(db),
         Ok(None) => {
-            eprintln!("skipping live MySQL {test_name}: DDD_CQRS_ES_MYSQL_URL is not set");
+            skip_live_test(&format!("MySQL {test_name}"), "DDD_CQRS_ES_MYSQL_URL");
             None
         }
         Err(error) => panic!("failed to prepare live MySQL {test_name}: {error}"),

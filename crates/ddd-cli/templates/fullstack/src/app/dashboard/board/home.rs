@@ -45,6 +45,7 @@ pub fn DashboardHome() -> impl IntoView {
 
     let layout = RwSignal::new(DashboardLayout {
         version: 2,
+        revision: 0,
         nodes: Vec::new(),
         widgets: Vec::new(),
     });
@@ -67,12 +68,11 @@ pub fn DashboardHome() -> impl IntoView {
     Effect::new(move |_| {
         if let Some(Ok(data)) = board.get() {
             if !seeded.get_untracked() {
+                // Keep the full board in state and filter only when rendering:
+                // saving a permission-filtered tree would delete the widgets
+                // this member cannot see.
                 let mut lay = data.layout.clone();
                 lay.migrate_if_needed();
-                let ctx = access.get_untracked();
-                if ctx.authenticated {
-                    lay.nodes = filter_board_nodes(lay.nodes, &ctx);
-                }
                 layout.set(lay);
                 set_notifications.set(data.notifications.clone());
                 set_seeded.set(true);
@@ -86,7 +86,19 @@ pub fn DashboardHome() -> impl IntoView {
             layout.set(next);
             set_save_error.set(None);
         }
-        Some(Err(error)) => set_save_error.set(Some(server_error_text(error))),
+        Some(Err(error)) => {
+            set_save_error.set(Some(server_error_text(error)));
+            // A rejected save is usually a revision conflict with another
+            // member's edit. Pull the winning board back so the next edit starts
+            // from the current revision instead of looping on 409s.
+            #[cfg(feature = "hydrate")]
+            spawn_local(async move {
+                if let Ok(current) = get_dashboard_snapshot().await {
+                    layout.set(current.layout.clone());
+                    set_snapshot.set(Some(current));
+                }
+            });
+        }
         None => {}
     });
 
@@ -382,7 +394,14 @@ pub fn DashboardHome() -> impl IntoView {
 
                         <div class=BOARD_GRID aria-label="Dashboard board">
                             {move || {
-                                let nodes = layout.get().nodes;
+                                // Render-time only: the signal keeps every node so
+                                // saves round-trip widgets this member cannot see.
+                                let ctx = access.get();
+                                let nodes = if ctx.authenticated {
+                                    filter_board_nodes(layout.get().nodes, &ctx)
+                                } else {
+                                    layout.get().nodes
+                                };
                                 let snap = snapshot.get().or_else(|| board.get().and_then(Result::ok));
                                 let notifs = notifications.get();
                                 let results = http_results.clone();
