@@ -10,6 +10,30 @@ static FILE_LOCKS: std::sync::OnceLock<
 > = std::sync::OnceLock::new();
 
 #[cfg(feature = "json-file")]
+fn canonical_lock_path(
+    path: &std::path::Path,
+) -> Result<std::path::PathBuf, crate::error::EventStoreError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?;
+    }
+    if path.exists() {
+        path.canonicalize()
+            .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))
+    } else if let Some(parent) = path.parent() {
+        let canonical_parent = parent
+            .canonicalize()
+            .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?;
+        Ok(canonical_parent.join(
+            path.file_name()
+                .ok_or_else(|| crate::error::EventStoreError::backend("invalid file path"))?,
+        ))
+    } else {
+        Ok(path.to_path_buf())
+    }
+}
+
+#[cfg(feature = "json-file")]
 fn get_file_lock(
     path: &std::path::Path,
 ) -> Result<std::sync::Arc<std::sync::Mutex<()>>, crate::error::EventStoreError> {
@@ -18,20 +42,7 @@ fn get_file_lock(
     let mut map = map_lock
         .lock()
         .map_err(|_| crate::error::EventStoreError::Poisoned)?;
-    let canonical = if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-        if let Ok(canon_parent) = parent.canonicalize() {
-            if let Some(filename) = path.file_name() {
-                canon_parent.join(filename)
-            } else {
-                canon_parent
-            }
-        } else {
-            path.to_path_buf()
-        }
-    } else {
-        path.to_path_buf()
-    };
+    let canonical = canonical_lock_path(path)?;
     Ok(map
         .entry(canonical)
         .or_insert_with(|| std::sync::Arc::new(std::sync::Mutex::new(())))
@@ -83,8 +94,10 @@ fn sync_parent_dir(path: &std::path::Path) {
     }
 }
 
-/// Reads every stored envelope as raw JSON, migrating legacy whole-array
-/// files to the JSON Lines format on first contact.
+/// Reads every stored envelope as raw JSON without mutating the file.
+///
+/// Legacy whole-array files are parsed in memory; migration to JSON Lines
+/// happens on the next append.
 #[cfg(feature = "json-file")]
 fn read_event_values(
     path: &std::path::Path,
@@ -97,52 +110,107 @@ fn read_event_values(
         .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?;
 
     if content.trim_start().starts_with('[') {
-        // Legacy format: one JSON array holding every envelope. Parse it and
-        // durably rewrite the file as JSON Lines before returning.
         let values: Vec<serde_json::Value> = serde_json::from_str(&content)
             .map_err(|e| crate::error::EventStoreError::deserialization(e.to_string()))?;
-        let mut lines = String::new();
-        for value in &values {
-            lines.push_str(
-                &serde_json::to_string(value)
-                    .map_err(|e| crate::error::EventStoreError::serialization(e.to_string()))?,
-            );
-            lines.push('\n');
-        }
-        write_atomic(path, &lines)
-            .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?;
         return Ok(values);
     }
 
-    content
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| {
-            serde_json::from_str(line)
-                .map_err(|e| crate::error::EventStoreError::deserialization(e.to_string()))
-        })
-        .collect()
+    parse_json_lines(&content)
 }
 
-/// Appends pre-serialized envelope lines and flushes them to disk before
-/// acknowledging.
 #[cfg(feature = "json-file")]
-fn append_event_lines(path: &std::path::Path, lines: &[String]) -> std::io::Result<()> {
+fn parse_json_lines(content: &str) -> Result<Vec<serde_json::Value>, crate::error::EventStoreError> {
+    let mut lines: Vec<&str> = content.lines().filter(|line| !line.trim().is_empty()).collect();
+    if lines.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut values = Vec::with_capacity(lines.len());
+    while !lines.is_empty() {
+        let line = lines.remove(0);
+        match serde_json::from_str::<serde_json::Value>(line) {
+            Ok(value) => values.push(value),
+            Err(_) if lines.is_empty() => {
+                // Tolerate one torn trailing line from a crash mid-append.
+                break;
+            }
+            Err(error) => {
+                return Err(crate::error::EventStoreError::deserialization(format!(
+                    "invalid JSON line: {error}"
+                )));
+            }
+        }
+    }
+    Ok(values)
+}
+
+#[cfg(feature = "json-file")]
+fn file_is_legacy_array(path: &std::path::Path) -> Result<bool, crate::error::EventStoreError> {
+    if !path.exists() {
+        return Ok(false);
+    }
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?;
+    Ok(content.trim_start().starts_with('['))
+}
+
+#[cfg(feature = "json-file")]
+fn json_lines_from_values(values: &[serde_json::Value]) -> Result<String, crate::error::EventStoreError> {
+    let mut lines = String::new();
+    for value in values {
+        lines.push_str(
+            &serde_json::to_string(value)
+                .map_err(|e| crate::error::EventStoreError::serialization(e.to_string()))?,
+        );
+        lines.push('\n');
+    }
+    Ok(lines)
+}
+
+/// Appends pre-serialized envelope lines in one buffered write and fsyncs before
+/// acknowledging. Legacy array files are rewritten as JSON Lines during append.
+#[cfg(feature = "json-file")]
+fn append_event_lines(
+    path: &std::path::Path,
+    existing: &[serde_json::Value],
+    new_lines: &[String],
+) -> Result<(), crate::error::EventStoreError> {
     use std::io::Write as _;
 
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?;
     }
+
+    if file_is_legacy_array(path)? || !path.exists() {
+        let mut all_values = existing.to_vec();
+        for line in new_lines {
+            all_values.push(serde_json::from_str(line).map_err(|e| {
+                crate::error::EventStoreError::serialization(e.to_string())
+            })?);
+        }
+        let content = json_lines_from_values(&all_values)?;
+        write_atomic(path, &content)
+            .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?;
+        return Ok(());
+    }
+
+    let mut buffer = String::new();
+    for line in new_lines {
+        buffer.push_str(line);
+        buffer.push('\n');
+    }
+
     let created = !path.exists();
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(path)?;
-    for line in lines {
-        file.write_all(line.as_bytes())?;
-        file.write_all(b"\n")?;
-    }
-    file.sync_all()?;
+        .open(path)
+        .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?;
+    file.write_all(buffer.as_bytes())
+        .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?;
+    file.sync_all()
+        .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?;
     if created {
         sync_parent_dir(path);
     }
@@ -366,8 +434,7 @@ where
             envelopes.push(envelope);
         }
 
-        append_event_lines(&self.events_path, &new_lines)
-            .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?;
+        append_event_lines(&self.events_path, &all_values, &new_lines)?;
 
         Ok(envelopes)
     }
@@ -661,5 +728,41 @@ impl<A> crate::raw_feed::RawEventFeed for JsonFileEventStore<A> {
         envelopes.sort_by_key(|e| e.sequence);
         envelopes.truncate(limit.get());
         Ok(envelopes)
+    }
+}
+
+#[cfg(all(test, feature = "json-file"))]
+mod json_file_tests {
+    use super::{parse_json_lines, read_event_values};
+    use std::io::Write as _;
+
+    #[test]
+    fn tolerates_one_torn_trailing_line() {
+        let content = "{\"a\":1}\n{\"b\":2}\n{\"incomplete\":\n";
+        let values = parse_json_lines(content).unwrap();
+        assert_eq!(values.len(), 2);
+        assert_eq!(values[0]["a"], 1);
+    }
+
+    #[test]
+    fn legacy_array_read_is_non_mutating() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "json_file_legacy_read_{}.json",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(b"[{\"a\":1}]")
+            .unwrap();
+
+        let values = read_event_values(&path).unwrap();
+        assert_eq!(values.len(), 1);
+        let on_disk = std::fs::read_to_string(&path).unwrap();
+        assert!(on_disk.starts_with('['));
+        let _ = std::fs::remove_file(path);
     }
 }

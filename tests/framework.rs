@@ -3290,15 +3290,14 @@ fn json_file_store_migrates_legacy_array_files_to_json_lines() {
 
     let store = ddd_cqrs_es::JsonFileEventStore::<Counter>::new(events_path.clone());
 
-    // First read migrates the file to JSON Lines and returns the event.
+    // First read parses legacy arrays in memory without rewriting the file.
     let loaded = EventStore::load(&store, &"counter-legacy".to_owned()).unwrap();
     assert_eq!(loaded.len(), 1);
     assert_eq!(loaded[0].event_id.as_str(), "legacy-1");
-    let migrated = std::fs::read_to_string(&events_path).unwrap();
-    assert!(migrated.trim_start().starts_with('{'));
-    assert_eq!(migrated.lines().count(), 1);
+    let still_legacy = std::fs::read_to_string(&events_path).unwrap();
+    assert!(still_legacy.trim_start().starts_with('['));
 
-    // Appends continue on the migrated file.
+    // Appends migrate the file to JSON Lines and add new events.
     store
         .append(
             &"counter-legacy".to_owned(),
@@ -3309,12 +3308,13 @@ fn json_file_store_migrates_legacy_array_files_to_json_lines() {
             )],
         )
         .unwrap();
+    let migrated = std::fs::read_to_string(&events_path).unwrap();
+    assert!(migrated.trim_start().starts_with('{'));
+    assert_eq!(migrated.lines().count(), 2);
     let reloaded = EventStore::load(&store, &"counter-legacy".to_owned()).unwrap();
     assert_eq!(reloaded.len(), 2);
     assert_eq!(reloaded[1].revision, 2);
     assert_eq!(reloaded[1].sequence, Some(2));
-    let content = std::fs::read_to_string(&events_path).unwrap();
-    assert_eq!(content.lines().count(), 2);
 
     let _ = std::fs::remove_file(&events_path);
 }

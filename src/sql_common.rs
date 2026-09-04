@@ -66,6 +66,12 @@ pub(crate) fn map_stream_unique_violation(
     }
 }
 
+#[cfg(any(
+    feature = "sqlite",
+    feature = "postgres",
+    feature = "mysql",
+    feature = "redis"
+))]
 /// Returns an error when a snapshot save did not advance stored revision.
 pub(crate) fn stale_snapshot_revision_error(
     offered: u64,
@@ -74,6 +80,12 @@ pub(crate) fn stale_snapshot_revision_error(
     EventStoreError::Concurrency(ConcurrencyError::StaleSnapshotRevision { offered, current })
 }
 
+#[cfg(any(
+    feature = "sqlite",
+    feature = "postgres",
+    feature = "mysql",
+    feature = "redis"
+))]
 pub(crate) fn check_expected_revision(
     expected: ExpectedRevision,
     actual: u64,

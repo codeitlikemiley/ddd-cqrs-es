@@ -3,7 +3,7 @@ fn env_non_empty(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|s| !s.is_empty())
 }
 
-use super::http::wasi_http_post;
+use super::http::{redact_url_userinfo, truncate_body_for_error, wasi_http_post};
 
 // -------------------------------------------------------------------------
 // Neon / Serverless Postgres HTTP adapter
@@ -40,12 +40,30 @@ pub async fn execute_neon_query(
         headers.push(("Neon-Connection-String".to_string(), connection_string));
     }
 
-    let http_url = if url.starts_with("postgres://") || url.starts_with("postgresql://") {
+    let http_url = neon_http_endpoint(url)?;
+
+    let resp_bytes = wasi_http_post(&http_url, headers, body_data).await?;
+
+    let resp_val: serde_json::Value = serde_json::from_slice(&resp_bytes).map_err(|error| {
+        format!(
+            "Failed to parse Neon response JSON from {}: {error}; body={}",
+            redact_url_userinfo(&http_url),
+            truncate_body_for_error(&resp_bytes)
+        )
+    })?;
+
+    parse_neon_rows(&resp_val)
+}
+
+#[cfg(feature = "wasi-neon")]
+fn neon_http_endpoint(url: &str) -> Result<String, String> {
+    if url.starts_with("postgres://") || url.starts_with("postgresql://") {
         let stripped = url
             .strip_prefix("postgres://")
             .or_else(|| url.strip_prefix("postgresql://"))
             .unwrap_or(url);
-        let host_part = if let Some(at_idx) = stripped.find('@') {
+        // Credentials may contain '@'; the host separator is the last '@'.
+        let host_part = if let Some(at_idx) = stripped.rfind('@') {
             &stripped[at_idx + 1..]
         } else {
             stripped
@@ -62,20 +80,19 @@ pub async fn execute_neon_query(
         } else {
             host
         };
-        format!("https://{}/sql", host_name)
+        Ok(format!("https://{host_name}/sql"))
     } else {
-        url.to_string()
-    };
+        Ok(url.to_string())
+    }
+}
 
-    let resp_bytes = wasi_http_post(&http_url, headers, body_data).await?;
-
-    let resp_val: serde_json::Value = serde_json::from_slice(&resp_bytes)
-        .map_err(|e| format!("Failed to parse Neon response JSON: {}", e))?;
-
-    let mut parsed_rows = Vec::new();
+#[cfg(feature = "wasi-neon")]
+fn parse_neon_rows(resp_val: &serde_json::Value) -> Result<Vec<serde_json::Value>, String> {
     if let Some(arr) = resp_val.as_array() {
-        parsed_rows = arr.clone();
-    } else if let Some(obj) = resp_val.as_object() {
+        return Ok(arr.clone());
+    }
+
+    if let Some(obj) = resp_val.as_object() {
         if let (Some(fields_val), Some(rows_val)) = (obj.get("fields"), obj.get("rows")) {
             if let (Some(fields_arr), Some(rows_arr)) = (fields_val.as_array(), rows_val.as_array())
             {
@@ -89,6 +106,7 @@ pub async fn execute_neon_query(
                     })
                     .collect();
 
+                let mut parsed_rows = Vec::new();
                 for row_val in rows_arr {
                     if let Some(row_arr) = row_val.as_array() {
                         let mut row_obj = serde_json::Map::new();
@@ -100,9 +118,40 @@ pub async fn execute_neon_query(
                         parsed_rows.push(serde_json::Value::Object(row_obj));
                     }
                 }
+                return Ok(parsed_rows);
             }
+        }
+
+        if obj.contains_key("message") || obj.contains_key("error") {
+            return Err(format!("Neon SQL error: {resp_val}"));
         }
     }
 
-    Ok(parsed_rows)
+    Err(format!(
+        "Neon response did not contain a recognizable rowset: {}",
+        truncate_body_for_error(resp_val.to_string().as_bytes())
+    ))
+}
+
+#[cfg(all(test, feature = "wasi-neon"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn neon_endpoint_uses_last_at_as_host_separator() {
+        let endpoint = neon_http_endpoint(
+            "postgres://user:p@ss@word@ep-example.neon.tech/neondb?sslmode=require",
+        )
+        .unwrap();
+        assert_eq!(endpoint, "https://ep-example.neon.tech/sql");
+    }
+
+    #[test]
+    fn neon_endpoint_redacts_userinfo_in_errors() {
+        let redacted = redact_url_userinfo(
+            "postgres://user:secret@ep-example.neon.tech/neondb",
+        );
+        assert!(!redacted.contains("secret"));
+        assert!(redacted.contains("***@"));
+    }
 }
