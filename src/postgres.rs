@@ -18,7 +18,41 @@ use crate::upcast::UpcasterRegistry;
 use ::postgres::{Client, NoTls};
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
+
+fn validate_postgres_client(client: &mut Client) -> bool {
+    client.is_valid(Duration::from_secs(0)).is_ok()
+}
+
+fn postgres_pool(url: &str) -> ConnectionPool<Client> {
+    let url = url.to_owned();
+    ConnectionPool::pooled_validated(
+        1,
+        None,
+        move || Client::connect(&url, NoTls).map_err(map_postgres_error),
+        validate_postgres_client,
+    )
+}
+
+fn postgres_pool_seeded(client: Client, url: &str) -> ConnectionPool<Client> {
+    let url = url.to_owned();
+    ConnectionPool::pooled_validated(
+        1,
+        Some(client),
+        move || Client::connect(&url, NoTls).map_err(map_postgres_error),
+        validate_postgres_client,
+    )
+}
+
+fn postgres_pooled(max_size: usize, url: &str) -> ConnectionPool<Client> {
+    let url = url.to_owned();
+    ConnectionPool::pooled_validated(
+        resolve_pool_size(Some(max_size)),
+        None,
+        move || Client::connect(&url, NoTls).map_err(map_postgres_error),
+        validate_postgres_client,
+    )
+}
 
 /// PostgreSQL-backed event store.
 ///
@@ -69,8 +103,7 @@ where
 {
     /// Connects to PostgreSQL using [`NoTls`] and the default `events` table.
     pub fn connect(params: &str) -> Result<Self, EventStoreError> {
-        let client = Client::connect(params, NoTls).map_err(map_postgres_error)?;
-        Self::new(client)
+        Self::connect_with_table_name(params, "events")
     }
 
     /// Connects to PostgreSQL using [`NoTls`] and a custom table name.
@@ -78,13 +111,46 @@ where
         params: &str,
         table_name: impl Into<String>,
     ) -> Result<Self, EventStoreError> {
-        let client = Client::connect(params, NoTls).map_err(map_postgres_error)?;
-        Self::with_table_name(client, table_name)
+        let table_name = table_name.into();
+        validate_table_name(&table_name)?;
+        validate_table_name("idempotency_keys")?;
+
+        Ok(Self::with_table_names_impl(
+            postgres_pool(params),
+            table_name,
+            "idempotency_keys".to_owned(),
+        ))
     }
 
     /// Creates a PostgreSQL event store using the default `events` table.
+    ///
+    /// **Test-only.** The wrapped connection cannot be replaced when it goes
+    /// stale; prefer [`Self::connect`] or [`Self::with_client`] in application
+    /// code.
     pub fn new(client: Client) -> Result<Self, EventStoreError> {
         Self::with_table_name(client, "events")
+    }
+
+    /// Wraps an existing client in a reconnect-capable size-1 pool.
+    pub fn with_client(client: Client, url: &str) -> Result<Self, EventStoreError> {
+        Self::with_client_and_table_name(client, url, "events")
+    }
+
+    /// Wraps an existing client in a reconnect-capable size-1 pool.
+    pub fn with_client_and_table_name(
+        client: Client,
+        url: &str,
+        table_name: impl Into<String>,
+    ) -> Result<Self, EventStoreError> {
+        let table_name = table_name.into();
+        validate_table_name(&table_name)?;
+        validate_table_name("idempotency_keys")?;
+
+        Ok(Self::with_table_names_impl(
+            postgres_pool_seeded(client, url),
+            table_name,
+            "idempotency_keys".to_owned(),
+        ))
     }
 
     /// Creates a PostgreSQL event store with a custom table name.
@@ -136,11 +202,8 @@ where
         validate_table_name(&table_name)?;
         validate_table_name("idempotency_keys")?;
 
-        let url = params.to_owned();
         let store = Self::with_table_names_impl(
-            ConnectionPool::pooled(resolve_pool_size(Some(max_size)), move || {
-                Client::connect(&url, NoTls).map_err(map_postgres_error)
-            }),
+            postgres_pooled(max_size, params),
             table_name,
             "idempotency_keys".to_owned(),
         );
@@ -310,7 +373,7 @@ where
             .map(PreparedPostgresEvent::new)
             .collect::<Result<Vec<_>, _>>()?;
         let table_name = self.table_name.clone();
-        self.pool.write(move |client| {
+        self.pool.write(|client| {
             let mut transaction = client.transaction().map_err(map_postgres_error)?;
             let revision_query = format!(
                 "SELECT COALESCE(MAX(revision), 0)::BIGINT FROM {table} \
@@ -338,7 +401,7 @@ where
                 &aggregate_id_key,
                 actual_revision,
                 expected_revision,
-                prepared,
+                prepared.clone(),
             )?;
 
             transaction.commit().map_err(map_postgres_error)?;
@@ -536,7 +599,7 @@ where
 
         let committed = self
             .pool
-            .write(move |client| {
+            .write(|client| {
                 run_idempotent_append::<A>(
                     client,
                     &table_name,
@@ -545,7 +608,7 @@ where
                     &aggregate_id,
                     &aggregate_id_key,
                     expected_revision,
-                    prepared,
+                    prepared.clone(),
                 )
             })
             .map_err(IdempotentAppendError::Store)??;
@@ -789,6 +852,7 @@ where
     }
 }
 
+#[derive(Clone)]
 struct PreparedPostgresEvent<E> {
     event_id: EventId,
     event_type: String,
@@ -1082,7 +1146,7 @@ where
 }
 
 fn current_revision_postgres(
-    transaction: &::postgres::Transaction<'_>,
+    transaction: &mut ::postgres::Transaction<'_>,
     table_name: &str,
     aggregate_type: &str,
     aggregate_id: &str,
@@ -1102,10 +1166,14 @@ fn current_revision_postgres(
 }
 
 fn is_postgres_stream_revision_unique_violation(error: &::postgres::Error) -> bool {
-    if let Some(constraint) = error.constraint() {
-        return constraint.contains("revision");
+    if !error
+        .code()
+        .is_some_and(|code| *code == ::postgres::error::SqlState::UNIQUE_VIOLATION)
+    {
+        return false;
     }
-    error.to_string().contains("aggregate_id")
+    let message = error.to_string();
+    message.contains("revision") || message.contains("aggregate_id")
 }
 
 fn map_postgres_insert_error(

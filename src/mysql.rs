@@ -22,6 +22,40 @@ use std::marker::PhantomData;
 use std::num::NonZeroUsize;
 use std::time::SystemTime;
 
+fn validate_mysql_conn(conn: &mut Conn) -> bool {
+    conn.ping().is_ok()
+}
+
+fn mysql_connect(url: &str) -> Result<Conn, EventStoreError> {
+    let opts = Opts::from_url(url).map_err(|e| EventStoreError::backend(e.to_string()))?;
+    Conn::new(opts).map_err(map_mysql_error)
+}
+
+fn mysql_pool(url: &str) -> ConnectionPool<Conn> {
+    let url = url.to_owned();
+    ConnectionPool::pooled_validated(1, None, move || mysql_connect(&url), validate_mysql_conn)
+}
+
+fn mysql_pool_seeded(connection: Conn, url: &str) -> ConnectionPool<Conn> {
+    let url = url.to_owned();
+    ConnectionPool::pooled_validated(
+        1,
+        Some(connection),
+        move || mysql_connect(&url),
+        validate_mysql_conn,
+    )
+}
+
+fn mysql_pooled(max_size: usize, url: &str) -> ConnectionPool<Conn> {
+    let url = url.to_owned();
+    ConnectionPool::pooled_validated(
+        resolve_pool_size(Some(max_size)),
+        None,
+        move || mysql_connect(&url),
+        validate_mysql_conn,
+    )
+}
+
 /// MySQL-backed event store.
 pub struct MySqlEventStore<A>
 where
@@ -67,9 +101,7 @@ where
 {
     /// Connects to MySQL using standard URL params and the default `events` table.
     pub fn connect(url: &str) -> Result<Self, EventStoreError> {
-        let opts = Opts::from_url(url).map_err(|e| EventStoreError::backend(e.to_string()))?;
-        let conn = Conn::new(opts).map_err(map_mysql_error)?;
-        Self::new(conn)
+        Self::connect_with_table_name(url, "events")
     }
 
     /// Connects to MySQL using standard URL params and a custom table name.
@@ -77,14 +109,46 @@ where
         url: &str,
         table_name: impl Into<String>,
     ) -> Result<Self, EventStoreError> {
-        let opts = Opts::from_url(url).map_err(|e| EventStoreError::backend(e.to_string()))?;
-        let conn = Conn::new(opts).map_err(map_mysql_error)?;
-        Self::with_table_name(conn, table_name)
+        let table_name = table_name.into();
+        validate_table_name(&table_name)?;
+        validate_table_name("idempotency_keys")?;
+
+        Ok(Self::with_table_names_impl(
+            mysql_pool(url),
+            table_name,
+            "idempotency_keys".to_owned(),
+        ))
     }
 
     /// Creates a MySQL event store using the default `events` table.
+    ///
+    /// **Test-only.** The wrapped connection cannot be replaced when it goes
+    /// stale; prefer [`Self::connect`] or [`Self::with_client`] in application
+    /// code.
     pub fn new(connection: Conn) -> Result<Self, EventStoreError> {
         Self::with_table_name(connection, "events")
+    }
+
+    /// Wraps an existing connection in a reconnect-capable size-1 pool.
+    pub fn with_client(connection: Conn, url: &str) -> Result<Self, EventStoreError> {
+        Self::with_client_and_table_name(connection, url, "events")
+    }
+
+    /// Wraps an existing connection in a reconnect-capable size-1 pool.
+    pub fn with_client_and_table_name(
+        connection: Conn,
+        url: &str,
+        table_name: impl Into<String>,
+    ) -> Result<Self, EventStoreError> {
+        let table_name = table_name.into();
+        validate_table_name(&table_name)?;
+        validate_table_name("idempotency_keys")?;
+
+        Ok(Self::with_table_names_impl(
+            mysql_pool_seeded(connection, url),
+            table_name,
+            "idempotency_keys".to_owned(),
+        ))
     }
 
     /// Creates a MySQL event store with a custom table name.
@@ -136,13 +200,8 @@ where
         validate_table_name(&table_name)?;
         validate_table_name("idempotency_keys")?;
 
-        let url = url.to_owned();
         let store = Self::with_table_names_impl(
-            ConnectionPool::pooled(resolve_pool_size(Some(max_size)), move || {
-                let opts =
-                    Opts::from_url(&url).map_err(|e| EventStoreError::backend(e.to_string()))?;
-                Conn::new(opts).map_err(map_mysql_error)
-            }),
+            mysql_pooled(max_size, url),
             table_name,
             "idempotency_keys".to_owned(),
         );
@@ -309,7 +368,7 @@ where
             .map(PreparedMySqlEvent::new)
             .collect::<Result<Vec<_>, _>>()?;
         let table_name = self.table_name.clone();
-        self.pool.write(move |connection| {
+        self.pool.write(|connection| {
             let mut transaction = connection
                 .start_transaction(TxOpts::default())
                 .map_err(map_mysql_error)?;
@@ -340,7 +399,7 @@ where
                 &aggregate_id_key,
                 actual_revision,
                 expected_revision,
-                prepared,
+                prepared.clone(),
             )?;
 
             transaction.commit().map_err(map_mysql_error)?;
@@ -539,7 +598,7 @@ where
 
         let committed = self
             .pool
-            .write(move |connection| {
+            .write(|connection| {
                 run_idempotent_append::<A>(
                     connection,
                     &table_name,
@@ -548,7 +607,7 @@ where
                     &aggregate_id,
                     &aggregate_id_key,
                     expected_revision,
-                    prepared,
+                    prepared.clone(),
                 )
             })
             .map_err(IdempotentAppendError::Store)??;
@@ -792,6 +851,7 @@ where
     }
 }
 
+#[derive(Clone)]
 struct PreparedMySqlEvent<E> {
     event_id: EventId,
     event_type: String,
@@ -1424,7 +1484,7 @@ where
         );
         self.pool.write(|connection| {
             connection
-                .exec_drop(&sql, (key.as_str(), value_json, updated_at_ms))
+                .exec_drop(&sql, (key.as_str(), value_json.as_str(), updated_at_ms))
                 .map_err(map_mysql_error)?;
             Ok(())
         })
@@ -1623,10 +1683,10 @@ where
                     &sql,
                     (
                         A::aggregate_type(),
-                        aggregate_id,
+                        aggregate_id.as_str(),
                         revision_i64,
-                        state_json,
-                        metadata_json,
+                        state_json.as_str(),
+                        metadata_json.as_str(),
                         recorded_at_ms,
                     ),
                 )

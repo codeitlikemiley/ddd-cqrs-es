@@ -10,7 +10,7 @@
 use crate::error::EventStoreError;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub(crate) const POOL_SIZE_ENV_VAR: &str = "DDD_CQRS_ES_POOL_SIZE";
 
@@ -22,6 +22,10 @@ const OVERRIDE_MAX_SIZE: usize = 128;
 /// How long an acquisition waits on an exhausted pool before failing with a
 /// connection error instead of blocking indefinitely.
 const DEFAULT_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Idle connections older than this are discarded on checkout so the pool can
+/// open a fresh one when a reconnect factory is configured.
+const DEFAULT_MAX_IDLE_AGE: Duration = Duration::from_secs(30 * 60);
 
 /// Resolves the pool size from an explicit override, the environment, or the
 /// CPU-count default.
@@ -41,6 +45,7 @@ pub(crate) fn resolve_pool_size(explicit: Option<usize>) -> usize {
 }
 
 type Connect<C> = Box<dyn Fn() -> Result<C, EventStoreError> + Send + Sync>;
+type ValidateFn<C> = Box<dyn Fn(&mut C) -> bool + Send + Sync>;
 
 /// Transport-level failures justify discarding a pooled connection; domain
 /// outcomes (concurrency conflicts, serialization, deserialization) do not.
@@ -72,17 +77,24 @@ fn is_transport_code(code: &str) -> bool {
         || MYSQL_TRANSPORT_ERRNOS.contains(&code)
 }
 
+struct IdleEntry<C> {
+    connection: C,
+    idle_since: Instant,
+}
+
 struct PoolState<C> {
-    idle: Vec<C>,
+    idle: Vec<IdleEntry<C>>,
     leased: usize,
 }
 
 struct PoolShared<C> {
     max_size: usize,
     acquire_timeout: Duration,
+    max_idle_age: Option<Duration>,
     state: Mutex<PoolState<C>>,
     available: Condvar,
     connect: Option<Connect<C>>,
+    validate: Option<ValidateFn<C>>,
 }
 
 impl<C> PoolShared<C> {
@@ -93,9 +105,24 @@ impl<C> PoolShared<C> {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.leased -= 1;
         if let Some(connection) = connection {
-            state.idle.push(connection);
+            state.idle.push(IdleEntry {
+                connection,
+                idle_since: Instant::now(),
+            });
         }
         self.available.notify_one();
+    }
+
+    fn idle_connection_is_usable(&self, entry: &mut IdleEntry<C>) -> bool {
+        if let Some(max_idle_age) = self.max_idle_age {
+            if entry.idle_since.elapsed() > max_idle_age {
+                return false;
+            }
+        }
+        if let Some(validate) = self.validate.as_ref() {
+            return validate(&mut entry.connection);
+        }
+        true
     }
 }
 
@@ -133,10 +160,7 @@ impl<C> DerefMut for PoolLease<C> {
 
 impl<C> Drop for PoolLease<C> {
     fn drop(&mut self) {
-        // A pool without a reconnect factory cannot replace a discarded
-        // connection, so broken leases are retained (matching the previous
-        // mutex-guarded behaviour of keeping one client forever).
-        let connection = if self.broken && self.shared.connect.is_some() {
+        let connection = if self.broken {
             None
         } else {
             self.connection.take()
@@ -169,10 +193,11 @@ impl<C> std::fmt::Debug for ConnectionPool<C> {
 impl<C> ConnectionPool<C> {
     /// Creates a pool that wraps a single pre-established connection.
     ///
-    /// Without a connect factory the pool cannot grow; acquisitions queue on
-    /// the one connection, matching the previous mutex-guarded behaviour.
+    /// **Test-only.** Without a connect factory the pool cannot replace broken
+    /// or stale connections; prefer a factory-backed [`Self::pooled`] pool in
+    /// production code.
     pub(crate) fn single(connection: C) -> Self {
-        Self::build(Some(connection), 1, None)
+        Self::build(Some(connection), 1, None, None, None)
     }
 
     /// Creates a growable pool that opens connections through `connect`.
@@ -180,18 +205,48 @@ impl<C> ConnectionPool<C> {
         max_size: usize,
         connect: impl Fn() -> Result<C, EventStoreError> + Send + Sync + 'static,
     ) -> Self {
-        Self::build(None, max_size, Some(Box::new(connect)))
+        Self::build(None, max_size, Some(Box::new(connect)), None, Some(DEFAULT_MAX_IDLE_AGE))
     }
 
-    fn build(seed: Option<C>, max_size: usize, connect: Option<Connect<C>>) -> Self {
-        let idle = seed.into_iter().collect();
+    /// Creates a pool with checkout validation and optional seed connection.
+    pub(crate) fn pooled_validated(
+        max_size: usize,
+        seed: Option<C>,
+        connect: impl Fn() -> Result<C, EventStoreError> + Send + Sync + 'static,
+        validate: impl Fn(&mut C) -> bool + Send + Sync + 'static,
+    ) -> Self {
+        Self::build(
+            seed,
+            max_size,
+            Some(Box::new(connect)),
+            Some(Box::new(validate)),
+            Some(DEFAULT_MAX_IDLE_AGE),
+        )
+    }
+
+    fn build(
+        seed: Option<C>,
+        max_size: usize,
+        connect: Option<Connect<C>>,
+        validate: Option<ValidateFn<C>>,
+        max_idle_age: Option<Duration>,
+    ) -> Self {
+        let idle = seed
+            .into_iter()
+            .map(|connection| IdleEntry {
+                connection,
+                idle_since: Instant::now(),
+            })
+            .collect();
         Self {
             shared: Arc::new(PoolShared {
                 max_size,
                 acquire_timeout: DEFAULT_ACQUIRE_TIMEOUT,
+                max_idle_age,
                 state: Mutex::new(PoolState { idle, leased: 0 }),
                 available: Condvar::new(),
                 connect,
+                validate,
             }),
         }
     }
@@ -210,18 +265,21 @@ impl<C> ConnectionPool<C> {
     ///
     /// Waits at most the pool's acquire timeout for a connection to be
     /// returned, then fails with a connection error instead of blocking the
-    /// caller indefinitely on an exhausted pool.
+    /// caller indefinitely on an exhausted pool. Idle connections are
+    /// validated on checkout and discarded when stale or dead.
     pub(crate) fn acquire(&self) -> Result<PoolLease<C>, EventStoreError> {
-        let deadline = std::time::Instant::now() + self.shared.acquire_timeout;
+        let deadline = Instant::now() + self.shared.acquire_timeout;
         let mut state = self
             .shared
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         loop {
-            if let Some(connection) = state.idle.pop() {
-                state.leased += 1;
-                return Ok(self.lease(connection));
+            while let Some(mut entry) = state.idle.pop() {
+                if self.shared.idle_connection_is_usable(&mut entry) {
+                    state.leased += 1;
+                    return Ok(self.lease(entry.connection));
+                }
             }
             if state.leased < self.shared.max_size {
                 let Some(connect) = self.shared.connect.as_ref() else {
@@ -247,7 +305,7 @@ impl<C> ConnectionPool<C> {
                     }
                 }
             }
-            let now = std::time::Instant::now();
+            let now = Instant::now();
             let Some(remaining) = deadline
                 .checked_duration_since(now)
                 .filter(|d| !d.is_zero())
@@ -274,42 +332,58 @@ impl<C> ConnectionPool<C> {
         F: Fn(&mut C) -> Result<T, EventStoreError>,
     {
         let mut lease = self.acquire()?;
-        let first = operation(&mut lease);
-        match first {
-            Ok(value) => return Ok(value),
+        match operation(&mut lease) {
+            Ok(value) => Ok(value),
             Err(error) => {
                 if !is_transport_error(&error) {
                     return Err(error);
                 }
+                lease.mark_broken();
+                drop(lease);
+                if self.shared.connect.is_none() {
+                    return Err(error);
+                }
+                let mut fresh = self.acquire()?;
+                let result = operation(&mut fresh);
+                if let Err(retry_error) = &result {
+                    if is_transport_error(retry_error) {
+                        fresh.mark_broken();
+                    }
+                }
+                result
             }
         }
-        lease.mark_broken();
-        drop(lease);
-        let mut fresh = self.acquire()?;
-        let result = operation(&mut fresh);
-        if let Err(error) = &result {
-            if is_transport_error(error) {
-                fresh.mark_broken();
-            }
-        }
-        result
     }
 
-    /// Runs an operation exactly once. The connection is discarded only when
-    /// the failure looks transport-level; domain outcomes such as optimistic
-    /// concurrency conflicts leave the connection healthy and pooled.
-    pub(crate) fn write<F, T>(&self, operation: F) -> Result<T, EventStoreError>
+    /// Runs a write operation, retrying once on a fresh connection when the
+    /// first attempt fails on a possibly stale pooled connection.
+    pub(crate) fn write<F, T>(&self, mut operation: F) -> Result<T, EventStoreError>
     where
-        F: FnOnce(&mut C) -> Result<T, EventStoreError>,
+        F: FnMut(&mut C) -> Result<T, EventStoreError>,
     {
         let mut lease = self.acquire()?;
-        let result = operation(&mut lease);
-        if let Err(error) = &result {
-            if is_transport_error(error) {
+        let first = operation(&mut lease);
+        match first {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                if !is_transport_error(&error) {
+                    return Err(error);
+                }
                 lease.mark_broken();
+                drop(lease);
+                if self.shared.connect.is_none() {
+                    return Err(error);
+                }
+                let mut fresh = self.acquire()?;
+                let result = operation(&mut fresh);
+                if let Err(retry_error) = &result {
+                    if is_transport_error(retry_error) {
+                        fresh.mark_broken();
+                    }
+                }
+                result
             }
         }
-        result
     }
 
     fn lease(&self, connection: C) -> PoolLease<C> {
@@ -327,6 +401,7 @@ mod tests {
     use crate::error::EventStoreError;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Barrier};
+    use std::time::Duration;
 
     #[test]
     fn resolve_prefers_explicit_then_env_then_default() {
@@ -434,7 +509,7 @@ mod tests {
     #[test]
     fn acquire_fails_with_a_connection_error_when_the_pool_stays_exhausted() {
         let pool = ConnectionPool::<()>::pooled(1, || Ok(()))
-            .with_acquire_timeout(std::time::Duration::from_millis(50));
+            .with_acquire_timeout(Duration::from_millis(50));
 
         let held = pool.acquire().unwrap();
         let Err(error) = pool.acquire() else {
@@ -444,7 +519,6 @@ mod tests {
         assert!(matches!(error, EventStoreError::Connection { .. }));
         assert!(error.to_string().contains("1 of 1 connections leased"));
 
-        // Returning the lease makes the pool usable again.
         drop(held);
         pool.acquire().unwrap();
     }
@@ -463,21 +537,40 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(connects.load(Ordering::SeqCst), 2);
 
-        // Both failed connections must have been evicted, so the next read
-        // opens a third connection instead of recycling a broken one.
         pool.read(|_| Ok(())).unwrap();
         assert_eq!(connects.load(Ordering::SeqCst), 3);
     }
 
     #[test]
-    fn write_runs_exactly_once_even_on_failure() {
+    fn write_retries_once_on_transport_failure() {
         let attempts = Arc::new(AtomicUsize::new(0));
         let counter = Arc::clone(&attempts);
         let pool = ConnectionPool::<()>::pooled(2, || Ok(()));
 
-        let result: Result<(), EventStoreError> = pool.write(move |_| {
+        let result = pool.write(|_| {
+            let attempt = counter.fetch_add(1, Ordering::SeqCst);
+            if attempt == 0 {
+                Err(EventStoreError::backend("broken pipe".to_owned()))
+            } else {
+                Ok(attempt)
+            }
+        });
+
+        assert_eq!(result.unwrap(), 1);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn write_runs_once_on_non_transport_failure() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&attempts);
+        let pool = ConnectionPool::<()>::pooled(2, || Ok(()));
+
+        let result: Result<(), EventStoreError> = pool.write(|_| {
             counter.fetch_add(1, Ordering::SeqCst);
-            Err(EventStoreError::backend("conflict".to_owned()))
+            Err(EventStoreError::Concurrency(
+                crate::ConcurrencyError::StreamAlreadyExists,
+            ))
         });
 
         assert!(result.is_err());
@@ -497,29 +590,57 @@ mod tests {
     }
 
     #[test]
-    fn single_pool_keeps_serving_after_marked_broken_lease() {
+    fn single_pool_cannot_recover_after_marked_broken_lease() {
         let pool = ConnectionPool::single(7_u32);
         {
             let mut lease = pool.acquire().unwrap();
             lease.mark_broken();
         }
 
-        let mut lease = pool.acquire().unwrap();
-        *lease += 1;
-        assert_eq!(*lease, 8);
+        let Err(error) = pool.acquire() else {
+            panic!("test-only single pools cannot replace broken connections");
+        };
+        assert!(matches!(error, EventStoreError::Backend { .. }));
     }
 
     #[test]
-    fn single_pool_survives_failed_writes_and_stays_usable() {
+    fn single_pool_does_not_retry_reads_on_transport_failure() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&attempts);
         let pool = ConnectionPool::<()>::single(());
 
-        for _ in 0..3 {
-            let result: Result<(), EventStoreError> =
-                pool.write(|_| Err(EventStoreError::backend("connection reset".to_owned())));
-            assert!(result.is_err());
+        let result: Result<(), _> = pool.read(|_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Err(EventStoreError::backend("broken pipe".to_owned()))
+        });
 
-            // Must never hang or brick; each write acquires again.
+        assert!(result.is_err());
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn validated_pool_discards_dead_idle_connections() {
+        let connects = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&connects);
+        let alive = Arc::new(AtomicUsize::new(0));
+        let alive_for_validate = Arc::clone(&alive);
+        let pool = ConnectionPool::pooled_validated(
+            1,
+            Some(()),
+            move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+            move |_| alive_for_validate.load(Ordering::SeqCst) > 0,
+        );
+
+        {
+            let lease = pool.acquire().unwrap();
+            drop(lease);
         }
+        alive.store(0, Ordering::SeqCst);
+        pool.acquire().unwrap();
+        assert_eq!(connects.load(Ordering::SeqCst), 2);
     }
 
     #[test]
@@ -531,13 +652,12 @@ mod tests {
             Ok(())
         });
 
-        let conflict = Err(EventStoreError::Concurrency(
-            crate::ConcurrencyError::StreamAlreadyExists,
-        ));
-        let result: Result<(), EventStoreError> = pool.write(move |_| conflict);
+        let result: Result<(), EventStoreError> =
+            pool.write(|_| Err(EventStoreError::Concurrency(
+                crate::ConcurrencyError::StreamAlreadyExists,
+            )));
         assert!(result.is_err());
 
-        // The healthy connection must be recycled, not reconnected.
         let second: Result<(), EventStoreError> = pool.write(|_| Ok(()));
         assert!(second.is_ok());
         assert_eq!(connects.load(Ordering::SeqCst), 1);
@@ -552,20 +672,17 @@ mod tests {
             Ok(())
         });
 
-        // A unique violation proves the server processed the statement, so
-        // the connection is healthy and must be recycled.
         let result: Result<(), EventStoreError> =
             pool.write(|_| Err(EventStoreError::backend("duplicate key").with_code("23505")));
         assert!(result.is_err());
         pool.write(|_| Ok(())).unwrap();
         assert_eq!(connects.load(Ordering::SeqCst), 1);
 
-        // A connection-exception SQLSTATE evicts as before.
         let result: Result<(), EventStoreError> =
             pool.write(|_| Err(EventStoreError::backend("connection failure").with_code("08006")));
         assert!(result.is_err());
         pool.write(|_| Ok(())).unwrap();
-        assert_eq!(connects.load(Ordering::SeqCst), 2);
+        assert_eq!(connects.load(Ordering::SeqCst), 3);
     }
 
     #[test]
