@@ -171,6 +171,26 @@ where
             .unwrap_or_default())
     }
 
+    fn load_after_revision(
+        &self,
+        aggregate_id: &A::Id,
+        revision: u64,
+    ) -> Result<EventStream<A>, Self::Error> {
+        let state = self.state.read().map_err(|_| EventStoreError::Poisoned)?;
+        Ok(state
+            .streams
+            .get(aggregate_id)
+            .map(|indices| {
+                indices
+                    .iter()
+                    .map(|&index| &state.global[index])
+                    .filter(|event| event.revision > revision)
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
     fn append(
         &self,
         aggregate_id: &A::Id,
@@ -256,6 +276,77 @@ where
         let start = state.first_index_after(sequence);
         let end = state.global.len().min(start + limit.get());
         Ok(state.global[start..end].to_vec())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event::{ExpectedRevision, NewEvent};
+    use crate::Metadata;
+    use crate::event_store::EventStore;
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum TestEvent {
+        Created,
+    }
+
+    impl crate::DomainEvent for TestEvent {
+        fn event_type(&self) -> &'static str {
+            "test_created"
+        }
+    }
+
+    struct TestAggregate;
+
+    impl Aggregate for TestAggregate {
+        type Id = String;
+        type Command = ();
+        type Event = TestEvent;
+        type Error = ();
+        fn aggregate_type() -> &'static str {
+            "test_aggregate"
+        }
+        fn new() -> Self {
+            Self
+        }
+        fn apply(&mut self, _event: &Self::Event) {}
+        fn handle(&self, _command: Self::Command) -> Result<Vec<Self::Event>, Self::Error> {
+            Ok(vec![])
+        }
+    }
+
+    #[test]
+    fn load_after_revision_slices_stream_index_without_loading_other_streams() {
+        let store = InMemoryEventStore::<TestAggregate>::new();
+        let stream_a = "stream-a".to_owned();
+        let stream_b = "stream-b".to_owned();
+
+        store
+            .append(
+                &stream_a,
+                ExpectedRevision::NoStream,
+                vec![NewEvent::new(TestEvent::Created, Metadata::default())],
+            )
+            .unwrap();
+        store
+            .append(
+                &stream_a,
+                ExpectedRevision::Exact(1),
+                vec![NewEvent::new(TestEvent::Created, Metadata::default())],
+            )
+            .unwrap();
+        store
+            .append(
+                &stream_b,
+                ExpectedRevision::NoStream,
+                vec![NewEvent::new(TestEvent::Created, Metadata::default())],
+            )
+            .unwrap();
+
+        let tail = store.load_after_revision(&stream_a, 1).unwrap();
+        assert_eq!(tail.len(), 1);
+        assert_eq!(tail[0].revision, 2);
     }
 }
 

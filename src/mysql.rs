@@ -879,7 +879,21 @@ where
     );
     transaction
         .exec_drop(&insert, params)
-        .map_err(|error| map_mysql_insert_error(error, expected_revision, actual_revision))?;
+        .map_err(|error| {
+            map_mysql_insert_error(
+                error,
+                expected_revision,
+                actual_revision,
+                || {
+                    current_revision_mysql(
+                        transaction,
+                        table_name,
+                        A::aggregate_type(),
+                        aggregate_id_key,
+                    )
+                },
+            )
+        })?;
 
     let select = format!(
         "SELECT revision, sequence FROM {table} \
@@ -974,7 +988,7 @@ fn row_to_raw_envelope(
     })?;
 
     let (event_version, upcasted_bytes) = upcasters
-        .upcast(&event_type, event_version, payload_str.into_bytes())
+        .prepare_payload(&event_type, event_version, payload_str.into_bytes())
         .map_err(|err| EventStoreError::deserialization(err.to_string()))?;
     let payload: serde_json::Value = serde_json::from_slice(&upcasted_bytes)
         .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
@@ -1049,18 +1063,22 @@ where
     let payload_val: serde_json::Value = serde_json::from_str(&payload_str)
         .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
 
-    let payload_bytes = serde_json::to_vec(&payload_val).map_err(|error| {
-        EventStoreError::deserialization(format!(
-            "payload serialization for upcasting failed: {error}"
-        ))
-    })?;
-
-    let (event_version, upcasted_bytes) = upcasters
-        .upcast(&event_type, event_version, payload_bytes)
-        .map_err(|err| EventStoreError::deserialization(err.to_string()))?;
-
-    let payload = serde_json::from_slice(&upcasted_bytes)
-        .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
+    let (event_version, payload) = if upcasters.is_empty() || !upcasters.has_upcasters(&event_type) {
+        (event_version, payload_val)
+    } else {
+        let payload_bytes = serde_json::to_vec(&payload_val).map_err(|error| {
+            EventStoreError::deserialization(format!(
+                "payload serialization for upcasting failed: {error}"
+            ))
+        })?;
+        let (event_version, upcasted_bytes) = upcasters
+            .prepare_payload(&event_type, event_version, payload_bytes)
+            .map_err(|err| EventStoreError::deserialization(err.to_string()))?;
+        let payload = serde_json::from_slice(&upcasted_bytes).map_err(|error| {
+            EventStoreError::deserialization(format!("payload JSON: {error}"))
+        })?;
+        (event_version, payload)
+    };
 
     let payload = deserialize_payload(&event_id, &event_type, payload)?;
     let metadata_val: serde_json::Value = serde_json::from_str(&metadata_str)
@@ -1094,17 +1112,48 @@ fn map_mysql_error(error: MySqlError) -> EventStoreError {
     }
 }
 
+fn current_revision_mysql(
+    transaction: &mut mysql::Transaction<'_>,
+    table_name: &str,
+    aggregate_type: &str,
+    aggregate_id: &str,
+) -> Result<u64, EventStoreError> {
+    let query = format!(
+        "SELECT COALESCE(MAX(revision), 0) FROM {table} \
+         WHERE aggregate_type = ? AND aggregate_id = ?",
+        table = table_name
+    );
+    let revision: Option<i64> = transaction
+        .exec_first(&query, (aggregate_type, aggregate_id))
+        .map_err(map_mysql_error)?;
+    let revision = revision.unwrap_or(0);
+    u64::try_from(revision).map_err(|_| {
+        EventStoreError::deserialization("stored revision cannot be negative".to_owned())
+    })
+}
+
+fn is_mysql_stream_revision_unique_violation(error: &MySqlError) -> bool {
+    match error {
+        MySqlError::MySqlError(server) => {
+            server.message.contains("aggregate_type")
+                || server.message.contains("revision")
+        }
+        _ => false,
+    }
+}
+
 fn map_mysql_insert_error(
     error: MySqlError,
     expected_revision: ExpectedRevision,
-    actual_revision: u64,
+    stale_actual: u64,
+    reread_revision: impl FnOnce() -> Result<u64, EventStoreError>,
 ) -> EventStoreError {
     match &error {
-        MySqlError::MySqlError(e) if e.code == 1062 => {
-            EventStoreError::Concurrency(crate::ConcurrencyError::WrongExpectedRevision {
-                expected: expected_revision,
-                actual: actual_revision,
-            })
+        MySqlError::MySqlError(e)
+            if e.code == 1062 && is_mysql_stream_revision_unique_violation(&error) =>
+        {
+            let current_revision = reread_revision().unwrap_or(stale_actual);
+            crate::sql_common::map_stream_unique_violation(expected_revision, current_revision)
         }
         _ => map_mysql_error(error),
     }
@@ -1582,6 +1631,29 @@ where
                     ),
                 )
                 .map_err(map_mysql_error)?;
+            let affected = connection.affected_rows();
+            if affected == 0 {
+                let current_sql = format!(
+                    "SELECT revision FROM {} WHERE aggregate_type = ? AND aggregate_id = ?;",
+                    self.table_name
+                );
+                let current: Option<i64> = connection
+                    .exec_first(&current_sql, (A::aggregate_type(), aggregate_id.as_str()))
+                    .map_err(map_mysql_error)?;
+                if let Some(current) = current {
+                    let current = u64::try_from(current).map_err(|_| {
+                        EventStoreError::deserialization(
+                            "MySQL snapshot revision cannot be negative".to_owned(),
+                        )
+                    })?;
+                    if snapshot.revision < current {
+                        return Err(crate::sql_common::stale_snapshot_revision_error(
+                            snapshot.revision,
+                            current,
+                        ));
+                    }
+                }
+            }
             Ok(())
         })
     }

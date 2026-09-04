@@ -99,6 +99,10 @@ where
     fn load(&self, aggregate_id: &A::Id) -> Result<EventStream<A>, Self::Error>;
 
     /// Loads events for one aggregate stream after the given revision.
+    ///
+    /// The default implementation loads the full stream and filters in memory
+    /// (`O(stream)`). Stores with per-stream indexes should override this to
+    /// slice or query only the tail after `revision`.
     fn load_after_revision(
         &self,
         aggregate_id: &A::Id,

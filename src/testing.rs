@@ -455,7 +455,7 @@ where
             .load_snapshot(&aggregate_id)
             .unwrap()
             .map(|snapshot| snapshot.state),
-        Some(older)
+        Some(older.clone())
     );
 
     store
@@ -469,6 +469,14 @@ where
     let loaded = store.load_snapshot(&aggregate_id).unwrap().unwrap();
     assert_eq!(loaded.revision, 2);
     assert_eq!(loaded.state, newer);
+
+    let stale = store.save_snapshot(Snapshot::new(
+        aggregate_id.clone(),
+        1,
+        older,
+        Metadata::default(),
+    ));
+    assert!(stale.is_err());
 }
 
 impl<A> AggregateFixture<A>

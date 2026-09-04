@@ -31,6 +31,13 @@ pub enum ConcurrencyError {
         /// Actual stream revision at append time.
         actual: Revision,
     },
+    /// A snapshot save offered a revision older than the stored snapshot.
+    StaleSnapshotRevision {
+        /// Revision offered by the caller.
+        offered: Revision,
+        /// Revision currently stored for the stream.
+        current: Revision,
+    },
 }
 
 impl Display for ConcurrencyError {
@@ -42,6 +49,13 @@ impl Display for ConcurrencyError {
                     f,
                     "wrong expected revision: expected {:?}, actual revision {}",
                     expected, actual
+                )
+            }
+            ConcurrencyError::StaleSnapshotRevision { offered, current } => {
+                write!(
+                    f,
+                    "stale snapshot revision: offered {}, current {}",
+                    offered, current
                 )
             }
         }

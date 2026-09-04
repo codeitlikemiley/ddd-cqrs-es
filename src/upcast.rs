@@ -111,6 +111,36 @@ impl UpcasterRegistry {
         }
     }
 
+    /// Returns `true` when no upcasters are registered for any event type.
+    pub fn is_empty(&self) -> bool {
+        self.upcasters
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty()
+    }
+
+    /// Returns `true` when at least one upcaster is registered for `event_type`.
+    pub fn has_upcasters(&self, event_type: &str) -> bool {
+        self.upcasters
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains_key(event_type)
+    }
+
+    /// Upcasts `payload_bytes` when needed, otherwise returns the input unchanged.
+    pub fn prepare_payload(
+        &self,
+        event_type: &str,
+        event_version: u32,
+        payload_bytes: Vec<u8>,
+    ) -> Result<(u32, Vec<u8>), Box<dyn std::error::Error + Send + Sync>> {
+        if self.is_empty() || !self.has_upcasters(event_type) {
+            Ok((event_version, payload_bytes))
+        } else {
+            self.upcast(event_type, event_version, payload_bytes)
+        }
+    }
+
     /// Registers an upcaster for a specific event type.
     ///
     /// Upcasters must strictly increase the version (`target_version >
@@ -234,5 +264,29 @@ mod tests {
         let error = registry.upcast("evt", 1, Vec::new()).unwrap_err();
 
         assert!(error.to_string().contains("does not advance"));
+    }
+
+    #[test]
+    fn empty_registry_skips_upcast_path() {
+        let registry = UpcasterRegistry::new();
+        assert!(registry.is_empty());
+        assert!(!registry.has_upcasters("evt"));
+
+        let (version, payload) = registry.prepare_payload("evt", 1, b"raw".to_vec()).unwrap();
+        assert_eq!(version, 1);
+        assert_eq!(payload, b"raw");
+    }
+
+    #[test]
+    fn prepare_payload_upcasts_when_registered() {
+        let registry = UpcasterRegistry::new();
+        registry.register("evt", Step { from: 1, to: 2 });
+
+        assert!(registry.has_upcasters("evt"));
+        assert!(!registry.has_upcasters("other"));
+
+        let (version, payload) = registry.prepare_payload("evt", 1, vec![0]).unwrap();
+        assert_eq!(version, 2);
+        assert_eq!(payload, vec![0, 2]);
     }
 }

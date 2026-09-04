@@ -899,7 +899,21 @@ where
                 &recorded_at_values,
             ],
         )
-        .map_err(|error| map_postgres_insert_error(error, expected_revision, actual_revision))?;
+        .map_err(|error| {
+            map_postgres_insert_error(
+                error,
+                expected_revision,
+                actual_revision,
+                || {
+                    current_revision_postgres(
+                        transaction,
+                        table_name,
+                        A::aggregate_type(),
+                        aggregate_id_key,
+                    )
+                },
+            )
+        })?;
     if rows.len() != count {
         return Err(EventStoreError::backend(format!(
             "multi-row insert returned {} of {} sequences",
@@ -979,7 +993,7 @@ fn row_to_raw_envelope(
         ))
     })?;
     let (event_version, upcasted_bytes) = upcasters
-        .upcast(&event_type, event_version, payload_bytes)
+        .prepare_payload(&event_type, event_version, payload_bytes)
         .map_err(|err| EventStoreError::deserialization(err.to_string()))?;
     let payload: serde_json::Value = serde_json::from_slice(&upcasted_bytes)
         .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
@@ -1032,18 +1046,22 @@ where
     })?;
     let aggregate_id = deserialize_id(&aggregate_id)?;
 
-    let payload_bytes = serde_json::to_vec(&payload_val).map_err(|error| {
-        EventStoreError::deserialization(format!(
-            "payload serialization for upcasting failed: {error}"
-        ))
-    })?;
-
-    let (event_version, upcasted_bytes) = upcasters
-        .upcast(&event_type, event_version, payload_bytes)
-        .map_err(|err| EventStoreError::deserialization(err.to_string()))?;
-
-    let payload = serde_json::from_slice(&upcasted_bytes)
-        .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
+    let (event_version, payload) = if upcasters.is_empty() || !upcasters.has_upcasters(&event_type) {
+        (event_version, payload_val)
+    } else {
+        let payload_bytes = serde_json::to_vec(&payload_val).map_err(|error| {
+            EventStoreError::deserialization(format!(
+                "payload serialization for upcasting failed: {error}"
+            ))
+        })?;
+        let (event_version, upcasted_bytes) = upcasters
+            .prepare_payload(&event_type, event_version, payload_bytes)
+            .map_err(|err| EventStoreError::deserialization(err.to_string()))?;
+        let payload = serde_json::from_slice(&upcasted_bytes).map_err(|error| {
+            EventStoreError::deserialization(format!("payload JSON: {error}"))
+        })?;
+        (event_version, payload)
+    };
 
     let payload = deserialize_payload(&event_id, &event_type, payload)?;
     let metadata = deserialize_metadata(&event_id, metadata)?;
@@ -1063,19 +1081,46 @@ where
     ))
 }
 
+fn current_revision_postgres(
+    transaction: &::postgres::Transaction<'_>,
+    table_name: &str,
+    aggregate_type: &str,
+    aggregate_id: &str,
+) -> Result<u64, EventStoreError> {
+    let query = format!(
+        "SELECT COALESCE(MAX(revision), 0)::BIGINT FROM {table} \
+         WHERE aggregate_type = $1 AND aggregate_id = $2",
+        table = table_name
+    );
+    let revision: i64 = transaction
+        .query_one(&query, &[&aggregate_type, &aggregate_id])
+        .and_then(|row| row.try_get(0))
+        .map_err(map_postgres_error)?;
+    u64::try_from(revision).map_err(|_| {
+        EventStoreError::deserialization("stored revision cannot be negative".to_owned())
+    })
+}
+
+fn is_postgres_stream_revision_unique_violation(error: &::postgres::Error) -> bool {
+    if let Some(constraint) = error.constraint() {
+        return constraint.contains("revision");
+    }
+    error.to_string().contains("aggregate_id")
+}
+
 fn map_postgres_insert_error(
     error: ::postgres::Error,
     expected: ExpectedRevision,
-    actual: u64,
+    stale_actual: u64,
+    reread_revision: impl FnOnce() -> Result<u64, EventStoreError>,
 ) -> EventStoreError {
     if error
         .code()
         .is_some_and(|code| *code == ::postgres::error::SqlState::UNIQUE_VIOLATION)
+        && is_postgres_stream_revision_unique_violation(&error)
     {
-        return EventStoreError::Concurrency(crate::ConcurrencyError::WrongExpectedRevision {
-            expected,
-            actual,
-        });
+        let current_revision = reread_revision().unwrap_or(stale_actual);
+        return crate::sql_common::map_stream_unique_violation(expected, current_revision);
     }
 
     map_postgres_error(error)
@@ -1555,7 +1600,7 @@ where
             self.table_name, self.table_name
         );
         self.pool.write(|client| {
-            client
+            let rows = client
                 .execute(
                     &sql,
                     &[
@@ -1568,6 +1613,31 @@ where
                     ],
                 )
                 .map_err(map_postgres_error)?;
+            if rows == 0 {
+                let current_sql = format!(
+                    "SELECT revision FROM {} WHERE aggregate_type = $1 AND aggregate_id = $2;",
+                    self.table_name
+                );
+                let current: Option<i64> = client
+                    .query_opt(&current_sql, &[&A::aggregate_type(), &aggregate_id])
+                    .map_err(map_postgres_error)?
+                    .map(|row| row.try_get(0))
+                    .transpose()
+                    .map_err(map_postgres_error)?;
+                if let Some(current) = current {
+                    let current = u64::try_from(current).map_err(|_| {
+                        EventStoreError::deserialization(
+                            "PostgreSQL snapshot revision cannot be negative".to_owned(),
+                        )
+                    })?;
+                    if snapshot.revision < current {
+                        return Err(crate::sql_common::stale_snapshot_revision_error(
+                            snapshot.revision,
+                            current,
+                        ));
+                    }
+                }
+            }
             Ok(())
         })
     }

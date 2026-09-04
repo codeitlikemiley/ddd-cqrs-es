@@ -17,8 +17,12 @@ use crate::upcast::UpcasterRegistry;
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime};
+
+fn lock_connection(mutex: &Mutex<Connection>) -> MutexGuard<'_, Connection> {
+    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 /// Applies production-oriented pragmas for file-backed and in-memory SQLite
 /// connections used by the event and checkpoint stores.
@@ -143,10 +147,7 @@ where
             .with_events_table(&self.table_name)?
             .with_idempotency_table(&self.idempotency_table)?;
         let migrator = crate::schema::SchemaMigrator::new(config);
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
+        let connection = lock_connection(&self.connection);
         migrator.run_sqlite(&connection)
     }
 
@@ -187,10 +188,7 @@ where
 
     fn load(&self, aggregate_id: &A::Id) -> Result<EventStream<A>, Self::Error> {
         let aggregate_id = serialize_id(aggregate_id)?;
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
+        let connection = lock_connection(&self.connection);
         let query = format!(
             "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
              event_version, payload, metadata, recorded_at_ms FROM {table} \
@@ -220,10 +218,7 @@ where
             EventStoreError::serialization("revision exceeds SQLite INTEGER".to_owned())
         })?;
         let aggregate_id = serialize_id(aggregate_id)?;
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
+        let connection = lock_connection(&self.connection);
         let query = format!(
             "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
              event_version, payload, metadata, recorded_at_ms FROM {table} \
@@ -257,10 +252,7 @@ where
             .into_iter()
             .map(PreparedSqliteEvent::new)
             .collect::<Result<Vec<_>, _>>()?;
-        let mut connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
+        let mut connection = lock_connection(&self.connection);
         let transaction = connection.transaction().map_err(map_sqlite_error)?;
         let actual_revision =
             Self::current_revision_locked(&self.table_name, &transaction, &aggregate_id_key)?;
@@ -303,7 +295,18 @@ where
                     event.recorded_at_ms,
                 ])
                 .map_err(|error| {
-                    map_sqlite_insert_error(error, expected_revision, actual_revision)
+                    map_sqlite_insert_error(
+                        error,
+                        expected_revision,
+                        actual_revision,
+                        || {
+                            Self::current_revision_locked(
+                                &self.table_name,
+                                &transaction,
+                                &aggregate_id_key,
+                            )
+                        },
+                    )
                 })?;
             let sequence = transaction.last_insert_rowid();
             let sequence = u64::try_from(sequence).map_err(|_| {
@@ -334,10 +337,7 @@ where
         let sequence = i64::try_from(sequence).map_err(|_| {
             EventStoreError::deserialization("global sequence exceeds SQLite INTEGER".to_owned())
         })?;
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
+        let connection = lock_connection(&self.connection);
         let query = format!(
             "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
              event_version, payload, metadata, recorded_at_ms FROM {table} \
@@ -370,10 +370,7 @@ where
         let limit = i64::try_from(limit.get()).map_err(|_| {
             EventStoreError::deserialization("event replay limit exceeds SQLite INTEGER".to_owned())
         })?;
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
+        let connection = lock_connection(&self.connection);
         let query = format!(
             "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
              event_version, payload, metadata, recorded_at_ms FROM {table} \
@@ -412,10 +409,7 @@ where
         let limit_i64 = i64::try_from(limit.get()).map_err(|_| {
             EventStoreError::deserialization("event replay limit exceeds SQLite INTEGER".to_owned())
         })?;
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
+        let connection = lock_connection(&self.connection);
         let query = format!(
             "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
              event_version, payload, metadata, recorded_at_ms FROM {table} \
@@ -469,10 +463,7 @@ where
         &self,
         idempotency_key: &IdempotencyKey,
     ) -> Result<Option<IdempotencyState<EventStream<A>>>, Self::Error> {
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
+        let connection = lock_connection(&self.connection);
         let query = format!(
             "SELECT state, value FROM {} WHERE idempotency_key = ?1;",
             self.idempotency_table
@@ -526,10 +517,7 @@ where
             .map(PreparedSqliteEvent::new)
             .collect::<Result<Vec<_>, _>>()
             .map_err(IdempotentAppendError::Store)?;
-        let mut connection = self
-            .connection
-            .lock()
-            .map_err(|_| IdempotentAppendError::Store(EventStoreError::Poisoned))?;
+        let mut connection = lock_connection(&self.connection);
         let transaction = connection
             .transaction()
             .map_err(|error| IdempotentAppendError::Store(map_sqlite_error(error)))?;
@@ -638,6 +626,13 @@ where
                         error,
                         expected_revision,
                         actual_revision,
+                        || {
+                            Self::current_revision_locked(
+                                &self.table_name,
+                                &transaction,
+                                &aggregate_id_key,
+                            )
+                        },
                     ))
                 })?;
             let sequence = transaction.last_insert_rowid();
@@ -872,7 +867,7 @@ fn row_to_raw_envelope(
     })?;
 
     let (event_version, upcasted_bytes) = upcasters
-        .upcast(&event_type, event_version, payload.into_bytes())
+        .prepare_payload(&event_type, event_version, payload.into_bytes())
         .map_err(|err| from_event_store_error(EventStoreError::deserialization(err.to_string())))?;
     let payload: serde_json::Value = serde_json::from_slice(&upcasted_bytes).map_err(|error| {
         from_event_store_error(EventStoreError::deserialization(format!(
@@ -949,7 +944,7 @@ where
     let aggregate_id = deserialize_id(&aggregate_id).map_err(from_event_store_error)?;
 
     let (event_version, upcasted_bytes) = upcasters
-        .upcast(&event_type, event_version, payload.into_bytes())
+        .prepare_payload(&event_type, event_version, payload.into_bytes())
         .map_err(|err| from_event_store_error(EventStoreError::deserialization(err.to_string())))?;
 
     let payload_value = serde_json::from_slice(&upcasted_bytes).map_err(|error| {
@@ -982,13 +977,22 @@ where
     ))
 }
 
+fn is_sqlite_stream_revision_unique_violation(message: Option<&str>) -> bool {
+    message.is_some_and(|message| {
+        message.contains("aggregate_id")
+            && message.contains("revision")
+            && !message.contains("event_id")
+    })
+}
+
 fn map_sqlite_insert_error(
     error: rusqlite::Error,
     expected: ExpectedRevision,
-    actual: u64,
+    stale_actual: u64,
+    reread_revision: impl FnOnce() -> Result<u64, EventStoreError>,
 ) -> EventStoreError {
     match &error {
-        rusqlite::Error::SqliteFailure(failure, _)
+        rusqlite::Error::SqliteFailure(failure, message)
             if failure.code == ErrorCode::ConstraintViolation
                 && matches!(
                     failure.extended_code,
@@ -996,13 +1000,14 @@ fn map_sqlite_insert_error(
                         | rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY
                 ) =>
         {
-            EventStoreError::Concurrency(crate::ConcurrencyError::WrongExpectedRevision {
-                expected,
-                actual,
-            })
+            if is_sqlite_stream_revision_unique_violation(message.as_deref()) {
+                let current_revision = reread_revision().unwrap_or(stale_actual);
+                return crate::sql_common::map_stream_unique_violation(expected, current_revision);
+            }
         }
-        _ => map_sqlite_error(error),
+        _ => {}
     }
+    map_sqlite_error(error)
 }
 
 fn map_sqlite_error(error: rusqlite::Error) -> EventStoreError {
@@ -1056,10 +1061,7 @@ impl SqliteCheckpointStore {
         let config = crate::schema::SqlSchemaConfig::new(crate::schema::SqlDialect::Sqlite)
             .with_checkpoints_table(&self.table_name)?;
         let migrator = crate::schema::SchemaMigrator::new(config);
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
+        let connection = lock_connection(&self.connection);
         migrator.run_sqlite(&connection)
     }
 }
@@ -1068,10 +1070,7 @@ impl crate::projection::CheckpointStore for SqliteCheckpointStore {
     type Error = EventStoreError;
 
     fn load_checkpoint(&self, projection_name: &str) -> Result<Option<u64>, Self::Error> {
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
+        let connection = lock_connection(&self.connection);
         let sql = format!(
             "SELECT sequence FROM {} WHERE projection_name = ?1;",
             self.table_name
@@ -1093,10 +1092,7 @@ impl crate::projection::CheckpointStore for SqliteCheckpointStore {
     }
 
     fn save_checkpoint(&self, projection_name: &str, sequence: u64) -> Result<(), Self::Error> {
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
+        let connection = lock_connection(&self.connection);
         let sql = format!(
             "INSERT INTO {} (projection_name, sequence) VALUES (?1, ?2)
              ON CONFLICT(projection_name) DO UPDATE SET sequence = CASE
@@ -1215,10 +1211,7 @@ where
         let config = crate::schema::SqlSchemaConfig::new(crate::schema::SqlDialect::Sqlite)
             .with_idempotency_table(&self.table_name)?;
         let migrator = crate::schema::SchemaMigrator::new(config);
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
+        let connection = lock_connection(&self.connection);
         migrator.run_sqlite(&connection)
     }
 }
@@ -1230,10 +1223,7 @@ where
     type Error = EventStoreError;
 
     fn load(&self, key: &IdempotencyKey) -> Result<Option<IdempotencyState<V>>, Self::Error> {
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
+        let connection = lock_connection(&self.connection);
         let sql = format!(
             "SELECT state, value FROM {} WHERE idempotency_key = ?1;",
             self.table_name
@@ -1266,10 +1256,7 @@ where
     }
 
     fn reserve(&self, key: IdempotencyKey) -> Result<bool, Self::Error> {
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
+        let connection = lock_connection(&self.connection);
         let updated_at_ms = system_time_to_millis(SystemTime::now())?;
         let sql = format!(
             "INSERT OR IGNORE INTO {} (idempotency_key, state, value, updated_at_ms)
@@ -1283,10 +1270,7 @@ where
     }
 
     fn save(&self, key: IdempotencyKey, value: V) -> Result<(), Self::Error> {
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
+        let connection = lock_connection(&self.connection);
         let updated_at_ms = system_time_to_millis(SystemTime::now())?;
         let value_json = serde_json::to_string(&value).map_err(|error| {
             EventStoreError::serialization(format!("idempotency value JSON: {error}"))
@@ -1307,10 +1291,7 @@ where
     }
 
     fn remove(&self, key: &IdempotencyKey) -> Result<(), Self::Error> {
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
+        let connection = lock_connection(&self.connection);
         let sql = format!(
             "DELETE FROM {} WHERE idempotency_key = ?1;",
             self.table_name
@@ -1387,10 +1368,7 @@ where
         let config = crate::schema::SqlSchemaConfig::new(crate::schema::SqlDialect::Sqlite)
             .with_snapshots_table(&self.table_name)?;
         let migrator = crate::schema::SchemaMigrator::new(config);
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
+        let connection = lock_connection(&self.connection);
         migrator.run_sqlite(&connection)
     }
 }
@@ -1412,10 +1390,7 @@ where
         .entered();
 
         let aggregate_id = serialize_id(aggregate_id)?;
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
+        let connection = lock_connection(&self.connection);
         let sql = format!(
             "SELECT revision, state, metadata, recorded_at_ms FROM {} \
              WHERE aggregate_type = ?1 AND aggregate_id = ?2;",
@@ -1481,10 +1456,7 @@ where
             EventStoreError::serialization(format!("snapshot metadata JSON: {error}"))
         })?;
         let recorded_at_ms = system_time_to_millis(snapshot.recorded_at)?;
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| EventStoreError::Poisoned)?;
+        let connection = lock_connection(&self.connection);
         let sql = format!(
             "INSERT INTO {} (aggregate_type, aggregate_id, revision, state, metadata, recorded_at_ms)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
@@ -1496,7 +1468,7 @@ where
              WHERE excluded.revision >= {}.revision;",
             self.table_name, self.table_name
         );
-        connection
+        let changed = connection
             .execute(
                 &sql,
                 params![
@@ -1509,6 +1481,31 @@ where
                 ],
             )
             .map_err(map_sqlite_error)?;
+        if changed == 0 {
+            let current_sql = format!(
+                "SELECT revision FROM {} WHERE aggregate_type = ?1 AND aggregate_id = ?2;",
+                self.table_name
+            );
+            if let Some(current) = connection
+                .query_row(&current_sql, params![A::aggregate_type(), aggregate_id], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .optional()
+                .map_err(map_sqlite_error)?
+            {
+                let current = u64::try_from(current).map_err(|_| {
+                    EventStoreError::deserialization(
+                        "SQLite snapshot revision cannot be negative".to_owned(),
+                    )
+                })?;
+                if snapshot.revision < current {
+                    return Err(crate::sql_common::stale_snapshot_revision_error(
+                        snapshot.revision,
+                        current,
+                    ));
+                }
+            }
+        }
         Ok(())
     }
 }

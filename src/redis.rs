@@ -1292,7 +1292,7 @@ where
 
     let aggregate_id = deserialize_id(&aggregate_id_json)?;
     let (event_version, upcasted_bytes) = upcasters
-        .upcast(&event_type, event_version, payload_bytes)
+        .prepare_payload(&event_type, event_version, payload_bytes)
         .map_err(|error| EventStoreError::deserialization(error.to_string()))?;
     let payload_value = serde_json::from_slice(&upcasted_bytes)
         .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
@@ -1334,7 +1334,7 @@ fn hash_to_raw_envelope(
     let recorded_at_ms = hash_field_i64(&hash, "recorded_at_ms")?;
 
     let (event_version, upcasted_bytes) = upcasters
-        .upcast(&event_type, event_version, payload_bytes)
+        .prepare_payload(&event_type, event_version, payload_bytes)
         .map_err(|error| EventStoreError::deserialization(error.to_string()))?;
     let payload: serde_json::Value = serde_json::from_slice(&upcasted_bytes)
         .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;

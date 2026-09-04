@@ -17,7 +17,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-#[cfg(any(feature = "postgres", feature = "mysql", feature = "json-file"))]
+#[cfg(any(
+    feature = "postgres",
+    feature = "mysql",
+    feature = "json-file",
+    feature = "sqlite"
+))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[path = "framework/contract_tests.rs"]
