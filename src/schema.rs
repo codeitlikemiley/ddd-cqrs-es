@@ -299,7 +299,6 @@ pub fn get_migrations(dialect: SqlDialect) -> Vec<SchemaMigration> {
                     DROP INDEX IF EXISTS {events_table}_stream_idx;
                 "#,
             },
-
             SchemaMigration {
                 version: 7,
                 description: "idempotency_lease_columns",
@@ -311,7 +310,6 @@ pub fn get_migrations(dialect: SqlDialect) -> Vec<SchemaMigration> {
                         ON {idempotency_table} (updated_at_ms);
                 "#,
             },
-
             SchemaMigration {
                 version: 7,
                 description: "idempotency_lease_columns",
@@ -323,7 +321,6 @@ pub fn get_migrations(dialect: SqlDialect) -> Vec<SchemaMigration> {
                         WHERE state = 'pending';
                 "#,
             },
-
             SchemaMigration {
                 version: 7,
                 description: "idempotency_lease_columns",
