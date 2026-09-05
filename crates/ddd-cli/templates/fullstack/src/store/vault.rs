@@ -271,7 +271,7 @@ pub(crate) fn secret_to_summary(secret: &StoredSecret) -> crate::contracts::Secr
 /// `org_id` is the workspace vault owner (organization UUID).
 pub(crate) async fn load_secrets_resolved(org_id: &str) -> AuthStackResult<Vec<StoredSecret>> {
     let secrets = load_secrets_raw(org_id).await?;
-    resolve_loaded_secrets(org_id, secrets).await
+    resolve_loaded_secrets(org_id, secrets, true).await
 }
 
 /// Decrypt only the secrets referenced by dashboard query execution (avoids re-decrypting the full vault per widget).
@@ -283,12 +283,15 @@ pub(crate) async fn load_secrets_resolved_for_ids(
         return Ok(Vec::new());
     }
     let secrets = load_secrets_raw_for_ids(org_id, secret_ids).await?;
-    resolve_loaded_secrets(org_id, secrets).await
+    // Connector loads must not persist normalization: save_secrets_raw replaces the
+    // whole org vault and would delete secrets outside this referenced subset.
+    resolve_loaded_secrets(org_id, secrets, false).await
 }
 
 async fn resolve_loaded_secrets(
     org_id: &str,
     mut secrets: Vec<StoredSecret>,
+    persist_normalization: bool,
 ) -> AuthStackResult<Vec<StoredSecret>> {
     if secrets.is_empty() {
         return Ok(secrets);
@@ -342,7 +345,7 @@ async fn resolve_loaded_secrets(
             dirty = true;
         }
     }
-    if dirty {
+    if dirty && persist_normalization {
         // Persist ciphertext only (skip empty plaintext via serde skip).
         let to_save: Vec<StoredSecret> = secrets
             .iter()
