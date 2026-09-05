@@ -575,7 +575,7 @@ where
                 .load_indexed_sequences(&keys.stream_key, 0, None)
                 .await?;
             let hashes = self.load_sequence_hashes(&sequences).await?;
-            for mut hash in hashes {
+            for hash in hashes {
                 if hash_field_string_peek(&hash, "aggregate_type")? == aggregate_type {
                     events.push(hash_to_envelope::<A>(&self.upcasters, hash)?);
                 }
@@ -602,7 +602,7 @@ where
                 .load_indexed_sequences(&keys.stream_key, revision, None)
                 .await?;
             let hashes = self.load_sequence_hashes(&sequences).await?;
-            for mut hash in hashes {
+            for hash in hashes {
                 if hash_field_string_peek(&hash, "aggregate_type")? == aggregate_type {
                     events.push(hash_to_envelope::<A>(&self.upcasters, hash)?);
                 }

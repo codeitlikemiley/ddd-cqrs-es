@@ -305,6 +305,8 @@ Tighten `spin.toml` outbound hosts in production — copy `spin.production.toml.
 
 **Postgres dashboard connectors:** create a dedicated read-only database role (`GRANT SELECT` only) and prefer that user in Resources. The runtime also sets libpq `default_transaction_read_only=on` and `statement_timeout=30s` on connector URLs as defense-in-depth (keyword blocklists alone are not sufficient).
 
+**TOTP step-up:** codes are verified within the standard time skew, but `wasi-auth` 0.1.0-rc.4 does not yet record consumed codes across that window — replaying the same code before the window advances remains a known limitation until upstream adds replay tracking.
+
 ### Email verification: register vs resend
 
 | Action | Result |

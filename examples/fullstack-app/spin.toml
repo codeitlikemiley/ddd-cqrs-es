@@ -97,6 +97,9 @@ auth_apple_jwks_url = { default = "https://appleid.apple.com/auth/keys" }
 auth_apple_jwks_json = { default = "" }
 auth_apple_scopes = { default = "openid email name" }
 auth_apple_redirect_uri = { default = "http://127.0.0.1:3008/api/auth/oauth/apple/callback" }
+auth_dashboard_http_enabled = { default = "false" }
+auth_dashboard_http_allow_private = { default = "false" }
+auth_dashboard_grpc_enabled = { default = "false" }
 
 [[trigger.http]]
 route = "/api/auth/..."
@@ -229,6 +232,9 @@ auth_apple_jwks_url = "{{ auth_apple_jwks_url }}"
 auth_apple_jwks_json = "{{ auth_apple_jwks_json }}"
 auth_apple_scopes = "{{ auth_apple_scopes }}"
 auth_apple_redirect_uri = "{{ auth_apple_redirect_uri }}"
+auth_dashboard_http_enabled = "{{ auth_dashboard_http_enabled }}"
+auth_dashboard_http_allow_private = "{{ auth_dashboard_http_allow_private }}"
+auth_dashboard_grpc_enabled = "{{ auth_dashboard_grpc_enabled }}"
 
 [component.auth-api.build]
 command = "bash scripts/verify_toolchain.sh && WASI_RUNTIME=spin AUTH_TRANSPORT=both cargo leptos build --release --split --frontend-only && WASI_RUNTIME=spin AUTH_TRANSPORT=both LEPTOS_OUTPUT_NAME=fullstack_app cargo build --lib --target wasm32-wasip2 --release --no-default-features --features ${FULLSTACK_FEATURES:-ssr,postgres,spin-grpc,mail-capture} && bash scripts/verify_wasi_artifact.sh"
@@ -345,6 +351,9 @@ auth_apple_jwks_url = "{{ auth_apple_jwks_url }}"
 auth_apple_jwks_json = "{{ auth_apple_jwks_json }}"
 auth_apple_scopes = "{{ auth_apple_scopes }}"
 auth_apple_redirect_uri = "{{ auth_apple_redirect_uri }}"
+auth_dashboard_http_enabled = "{{ auth_dashboard_http_enabled }}"
+auth_dashboard_http_allow_private = "{{ auth_dashboard_http_allow_private }}"
+auth_dashboard_grpc_enabled = "{{ auth_dashboard_grpc_enabled }}"
 
 [component.auth-ui]
 source = "target/wasm32-wasip2/release/fullstack_app.wasm"
@@ -457,6 +466,9 @@ auth_apple_jwks_url = "{{ auth_apple_jwks_url }}"
 auth_apple_jwks_json = "{{ auth_apple_jwks_json }}"
 auth_apple_scopes = "{{ auth_apple_scopes }}"
 auth_apple_redirect_uri = "{{ auth_apple_redirect_uri }}"
+auth_dashboard_http_enabled = "{{ auth_dashboard_http_enabled }}"
+auth_dashboard_http_allow_private = "{{ auth_dashboard_http_allow_private }}"
+auth_dashboard_grpc_enabled = "{{ auth_dashboard_grpc_enabled }}"
 
 [component.auth-static]
 source = { url = "https://github.com/fermyon/spin-fileserver/releases/download/v0.1.0/spin_static_fs.wasm", digest = "sha256:96c76d9af86420b39eb6cd7be5550e3cb5d4cc4de572ce0fd1f6a29471536cb4" }

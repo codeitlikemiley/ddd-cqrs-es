@@ -458,7 +458,9 @@ pub async fn load_data_sources(
         else {
             return Ok(Vec::new());
         };
-        Ok(serde_json::from_slice(&bytes).unwrap_or_default())
+        Ok(serde_json::from_slice(&bytes).map_err(|error| {
+            AuthStackError::deserialization(format!("dashboard sources JSON: {error}"))
+        })?)
     }
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
@@ -592,7 +594,9 @@ pub async fn migrate_legacy_user_secrets_to_org_detailed(
         else {
             return Ok((false, 0, 0, Vec::new()));
         };
-        let legacy: Vec<StoredSecret> = serde_json::from_slice(&bytes).unwrap_or_default();
+        let legacy: Vec<StoredSecret> = serde_json::from_slice(&bytes).map_err(|error| {
+            AuthStackError::deserialization(format!("legacy vault secrets JSON: {error}"))
+        })?;
         if legacy.is_empty() {
             return Ok((false, 0, 0, Vec::new()));
         }
