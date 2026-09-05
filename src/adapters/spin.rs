@@ -370,6 +370,7 @@ fn spin_sql_returns_rows(sql: &str) -> bool {
     upper.starts_with("SELECT") || upper.contains("RETURNING")
 }
 
+#[cfg(feature = "spin-postgres")]
 /// Execute a Spin Postgres query and return JSON rows for read operations.
 ///
 /// For write commands this returns an empty rowset after successful execution.
