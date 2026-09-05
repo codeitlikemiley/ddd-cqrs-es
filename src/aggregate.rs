@@ -61,11 +61,11 @@ pub trait Aggregate: Sized {
     /// Aggregate identifier type.
     type Id: Clone + Eq + Hash + Send + Sync + 'static;
     /// Command type handled by this aggregate.
-    type Command;
+    type Command: Send;
     /// Domain event type applied by this aggregate.
     type Event: DomainEvent;
     /// Domain error type returned when a command is rejected.
-    type Error;
+    type Error: Send;
 
     /// Stable aggregate type name used in event envelopes.
     fn aggregate_type() -> &'static str;

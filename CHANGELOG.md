@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0-rc.8
+
+- **Breaking:** `Aggregate::Command` and `Aggregate::Error` now require `Send`,
+  matching the async repository and command-bus APIs that hold commands and
+  domain errors across `.await`. Aggregates that used non-`Send` command or
+  error types (for example `Rc` or thread-local handles) must switch to
+  `Send` alternatives before upgrading.
+
 ## 0.3.0-rc.7
 
 - **Fixed (unbounded memory / Redis data loss):** projection runners no longer
