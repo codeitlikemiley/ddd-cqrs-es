@@ -440,6 +440,10 @@ pub trait CheckpointStore {
     fn load_checkpoint(&self, projection_name: &str) -> Result<Option<u64>, Self::Error>;
 
     /// Saves the last successfully processed event global sequence for a given projection name.
+    ///
+    /// Implementations must keep checkpoints monotonic: saving an older sequence
+    /// must not rewind a newer stored value. See
+    /// [`assert_checkpoint_store_contract`](crate::testing::assert_checkpoint_store_contract).
     fn save_checkpoint(&self, projection_name: &str, sequence: u64) -> Result<(), Self::Error>;
 }
 

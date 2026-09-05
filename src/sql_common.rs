@@ -249,3 +249,76 @@ pub(crate) fn deserialize_metadata(
         )
     })
 }
+
+#[cfg(all(
+    test,
+    any(
+        feature = "sqlite",
+        feature = "postgres",
+        feature = "mysql",
+        feature = "redis"
+    )
+))]
+mod tests {
+    use super::*;
+    use crate::error::EventStoreError;
+
+    #[test]
+    fn check_expected_revision_accepts_any_and_exact_matches() {
+        assert!(check_expected_revision(ExpectedRevision::Any, 10).is_ok());
+        assert!(check_expected_revision(ExpectedRevision::NoStream, 0).is_ok());
+        assert!(check_expected_revision(ExpectedRevision::Exact(4), 4).is_ok());
+    }
+
+    #[test]
+    fn check_expected_revision_rejects_stale_exact_and_existing_stream() {
+        assert!(matches!(
+            check_expected_revision(ExpectedRevision::NoStream, 1),
+            Err(EventStoreError::Concurrency(
+                ConcurrencyError::StreamAlreadyExists
+            ))
+        ));
+        assert!(matches!(
+            check_expected_revision(ExpectedRevision::Exact(2), 4),
+            Err(EventStoreError::Concurrency(
+                ConcurrencyError::WrongExpectedRevision {
+                    expected: ExpectedRevision::Exact(2),
+                    actual: 4,
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn map_stream_unique_violation_maps_nostream_and_exact() {
+        assert!(matches!(
+            map_stream_unique_violation(ExpectedRevision::NoStream, 0),
+            EventStoreError::Concurrency(ConcurrencyError::StreamAlreadyExists)
+        ));
+        assert!(matches!(
+            map_stream_unique_violation(ExpectedRevision::Exact(1), 2),
+            EventStoreError::Concurrency(ConcurrencyError::WrongExpectedRevision {
+                expected: ExpectedRevision::Exact(1),
+                actual: 2,
+            })
+        ));
+        assert!(matches!(
+            map_stream_unique_violation(ExpectedRevision::Any, 2),
+            EventStoreError::Concurrency(ConcurrencyError::WrongExpectedRevision {
+                expected: ExpectedRevision::Any,
+                actual: 2,
+            })
+        ));
+    }
+
+    #[test]
+    fn stale_snapshot_revision_error_reports_current_revision() {
+        assert!(matches!(
+            stale_snapshot_revision_error(1, 3),
+            EventStoreError::Concurrency(ConcurrencyError::StaleSnapshotRevision {
+                offered: 1,
+                current: 3,
+            })
+        ));
+    }
+}

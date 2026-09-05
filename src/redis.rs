@@ -2783,6 +2783,7 @@ mod tests {
             "stream-1".to_owned(),
             TestEvent::Created { value: 11 },
             TestEvent::Updated { value: 12 },
+            TestEvent::Updated { value: 13 },
             crate::testing::EventStoreContractOptions::default(),
         )
         .await;

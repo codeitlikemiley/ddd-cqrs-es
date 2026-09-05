@@ -141,8 +141,11 @@ Adapter authors should use the contract helpers in `ddd_cqrs_es::testing`:
 
 - `assert_event_store_contract`
 - `assert_event_store_global_replay_contract`
+- `assert_event_store_any_writers_contract`
+- `assert_event_store_append_race_contract`
+- `assert_atomic_idempotent_store_contract`
 - `assert_checkpoint_store_contract`
 - `assert_idempotency_store_contract`
 - `assert_snapshot_store_contract`
 
-These helpers are intentionally focused so adapters can validate event append, global replay, idempotency, checkpoint, snapshot, and upcaster behavior without assuming one exact sequence-number policy for every backend.
+These helpers are intentionally focused so adapters can validate event append, multi-event batches, optimistic concurrency races, global replay, atomic idempotency, idempotency, checkpoint monotonicity, snapshot revision guards, and upcaster behavior without assuming one exact sequence-number policy for every backend.
