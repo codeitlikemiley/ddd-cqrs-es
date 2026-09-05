@@ -78,6 +78,74 @@ impl PartialEq<&str> for EventType {
     }
 }
 
+/// Stable aggregate type name stored with an event envelope.
+///
+/// Backed by `Cow<'static, str>` so names sourced from
+/// [`crate::aggregate::Aggregate::aggregate_type`]'s `&'static str` are
+/// borrowed instead of allocated on every append.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AggregateType(std::borrow::Cow<'static, str>);
+
+impl AggregateType {
+    /// Creates an aggregate type from a stable aggregate name.
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(std::borrow::Cow::Owned(value.into()))
+    }
+
+    /// Creates an aggregate type that borrows a static aggregate name without
+    /// allocating.
+    pub const fn from_static(value: &'static str) -> Self {
+        Self(std::borrow::Cow::Borrowed(value))
+    }
+
+    /// Creates an aggregate type from a dynamic string slice.
+    pub fn from_str(value: &str) -> Self {
+        Self(std::borrow::Cow::Owned(value.to_owned()))
+    }
+
+    /// Returns the aggregate type as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Consumes the aggregate type and returns the owned string.
+    pub fn into_string(self) -> String {
+        self.0.into_owned()
+    }
+}
+
+impl From<&'static str> for AggregateType {
+    fn from(value: &'static str) -> Self {
+        Self::from_static(value)
+    }
+}
+
+impl From<String> for AggregateType {
+    fn from(value: String) -> Self {
+        Self(std::borrow::Cow::Owned(value))
+    }
+}
+
+impl AsRef<str> for AggregateType {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl Display for AggregateType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl PartialEq<&str> for AggregateType {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
 impl PartialEq<EventType> for &str {
     fn eq(&self, other: &EventType) -> bool {
         *self == other.as_str()
@@ -308,12 +376,7 @@ pub struct EventEnvelope<E, Id> {
     /// Aggregate stream identifier.
     pub aggregate_id: Id,
     /// Stable aggregate type name.
-    ///
-    /// Stored as an owned [`String`] today. A `Cow<'static, str>` newtype (like
-    /// [`EventType`]) is planned for 0.4 so typed feeds can borrow
-    /// [`crate::aggregate::Aggregate::aggregate_type`] without allocating per
-    /// envelope.
-    pub aggregate_type: String,
+    pub aggregate_type: AggregateType,
     /// Per-aggregate stream revision assigned on append.
     pub revision: Revision,
     /// Global append order assigned by stores that support sequencing.
@@ -336,7 +399,7 @@ impl<E, Id> EventEnvelope<E, Id> {
     pub fn new(
         event_id: EventId,
         aggregate_id: Id,
-        aggregate_type: impl Into<String>,
+        aggregate_type: impl Into<AggregateType>,
         revision: Revision,
         sequence: Option<u64>,
         event_type: impl Into<EventType>,
@@ -367,7 +430,7 @@ impl<E, Id> EventEnvelope<E, Id> {
     pub fn builder(
         event_id: EventId,
         aggregate_id: Id,
-        aggregate_type: impl Into<String>,
+        aggregate_type: impl Into<AggregateType>,
         revision: Revision,
         event_type: impl Into<EventType>,
         payload: E,

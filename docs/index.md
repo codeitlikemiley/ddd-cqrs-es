@@ -44,7 +44,7 @@ The root crate provides durable stores, checkpoints, idempotency stores, and not
 
 #### API Notes:
 * Aggregates are loaded by the repository using the external stream ID; the `Aggregate` trait does not require an `id()` method.
-* `EventType` is a serde-transparent newtype. Convert it with `as_str()` or `into_string()` when a database, UI, or protocol needs a plain string.
+* `EventType` and `AggregateType` are serde-transparent newtypes. Convert them with `as_str()` or `into_string()` when a database, UI, or protocol needs a plain string.
 * `SqlSchemaConfig` table-name builders validate eagerly and return `Result`.
 * Process managers can be coordinated by `ProcessManagerRunner` or `AsyncProcessManagerRunner`.
 * `execute_idempotent(...)` is portable but not crash-atomic across separate stores. Use `execute_idempotent_atomic(...)` with native SQL stores for production request idempotency.
