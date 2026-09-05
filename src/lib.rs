@@ -142,12 +142,14 @@ pub use event::{
 /// Primary event store contracts and append semantics.
 pub use event_store::{
     AtomicIdempotentEventStore, EventStore, EventStream, IdempotentAppendError, StandardEventStore,
+    GLOBAL_REPLAY_PAGE_SIZE,
 };
 /// Idempotency APIs and error types shared across adapters.
 pub use idempotency::{
-    IdempotencyKey, IdempotencyState, IdempotencyStore, IdempotencyWaitConfig,
-    IdempotentRepositoryError, InMemoryIdempotencyError, InMemoryIdempotencyStore,
-    DEFAULT_IDEMPOTENCY_PENDING_TIMEOUT, DEFAULT_IDEMPOTENCY_POLL_INTERVAL,
+    IdempotencyKey, IdempotencyLease, IdempotencyLeaseConfig, IdempotencyState, IdempotencyStore,
+    IdempotencyWaitConfig, IdempotentRepositoryError, InMemoryIdempotencyError,
+    InMemoryIdempotencyStore, DEFAULT_IDEMPOTENCY_LEASE, DEFAULT_IDEMPOTENCY_PENDING_TIMEOUT,
+    DEFAULT_IDEMPOTENCY_POLL_INTERVAL,
 };
 /// In-memory event store implementation for tests and local development.
 pub use memory::InMemoryEventStore;
@@ -165,7 +167,10 @@ pub use postgres::{
 /// Async process manager implementation for background consistency jobs.
 pub use process_manager::AsyncProcessManagerRunner;
 /// Synchronous process manager abstractions and runner APIs.
-pub use process_manager::{ProcessManager, ProcessManagerRunner, ProcessManagerRunnerError};
+pub use process_manager::{
+    ProcessManager, ProcessManagerDispatchCheckpoint, ProcessManagerRunResult,
+    ProcessManagerRunner, ProcessManagerRunnerError,
+};
 #[cfg(feature = "async")]
 /// Async projection and replay runner interfaces.
 pub use projection::{
@@ -182,10 +187,11 @@ pub use raw_feed::{RawEventEnvelope, RawEventFeed};
 
 /// Projection runners, batch controls, and checkpoint integrations.
 pub use projection::{
-    CheckpointStore, CheckpointedProjection, CheckpointedProjectionRunner,
-    InMemoryProjectionRunner, PersistedProjectionRunner, Projection, ProjectionBatchConfig,
-    ProjectionBatchOutcome, ProjectionRunnerError, TransactionalCheckpointedProjection,
-    TransactionalCheckpointedProjectionRunner, DEFAULT_PROJECTION_BATCH_SIZE,
+    aggregate_scoped_checkpoint_key, raw_checkpoint_key, CheckpointStore, CheckpointedProjection,
+    CheckpointedProjectionRunner, InMemoryProjectionRunner, PersistedProjectionRunner, Projection,
+    ProjectionBatchConfig, ProjectionBatchOutcome, ProjectionRunnerError,
+    TransactionalCheckpointedProjection, TransactionalCheckpointedProjectionRunner,
+    DEFAULT_PROJECTION_BATCH_SIZE,
 };
 #[cfg(feature = "spin-redis")]
 /// Spin Redis client handle when the Spin Redis client feature is enabled.
@@ -196,7 +202,8 @@ pub use redis::WasiRedisClient;
 #[cfg(feature = "redis")]
 /// Redis checkpoint/event/publish adapters for production distributed usage.
 pub use redis::{
-    RedisCheckpointStore, RedisCommandExecutor, RedisEventStore, RedisPubSubPublisher,
+    RedisCheckpointStore, RedisCommandExecutor, RedisEventStore, RedisIdempotencyStore,
+    RedisPubSubPublisher,
 };
 /// Repository contracts and execution outcome types.
 pub use repository::{
@@ -230,4 +237,4 @@ pub use testing::{
     assert_snapshot_store_contract, AggregateFixture, EventStoreContractOptions,
 };
 /// Upcaster abstractions for event schema migration over time.
-pub use upcast::{ErasedUpcaster, EventUpcaster, UpcasterRegistry};
+pub use upcast::{ErasedUpcaster, EventUpcaster, UpcasterRegistrationError, UpcasterRegistry};

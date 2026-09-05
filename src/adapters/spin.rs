@@ -1,7 +1,11 @@
 // -------------------------------------------------------------------------
 // Spin SQLite adapter
 // -------------------------------------------------------------------------
-#[cfg(any(feature = "spin-sqlite", feature = "spin-postgres"))]
+#[cfg(any(
+    feature = "spin-sqlite",
+    feature = "spin-postgres",
+    feature = "spin-mysql"
+))]
 /// One parameterized statement in a bounded Spin host transaction.
 ///
 /// Parameters are kept separate from SQL so callers never interpolate secret
@@ -14,7 +18,11 @@ pub struct SpinSqlStatement {
     minimum_rows: usize,
 }
 
-#[cfg(any(feature = "spin-sqlite", feature = "spin-postgres"))]
+#[cfg(any(
+    feature = "spin-sqlite",
+    feature = "spin-postgres",
+    feature = "spin-mysql"
+))]
 impl SpinSqlStatement {
     /// Creates a write statement.
     #[must_use]
@@ -75,7 +83,11 @@ impl SpinSqlStatement {
     }
 }
 
-#[cfg(any(feature = "spin-sqlite", feature = "spin-postgres"))]
+#[cfg(any(
+    feature = "spin-sqlite",
+    feature = "spin-postgres",
+    feature = "spin-mysql"
+))]
 const MAX_SPIN_TRANSACTION_STATEMENTS: usize = 1_024;
 
 #[cfg(feature = "spin-sqlite")]
@@ -559,7 +571,11 @@ async fn collect_postgres_statement(
     Ok(rows)
 }
 
-#[cfg(any(feature = "spin-sqlite", feature = "spin-postgres"))]
+#[cfg(any(
+    feature = "spin-sqlite",
+    feature = "spin-postgres",
+    feature = "spin-mysql"
+))]
 fn validate_spin_transaction(statements: &[SpinSqlStatement]) -> Result<(), String> {
     if statements.is_empty() {
         return Err("Spin SQL transaction requires at least one statement".to_owned());
@@ -578,7 +594,11 @@ fn validate_spin_transaction(statements: &[SpinSqlStatement]) -> Result<(), Stri
     Ok(())
 }
 
-#[cfg(any(feature = "spin-sqlite", feature = "spin-postgres"))]
+#[cfg(any(
+    feature = "spin-sqlite",
+    feature = "spin-postgres",
+    feature = "spin-mysql"
+))]
 fn transaction_failure(
     backend: &str,
     statement_index: usize,
@@ -595,7 +615,14 @@ fn transaction_failure(
     }
 }
 
-#[cfg(all(test, any(feature = "spin-sqlite", feature = "spin-postgres")))]
+#[cfg(all(
+    test,
+    any(
+        feature = "spin-sqlite",
+        feature = "spin-postgres",
+        feature = "spin-mysql"
+    )
+))]
 mod spin_transaction_tests {
     use super::*;
 
@@ -646,54 +673,75 @@ mod spin_transaction_tests {
 // Spin MySQL adapter
 // -------------------------------------------------------------------------
 #[cfg(feature = "spin-mysql")]
+fn mysql_parameters(params: Vec<serde_json::Value>) -> Vec<spin_sdk::mysql::ParameterValue> {
+    params
+        .into_iter()
+        .map(|value| match value {
+            serde_json::Value::Null => spin_sdk::mysql::ParameterValue::DbNull,
+            serde_json::Value::Bool(value) => {
+                spin_sdk::mysql::ParameterValue::Int8(if value { 1 } else { 0 })
+            }
+            serde_json::Value::Number(value) => {
+                if let Some(value) = value.as_i64() {
+                    spin_sdk::mysql::ParameterValue::Int64(value)
+                } else if let Some(value) = value.as_u64() {
+                    spin_sdk::mysql::ParameterValue::Uint64(value)
+                } else if let Some(value) = value.as_f64() {
+                    spin_sdk::mysql::ParameterValue::Floating64(value)
+                } else {
+                    spin_sdk::mysql::ParameterValue::DbNull
+                }
+            }
+            serde_json::Value::String(value) => spin_sdk::mysql::ParameterValue::Str(value),
+            value => spin_sdk::mysql::ParameterValue::Str(value.to_string()),
+        })
+        .collect()
+}
+
+#[cfg(feature = "spin-mysql")]
+fn spin_mysql_returns_rows(sql: &str) -> bool {
+    let sql_upper = sql.trim_start().to_ascii_uppercase();
+    sql_upper.starts_with("SELECT") || sql_upper.contains("RETURNING")
+}
+
+#[cfg(feature = "spin-mysql")]
+fn spin_mysql_insert_returning_limit(sql: &str) -> Option<(String, u64)> {
+    let trimmed = sql.trim();
+    let upper = trimmed.to_ascii_uppercase();
+    if !upper.starts_with("INSERT") || !upper.contains(" RETURNING SEQUENCE") {
+        return None;
+    }
+    let insert_sql = trimmed
+        .replace(" RETURNING sequence", "")
+        .replace(" RETURNING SEQUENCE", "");
+    Some((insert_sql, 1))
+}
+
+#[cfg(feature = "spin-mysql")]
 /// Execute a Spin MySQL query and return JSON rows for read operations.
 ///
-/// `?` placeholders are interpolated into SQL-safe values before execution.
+/// `?` placeholders are bound by the Spin host. Callers that need JSON columns
+/// decoded as text must include an explicit `CAST(... AS CHAR CHARACTER SET utf8mb4)`
+/// in their SELECT list; this helper does not rewrite SQL.
 pub async fn execute_spin_mysql(
     db_url: &str,
     sql: &str,
     params: Vec<serde_json::Value>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    use spin_sdk::mysql::{Connection as SpinMysqlConn, ParameterValue as SpinMysqlParam};
+    use spin_sdk::mysql::Connection as SpinMysqlConn;
 
-    let mysql_params: Vec<SpinMysqlParam> = params
-        .into_iter()
-        .map(|value| match value {
-            serde_json::Value::Null => SpinMysqlParam::DbNull,
-            serde_json::Value::Bool(value) => SpinMysqlParam::Int8(if value { 1 } else { 0 }),
-            serde_json::Value::Number(value) => {
-                if let Some(value) = value.as_i64() {
-                    SpinMysqlParam::Int64(value)
-                } else if let Some(value) = value.as_u64() {
-                    SpinMysqlParam::Uint64(value)
-                } else if let Some(value) = value.as_f64() {
-                    SpinMysqlParam::Floating64(value)
-                } else {
-                    SpinMysqlParam::DbNull
-                }
-            }
-            serde_json::Value::String(value) => SpinMysqlParam::Str(value),
-            value => SpinMysqlParam::Str(value.to_string()),
-        })
-        .collect();
-
-    let sql_upper = sql.trim_start().to_ascii_uppercase();
-    let returns_rows = sql_upper.starts_with("SELECT") || sql_upper.contains("RETURNING");
+    let mysql_params = mysql_parameters(params);
     let conn = SpinMysqlConn::open(db_url)
         .await
         .map_err(|error| format!("MySQL connection error: {error:?}"))?;
 
-    if returns_rows {
-        let query_sql = sql.replace(" RETURNING sequence", "");
-        if query_sql != sql {
-            conn.execute(&query_sql, mysql_params.as_slice())
-                .await
-                .map_err(|error| format!("MySQL execute error: {error:?}"))?;
-            return spin_mysql_query_rows(&conn, "SELECT LAST_INSERT_ID() AS sequence", &[]).await;
-        }
+    if let Some((insert_sql, limit)) = spin_mysql_insert_returning_limit(sql) {
+        return spin_mysql_insert_and_read_sequences(&conn, &insert_sql, &mysql_params, limit)
+            .await;
+    }
 
-        let query_sql = spin_mysql_select_sql(sql);
-        spin_mysql_query_rows(&conn, &query_sql, &mysql_params).await
+    if spin_mysql_returns_rows(sql) {
+        spin_mysql_query_rows(&conn, sql, &mysql_params).await
     } else {
         conn.execute(sql, mysql_params.as_slice())
             .await
@@ -703,21 +751,117 @@ pub async fn execute_spin_mysql(
 }
 
 #[cfg(feature = "spin-mysql")]
-fn spin_mysql_select_sql(sql: &str) -> String {
-    // Spin's MySQL SDK cannot currently convert MySQL JSON columns directly;
-    // cast event JSON columns to strings before RowSet decoding.
-    if sql.contains(" AS payload") {
-        return sql.to_string();
+/// Executes parameterized MySQL statements on one Spin host connection inside
+/// `START TRANSACTION` and `COMMIT`.
+pub async fn execute_spin_mysql_atomic(
+    db_url: &str,
+    statements: Vec<SpinSqlStatement>,
+) -> Result<Vec<Vec<serde_json::Value>>, String> {
+    use spin_sdk::mysql::Connection;
+
+    validate_spin_transaction(&statements)?;
+    let connection = Connection::open(db_url)
+        .await
+        .map_err(|error| format!("MySQL connection error: {error:?}"))?;
+    connection
+        .execute("START TRANSACTION", &[])
+        .await
+        .map_err(|error| format!("MySQL begin transaction error: {error:?}"))?;
+
+    let mut output = Vec::with_capacity(statements.len());
+    for (index, statement) in statements.into_iter().enumerate() {
+        let params = mysql_parameters(statement.params);
+        let result = if statement.returns_rows {
+            spin_mysql_query_rows(&connection, &statement.sql, &params).await
+        } else {
+            connection
+                .execute(&statement.sql, params.as_slice())
+                .await
+                .map(|_| Vec::new())
+                .map_err(|error| format!("host execute failed: {error:?}"))
+        };
+        match result {
+            Ok(rows) if rows.len() >= statement.minimum_rows => output.push(rows),
+            Ok(_) => {
+                let rollback = connection
+                    .execute("ROLLBACK", &[])
+                    .await
+                    .map(|_| ())
+                    .map_err(|rollback_error| format!("{rollback_error:?}"));
+                return Err(transaction_failure(
+                    "MySQL",
+                    index,
+                    "transaction guard returned too few rows".to_owned(),
+                    rollback,
+                ));
+            }
+            Err(error) => {
+                let rollback = connection
+                    .execute("ROLLBACK", &[])
+                    .await
+                    .map(|_| ())
+                    .map_err(|rollback_error| format!("{rollback_error:?}"));
+                return Err(transaction_failure("MySQL", index, error, rollback));
+            }
+        }
     }
 
-    sql.replace(
-        "payload, metadata",
-        "CAST(payload AS CHAR(10000) CHARACTER SET utf8mb4) AS payload, CAST(metadata AS CHAR(10000) CHARACTER SET utf8mb4) AS metadata",
-    )
-    .replace(
-        "payload, recorded_at_ms",
-        "CAST(payload AS CHAR(10000) CHARACTER SET utf8mb4) AS payload, recorded_at_ms",
-    )
+    if let Err(error) = connection.execute("COMMIT", &[]).await {
+        let rollback = connection
+            .execute("ROLLBACK", &[])
+            .await
+            .map(|_| ())
+            .map_err(|rollback_error| format!("{rollback_error:?}"));
+        return Err(transaction_failure(
+            "MySQL commit",
+            output.len(),
+            format!("{error:?}"),
+            rollback,
+        ));
+    }
+    Ok(output)
+}
+
+#[cfg(feature = "spin-mysql")]
+async fn spin_mysql_insert_and_read_sequences(
+    conn: &spin_sdk::mysql::Connection,
+    insert_sql: &str,
+    params: &[spin_sdk::mysql::ParameterValue],
+    limit: u64,
+) -> Result<Vec<serde_json::Value>, String> {
+    conn.execute("START TRANSACTION", &[])
+        .await
+        .map_err(|error| format!("MySQL begin transaction error: {error:?}"))?;
+
+    let insert_result = conn.execute(insert_sql, params).await;
+    if let Err(error) = insert_result {
+        let _ = conn.execute("ROLLBACK", &[]).await;
+        return Err(format!("MySQL execute error: {error:?}"));
+    }
+
+    let table = mysql_insert_target_table(insert_sql).unwrap_or("events");
+    let read_back = format!(
+        "SELECT sequence FROM {table} WHERE sequence >= LAST_INSERT_ID() \
+         ORDER BY sequence ASC LIMIT {limit}"
+    );
+    let rows = spin_mysql_query_rows(conn, &read_back, &[]).await;
+    if let Err(error) = &rows {
+        let _ = conn.execute("ROLLBACK", &[]).await;
+        return Err(error.clone());
+    }
+
+    conn.execute("COMMIT", &[])
+        .await
+        .map_err(|error| format!("MySQL commit error: {error:?}"))?;
+    rows
+}
+
+#[cfg(feature = "spin-mysql")]
+fn mysql_insert_target_table(insert_sql: &str) -> Option<&str> {
+    let upper = insert_sql.to_ascii_uppercase();
+    let into_idx = upper.find("INTO ")? + 5;
+    let rest = insert_sql[into_idx..].trim_start();
+    rest.split_whitespace().next()
 }
 
 #[cfg(feature = "spin-mysql")]
@@ -782,5 +926,18 @@ fn spin_mysql_value_to_json(value: &spin_sdk::mysql::DbValue) -> serde_json::Val
             serde_json::Value::String(String::from_utf8_lossy(value).into_owned())
         }
         other => serde_json::Value::String(format!("{other:?}")),
+    }
+}
+
+#[cfg(all(test, feature = "spin-mysql"))]
+mod spin_mysql_tests {
+    use super::*;
+
+    #[test]
+    fn insert_returning_is_detected_without_sql_rewrite() {
+        let sql = "INSERT INTO events (event_id) VALUES (?) RETURNING sequence";
+        let (insert_sql, limit) = spin_mysql_insert_returning_limit(sql).unwrap();
+        assert!(!insert_sql.contains("RETURNING"));
+        assert_eq!(limit, 1);
     }
 }

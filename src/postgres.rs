@@ -6,7 +6,10 @@ use crate::event::{EventEnvelope, EventId, ExpectedRevision, NewEvent};
 use crate::event_store::{
     AtomicIdempotentEventStore, EventStore, EventStream, IdempotentAppendError,
 };
-use crate::idempotency::{IdempotencyKey, IdempotencyState, IdempotencyStore};
+use crate::idempotency::{
+    now_ms, pending_state_from_row, IdempotencyKey, IdempotencyLeaseConfig, IdempotencyState,
+    IdempotencyStore,
+};
 use crate::pool::{resolve_pool_size, ConnectionPool};
 use crate::snapshot::{Snapshot, SnapshotStore};
 use crate::sql_common::{
@@ -18,7 +21,41 @@ use crate::upcast::UpcasterRegistry;
 use ::postgres::{Client, NoTls};
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
+
+fn validate_postgres_client(client: &mut Client) -> bool {
+    client.is_valid(Duration::from_secs(0)).is_ok()
+}
+
+fn postgres_pool(url: &str) -> ConnectionPool<Client> {
+    let url = url.to_owned();
+    ConnectionPool::pooled_validated(
+        1,
+        None,
+        move || Client::connect(&url, NoTls).map_err(map_postgres_error),
+        validate_postgres_client,
+    )
+}
+
+fn postgres_pool_seeded(client: Client, url: &str) -> ConnectionPool<Client> {
+    let url = url.to_owned();
+    ConnectionPool::pooled_validated(
+        1,
+        Some(client),
+        move || Client::connect(&url, NoTls).map_err(map_postgres_error),
+        validate_postgres_client,
+    )
+}
+
+fn postgres_pooled(max_size: usize, url: &str) -> ConnectionPool<Client> {
+    let url = url.to_owned();
+    ConnectionPool::pooled_validated(
+        resolve_pool_size(Some(max_size)),
+        None,
+        move || Client::connect(&url, NoTls).map_err(map_postgres_error),
+        validate_postgres_client,
+    )
+}
 
 /// PostgreSQL-backed event store.
 ///
@@ -69,8 +106,7 @@ where
 {
     /// Connects to PostgreSQL using [`NoTls`] and the default `events` table.
     pub fn connect(params: &str) -> Result<Self, EventStoreError> {
-        let client = Client::connect(params, NoTls).map_err(map_postgres_error)?;
-        Self::new(client)
+        Self::connect_with_table_name(params, "events")
     }
 
     /// Connects to PostgreSQL using [`NoTls`] and a custom table name.
@@ -78,13 +114,46 @@ where
         params: &str,
         table_name: impl Into<String>,
     ) -> Result<Self, EventStoreError> {
-        let client = Client::connect(params, NoTls).map_err(map_postgres_error)?;
-        Self::with_table_name(client, table_name)
+        let table_name = table_name.into();
+        validate_table_name(&table_name)?;
+        validate_table_name("idempotency_keys")?;
+
+        Ok(Self::with_table_names_impl(
+            postgres_pool(params),
+            table_name,
+            "idempotency_keys".to_owned(),
+        ))
     }
 
     /// Creates a PostgreSQL event store using the default `events` table.
+    ///
+    /// **Test-only.** The wrapped connection cannot be replaced when it goes
+    /// stale; prefer [`Self::connect`] or [`Self::with_client`] in application
+    /// code.
     pub fn new(client: Client) -> Result<Self, EventStoreError> {
         Self::with_table_name(client, "events")
+    }
+
+    /// Wraps an existing client in a reconnect-capable size-1 pool.
+    pub fn with_client(client: Client, url: &str) -> Result<Self, EventStoreError> {
+        Self::with_client_and_table_name(client, url, "events")
+    }
+
+    /// Wraps an existing client in a reconnect-capable size-1 pool.
+    pub fn with_client_and_table_name(
+        client: Client,
+        url: &str,
+        table_name: impl Into<String>,
+    ) -> Result<Self, EventStoreError> {
+        let table_name = table_name.into();
+        validate_table_name(&table_name)?;
+        validate_table_name("idempotency_keys")?;
+
+        Ok(Self::with_table_names_impl(
+            postgres_pool_seeded(client, url),
+            table_name,
+            "idempotency_keys".to_owned(),
+        ))
     }
 
     /// Creates a PostgreSQL event store with a custom table name.
@@ -136,11 +205,8 @@ where
         validate_table_name(&table_name)?;
         validate_table_name("idempotency_keys")?;
 
-        let url = params.to_owned();
         let store = Self::with_table_names_impl(
-            ConnectionPool::pooled(resolve_pool_size(Some(max_size)), move || {
-                Client::connect(&url, NoTls).map_err(map_postgres_error)
-            }),
+            postgres_pooled(max_size, params),
             table_name,
             "idempotency_keys".to_owned(),
         );
@@ -167,12 +233,16 @@ where
     }
 
     /// Registers a sequential schema version upcaster for a specific event type.
-    pub fn register_upcaster<U>(&self, event_type: impl Into<String>, upcaster: U)
+    pub fn register_upcaster<U>(
+        &self,
+        event_type: impl Into<String>,
+        upcaster: U,
+    ) -> Result<(), crate::upcast::UpcasterRegistrationError>
     where
         U: crate::upcast::EventUpcaster + Send + Sync + 'static,
         U::Error: std::fmt::Debug + std::fmt::Display + Send + Sync + 'static,
     {
-        self.upcasters.register(event_type, upcaster);
+        self.upcasters.register(event_type, upcaster)
     }
 
     /// Migrates the PostgreSQL schemas to the latest version.
@@ -310,7 +380,7 @@ where
             .map(PreparedPostgresEvent::new)
             .collect::<Result<Vec<_>, _>>()?;
         let table_name = self.table_name.clone();
-        self.pool.write(move |client| {
+        self.pool.write(|client| {
             let mut transaction = client.transaction().map_err(map_postgres_error)?;
             let revision_query = format!(
                 "SELECT COALESCE(MAX(revision), 0)::BIGINT FROM {table} \
@@ -338,7 +408,7 @@ where
                 &aggregate_id_key,
                 actual_revision,
                 expected_revision,
-                prepared,
+                prepared.clone(),
             )?;
 
             transaction.commit().map_err(map_postgres_error)?;
@@ -487,7 +557,18 @@ where
                 let value: Option<serde_json::Value> =
                     row.try_get(1).map_err(map_postgres_error)?;
                 match (state.as_str(), value) {
-                    ("pending", _) => Ok(IdempotencyState::Pending),
+                    ("pending", _) => crate::idempotency::pending_state_from_row(
+                        None,
+                        None,
+                        crate::idempotency::now_ms(),
+                    )
+                    .map(IdempotencyState::Pending)
+                    .ok_or_else(|| {
+                        EventStoreError::deserialization(
+                            "pending idempotency row has expired or is missing lease metadata"
+                                .to_owned(),
+                        )
+                    }),
                     ("complete", Some(value)) => serde_json::from_value(value)
                         .map(IdempotencyState::Complete)
                         .map_err(|error| {
@@ -536,7 +617,7 @@ where
 
         let committed = self
             .pool
-            .write(move |client| {
+            .write(|client| {
                 run_idempotent_append::<A>(
                     client,
                     &table_name,
@@ -545,7 +626,7 @@ where
                     &aggregate_id,
                     &aggregate_id_key,
                     expected_revision,
-                    prepared,
+                    prepared.clone(),
                 )
             })
             .map_err(IdempotentAppendError::Store)??;
@@ -789,6 +870,7 @@ where
     }
 }
 
+#[derive(Clone)]
 struct PreparedPostgresEvent<E> {
     event_id: EventId,
     event_type: String,
@@ -899,7 +981,16 @@ where
                 &recorded_at_values,
             ],
         )
-        .map_err(|error| map_postgres_insert_error(error, expected_revision, actual_revision))?;
+        .map_err(|error| {
+            map_postgres_insert_error(error, expected_revision, actual_revision, || {
+                current_revision_postgres(
+                    transaction,
+                    table_name,
+                    A::aggregate_type(),
+                    aggregate_id_key,
+                )
+            })
+        })?;
     if rows.len() != count {
         return Err(EventStoreError::backend(format!(
             "multi-row insert returned {} of {} sequences",
@@ -979,7 +1070,7 @@ fn row_to_raw_envelope(
         ))
     })?;
     let (event_version, upcasted_bytes) = upcasters
-        .upcast(&event_type, event_version, payload_bytes)
+        .prepare_payload(&event_type, event_version, payload_bytes)
         .map_err(|err| EventStoreError::deserialization(err.to_string()))?;
     let payload: serde_json::Value = serde_json::from_slice(&upcasted_bytes)
         .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
@@ -1032,18 +1123,22 @@ where
     })?;
     let aggregate_id = deserialize_id(&aggregate_id)?;
 
-    let payload_bytes = serde_json::to_vec(&payload_val).map_err(|error| {
-        EventStoreError::deserialization(format!(
-            "payload serialization for upcasting failed: {error}"
-        ))
-    })?;
-
-    let (event_version, upcasted_bytes) = upcasters
-        .upcast(&event_type, event_version, payload_bytes)
-        .map_err(|err| EventStoreError::deserialization(err.to_string()))?;
-
-    let payload = serde_json::from_slice(&upcasted_bytes)
-        .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
+    let (event_version, payload) = if upcasters.is_empty() || !upcasters.has_upcasters(&event_type)
+    {
+        (event_version, payload_val)
+    } else {
+        let payload_bytes = serde_json::to_vec(&payload_val).map_err(|error| {
+            EventStoreError::deserialization(format!(
+                "payload serialization for upcasting failed: {error}"
+            ))
+        })?;
+        let (event_version, upcasted_bytes) = upcasters
+            .prepare_payload(&event_type, event_version, payload_bytes)
+            .map_err(|err| EventStoreError::deserialization(err.to_string()))?;
+        let payload = serde_json::from_slice(&upcasted_bytes)
+            .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
+        (event_version, payload)
+    };
 
     let payload = deserialize_payload(&event_id, &event_type, payload)?;
     let metadata = deserialize_metadata(&event_id, metadata)?;
@@ -1063,19 +1158,50 @@ where
     ))
 }
 
+fn current_revision_postgres(
+    transaction: &mut ::postgres::Transaction<'_>,
+    table_name: &str,
+    aggregate_type: &str,
+    aggregate_id: &str,
+) -> Result<u64, EventStoreError> {
+    let query = format!(
+        "SELECT COALESCE(MAX(revision), 0)::BIGINT FROM {table} \
+         WHERE aggregate_type = $1 AND aggregate_id = $2",
+        table = table_name
+    );
+    let revision: i64 = transaction
+        .query_one(&query, &[&aggregate_type, &aggregate_id])
+        .and_then(|row| row.try_get(0))
+        .map_err(map_postgres_error)?;
+    u64::try_from(revision).map_err(|_| {
+        EventStoreError::deserialization("stored revision cannot be negative".to_owned())
+    })
+}
+
+fn is_postgres_stream_revision_unique_violation(error: &::postgres::Error) -> bool {
+    if !error
+        .code()
+        .is_some_and(|code| *code == ::postgres::error::SqlState::UNIQUE_VIOLATION)
+    {
+        return false;
+    }
+    let message = error.to_string();
+    message.contains("revision") || message.contains("aggregate_id")
+}
+
 fn map_postgres_insert_error(
     error: ::postgres::Error,
     expected: ExpectedRevision,
-    actual: u64,
+    stale_actual: u64,
+    reread_revision: impl FnOnce() -> Result<u64, EventStoreError>,
 ) -> EventStoreError {
     if error
         .code()
         .is_some_and(|code| *code == ::postgres::error::SqlState::UNIQUE_VIOLATION)
+        && is_postgres_stream_revision_unique_violation(&error)
     {
-        return EventStoreError::Concurrency(crate::ConcurrencyError::WrongExpectedRevision {
-            expected,
-            actual,
-        });
+        let current_revision = reread_revision().unwrap_or(stale_actual);
+        return crate::sql_common::map_stream_unique_violation(expected, current_revision);
     }
 
     map_postgres_error(error)
@@ -1318,7 +1444,9 @@ where
             let value: Option<serde_json::Value> = row.try_get(1).map_err(map_postgres_error)?;
 
             match (state.as_str(), value) {
-                ("pending", _) => Ok(Some(IdempotencyState::Pending)),
+                ("pending", _) => {
+                    Ok(pending_state_from_row(None, None, now_ms()).map(IdempotencyState::Pending))
+                }
                 ("complete", Some(value)) => {
                     let value = serde_json::from_value(value).map_err(|error| {
                         EventStoreError::deserialization(format!("idempotency value JSON: {error}"))
@@ -1384,6 +1512,22 @@ where
                 .map_err(map_postgres_error)?;
             Ok(())
         })
+    }
+
+    fn reserve_with_lease(
+        &self,
+        key: IdempotencyKey,
+        _config: &IdempotencyLeaseConfig,
+    ) -> Result<bool, Self::Error> {
+        IdempotencyStore::reserve(self, key)
+    }
+
+    fn heartbeat(&self, _key: &IdempotencyKey, _owner: &str) -> Result<bool, Self::Error> {
+        Ok(false)
+    }
+
+    fn expire_stale_pending(&self, _now_ms: u64) -> Result<usize, Self::Error> {
+        Ok(0)
     }
 }
 
@@ -1555,7 +1699,7 @@ where
             self.table_name, self.table_name
         );
         self.pool.write(|client| {
-            client
+            let rows = client
                 .execute(
                     &sql,
                     &[
@@ -1568,6 +1712,31 @@ where
                     ],
                 )
                 .map_err(map_postgres_error)?;
+            if rows == 0 {
+                let current_sql = format!(
+                    "SELECT revision FROM {} WHERE aggregate_type = $1 AND aggregate_id = $2;",
+                    self.table_name
+                );
+                let current: Option<i64> = client
+                    .query_opt(&current_sql, &[&A::aggregate_type(), &aggregate_id])
+                    .map_err(map_postgres_error)?
+                    .map(|row| row.try_get(0))
+                    .transpose()
+                    .map_err(map_postgres_error)?;
+                if let Some(current) = current {
+                    let current = u64::try_from(current).map_err(|_| {
+                        EventStoreError::deserialization(
+                            "PostgreSQL snapshot revision cannot be negative".to_owned(),
+                        )
+                    })?;
+                    if snapshot.revision < current {
+                        return Err(crate::sql_common::stale_snapshot_revision_error(
+                            snapshot.revision,
+                            current,
+                        ));
+                    }
+                }
+            }
             Ok(())
         })
     }
@@ -1635,6 +1804,36 @@ where
         let this = self.clone();
         let key = key.clone();
         tokio::task::spawn_blocking(move || IdempotencyStore::remove(&this, &key))
+            .await
+            .map_err(|e| EventStoreError::backend(e.to_string()))?
+    }
+
+    async fn reserve_with_lease(
+        &self,
+        key: IdempotencyKey,
+        config: &crate::idempotency::IdempotencyLeaseConfig,
+    ) -> Result<bool, Self::Error> {
+        let this = self.clone();
+        let config = config.clone();
+        tokio::task::spawn_blocking(move || {
+            IdempotencyStore::reserve_with_lease(&this, key, &config)
+        })
+        .await
+        .map_err(|e| EventStoreError::backend(e.to_string()))?
+    }
+
+    async fn heartbeat(&self, key: &IdempotencyKey, owner: &str) -> Result<bool, Self::Error> {
+        let this = self.clone();
+        let key = key.clone();
+        let owner = owner.to_owned();
+        tokio::task::spawn_blocking(move || IdempotencyStore::heartbeat(&this, &key, &owner))
+            .await
+            .map_err(|e| EventStoreError::backend(e.to_string()))?
+    }
+
+    async fn expire_stale_pending(&self, now_ms: u64) -> Result<usize, Self::Error> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || IdempotencyStore::expire_stale_pending(&this, now_ms))
             .await
             .map_err(|e| EventStoreError::backend(e.to_string()))?
     }

@@ -17,12 +17,12 @@ pub fn format_pg_value(val: &serde_json::Value) -> Result<String, String> {
         serde_json::Value::Bool(b) => Ok(if *b { "true" } else { "false" }.to_string()),
         serde_json::Value::Number(n) => Ok(n.to_string()),
         serde_json::Value::String(s) => {
-            let escaped = s.replace('\'', "''");
+            let escaped = s.replace('\\', "\\\\").replace('\'', "''");
             Ok(format!("'{}'", escaped))
         }
         serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
             let s = serde_json::to_string(val).map_err(|e| e.to_string())?;
-            let escaped = s.replace('\'', "''");
+            let escaped = s.replace('\\', "\\\\").replace('\'', "''");
             Ok(format!("'{}'", escaped))
         }
     }
@@ -30,13 +30,10 @@ pub fn format_pg_value(val: &serde_json::Value) -> Result<String, String> {
 
 /// Replace `$1`, `$2`, ... placeholders in a SQL template with interpolated literals.
 ///
-/// Values are rendered by [`format_pg_value`] and substituted into the SQL
-/// text; inserted values are never rescanned, so placeholder-like text inside
-/// parameter data stays literal. Returns an error when a placeholder index is
-/// invalid or out of bounds.
-///
-/// Callers must guarantee the [`format_pg_value`] safety contract
-/// (`standard_conforming_strings = on`) or use a parameterized transport.
+/// Prefer server-side `query_params` (Supabase RPC, Neon HTTP) whenever available.
+/// When interpolation is unavoidable, values are rendered by [`format_pg_value`],
+/// which doubles backslashes and single quotes. Callers must still verify
+/// `standard_conforming_strings = on` on the target database.
 pub fn interpolate_query(sql: &str, params: &[serde_json::Value]) -> Result<String, String> {
     let mut final_sql = String::new();
     let mut chars = sql.chars().peekable();
@@ -134,11 +131,9 @@ mod pg_interpolation_tests {
     }
 
     #[test]
-    fn backslashes_are_literal_under_standard_conforming_strings() {
-        // Pins the documented contract: backslashes pass through unchanged and
-        // only single quotes are doubled.
+    fn backslashes_are_doubled_for_interpolation_safety() {
         let value = json!(r"\'; DELETE");
-        assert_eq!(format_pg_value(&value).unwrap(), "'\\''; DELETE'");
+        assert_eq!(format_pg_value(&value).unwrap(), "'\\\\''; DELETE'");
     }
 
     #[test]

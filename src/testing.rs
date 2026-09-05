@@ -11,6 +11,7 @@ use crate::projection::AsyncCheckpointStore;
 use crate::projection::CheckpointStore;
 use crate::snapshot::{Snapshot, SnapshotStore};
 use std::fmt::Debug;
+use std::num::NonZeroUsize;
 
 /// Fluent aggregate test fixture.
 ///
@@ -159,6 +160,27 @@ pub fn assert_event_store_contract<A, S>(
         let global = store.load_global_after(Some(first_sequence)).unwrap();
         assert_eq!(global.len(), 1);
         assert_eq!(global[0].revision, 2);
+
+        // `load_global_after_limited` is the primitive projection runners page
+        // with, so the limit must be honoured by the backend read and resuming
+        // from the last returned sequence must yield the next event exactly
+        // once.
+        let one = NonZeroUsize::new(1).unwrap();
+        let page = store
+            .load_global_after_limited(Some(first_sequence.saturating_sub(1)), one)
+            .unwrap();
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].revision, 1);
+
+        let next = store
+            .load_global_after_limited(page[0].sequence, one)
+            .unwrap();
+        assert_eq!(next.len(), 1);
+        assert_eq!(next[0].revision, 2);
+        assert!(store
+            .load_global_after_limited(next[0].sequence, one)
+            .unwrap()
+            .is_empty());
     }
 
     let tail = store.load_after_revision(&aggregate_id, 1).unwrap();
@@ -287,6 +309,30 @@ pub async fn assert_async_event_store_contract<A, S>(
         let global = store.load_global_after(Some(first_sequence)).await.unwrap();
         assert_eq!(global.len(), 1);
         assert_eq!(global[0].revision, 2);
+
+        // `load_global_after_limited` is the primitive projection runners page
+        // with, so the limit must be honoured by the backend read and resuming
+        // from the last returned sequence must yield the next event exactly
+        // once.
+        let one = NonZeroUsize::new(1).unwrap();
+        let page = store
+            .load_global_after_limited(Some(first_sequence.saturating_sub(1)), one)
+            .await
+            .unwrap();
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].revision, 1);
+
+        let next = store
+            .load_global_after_limited(page[0].sequence, one)
+            .await
+            .unwrap();
+        assert_eq!(next.len(), 1);
+        assert_eq!(next[0].revision, 2);
+        assert!(store
+            .load_global_after_limited(next[0].sequence, one)
+            .await
+            .unwrap()
+            .is_empty());
     }
 
     let tail = store.load_after_revision(&aggregate_id, 1).await.unwrap();
@@ -349,7 +395,10 @@ where
 {
     assert_eq!(store.load(&key).unwrap(), None);
     assert!(store.reserve(key.clone()).unwrap());
-    assert_eq!(store.load(&key).unwrap(), Some(IdempotencyState::Pending));
+    assert!(matches!(
+        store.load(&key).unwrap(),
+        Some(IdempotencyState::Pending(_))
+    ));
     assert!(!store.reserve(key.clone()).unwrap());
     store.save(key.clone(), value.clone()).unwrap();
     assert_eq!(
@@ -371,10 +420,10 @@ where
 {
     assert_eq!(store.load(&key).await.unwrap(), None);
     assert!(store.reserve(key.clone()).await.unwrap());
-    assert_eq!(
+    assert!(matches!(
         store.load(&key).await.unwrap(),
-        Some(IdempotencyState::Pending)
-    );
+        Some(IdempotencyState::Pending(_))
+    ));
     assert!(!store.reserve(key.clone()).await.unwrap());
     store.save(key.clone(), value.clone()).await.unwrap();
     assert_eq!(
@@ -409,7 +458,7 @@ where
             .load_snapshot(&aggregate_id)
             .unwrap()
             .map(|snapshot| snapshot.state),
-        Some(older)
+        Some(older.clone())
     );
 
     store
@@ -423,6 +472,14 @@ where
     let loaded = store.load_snapshot(&aggregate_id).unwrap().unwrap();
     assert_eq!(loaded.revision, 2);
     assert_eq!(loaded.state, newer);
+
+    let stale = store.save_snapshot(Snapshot::new(
+        aggregate_id.clone(),
+        1,
+        older,
+        Metadata::default(),
+    ));
+    assert!(stale.is_err());
 }
 
 impl<A> AggregateFixture<A>

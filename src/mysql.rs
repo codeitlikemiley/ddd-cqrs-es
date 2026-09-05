@@ -6,7 +6,9 @@ use crate::event::{EventEnvelope, EventId, ExpectedRevision, NewEvent};
 use crate::event_store::{
     AtomicIdempotentEventStore, EventStore, EventStream, IdempotentAppendError,
 };
-use crate::idempotency::{IdempotencyKey, IdempotencyState, IdempotencyStore};
+use crate::idempotency::{
+    IdempotencyKey, IdempotencyLeaseConfig, IdempotencyState, IdempotencyStore,
+};
 use crate::pool::{resolve_pool_size, ConnectionPool};
 use crate::projection::CheckpointStore;
 use crate::snapshot::{Snapshot, SnapshotStore};
@@ -21,6 +23,40 @@ use mysql::{Conn, Error as MySqlError, Opts, Row, TxOpts};
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
 use std::time::SystemTime;
+
+fn validate_mysql_conn(conn: &mut Conn) -> bool {
+    conn.ping().is_ok()
+}
+
+fn mysql_connect(url: &str) -> Result<Conn, EventStoreError> {
+    let opts = Opts::from_url(url).map_err(|e| EventStoreError::backend(e.to_string()))?;
+    Conn::new(opts).map_err(map_mysql_error)
+}
+
+fn mysql_pool(url: &str) -> ConnectionPool<Conn> {
+    let url = url.to_owned();
+    ConnectionPool::pooled_validated(1, None, move || mysql_connect(&url), validate_mysql_conn)
+}
+
+fn mysql_pool_seeded(connection: Conn, url: &str) -> ConnectionPool<Conn> {
+    let url = url.to_owned();
+    ConnectionPool::pooled_validated(
+        1,
+        Some(connection),
+        move || mysql_connect(&url),
+        validate_mysql_conn,
+    )
+}
+
+fn mysql_pooled(max_size: usize, url: &str) -> ConnectionPool<Conn> {
+    let url = url.to_owned();
+    ConnectionPool::pooled_validated(
+        resolve_pool_size(Some(max_size)),
+        None,
+        move || mysql_connect(&url),
+        validate_mysql_conn,
+    )
+}
 
 /// MySQL-backed event store.
 pub struct MySqlEventStore<A>
@@ -67,9 +103,7 @@ where
 {
     /// Connects to MySQL using standard URL params and the default `events` table.
     pub fn connect(url: &str) -> Result<Self, EventStoreError> {
-        let opts = Opts::from_url(url).map_err(|e| EventStoreError::backend(e.to_string()))?;
-        let conn = Conn::new(opts).map_err(map_mysql_error)?;
-        Self::new(conn)
+        Self::connect_with_table_name(url, "events")
     }
 
     /// Connects to MySQL using standard URL params and a custom table name.
@@ -77,14 +111,46 @@ where
         url: &str,
         table_name: impl Into<String>,
     ) -> Result<Self, EventStoreError> {
-        let opts = Opts::from_url(url).map_err(|e| EventStoreError::backend(e.to_string()))?;
-        let conn = Conn::new(opts).map_err(map_mysql_error)?;
-        Self::with_table_name(conn, table_name)
+        let table_name = table_name.into();
+        validate_table_name(&table_name)?;
+        validate_table_name("idempotency_keys")?;
+
+        Ok(Self::with_table_names_impl(
+            mysql_pool(url),
+            table_name,
+            "idempotency_keys".to_owned(),
+        ))
     }
 
     /// Creates a MySQL event store using the default `events` table.
+    ///
+    /// **Test-only.** The wrapped connection cannot be replaced when it goes
+    /// stale; prefer [`Self::connect`] or [`Self::with_client`] in application
+    /// code.
     pub fn new(connection: Conn) -> Result<Self, EventStoreError> {
         Self::with_table_name(connection, "events")
+    }
+
+    /// Wraps an existing connection in a reconnect-capable size-1 pool.
+    pub fn with_client(connection: Conn, url: &str) -> Result<Self, EventStoreError> {
+        Self::with_client_and_table_name(connection, url, "events")
+    }
+
+    /// Wraps an existing connection in a reconnect-capable size-1 pool.
+    pub fn with_client_and_table_name(
+        connection: Conn,
+        url: &str,
+        table_name: impl Into<String>,
+    ) -> Result<Self, EventStoreError> {
+        let table_name = table_name.into();
+        validate_table_name(&table_name)?;
+        validate_table_name("idempotency_keys")?;
+
+        Ok(Self::with_table_names_impl(
+            mysql_pool_seeded(connection, url),
+            table_name,
+            "idempotency_keys".to_owned(),
+        ))
     }
 
     /// Creates a MySQL event store with a custom table name.
@@ -136,13 +202,8 @@ where
         validate_table_name(&table_name)?;
         validate_table_name("idempotency_keys")?;
 
-        let url = url.to_owned();
         let store = Self::with_table_names_impl(
-            ConnectionPool::pooled(resolve_pool_size(Some(max_size)), move || {
-                let opts =
-                    Opts::from_url(&url).map_err(|e| EventStoreError::backend(e.to_string()))?;
-                Conn::new(opts).map_err(map_mysql_error)
-            }),
+            mysql_pooled(max_size, url),
             table_name,
             "idempotency_keys".to_owned(),
         );
@@ -169,12 +230,16 @@ where
     }
 
     /// Registers a sequential schema version upcaster for a specific event type.
-    pub fn register_upcaster<U>(&self, event_type: impl Into<String>, upcaster: U)
+    pub fn register_upcaster<U>(
+        &self,
+        event_type: impl Into<String>,
+        upcaster: U,
+    ) -> Result<(), crate::upcast::UpcasterRegistrationError>
     where
         U: crate::upcast::EventUpcaster + Send + Sync + 'static,
         U::Error: std::fmt::Debug + std::fmt::Display + Send + Sync + 'static,
     {
-        self.upcasters.register(event_type, upcaster);
+        self.upcasters.register(event_type, upcaster)
     }
 
     /// Migrates the MySQL schemas to the latest version.
@@ -309,7 +374,7 @@ where
             .map(PreparedMySqlEvent::new)
             .collect::<Result<Vec<_>, _>>()?;
         let table_name = self.table_name.clone();
-        self.pool.write(move |connection| {
+        self.pool.write(|connection| {
             let mut transaction = connection
                 .start_transaction(TxOpts::default())
                 .map_err(map_mysql_error)?;
@@ -340,7 +405,7 @@ where
                 &aggregate_id_key,
                 actual_revision,
                 expected_revision,
-                prepared,
+                prepared.clone(),
             )?;
 
             transaction.commit().map_err(map_mysql_error)?;
@@ -490,7 +555,18 @@ where
                 })?;
                 let value: Option<String> = row.get::<Option<String>, _>(1).flatten();
                 match (state.as_str(), value) {
-                    ("pending", _) => Ok(IdempotencyState::Pending),
+                    ("pending", _) => crate::idempotency::pending_state_from_row(
+                        None,
+                        None,
+                        crate::idempotency::now_ms(),
+                    )
+                    .map(IdempotencyState::Pending)
+                    .ok_or_else(|| {
+                        EventStoreError::deserialization(
+                            "pending idempotency row has expired or is missing lease metadata"
+                                .to_owned(),
+                        )
+                    }),
                     ("complete", Some(value)) => serde_json::from_str(&value)
                         .map(IdempotencyState::Complete)
                         .map_err(|error| {
@@ -539,7 +615,7 @@ where
 
         let committed = self
             .pool
-            .write(move |connection| {
+            .write(|connection| {
                 run_idempotent_append::<A>(
                     connection,
                     &table_name,
@@ -548,7 +624,7 @@ where
                     &aggregate_id,
                     &aggregate_id_key,
                     expected_revision,
-                    prepared,
+                    prepared.clone(),
                 )
             })
             .map_err(IdempotentAppendError::Store)??;
@@ -792,6 +868,7 @@ where
     }
 }
 
+#[derive(Clone)]
 struct PreparedMySqlEvent<E> {
     event_id: EventId,
     event_type: String,
@@ -877,9 +954,16 @@ where
          VALUES {placeholders}",
         table = table_name
     );
-    transaction
-        .exec_drop(&insert, params)
-        .map_err(|error| map_mysql_insert_error(error, expected_revision, actual_revision))?;
+    transaction.exec_drop(&insert, params).map_err(|error| {
+        map_mysql_insert_error(error, expected_revision, actual_revision, || {
+            current_revision_mysql(
+                transaction,
+                table_name,
+                A::aggregate_type(),
+                aggregate_id_key,
+            )
+        })
+    })?;
 
     let select = format!(
         "SELECT revision, sequence FROM {table} \
@@ -974,7 +1058,7 @@ fn row_to_raw_envelope(
     })?;
 
     let (event_version, upcasted_bytes) = upcasters
-        .upcast(&event_type, event_version, payload_str.into_bytes())
+        .prepare_payload(&event_type, event_version, payload_str.into_bytes())
         .map_err(|err| EventStoreError::deserialization(err.to_string()))?;
     let payload: serde_json::Value = serde_json::from_slice(&upcasted_bytes)
         .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
@@ -1049,18 +1133,22 @@ where
     let payload_val: serde_json::Value = serde_json::from_str(&payload_str)
         .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
 
-    let payload_bytes = serde_json::to_vec(&payload_val).map_err(|error| {
-        EventStoreError::deserialization(format!(
-            "payload serialization for upcasting failed: {error}"
-        ))
-    })?;
-
-    let (event_version, upcasted_bytes) = upcasters
-        .upcast(&event_type, event_version, payload_bytes)
-        .map_err(|err| EventStoreError::deserialization(err.to_string()))?;
-
-    let payload = serde_json::from_slice(&upcasted_bytes)
-        .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
+    let (event_version, payload) = if upcasters.is_empty() || !upcasters.has_upcasters(&event_type)
+    {
+        (event_version, payload_val)
+    } else {
+        let payload_bytes = serde_json::to_vec(&payload_val).map_err(|error| {
+            EventStoreError::deserialization(format!(
+                "payload serialization for upcasting failed: {error}"
+            ))
+        })?;
+        let (event_version, upcasted_bytes) = upcasters
+            .prepare_payload(&event_type, event_version, payload_bytes)
+            .map_err(|err| EventStoreError::deserialization(err.to_string()))?;
+        let payload = serde_json::from_slice(&upcasted_bytes)
+            .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
+        (event_version, payload)
+    };
 
     let payload = deserialize_payload(&event_id, &event_type, payload)?;
     let metadata_val: serde_json::Value = serde_json::from_str(&metadata_str)
@@ -1094,17 +1182,47 @@ fn map_mysql_error(error: MySqlError) -> EventStoreError {
     }
 }
 
+fn current_revision_mysql(
+    transaction: &mut mysql::Transaction<'_>,
+    table_name: &str,
+    aggregate_type: &str,
+    aggregate_id: &str,
+) -> Result<u64, EventStoreError> {
+    let query = format!(
+        "SELECT COALESCE(MAX(revision), 0) FROM {table} \
+         WHERE aggregate_type = ? AND aggregate_id = ?",
+        table = table_name
+    );
+    let revision: Option<i64> = transaction
+        .exec_first(&query, (aggregate_type, aggregate_id))
+        .map_err(map_mysql_error)?;
+    let revision = revision.unwrap_or(0);
+    u64::try_from(revision).map_err(|_| {
+        EventStoreError::deserialization("stored revision cannot be negative".to_owned())
+    })
+}
+
+fn is_mysql_stream_revision_unique_violation(error: &MySqlError) -> bool {
+    match error {
+        MySqlError::MySqlError(server) => {
+            server.message.contains("aggregate_type") || server.message.contains("revision")
+        }
+        _ => false,
+    }
+}
+
 fn map_mysql_insert_error(
     error: MySqlError,
     expected_revision: ExpectedRevision,
-    actual_revision: u64,
+    stale_actual: u64,
+    reread_revision: impl FnOnce() -> Result<u64, EventStoreError>,
 ) -> EventStoreError {
     match &error {
-        MySqlError::MySqlError(e) if e.code == 1062 => {
-            EventStoreError::Concurrency(crate::ConcurrencyError::WrongExpectedRevision {
-                expected: expected_revision,
-                actual: actual_revision,
-            })
+        MySqlError::MySqlError(e)
+            if e.code == 1062 && is_mysql_stream_revision_unique_violation(&error) =>
+        {
+            let current_revision = reread_revision().unwrap_or(stale_actual);
+            crate::sql_common::map_stream_unique_violation(expected_revision, current_revision)
         }
         _ => map_mysql_error(error),
     }
@@ -1323,7 +1441,12 @@ where
             let value_str: Option<String> = row.get::<Option<String>, _>(1).flatten();
 
             match (state.as_str(), value_str) {
-                ("pending", _) => Ok(Some(IdempotencyState::Pending)),
+                ("pending", _) => Ok(crate::idempotency::pending_state_from_row(
+                    None,
+                    None,
+                    crate::idempotency::now_ms(),
+                )
+                .map(IdempotencyState::Pending)),
                 ("complete", Some(value_str)) => {
                     let value = serde_json::from_str(&value_str).map_err(|error| {
                         EventStoreError::deserialization(format!("idempotency value JSON: {error}"))
@@ -1375,7 +1498,7 @@ where
         );
         self.pool.write(|connection| {
             connection
-                .exec_drop(&sql, (key.as_str(), value_json, updated_at_ms))
+                .exec_drop(&sql, (key.as_str(), value_json.as_str(), updated_at_ms))
                 .map_err(map_mysql_error)?;
             Ok(())
         })
@@ -1389,6 +1512,22 @@ where
                 .map_err(map_mysql_error)?;
             Ok(())
         })
+    }
+
+    fn reserve_with_lease(
+        &self,
+        key: IdempotencyKey,
+        _config: &IdempotencyLeaseConfig,
+    ) -> Result<bool, Self::Error> {
+        IdempotencyStore::reserve(self, key)
+    }
+
+    fn heartbeat(&self, _key: &IdempotencyKey, _owner: &str) -> Result<bool, Self::Error> {
+        Ok(false)
+    }
+
+    fn expire_stale_pending(&self, _now_ms: u64) -> Result<usize, Self::Error> {
+        Ok(0)
     }
 }
 
@@ -1574,14 +1713,37 @@ where
                     &sql,
                     (
                         A::aggregate_type(),
-                        aggregate_id,
+                        aggregate_id.as_str(),
                         revision_i64,
-                        state_json,
-                        metadata_json,
+                        state_json.as_str(),
+                        metadata_json.as_str(),
                         recorded_at_ms,
                     ),
                 )
                 .map_err(map_mysql_error)?;
+            let affected = connection.affected_rows();
+            if affected == 0 {
+                let current_sql = format!(
+                    "SELECT revision FROM {} WHERE aggregate_type = ? AND aggregate_id = ?;",
+                    self.table_name
+                );
+                let current: Option<i64> = connection
+                    .exec_first(&current_sql, (A::aggregate_type(), aggregate_id.as_str()))
+                    .map_err(map_mysql_error)?;
+                if let Some(current) = current {
+                    let current = u64::try_from(current).map_err(|_| {
+                        EventStoreError::deserialization(
+                            "MySQL snapshot revision cannot be negative".to_owned(),
+                        )
+                    })?;
+                    if snapshot.revision < current {
+                        return Err(crate::sql_common::stale_snapshot_revision_error(
+                            snapshot.revision,
+                            current,
+                        ));
+                    }
+                }
+            }
             Ok(())
         })
     }
@@ -1649,6 +1811,36 @@ where
         let this = self.clone();
         let key = key.clone();
         tokio::task::spawn_blocking(move || IdempotencyStore::remove(&this, &key))
+            .await
+            .map_err(|e| EventStoreError::backend(e.to_string()))?
+    }
+
+    async fn reserve_with_lease(
+        &self,
+        key: IdempotencyKey,
+        config: &crate::idempotency::IdempotencyLeaseConfig,
+    ) -> Result<bool, Self::Error> {
+        let this = self.clone();
+        let config = config.clone();
+        tokio::task::spawn_blocking(move || {
+            IdempotencyStore::reserve_with_lease(&this, key, &config)
+        })
+        .await
+        .map_err(|e| EventStoreError::backend(e.to_string()))?
+    }
+
+    async fn heartbeat(&self, key: &IdempotencyKey, owner: &str) -> Result<bool, Self::Error> {
+        let this = self.clone();
+        let key = key.clone();
+        let owner = owner.to_owned();
+        tokio::task::spawn_blocking(move || IdempotencyStore::heartbeat(&this, &key, &owner))
+            .await
+            .map_err(|e| EventStoreError::backend(e.to_string()))?
+    }
+
+    async fn expire_stale_pending(&self, now_ms: u64) -> Result<usize, Self::Error> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || IdempotencyStore::expire_stale_pending(&this, now_ms))
             .await
             .map_err(|e| EventStoreError::backend(e.to_string()))?
     }

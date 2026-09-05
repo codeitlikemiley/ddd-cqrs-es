@@ -154,6 +154,30 @@ pub async fn validate_runtime_security_config() -> AuthStackResult<()> {
 pub(crate) async fn validate_runtime_security_config_uncached() -> AuthStackResult<()> {
     validate_spicedb_runtime_config().await?;
     crate::auth_product::transactional_mail_config().await?;
+    // Every sealing key, pepper, and MAC is derived from this; refuse to serve
+    // rather than fall back to a value that ships in the repository.
+    crate::auth_product::root_key_material().await?;
+    // Development shortcuts are unauthenticated account-takeover primitives.
+    // Refuse to start when they are enabled on a routable origin.
+    if !crate::application::loopback_public_base_url().await {
+        for (enabled, surface) in [
+            (config_bool("AUTH_DEV_TOOLS", false).await, "AUTH_DEV_TOOLS"),
+            (
+                config_bool("AUTH_OAUTH_DEVELOPMENT_CALLBACK_BYPASS", false).await,
+                "AUTH_OAUTH_DEVELOPMENT_CALLBACK_BYPASS",
+            ),
+            (
+                mail_transport().await == "capture",
+                "AUTH_MAIL_TRANSPORT=capture",
+            ),
+        ] {
+            if enabled {
+                return Err(AuthStackError::configuration(format!(
+                    "{surface} requires a loopback AUTH_PUBLIC_BASE_URL"
+                )));
+            }
+        }
+    }
     if !config_bool(AUTH_PRODUCTION_MODE, false).await {
         return Ok(());
     }
@@ -165,6 +189,11 @@ pub(crate) async fn validate_runtime_security_config_uncached() -> AuthStackResu
     if config_bool("AUTH_DEV_TOOLS", false).await {
         return Err(AuthStackError::configuration(
             "production forbids AUTH_DEV_TOOLS",
+        ));
+    }
+    if config_bool("AUTH_OAUTH_DEVELOPMENT_CALLBACK_BYPASS", false).await {
+        return Err(AuthStackError::configuration(
+            "production forbids AUTH_OAUTH_DEVELOPMENT_CALLBACK_BYPASS",
         ));
     }
     if !config_bool("AUTH_REQUIRE_TRUSTED_INGRESS", false).await {
@@ -259,13 +288,6 @@ pub(crate) async fn validate_runtime_security_config_uncached() -> AuthStackResu
                 "production AUTH_OUTBOX_KEY_BASE64 must decode to 32 bytes",
             )
         })?;
-    let development_outbox_key: [u8; 32] =
-        Sha256::digest(b"fullstack-development-outbox-key").into();
-    if vault_key == development_outbox_key || outbox_key == development_outbox_key {
-        return Err(AuthStackError::configuration(
-            "production forbids development encryption keys",
-        ));
-    }
     if store_config_value("AUTH_OUTBOX_KEY_VERSION")
         .await
         .is_none_or(|value| value.trim().is_empty() || value == "development-v1")

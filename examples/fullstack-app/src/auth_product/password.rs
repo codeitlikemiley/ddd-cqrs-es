@@ -122,8 +122,10 @@ pub async fn register_email_password(
 }
 
 pub async fn development_mail_capture_enabled() -> bool {
-    !config_bool("AUTH_PRODUCTION_MODE", false).await
+    cfg!(all(feature = "mail-capture", debug_assertions))
+        && !config_bool("AUTH_PRODUCTION_MODE", false).await
         && config_bool("AUTH_DEV_TOOLS", false).await
+        && crate::application::loopback_public_base_url().await
         && runtime_config_value("AUTH_MAIL_TRANSPORT").await.as_deref() == Some("capture")
 }
 
@@ -155,7 +157,10 @@ pub async fn latest_captured_mail(
     {
         return Err(AuthStackError::Forbidden);
     }
-    #[cfg(feature = "mail-capture")]
+    crate::application::require_loopback_public_base_url("captured mail").await?;
+    // Reading anyone's verification link is a takeover primitive, so the code
+    // is compiled out of release builds rather than merely gated at runtime.
+    #[cfg(all(feature = "mail-capture", debug_assertions))]
     {
         let expected_kind = match message_kind {
             "email-verification" => EmailKind::Verification,
@@ -190,11 +195,11 @@ pub async fn latest_captured_mail(
             action_url: captured.action_url().map(ToOwned::to_owned),
         })
     }
-    #[cfg(not(feature = "mail-capture"))]
+    #[cfg(not(all(feature = "mail-capture", debug_assertions)))]
     {
         let _ = (recipient, message_kind);
         Err(AuthStackError::configuration(
-            "captured mail requires the mail-capture feature",
+            "captured mail requires a debug build with the mail-capture feature",
         ))
     }
 }

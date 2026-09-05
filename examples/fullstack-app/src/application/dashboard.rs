@@ -341,16 +341,62 @@ pub(crate) async fn require_workspace_board(
     Ok((authorization.user_id, authorization.organization_id))
 }
 
+/// The caller's capabilities inside their active workspace.
+///
+/// Server-side twin of the context the UI builds, so board visibility is decided
+/// the same way on both sides.
+pub(crate) async fn workspace_access_context(
+    authorization: &WorkspaceAuthorization,
+) -> AuthStackResult<crate::access::AccessContext> {
+    let organization = crate::auth_product::organization_for_session(
+        authorization.context.session_id().as_str(),
+        &authorization.organization_id,
+    )
+    .await?;
+    let assurance = if authorization
+        .context
+        .assurance()
+        .satisfies(AuthenticationAssurance::Aal2)
+    {
+        "aal2"
+    } else {
+        "aal1"
+    };
+    Ok(crate::access::AccessContext::from_permissions(
+        true,
+        organization.permissions.iter().map(String::as_str),
+        assurance,
+        authorization.context.principal().is_system_administrator(),
+    ))
+}
+
 pub async fn save_dashboard_layout(
     request: DashboardLayoutUpdate,
     auth: RequestAuth,
 ) -> AuthStackResult<DashboardLayout> {
-    let (_user_id, org_id) =
-        require_workspace_board(auth, "dashboard.manage", AssuranceRequirement::Aal1).await?;
+    let authorization =
+        require_workspace_permission(auth, "dashboard.manage", AssuranceRequirement::Aal1).await?;
+    let org_id = authorization.organization_id.clone();
     let mut layout = request.layout;
     layout.migrate_if_needed();
-    crate::store::save_dashboard_layout(&org_id, &layout).await?;
-    crate::store::load_dashboard_layout(&org_id).await
+    let expected_revision = layout.revision;
+    if expected_revision <= 0 {
+        return Err(AuthStackError::conflict(
+            "the board revision is missing; reload the board and reapply your edit",
+        ));
+    }
+
+    // The caller only ever saw the widgets their permissions allow, so the tree
+    // they posted is missing everyone else's. Put those back before writing.
+    let stored = crate::store::load_dashboard_layout(&org_id).await?;
+    let access = workspace_access_context(&authorization).await?;
+    layout.nodes = crate::access::merge_hidden_board_nodes(stored.nodes, layout.nodes, &access);
+
+    layout.widgets.clear();
+    layout.version = 2;
+    layout.revision =
+        crate::store::save_dashboard_layout(&org_id, &layout, Some(expected_revision)).await?;
+    Ok(layout)
 }
 
 pub async fn dismiss_dashboard_notification(
@@ -381,7 +427,10 @@ pub async fn update_dashboard_note(
     }
     let (_user_id, org_id) =
         require_workspace_board(auth, "dashboard.manage", AssuranceRequirement::Aal1).await?;
+    // Read-modify-write on the full stored tree: no client-supplied nodes are
+    // involved, so only the revision read here has to still hold at write time.
     let mut layout = crate::store::load_dashboard_layout(&org_id).await?;
+    let expected_revision = layout.revision;
     let Some(node) = layout.find_widget_mut(request.widget_id.trim()) else {
         return Err(AuthStackError::not_found("widget not found"));
     };
@@ -395,8 +444,9 @@ pub async fn update_dashboard_note(
         }
         _ => return Err(AuthStackError::validation("widget is not a notes tile")),
     }
-    crate::store::save_dashboard_layout(&org_id, &layout).await?;
-    crate::store::load_dashboard_layout(&org_id).await
+    layout.revision =
+        crate::store::save_dashboard_layout(&org_id, &layout, Some(expected_revision)).await?;
+    Ok(layout)
 }
 
 pub async fn list_dashboard_sources(auth: RequestAuth) -> AuthStackResult<Vec<DataSourceSummary>> {

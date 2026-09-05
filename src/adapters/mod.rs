@@ -10,6 +10,13 @@
 //! LibSQL, raw PostgreSQL TCP, and Spin host calls. These helpers are not
 //! general-purpose SQL parameterization APIs and are not full event-store or
 //! checkpoint-store backends until they implement the reusable library traits.
+//!
+//! HTTP-backed adapters (Neon, LibSQL, Supabase) execute one statement per
+//! request and do not yet expose portable optimistic-concurrency append
+//! (`append_atomic`). Use native SQL adapters or Spin host transactions
+//! (`execute_spin_sqlite_atomic`, `execute_spin_pg_atomic`,
+//! `execute_spin_mysql_atomic`) when a command path needs read-check-write in
+//! one round trip.
 
 #[cfg(feature = "wasi-http")]
 mod http;
@@ -30,7 +37,10 @@ mod sql_text;
 mod supabase;
 
 #[cfg(feature = "wasi-http")]
-pub use http::wasi_http_post;
+pub use http::{
+    redact_url_userinfo, truncate_body_for_error, validate_https_url, wasi_http_post,
+    HTTP_REQUEST_DEADLINE, MAX_HTTP_REQUEST_BODY_BYTES, MAX_HTTP_RESPONSE_BODY_BYTES,
+};
 #[cfg(feature = "json-file")]
 pub use json_file::{JsonFileCheckpointStore, JsonFileEventStore};
 #[cfg(feature = "wasi-libsql")]
@@ -45,7 +55,7 @@ pub use neon::execute_neon_query;
 pub use spin::*;
 pub use sql_text::{base64_encode, format_pg_value, interpolate_query};
 #[cfg(feature = "wasi-supabase-rpc")]
-pub use supabase::execute_supabase_query;
+pub use supabase::{execute_supabase_query, SUPABASE_EXECUTE_SQL_RPC};
 
 /// SQL schema for the Postgres `events` table used by framework-owned migrations.
 pub const EVENTS_TABLE_SCHEMA_POSTGRES: &str = r#"

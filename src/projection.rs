@@ -1,6 +1,7 @@
 use crate::aggregate::Aggregate;
 use crate::event::EventEnvelope;
 use crate::event_store::EventStore;
+use std::borrow::Cow;
 use std::fmt::{Display, Formatter};
 use std::num::NonZeroUsize;
 
@@ -121,6 +122,27 @@ fn projection_batch_outcome(
     }
 }
 
+/// Decides whether a catch-up loop should request another batch, advancing
+/// `position` to the batch's last sequence.
+///
+/// A full batch normally means more events are waiting. It only means that when
+/// the batch also moved the feed position forward: a store that hands back a
+/// full batch of events carrying no (or a non-increasing) global sequence would
+/// otherwise have the same batch replayed forever, because the next read
+/// resumes from the same checkpoint. Such a batch ends the loop instead.
+fn batch_advanced(outcome: ProjectionBatchOutcome, position: &mut Option<u64>) -> bool {
+    if outcome.caught_up {
+        return false;
+    }
+    match outcome.last_sequence {
+        Some(sequence) if position.is_none_or(|previous| sequence > previous) => {
+            *position = Some(sequence);
+            true
+        }
+        _ => false,
+    }
+}
+
 /// In-memory projection runner with a sequence checkpoint.
 ///
 /// # Example
@@ -202,7 +224,13 @@ impl<P> InMemoryProjectionRunner<P> {
 }
 
 impl<P> InMemoryProjectionRunner<P> {
-    /// Loads global events after the current checkpoint and applies them.
+    /// Catches the projection up to the end of the feed, applying events in
+    /// [`ProjectionBatchConfig::default`] sized batches.
+    ///
+    /// The tail is never materialized in one allocation: this repeats
+    /// [`Self::run_batch`] until a batch reports
+    /// [`ProjectionBatchOutcome::caught_up`], so a backlog of any size costs one
+    /// batch of memory at a time.
     pub fn run<A, S>(
         &mut self,
         store: &S,
@@ -221,20 +249,17 @@ impl<P> InMemoryProjectionRunner<P> {
         )
         .entered();
 
-        let events = store
-            .load_global_after(self.checkpoint)
-            .map_err(ProjectionRunnerError::Store)?;
+        let config = ProjectionBatchConfig::default();
         let mut applied = 0;
+        let mut position = None;
 
-        for event in events {
-            self.projection
-                .apply(&event)
-                .map_err(ProjectionRunnerError::Projection)?;
-            self.checkpoint = event.sequence;
-            applied += 1;
+        loop {
+            let outcome = self.run_batch(store, config)?;
+            applied += outcome.applied;
+            if !batch_advanced(outcome, &mut position) {
+                return Ok(applied);
+            }
         }
-
-        Ok(applied)
     }
 
     /// Loads at most `config.batch_size()` global events after the current
@@ -269,8 +294,10 @@ impl<P> InMemoryProjectionRunner<P> {
             self.projection
                 .apply(&event)
                 .map_err(ProjectionRunnerError::Projection)?;
-            self.checkpoint = event.sequence;
-            last_sequence = event.sequence;
+            if let Some(sequence) = event.sequence {
+                self.checkpoint = Some(sequence);
+                last_sequence = Some(sequence);
+            }
             applied += 1;
         }
 
@@ -355,19 +382,104 @@ pub trait AsyncCheckpointStore {
     ) -> Result<(), Self::Error>;
 }
 
+/// Separator between a projection name and its checkpoint scope.
+const CHECKPOINT_SCOPE_SEPARATOR: char = '@';
+
+/// Reserved scope for cross-aggregate raw feed replay, which has its own
+/// position independent of any single aggregate type's feed.
+const RAW_CHECKPOINT_SCOPE: &str = "*raw";
+
+/// Builds the checkpoint key an aggregate-scoped runner uses for one aggregate
+/// type.
+///
+/// Exposed so a deployment upgrading from name-only checkpoints can seed the
+/// scoped rows from its existing row instead of replaying from zero:
+///
+/// ```rust,no_run
+/// # use ddd_cqrs_es::projection::{aggregate_scoped_checkpoint_key, CheckpointStore};
+/// # fn seed<C: CheckpointStore>(store: &C) -> Result<(), C::Error> {
+/// if let Some(sequence) = store.load_checkpoint("order_summary")? {
+///     store.save_checkpoint(&aggregate_scoped_checkpoint_key("order_summary", "order"), sequence)?;
+/// }
+/// # Ok(())
+/// # }
+/// ```
+pub fn aggregate_scoped_checkpoint_key(projection_name: &str, aggregate_type: &str) -> String {
+    format!("{projection_name}{CHECKPOINT_SCOPE_SEPARATOR}{aggregate_type}")
+}
+
+/// Builds the checkpoint key an aggregate-scoped runner uses for
+/// [`PersistedProjectionRunner::run_raw_batch`] cross-aggregate replay.
+pub fn raw_checkpoint_key(projection_name: &str) -> String {
+    aggregate_scoped_checkpoint_key(projection_name, RAW_CHECKPOINT_SCOPE)
+}
+
+/// How a persisted runner derives the checkpoint key it reads and writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CheckpointKeying {
+    /// The bare [`Projection::name()`], shared by every feed the projection is
+    /// run against.
+    ProjectionName,
+    /// [`Projection::name()`] scoped by the feed being replayed.
+    AggregateScoped,
+}
+
 /// A projection runner that uses a persistent `CheckpointStore` to coordinate progress.
+///
+/// # Checkpoint keys
+///
+/// [`Self::new`] keys checkpoints on [`Projection::name()`] alone. Because
+/// global replay feeds are scoped to one aggregate type (see
+/// [`EventStore::load_global_after`]),
+/// running one projection against several aggregate types under that keying
+/// makes those runs share a single position: whichever feed advances furthest
+/// hides the others' events permanently.
+///
+/// [`Self::with_aggregate_scoped_checkpoints`] gives every feed its own row and
+/// is the correct choice for a projection spanning more than one aggregate type.
+/// It is opt-in so upgrading does not silently rewind existing deployments to
+/// zero; see [`aggregate_scoped_checkpoint_key`] for seeding the new rows.
 #[derive(Debug)]
 pub struct PersistedProjectionRunner<P, C> {
     projection: P,
     checkpoint_store: C,
+    keying: CheckpointKeying,
 }
 
 impl<P, C> PersistedProjectionRunner<P, C> {
-    /// Creates a new persisted runner for a projection and checkpoint store.
+    /// Creates a new persisted runner that keys checkpoints on
+    /// [`Projection::name()`] alone.
+    ///
+    /// Correct for a projection driven by exactly one aggregate type's feed.
+    /// Use [`Self::with_aggregate_scoped_checkpoints`] otherwise.
     pub fn new(projection: P, checkpoint_store: C) -> Self {
         Self {
             projection,
             checkpoint_store,
+            keying: CheckpointKeying::ProjectionName,
+        }
+    }
+
+    /// Creates a persisted runner that keys checkpoints on the projection name
+    /// **and** the feed being replayed, so a projection spanning several
+    /// aggregate types tracks each feed independently.
+    ///
+    /// [`Self::run_raw_batch`] gets its own cross-aggregate scope rather than
+    /// sharing a position with any typed feed.
+    pub fn with_aggregate_scoped_checkpoints(projection: P, checkpoint_store: C) -> Self {
+        Self {
+            projection,
+            checkpoint_store,
+            keying: CheckpointKeying::AggregateScoped,
+        }
+    }
+
+    fn checkpoint_key(&self, name: &'static str, scope: &str) -> Cow<'static, str> {
+        match self.keying {
+            CheckpointKeying::ProjectionName => Cow::Borrowed(name),
+            CheckpointKeying::AggregateScoped => {
+                Cow::Owned(aggregate_scoped_checkpoint_key(name, scope))
+            }
         }
     }
 
@@ -391,11 +503,17 @@ impl<P, C> PersistedProjectionRunner<P, C>
 where
     C: CheckpointStore,
 {
-    /// Loads global events after the current persistent checkpoint, applies
-    /// them, then saves the last applied event sequence as the new checkpoint
-    /// once per pass. When a projection fails mid-pass, the sequence of the
-    /// last successfully applied event is still saved before the error is
-    /// returned, so a retry resumes where the failure happened.
+    /// Catches the projection up to the end of the feed, applying events in
+    /// [`ProjectionBatchConfig::default`] sized batches and saving the last
+    /// applied sequence as the checkpoint once per batch. When a projection
+    /// fails mid-batch, the sequence of the last successfully applied event is
+    /// still saved before the error is returned, so a retry resumes where the
+    /// failure happened.
+    ///
+    /// The tail is never materialized in one allocation: this repeats
+    /// [`Self::run_batch`] until a batch reports
+    /// [`ProjectionBatchOutcome::caught_up`], so a backlog of any size costs one
+    /// batch of memory at a time.
     ///
     /// Projection side effects and checkpoint writes are not one transaction;
     /// projection implementations must be idempotent for retry safety. Events
@@ -411,52 +529,26 @@ where
         S: EventStore<A>,
         P: Projection<A::Event, A::Id>,
     {
-        let name = self.projection.name();
         #[cfg(feature = "tracing")]
         let _span = tracing::debug_span!(
             "projection.run",
             runner = "persisted",
-            projection = name,
+            projection = self.projection.name(),
             aggregate_type = A::aggregate_type()
         )
         .entered();
 
-        let checkpoint = self
-            .checkpoint_store
-            .load_checkpoint(name)
-            .map_err(ProjectionRunnerError::Checkpoint)?;
-
-        let events = store
-            .load_global_after(checkpoint)
-            .map_err(ProjectionRunnerError::Store)?;
+        let config = ProjectionBatchConfig::default();
         let mut applied = 0;
-        let mut last_sequence = None;
-        let mut failure = None;
+        let mut position = None;
 
-        for event in events {
-            if let Err(error) = self.projection.apply(&event) {
-                failure = Some(ProjectionRunnerError::Projection(error));
-                break;
+        loop {
+            let outcome = self.run_batch(store, config)?;
+            applied += outcome.applied;
+            if !batch_advanced(outcome, &mut position) {
+                return Ok(applied);
             }
-            if event.sequence.is_some() {
-                last_sequence = event.sequence;
-            }
-            applied += 1;
         }
-
-        let flushed = match last_sequence {
-            Some(sequence) => self
-                .checkpoint_store
-                .save_checkpoint(name, sequence)
-                .map_err(ProjectionRunnerError::Checkpoint),
-            None => Ok(()),
-        };
-        if let Some(error) = failure {
-            return Err(error);
-        }
-        flushed?;
-
-        Ok(applied)
     }
 
     /// Loads at most `config.batch_size()` global events after the persistent
@@ -485,9 +577,10 @@ where
         )
         .entered();
 
+        let key = self.checkpoint_key(name, A::aggregate_type());
         let checkpoint = self
             .checkpoint_store
-            .load_checkpoint(name)
+            .load_checkpoint(&key)
             .map_err(ProjectionRunnerError::Checkpoint)?;
 
         let events = store
@@ -511,7 +604,7 @@ where
         let flushed = match last_sequence {
             Some(sequence) => self
                 .checkpoint_store
-                .save_checkpoint(name, sequence)
+                .save_checkpoint(&key, sequence)
                 .map_err(ProjectionRunnerError::Checkpoint),
             None => Ok(()),
         };
@@ -527,6 +620,10 @@ where
     /// from a [`RawEventFeed`](crate::raw_feed::RawEventFeed) after the
     /// persistent checkpoint and applies them as raw envelopes, with the same
     /// once-per-batch checkpoint semantics as [`Self::run_batch`].
+    ///
+    /// Under [`Self::with_aggregate_scoped_checkpoints`] this cross-aggregate
+    /// replay keeps its own checkpoint row (see [`raw_checkpoint_key`]) rather
+    /// than sharing a position with a typed feed.
     #[cfg(feature = "json")]
     #[allow(clippy::type_complexity)]
     pub fn run_raw_batch<S>(
@@ -548,9 +645,10 @@ where
         )
         .entered();
 
+        let key = self.checkpoint_key(name, RAW_CHECKPOINT_SCOPE);
         let checkpoint = self
             .checkpoint_store
-            .load_checkpoint(name)
+            .load_checkpoint(&key)
             .map_err(ProjectionRunnerError::Checkpoint)?;
 
         let events = feed
@@ -574,7 +672,7 @@ where
         let flushed = match last_sequence {
             Some(sequence) => self
                 .checkpoint_store
-                .save_checkpoint(name, sequence)
+                .save_checkpoint(&key, sequence)
                 .map_err(ProjectionRunnerError::Checkpoint),
             None => Ok(()),
         };
@@ -588,20 +686,51 @@ where
 }
 
 /// An async projection runner that uses a persistent `AsyncCheckpointStore` to coordinate progress.
+///
+/// Checkpoint keying matches [`PersistedProjectionRunner`]: [`Self::new`] keys
+/// on [`Projection::name()`] alone, and
+/// [`Self::with_aggregate_scoped_checkpoints`] gives each replayed feed its own
+/// row.
 #[cfg(feature = "async")]
 #[derive(Debug)]
 pub struct AsyncPersistedProjectionRunner<P, C> {
     projection: P,
     checkpoint_store: C,
+    keying: CheckpointKeying,
 }
 
 #[cfg(feature = "async")]
 impl<P, C> AsyncPersistedProjectionRunner<P, C> {
-    /// Creates a new async persisted runner for a projection and checkpoint store.
+    /// Creates a new async persisted runner that keys checkpoints on
+    /// [`Projection::name()`] alone.
+    ///
+    /// Correct for a projection driven by exactly one aggregate type's feed.
+    /// Use [`Self::with_aggregate_scoped_checkpoints`] otherwise.
     pub fn new(projection: P, checkpoint_store: C) -> Self {
         Self {
             projection,
             checkpoint_store,
+            keying: CheckpointKeying::ProjectionName,
+        }
+    }
+
+    /// Creates an async persisted runner that keys checkpoints on the
+    /// projection name **and** the feed being replayed, so a projection
+    /// spanning several aggregate types tracks each feed independently.
+    pub fn with_aggregate_scoped_checkpoints(projection: P, checkpoint_store: C) -> Self {
+        Self {
+            projection,
+            checkpoint_store,
+            keying: CheckpointKeying::AggregateScoped,
+        }
+    }
+
+    fn checkpoint_key(&self, name: &'static str, scope: &str) -> Cow<'static, str> {
+        match self.keying {
+            CheckpointKeying::ProjectionName => Cow::Borrowed(name),
+            CheckpointKeying::AggregateScoped => {
+                Cow::Owned(aggregate_scoped_checkpoint_key(name, scope))
+            }
         }
     }
 
@@ -626,11 +755,17 @@ impl<P, C> AsyncPersistedProjectionRunner<P, C>
 where
     C: AsyncCheckpointStore,
 {
-    /// Loads global events after the current persistent checkpoint, applies
-    /// them, then saves the last applied event sequence as the new checkpoint
-    /// once per pass. When a projection fails mid-pass, the sequence of the
-    /// last successfully applied event is still saved before the error is
-    /// returned, so a retry resumes where the failure happened.
+    /// Catches the projection up to the end of the feed, applying events in
+    /// [`ProjectionBatchConfig::default`] sized batches and saving the last
+    /// applied sequence as the checkpoint once per batch. When a projection
+    /// fails mid-batch, the sequence of the last successfully applied event is
+    /// still saved before the error is returned, so a retry resumes where the
+    /// failure happened.
+    ///
+    /// The tail is never materialized in one allocation: this repeats
+    /// [`Self::run_batch`] until a batch reports
+    /// [`ProjectionBatchOutcome::caught_up`], so a backlog of any size costs one
+    /// batch of memory at a time.
     ///
     /// Projection side effects and checkpoint writes are not one transaction;
     /// projection implementations must be idempotent for retry safety. Events
@@ -646,46 +781,17 @@ where
         S: crate::async_api::AsyncEventStore<A>,
         P: Projection<A::Event, A::Id>,
     {
-        let name = self.projection.name();
-        let checkpoint = self
-            .checkpoint_store
-            .load_checkpoint(name)
-            .await
-            .map_err(ProjectionRunnerError::Checkpoint)?;
-
-        let events = store
-            .load_global_after(checkpoint)
-            .await
-            .map_err(ProjectionRunnerError::Store)?;
+        let config = ProjectionBatchConfig::default();
         let mut applied = 0;
-        let mut last_sequence = None;
-        let mut failure = None;
+        let mut position = None;
 
-        for event in events {
-            if let Err(error) = self.projection.apply(&event) {
-                failure = Some(ProjectionRunnerError::Projection(error));
-                break;
+        loop {
+            let outcome = self.run_batch(store, config).await?;
+            applied += outcome.applied;
+            if !batch_advanced(outcome, &mut position) {
+                return Ok(applied);
             }
-            if event.sequence.is_some() {
-                last_sequence = event.sequence;
-            }
-            applied += 1;
         }
-
-        let flushed = match last_sequence {
-            Some(sequence) => self
-                .checkpoint_store
-                .save_checkpoint(name, sequence)
-                .await
-                .map_err(ProjectionRunnerError::Checkpoint),
-            None => Ok(()),
-        };
-        if let Some(error) = failure {
-            return Err(error);
-        }
-        flushed?;
-
-        Ok(applied)
     }
 
     /// Loads at most `config.batch_size()` global events after the persistent
@@ -704,9 +810,10 @@ where
         P: Projection<A::Event, A::Id>,
     {
         let name = self.projection.name();
+        let key = self.checkpoint_key(name, A::aggregate_type());
         let checkpoint = self
             .checkpoint_store
-            .load_checkpoint(name)
+            .load_checkpoint(&key)
             .await
             .map_err(ProjectionRunnerError::Checkpoint)?;
 
@@ -732,7 +839,7 @@ where
         let flushed = match last_sequence {
             Some(sequence) => self
                 .checkpoint_store
-                .save_checkpoint(name, sequence)
+                .save_checkpoint(&key, sequence)
                 .await
                 .map_err(ProjectionRunnerError::Checkpoint),
             None => Ok(()),
@@ -750,6 +857,9 @@ where
     /// after the persistent checkpoint and applies them as raw envelopes,
     /// with the same once-per-batch checkpoint semantics as
     /// [`Self::run_batch`].
+    ///
+    /// Under [`Self::with_aggregate_scoped_checkpoints`] this cross-aggregate
+    /// replay keeps its own checkpoint row (see [`raw_checkpoint_key`]).
     #[cfg(feature = "json")]
     #[allow(clippy::type_complexity)]
     pub async fn run_raw_batch<S>(
@@ -762,9 +872,10 @@ where
         P: Projection<serde_json::Value, String>,
     {
         let name = self.projection.name();
+        let key = self.checkpoint_key(name, RAW_CHECKPOINT_SCOPE);
         let checkpoint = self
             .checkpoint_store
-            .load_checkpoint(name)
+            .load_checkpoint(&key)
             .await
             .map_err(ProjectionRunnerError::Checkpoint)?;
 
@@ -790,7 +901,7 @@ where
         let flushed = match last_sequence {
             Some(sequence) => self
                 .checkpoint_store
-                .save_checkpoint(name, sequence)
+                .save_checkpoint(&key, sequence)
                 .await
                 .map_err(ProjectionRunnerError::Checkpoint),
             None => Ok(()),
@@ -862,8 +973,14 @@ impl<P> CheckpointedProjectionRunner<P> {
 }
 
 impl<P> CheckpointedProjectionRunner<P> {
-    /// Loads global events after the current persistent checkpoint of the projection itself,
-    /// applies them atomically, and updates the checkpoint.
+    /// Catches the projection up to the end of the feed, applying events in
+    /// [`ProjectionBatchConfig::default`] sized batches through the
+    /// projection-owned checkpoint operation.
+    ///
+    /// The tail is never materialized in one allocation: this repeats
+    /// [`Self::run_batch`] until a batch reports
+    /// [`ProjectionBatchOutcome::caught_up`], so a backlog of any size costs one
+    /// batch of memory at a time.
     #[allow(clippy::type_complexity)]
     pub fn run<A, S>(
         &mut self,
@@ -883,24 +1000,17 @@ impl<P> CheckpointedProjectionRunner<P> {
         )
         .entered();
 
-        let checkpoint = self
-            .projection
-            .load_checkpoint()
-            .map_err(ProjectionRunnerError::Checkpoint)?;
-
-        let events = store
-            .load_global_after(checkpoint)
-            .map_err(ProjectionRunnerError::Store)?;
+        let config = ProjectionBatchConfig::default();
         let mut applied = 0;
+        let mut position = None;
 
-        for event in events {
-            self.projection
-                .apply_and_checkpoint(&event)
-                .map_err(ProjectionRunnerError::Projection)?;
-            applied += 1;
+        loop {
+            let outcome = self.run_batch(store, config)?;
+            applied += outcome.applied;
+            if !batch_advanced(outcome, &mut position) {
+                return Ok(applied);
+            }
         }
-
-        Ok(applied)
     }
 
     /// Loads at most `config.batch_size()` global events after the projection's
@@ -941,7 +1051,9 @@ impl<P> CheckpointedProjectionRunner<P> {
             self.projection
                 .apply_and_checkpoint(&event)
                 .map_err(ProjectionRunnerError::Projection)?;
-            last_sequence = event.sequence;
+            if let Some(sequence) = event.sequence {
+                last_sequence = Some(sequence);
+            }
             applied += 1;
         }
 
@@ -1002,8 +1114,15 @@ impl<P> TransactionalCheckpointedProjectionRunner<P> {
 }
 
 impl<P> TransactionalCheckpointedProjectionRunner<P> {
-    /// Loads global events after the projection checkpoint and applies each
-    /// read-model update with its checkpoint in one projection-owned transaction.
+    /// Catches the projection up to the end of the feed in
+    /// [`ProjectionBatchConfig::default`] sized batches, applying each
+    /// read-model update with its checkpoint in one projection-owned
+    /// transaction.
+    ///
+    /// The tail is never materialized in one allocation: this repeats
+    /// [`Self::run_batch`] until a batch reports
+    /// [`ProjectionBatchOutcome::caught_up`], so a backlog of any size costs one
+    /// batch of memory at a time.
     #[allow(clippy::type_complexity)]
     pub fn run<A, S>(
         &mut self,
@@ -1023,24 +1142,17 @@ impl<P> TransactionalCheckpointedProjectionRunner<P> {
         )
         .entered();
 
-        let checkpoint = self
-            .projection
-            .load_checkpoint()
-            .map_err(ProjectionRunnerError::Checkpoint)?;
-
-        let events = store
-            .load_global_after(checkpoint)
-            .map_err(ProjectionRunnerError::Store)?;
+        let config = ProjectionBatchConfig::default();
         let mut applied = 0;
+        let mut position = None;
 
-        for event in events {
-            self.projection
-                .apply_and_checkpoint_transactionally(&event)
-                .map_err(ProjectionRunnerError::Projection)?;
-            applied += 1;
+        loop {
+            let outcome = self.run_batch(store, config)?;
+            applied += outcome.applied;
+            if !batch_advanced(outcome, &mut position) {
+                return Ok(applied);
+            }
         }
-
-        Ok(applied)
     }
 
     /// Loads at most `config.batch_size()` global events after the projection's
@@ -1081,7 +1193,9 @@ impl<P> TransactionalCheckpointedProjectionRunner<P> {
             self.projection
                 .apply_and_checkpoint_transactionally(&event)
                 .map_err(ProjectionRunnerError::Projection)?;
-            last_sequence = event.sequence;
+            if let Some(sequence) = event.sequence {
+                last_sequence = Some(sequence);
+            }
             applied += 1;
         }
 
@@ -1183,8 +1297,15 @@ impl<P> AsyncTransactionalCheckpointedProjectionRunner<P> {
 
 #[cfg(feature = "async")]
 impl<P> AsyncTransactionalCheckpointedProjectionRunner<P> {
-    /// Loads global events after the projection checkpoint and applies each
-    /// read-model update with its checkpoint in one projection-owned transaction.
+    /// Catches the projection up to the end of the feed in
+    /// [`ProjectionBatchConfig::default`] sized batches, applying each
+    /// read-model update with its checkpoint in one projection-owned
+    /// transaction.
+    ///
+    /// The tail is never materialized in one allocation: this repeats
+    /// [`Self::run_batch`] until a batch reports
+    /// [`ProjectionBatchOutcome::caught_up`], so a backlog of any size costs one
+    /// batch of memory at a time.
     pub async fn run<A, S>(
         &mut self,
         store: &S,
@@ -1194,27 +1315,17 @@ impl<P> AsyncTransactionalCheckpointedProjectionRunner<P> {
         S: crate::async_api::AsyncEventStore<A>,
         P: AsyncTransactionalCheckpointedProjection<A::Event, A::Id> + Send + Sync,
     {
-        let checkpoint = self
-            .projection
-            .load_checkpoint()
-            .await
-            .map_err(ProjectionRunnerError::Checkpoint)?;
-
-        let events = store
-            .load_global_after(checkpoint)
-            .await
-            .map_err(ProjectionRunnerError::Store)?;
+        let config = ProjectionBatchConfig::default();
         let mut applied = 0;
+        let mut position = None;
 
-        for event in events {
-            self.projection
-                .apply_and_checkpoint_transactionally(&event)
-                .await
-                .map_err(ProjectionRunnerError::Projection)?;
-            applied += 1;
+        loop {
+            let outcome = self.run_batch(store, config).await?;
+            applied += outcome.applied;
+            if !batch_advanced(outcome, &mut position) {
+                return Ok(applied);
+            }
         }
-
-        Ok(applied)
     }
 
     /// Loads at most `config.batch_size()` global events after the projection's
@@ -1247,7 +1358,9 @@ impl<P> AsyncTransactionalCheckpointedProjectionRunner<P> {
                 .apply_and_checkpoint_transactionally(&event)
                 .await
                 .map_err(ProjectionRunnerError::Projection)?;
-            last_sequence = event.sequence;
+            if let Some(sequence) = event.sequence {
+                last_sequence = Some(sequence);
+            }
             applied += 1;
         }
 
@@ -1280,8 +1393,14 @@ impl<P> AsyncCheckpointedProjectionRunner<P> {
 
 #[cfg(feature = "async")]
 impl<P> AsyncCheckpointedProjectionRunner<P> {
-    /// Loads global events after the current persistent checkpoint of the projection itself,
-    /// applies them atomically, and updates the checkpoint.
+    /// Catches the projection up to the end of the feed, applying events in
+    /// [`ProjectionBatchConfig::default`] sized batches through the
+    /// projection-owned checkpoint operation.
+    ///
+    /// The tail is never materialized in one allocation: this repeats
+    /// [`Self::run_batch`] until a batch reports
+    /// [`ProjectionBatchOutcome::caught_up`], so a backlog of any size costs one
+    /// batch of memory at a time.
     #[allow(clippy::type_complexity)]
     pub async fn run<A, S>(
         &mut self,
@@ -1292,27 +1411,17 @@ impl<P> AsyncCheckpointedProjectionRunner<P> {
         S: crate::async_api::AsyncEventStore<A>,
         P: AsyncCheckpointedProjection<A::Event, A::Id> + Send + Sync,
     {
-        let checkpoint = self
-            .projection
-            .load_checkpoint()
-            .await
-            .map_err(ProjectionRunnerError::Checkpoint)?;
-
-        let events = store
-            .load_global_after(checkpoint)
-            .await
-            .map_err(ProjectionRunnerError::Store)?;
+        let config = ProjectionBatchConfig::default();
         let mut applied = 0;
+        let mut position = None;
 
-        for event in events {
-            self.projection
-                .apply_and_checkpoint(&event)
-                .await
-                .map_err(ProjectionRunnerError::Projection)?;
-            applied += 1;
+        loop {
+            let outcome = self.run_batch(store, config).await?;
+            applied += outcome.applied;
+            if !batch_advanced(outcome, &mut position) {
+                return Ok(applied);
+            }
         }
-
-        Ok(applied)
     }
 
     /// Loads at most `config.batch_size()` global events after the projection's
@@ -1346,7 +1455,9 @@ impl<P> AsyncCheckpointedProjectionRunner<P> {
                 .apply_and_checkpoint(&event)
                 .await
                 .map_err(ProjectionRunnerError::Projection)?;
-            last_sequence = event.sequence;
+            if let Some(sequence) = event.sequence {
+                last_sequence = Some(sequence);
+            }
             applied += 1;
         }
 

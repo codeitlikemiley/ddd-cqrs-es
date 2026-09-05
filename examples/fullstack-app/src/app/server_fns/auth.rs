@@ -105,7 +105,7 @@ pub async fn latest_development_mail(
 ) -> Result<CapturedMailResponse, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
-        crate::application::latest_captured_mail(recipient, message_kind)
+        crate::application::latest_captured_mail(recipient, message_kind, server_fn_request_auth())
             .await
             .map_err(server_fn_error)
     }
@@ -346,9 +346,11 @@ pub async fn start_oauth_login(
 ) -> Result<OAuthStartResponse, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
-        crate::application::start_oauth_login(provider_id, redirect_url)
+        let start = crate::application::start_oauth_login(provider_id, redirect_url)
             .await
-            .map_err(server_fn_error)
+            .map_err(server_fn_error)?;
+        append_response_cookie(&start.set_cookie);
+        Ok(start.response)
     }
     #[cfg(not(feature = "ssr"))]
     {
@@ -366,14 +368,20 @@ pub async fn complete_oauth_callback(
 ) -> Result<LoginCompletionResponse, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
-        let response = crate::application::complete_oauth_callback(OAuthCallbackRequest {
-            provider_id,
-            code,
-            state,
-            redirect_url,
-        })
-        .await
-        .map_err(server_fn_error)?;
+        let binding =
+            crate::application::OAuthFlowBinding::Browser(current_oauth_flow_cookie_value());
+        let response = crate::application::complete_oauth_callback(
+            OAuthCallbackRequest {
+                provider_id,
+                code,
+                state,
+                redirect_url,
+            },
+            binding,
+        )
+        .await;
+        clear_oauth_flow_cookie().await;
+        let response = response.map_err(server_fn_error)?;
         set_session_cookie(&response).await;
         Ok(browser_login_response(response))
     }

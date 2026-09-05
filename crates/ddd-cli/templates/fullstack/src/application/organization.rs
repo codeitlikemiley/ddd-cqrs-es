@@ -202,11 +202,7 @@ pub async fn upsert_role(
     validate_identifier("organization_id", &request.organization_id)?;
     validate_identifier("role_id", &request.role_id)?;
     validate_display_name("role name", &request.name, 80)?;
-    if request.permissions.len() > 100 {
-        return Err(AuthStackError::validation(
-            "role permission list is too large",
-        ));
-    }
+    validate_role_permissions(&request.permissions)?;
     let (context, _) = verified_context_and_permissions(auth, true).await?;
     enforce_organization_scope(&context, &request.organization_id).await?;
     let role = crate::auth_product::upsert_role(
@@ -295,6 +291,26 @@ fn built_in_role_display_name(role_id: &str) -> String {
         "viewer" => "Viewer".to_owned(),
         other => other.to_owned(),
     }
+}
+
+/// Workspace roles may only grant permissions the workspace access model offers.
+/// Unvalidated strings are written straight into the role, so a workspace admin
+/// could otherwise mint `system.*` and escalate to system administration.
+pub(crate) fn validate_role_permissions(permissions: &[String]) -> AuthStackResult<()> {
+    if permissions.len() > 100 {
+        return Err(AuthStackError::validation(
+            "role permission list is too large",
+        ));
+    }
+    let assignable = crate::auth_product::organization_permission_options();
+    for permission in permissions {
+        if !assignable.iter().any(|option| option.id == *permission) {
+            return Err(AuthStackError::validation(format!(
+                "permission '{permission}' is not assignable to a workspace role"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn has_capability(organization: &OrganizationSummary, permission: &str) -> bool {
@@ -562,11 +578,7 @@ pub async fn upsert_workspace_role(
 ) -> AuthStackResult<RoleSummary> {
     validate_identifier("role_id", &role_id)?;
     validate_display_name("role name", &name, 80)?;
-    if permissions.len() > 100 {
-        return Err(AuthStackError::validation(
-            "role permission list is too large",
-        ));
-    }
+    validate_role_permissions(&permissions)?;
     let (context, _) = verified_context_and_permissions(auth, true).await?;
     let resolved = resolve_workspace_by_slug_with_context(&context, &slug).await?;
     crate::auth_product::upsert_role(

@@ -2,6 +2,7 @@ use crate::model::{
     parse_model_value, AppSelection, DbBackend, OAuthProviderKind, Preset, Realtime, Runtime,
     Transport, Ui,
 };
+use crate::render::{ensure_package_name, ensure_rust_identifier, ensure_snake_identifier};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -210,6 +211,7 @@ impl ProjectManifest {
         let doc = text.parse::<DocumentMut>()?;
         let project = &doc["project"];
         let name = required_str(project, "name")?.to_string();
+        ensure_package_name(&name, "project.name")?;
         let preset = parse_model_value(required_str(project, "preset")?, "preset")?;
         let runtime = parse_model_value(required_str(project, "runtime")?, "runtime")?;
         let db = parse_model_value(required_str(project, "db")?, "db")?;
@@ -244,7 +246,12 @@ impl ProjectManifest {
         let mut domains = Vec::new();
         if let Some(domain_table) = doc["domains"].as_table() {
             for (module, item) in domain_table {
+                // Module keys become `src/domain/<module>.rs` paths and `mod`
+                // declarations, and aggregates become generated type names, so
+                // a hand-edited manifest cannot smuggle either past codegen.
+                ensure_snake_identifier(module, "domain module")?;
                 let aggregate = item["aggregate"].as_str().unwrap_or(module).to_string();
+                ensure_rust_identifier(&aggregate, "domain aggregate")?;
                 let commands = string_array(&item["commands"]);
                 let events = string_array(&item["events"]);
                 domains.push(DomainRecord {

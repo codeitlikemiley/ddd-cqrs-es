@@ -151,13 +151,13 @@ impl AuthService for AuthGrpcService {
         request: Request<auth_proto::StartOAuthLoginRequest>,
     ) -> Result<Response<auth_proto::OAuthStartResponse>, Status> {
         let request = request.into_inner();
-        let response = crate::application::start_oauth_login(
+        let start = crate::application::start_oauth_login(
             request.provider_id,
             empty_to_option(request.redirect_url),
         )
         .await
         .map_err(|error| status_from_app_error("StartOAuthLogin", error))?;
-        Ok(Response::new(response.into()))
+        Ok(Response::new(start.response.into()))
     }
 
     async fn complete_o_auth_callback(
@@ -165,15 +165,19 @@ impl AuthService for AuthGrpcService {
         request: Request<auth_proto::CompleteOAuthCallbackRequest>,
     ) -> Result<Response<auth_proto::LoginCompletionResponse>, Status> {
         let request = request.into_inner();
-        let response =
-            crate::application::complete_oauth_callback(crate::contracts::OAuthCallbackRequest {
+        let response = crate::application::complete_oauth_callback(
+            crate::contracts::OAuthCallbackRequest {
                 provider_id: request.provider_id,
                 code: empty_to_option(request.code),
                 state: empty_to_option(request.state),
                 redirect_url: empty_to_option(request.redirect_url),
-            })
-            .await
-            .map_err(|error| status_from_app_error("CompleteOAuthCallback", error))?;
+            },
+            // gRPC returns tokens in the response body and never sets a session
+            // cookie, so a forged callback plants nothing in a browser.
+            crate::application::OAuthFlowBinding::NonBrowserTransport,
+        )
+        .await
+        .map_err(|error| status_from_app_error("CompleteOAuthCallback", error))?;
         Ok(Response::new(response.into()))
     }
 

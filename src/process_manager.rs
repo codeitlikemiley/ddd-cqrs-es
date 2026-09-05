@@ -239,3 +239,197 @@ impl<P, B> AsyncProcessManagerRunner<P, B> {
         Ok(outputs)
     }
 }
+
+use crate::event::EventEnvelope;
+use std::error::Error;
+
+/// Checkpoint for partially dispatched process-manager command batches.
+pub trait ProcessManagerDispatchCheckpoint: Send + Sync {
+    fn load_dispatch_index(
+        &self,
+        manager_name: &str,
+        event_id: &str,
+    ) -> Result<usize, Box<dyn Error + Send + Sync>>;
+
+    fn save_dispatch_index(
+        &self,
+        manager_name: &str,
+        event_id: &str,
+        index: usize,
+    ) -> Result<(), Box<dyn Error + Send + Sync>>;
+}
+
+impl ProcessManagerDispatchCheckpoint for () {
+    fn load_dispatch_index(
+        &self,
+        _manager_name: &str,
+        _event_id: &str,
+    ) -> Result<usize, Box<dyn Error + Send + Sync>> {
+        Ok(0)
+    }
+
+    fn save_dispatch_index(
+        &self,
+        _manager_name: &str,
+        _event_id: &str,
+        _index: usize,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        Ok(())
+    }
+}
+
+/// Outcome of a checkpointed process-manager run.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProcessManagerRunResult<O, E> {
+    pub dispatched: Vec<O>,
+    pub failed_index: Option<usize>,
+    pub error: Option<E>,
+}
+
+impl<P, B> ProcessManagerRunner<P, B> {
+    pub fn run_envelope_with_checkpoint<E, C, Id, CP>(
+        &mut self,
+        envelope: &EventEnvelope<E, Id>,
+        checkpoint: &CP,
+    ) -> ProcessManagerRunResult<B::Output, ProcessManagerRunnerError<P::Error, B::Error>>
+    where
+        P: ProcessManager<E, C>,
+        B: CommandBus<C>,
+        CP: ProcessManagerDispatchCheckpoint,
+        Id: AsRef<str>,
+    {
+        let event_id = envelope.event_id.as_str();
+        let manager_name = self.process_manager.name();
+        let start_index = checkpoint
+            .load_dispatch_index(manager_name, event_id)
+            .unwrap_or(0);
+
+        let commands = match self.process_manager.handle(&envelope.payload) {
+            Ok(commands) => commands,
+            Err(error) => {
+                return ProcessManagerRunResult {
+                    dispatched: Vec::new(),
+                    failed_index: None,
+                    error: Some(ProcessManagerRunnerError::ProcessManager(error)),
+                };
+            }
+        };
+
+        let mut dispatched = Vec::with_capacity(commands.len().saturating_sub(start_index));
+        for (index, command) in commands.into_iter().enumerate().skip(start_index) {
+            match self.command_bus.dispatch(command) {
+                Ok(output) => {
+                    dispatched.push(output);
+                    let _ = checkpoint.save_dispatch_index(manager_name, event_id, index + 1);
+                }
+                Err(error) => {
+                    return ProcessManagerRunResult {
+                        dispatched,
+                        failed_index: Some(index),
+                        error: Some(ProcessManagerRunnerError::CommandBus(error)),
+                    };
+                }
+            }
+        }
+
+        ProcessManagerRunResult {
+            dispatched,
+            failed_index: None,
+            error: None,
+        }
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn run_envelope_strict<E, C, Id, CP>(
+        &mut self,
+        envelope: &EventEnvelope<E, Id>,
+        checkpoint: &CP,
+    ) -> Result<Vec<B::Output>, ProcessManagerRunnerError<P::Error, B::Error>>
+    where
+        P: ProcessManager<E, C>,
+        B: CommandBus<C>,
+        CP: ProcessManagerDispatchCheckpoint,
+        Id: AsRef<str>,
+    {
+        let result = self.run_envelope_with_checkpoint(envelope, checkpoint);
+        match result.error {
+            None => Ok(result.dispatched),
+            Some(error) => Err(error),
+        }
+    }
+}
+
+#[cfg(feature = "async")]
+impl<P, B> AsyncProcessManagerRunner<P, B> {
+    pub async fn run_envelope_with_checkpoint<E, C, Id, CP>(
+        &mut self,
+        envelope: &EventEnvelope<E, Id>,
+        checkpoint: &CP,
+    ) -> ProcessManagerRunResult<B::Output, ProcessManagerRunnerError<P::Error, B::Error>>
+    where
+        P: ProcessManager<E, C>,
+        B: AsyncCommandBus<C>,
+        CP: ProcessManagerDispatchCheckpoint,
+        Id: AsRef<str>,
+    {
+        let event_id = envelope.event_id.as_str();
+        let manager_name = self.process_manager.name();
+        let start_index = checkpoint
+            .load_dispatch_index(manager_name, event_id)
+            .unwrap_or(0);
+
+        let commands = match self.process_manager.handle(&envelope.payload) {
+            Ok(commands) => commands,
+            Err(error) => {
+                return ProcessManagerRunResult {
+                    dispatched: Vec::new(),
+                    failed_index: None,
+                    error: Some(ProcessManagerRunnerError::ProcessManager(error)),
+                };
+            }
+        };
+
+        let mut dispatched = Vec::with_capacity(commands.len().saturating_sub(start_index));
+        for (index, command) in commands.into_iter().enumerate().skip(start_index) {
+            match self.command_bus.dispatch(command).await {
+                Ok(output) => {
+                    dispatched.push(output);
+                    let _ = checkpoint.save_dispatch_index(manager_name, event_id, index + 1);
+                }
+                Err(error) => {
+                    return ProcessManagerRunResult {
+                        dispatched,
+                        failed_index: Some(index),
+                        error: Some(ProcessManagerRunnerError::CommandBus(error)),
+                    };
+                }
+            }
+        }
+
+        ProcessManagerRunResult {
+            dispatched,
+            failed_index: None,
+            error: None,
+        }
+    }
+
+    pub async fn run_envelope_strict<E, C, Id, CP>(
+        &mut self,
+        envelope: &EventEnvelope<E, Id>,
+        checkpoint: &CP,
+    ) -> Result<Vec<B::Output>, ProcessManagerRunnerError<P::Error, B::Error>>
+    where
+        P: ProcessManager<E, C>,
+        B: AsyncCommandBus<C>,
+        CP: ProcessManagerDispatchCheckpoint,
+        Id: AsRef<str>,
+    {
+        let result = self
+            .run_envelope_with_checkpoint(envelope, checkpoint)
+            .await;
+        match result.error {
+            None => Ok(result.dispatched),
+            Some(error) => Err(error),
+        }
+    }
+}

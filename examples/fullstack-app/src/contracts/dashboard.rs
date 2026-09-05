@@ -316,6 +316,11 @@ impl BoardNode {
 pub struct DashboardLayout {
     #[serde(default = "dashboard_layout_version")]
     pub version: u8,
+    /// Stored revision this layout was read at. Clients echo it back on save so
+    /// the server can reject a write that raced another member's edit. Zero
+    /// means "not read from the store yet".
+    #[serde(default)]
+    pub revision: i64,
     /// Top-level ordered nodes (widgets and containers).
     #[serde(default)]
     pub nodes: Vec<BoardNode>,

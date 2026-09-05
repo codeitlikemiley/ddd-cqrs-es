@@ -24,6 +24,8 @@ http-body = { version = "1.0", optional = true }
 http-body-util = { version = "0.1.2", optional = true }
 getrandom = { version = "0.2", optional = true }
 getrandom03 = { package = "getrandom", version = "0.3.4" }
+hkdf = { version = "0.12", optional = true }
+hmac = { version = "0.12", optional = true }
 leptos = { version = "0.8.20", default-features = false }
 leptos_meta = { version = "0.8.6", default-features = false }
 leptos_router = { version = "0.8.14", default-features = false }
@@ -48,7 +50,7 @@ sha2 = { version = "0.10", optional = true }
 tonic = { version = "0.12", default-features = false, features = ["codegen", "prost"], optional = true }
 tokio = { version = "1.52", features = ["macros", "rt"], optional = true }
 tokio-postgres = { version = "0.7", optional = true }
-wasi-auth = { version = "=0.1.0-rc.3", default-features = false, optional = true }
+wasi-auth = { version = "=0.1.0-rc.4", default-features = false, optional = true }
 ddd_cqrs_es = { version = "=0.3.0-rc.7", default-features = false, features = ["json", "serde", "async", "tracing", "json-file"], optional = true }
 qrcode = { version = "0.14", default-features = false, features = ["svg"], optional = true }
 
@@ -57,14 +59,12 @@ getrandom03 = { package = "getrandom", version = "0.3.4", features = ["wasm_js"]
 
 [build-dependencies]
 tonic-build = { version = "0.12", default-features = false, features = ["prost"] }
-wasi-auth = { version = "=0.1.0-rc.3", default-features = false, features = ["cedar"] }
+wasi-auth = { version = "=0.1.0-rc.4", default-features = false, features = ["cedar"] }
 
 # Keep every transitive SDK edge on the audited final-WASI revision until an
 # upstream release contains the same wasip3 graph.
 [patch.crates-io]
 spin-sdk = { git = "https://github.com/codeitlikemiley/spin-rust-sdk", rev = "a02d330fe9357be2d18e6deef400511195ce6f7f" }
-# Local wasi-auth for HTML mail templates until the next published rc.
-wasi-auth = { path = "../../../wasi-auth/crates/wasi-auth" }
 
 [features]
 default = []
@@ -97,6 +97,8 @@ ssr = [
   "dep:form_urlencoded",
   "dep:futures",
   "dep:getrandom",
+  "dep:hkdf",
+  "dep:hmac",
   "dep:serde_json",
   "dep:sha2",
   "dep:thiserror",

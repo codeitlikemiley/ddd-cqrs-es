@@ -10,51 +10,14 @@ use crate::idempotency::{
 };
 use crate::metadata::Metadata;
 use crate::repository_support::{
-    apply_committed_events, handle_command_as_new_events, new_events_with_metadata,
+    apply_committed_events, async_release_idempotency_key_with_result,
+    async_save_idempotency_result_with_retry, handle_command_as_new_events,
+    new_events_with_metadata,
 };
 use crate::snapshot::{Snapshot, SnapshotRepositoryError};
 use async_trait::async_trait;
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
-
-/// Releases a reserved idempotency key after a failed execution.
-///
-/// A key left `Pending` blocks every retry until it is removed, so cleanup
-/// is retried with backoff and a final failure is logged loudly instead of
-/// being silently swallowed.
-async fn release_idempotency_key<I, V>(idempotency_store: &I, idempotency_key: &IdempotencyKey)
-where
-    I: AsyncIdempotencyStore<V>,
-    V: Clone + Send + Sync + 'static,
-{
-    use crate::repository_support::{RELEASE_MAX_ATTEMPTS, RELEASE_RETRY_DELAY};
-
-    for attempt in 1..=RELEASE_MAX_ATTEMPTS {
-        match idempotency_store.remove(idempotency_key).await {
-            Ok(()) => return,
-            Err(_) => {
-                #[cfg(feature = "tracing")]
-                if attempt == RELEASE_MAX_ATTEMPTS {
-                    tracing::warn!(
-                        key = %idempotency_key,
-                        "{}",
-                        crate::repository_support::RELEASE_FAILED_MESSAGE
-                    );
-                } else {
-                    tracing::debug!(
-                        key = %idempotency_key,
-                        attempt,
-                        "{}",
-                        crate::repository_support::RELEASE_RETRY_MESSAGE
-                    );
-                }
-                if attempt < RELEASE_MAX_ATTEMPTS {
-                    tokio::time::sleep(RELEASE_RETRY_DELAY).await;
-                }
-            }
-        }
-    }
-}
 
 /// Async event persistence abstraction for one aggregate type.
 #[async_trait]
@@ -89,23 +52,61 @@ where
         events: Vec<NewEvent<A::Event>>,
     ) -> Result<EventStream<A>, Self::Error>;
 
-    /// Loads globally ordered events after a global sequence number.
-    async fn load_global_after(&self, sequence: Option<u64>)
-        -> Result<EventStream<A>, Self::Error>;
-
     /// Loads at most `limit` globally ordered events after a global sequence number.
     ///
-    /// Adapters should override this with backend-native limits. The default
-    /// implementation preserves compatibility for custom stores by loading the
-    /// unbounded tail and truncating it.
+    /// This is the bounded replay primitive every store must provide, and the
+    /// only global-feed read projection runners perform. Implementations must
+    /// push `limit` down to the backend rather than materializing the tail and
+    /// truncating it. See
+    /// [`EventStore::load_global_after_limited`](crate::EventStore::load_global_after_limited)
+    /// for how "global" order is scoped to this store's aggregate type.
     async fn load_global_after_limited(
         &self,
         sequence: Option<u64>,
         limit: NonZeroUsize,
+    ) -> Result<EventStream<A>, Self::Error>;
+
+    /// Loads **every** globally ordered event after a global sequence number.
+    ///
+    /// > [!WARNING]
+    /// > The result is unbounded: the whole backlog after `sequence` is held in
+    /// > memory at once. Use it for tests, small fixtures, and explicit
+    /// > maintenance jobs only. Production replay should call
+    /// > [`Self::load_global_after_limited`], or a projection runner, which
+    /// > pages through it.
+    ///
+    /// The provided implementation drains the feed in
+    /// [`GLOBAL_REPLAY_PAGE_SIZE`](crate::event_store::GLOBAL_REPLAY_PAGE_SIZE)
+    /// pages so a store never has to answer one unbounded backend query;
+    /// adapters that can stream the tail in a single query may override it.
+    /// Paging is not a consistent snapshot — events committed between pages are
+    /// included.
+    async fn load_global_after(
+        &self,
+        sequence: Option<u64>,
     ) -> Result<EventStream<A>, Self::Error> {
-        let mut events = self.load_global_after(sequence).await?;
-        events.truncate(limit.get());
-        Ok(events)
+        let page_size = crate::event_store::GLOBAL_REPLAY_PAGE_SIZE;
+        let mut cursor = sequence;
+        let mut all = Vec::new();
+
+        loop {
+            let page = self.load_global_after_limited(cursor, page_size).await?;
+            let page_len = page.len();
+            let last_sequence = page.last().and_then(|event| event.sequence);
+            all.extend(page);
+
+            if page_len < page_size.get() {
+                return Ok(all);
+            }
+            // A full page whose cursor does not advance would be re-read
+            // forever; stop instead of looping on it.
+            match last_sequence {
+                Some(sequence) if cursor.is_none_or(|cursor| sequence > cursor) => {
+                    cursor = Some(sequence);
+                }
+                _ => return Ok(all),
+            }
+        }
     }
 }
 
@@ -186,7 +187,7 @@ pub type AsyncAtomicIdempotentRepositoryResult<A, S, T> = Result<
 /// #     type Error = ddd_cqrs_es::error::EventStoreError;
 /// #     async fn load(&self, _id: &String) -> Result<EventStream<MyAggregate>, Self::Error> { Ok(vec![]) }
 /// #     async fn append(&self, _id: &String, _exp: ExpectedRevision, _evts: Vec<NewEvent<DummyEvent>>) -> Result<EventStream<MyAggregate>, Self::Error> { Ok(vec![]) }
-/// #     async fn load_global_after(&self, _seq: Option<u64>) -> Result<EventStream<MyAggregate>, Self::Error> { Ok(vec![]) }
+/// #     async fn load_global_after_limited(&self, _seq: Option<u64>, _limit: std::num::NonZeroUsize) -> Result<EventStream<MyAggregate>, Self::Error> { Ok(vec![]) }
 /// # }
 ///
 /// # async fn doc_example() -> Result<(), Box<dyn std::error::Error>> {
@@ -458,12 +459,14 @@ where
                 Some(IdempotencyState::Complete(committed)) => {
                     return Ok(committed);
                 }
-                Some(IdempotencyState::Pending) => {
+                Some(IdempotencyState::Pending(lease))
+                    if !lease.is_expired(crate::idempotency::now_ms()) =>
+                {
                     let delay = pending_wait_delay(&wait_config, started, &idempotency_key)?;
                     tokio::time::sleep(delay).await;
                     continue;
                 }
-                None => {
+                None | Some(IdempotencyState::Pending(_)) => {
                     if idempotency_store
                         .reserve(idempotency_key.clone())
                         .await
@@ -499,15 +502,18 @@ where
         {
             Ok(committed) => committed,
             Err(err) => {
-                release_idempotency_key(idempotency_store, &idempotency_key).await;
+                async_release_idempotency_key_with_result(idempotency_store, &idempotency_key)
+                    .await?;
                 return Err(err);
             }
         };
 
-        idempotency_store
-            .save(idempotency_key, committed.clone())
-            .await
-            .map_err(IdempotentRepositoryError::Idempotency)?;
+        async_save_idempotency_result_with_retry(
+            idempotency_store,
+            idempotency_key,
+            committed.clone(),
+        )
+        .await?;
 
         Ok(committed)
     }
@@ -562,11 +568,13 @@ where
                 .map_err(IdempotentRepositoryError::from_store_error)?
             {
                 Some(IdempotencyState::Complete(committed)) => return Ok(committed),
-                Some(IdempotencyState::Pending) => {
+                Some(IdempotencyState::Pending(lease))
+                    if !lease.is_expired(crate::idempotency::now_ms()) =>
+                {
                     let delay = pending_wait_delay(&wait_config, started, &idempotency_key)?;
                     tokio::time::sleep(delay).await;
                 }
-                None => break,
+                None | Some(IdempotencyState::Pending(_)) => break,
             }
         }
 
@@ -634,7 +642,23 @@ where
 
     /// Reserves an idempotency key, marking it as pending/in-progress.
     /// Returns `true` if the key was successfully reserved, or `false` if it was already reserved/completed.
-    async fn reserve(&self, key: IdempotencyKey) -> Result<bool, Self::Error>;
+    async fn reserve(&self, key: IdempotencyKey) -> Result<bool, Self::Error> {
+        self.reserve_with_lease(key, &crate::idempotency::IdempotencyLeaseConfig::default())
+            .await
+    }
+
+    /// Reserves an idempotency key with an explicit lease.
+    async fn reserve_with_lease(
+        &self,
+        key: IdempotencyKey,
+        config: &crate::idempotency::IdempotencyLeaseConfig,
+    ) -> Result<bool, Self::Error>;
+
+    /// Extends a pending lease owned by `owner`.
+    async fn heartbeat(&self, key: &IdempotencyKey, owner: &str) -> Result<bool, Self::Error>;
+
+    /// Removes or reclaims stale pending rows whose leases have expired.
+    async fn expire_stale_pending(&self, now_ms: u64) -> Result<usize, Self::Error>;
 
     /// Saves a completed result for an idempotency key.
     async fn save(&self, key: IdempotencyKey, value: V) -> Result<(), Self::Error>;

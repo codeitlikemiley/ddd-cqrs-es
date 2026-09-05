@@ -1,4 +1,4 @@
-use super::http::wasi_http_post;
+use super::http::{validate_https_url, wasi_http_post};
 
 // -------------------------------------------------------------------------
 // Turso / LibSQL Hrana /v2/pipeline HTTP adapter
@@ -10,6 +10,16 @@ pub struct LibSqlResult {
     pub rows: Vec<serde_json::Value>,
     /// Optional last insert row id when supported by the executed statement.
     pub last_insert_rowid: Option<u64>,
+}
+
+#[cfg(feature = "wasi-libsql")]
+impl std::fmt::Debug for LibSqlResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LibSqlResult")
+            .field("rows", &self.rows)
+            .field("last_insert_rowid", &self.last_insert_rowid)
+            .finish()
+    }
 }
 
 #[cfg(feature = "wasi-libsql")]
@@ -133,9 +143,23 @@ fn parse_libsql_result(resp: &serde_json::Value) -> Result<LibSqlResult, String>
         }
     }
 
-    Ok(LibSqlResult {
-        rows: Vec::new(),
-        last_insert_rowid: None,
+    Err("LibSQL response did not contain an execute result".to_string())
+}
+
+#[cfg(feature = "wasi-libsql")]
+fn resolve_libsql_pipeline_url(url: &str) -> Result<String, String> {
+    let resolved_url = if let Some(rest) = url.strip_prefix("libsql://") {
+        format!("https://{rest}")
+    } else {
+        url.to_string()
+    };
+
+    Ok(if resolved_url.ends_with("/v2/pipeline") {
+        resolved_url
+    } else if resolved_url.ends_with('/') {
+        format!("{}v2/pipeline", resolved_url)
+    } else {
+        format!("{}/v2/pipeline", resolved_url)
     })
 }
 
@@ -150,6 +174,11 @@ pub async fn execute_libsql_query(
     sql: &str,
     params: Vec<serde_json::Value>,
 ) -> Result<LibSqlResult, String> {
+    let pipeline_url = resolve_libsql_pipeline_url(url)?;
+    if auth_token.is_some() {
+        validate_https_url(&pipeline_url)?;
+    }
+
     let hrana_args: Vec<serde_json::Value> = params.into_iter().map(to_hrana_arg).collect();
 
     let req_payload = serde_json::json!({
@@ -175,23 +204,26 @@ pub async fn execute_libsql_query(
         headers.push(("Authorization".to_string(), format!("Bearer {}", tok)));
     }
 
-    let resolved_url = if let Some(rest) = url.strip_prefix("libsql://") {
-        format!("https://{}", rest)
-    } else {
-        url.to_string()
-    };
-
-    let pipeline_url = if resolved_url.ends_with("/v2/pipeline") {
-        resolved_url
-    } else if resolved_url.ends_with('/') {
-        format!("{}v2/pipeline", resolved_url)
-    } else {
-        format!("{}/v2/pipeline", resolved_url)
-    };
-
     let resp_bytes = wasi_http_post(&pipeline_url, headers, body_data).await?;
     let resp_json: serde_json::Value = serde_json::from_slice(&resp_bytes)
         .map_err(|e| format!("Failed to parse LibSQL response: {}", e))?;
 
     parse_libsql_result(&resp_json)
+}
+
+#[cfg(all(test, feature = "wasi-libsql"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn libsql_url_upgrades_to_https_pipeline() {
+        let url = resolve_libsql_pipeline_url("libsql://my-db.turso.io").unwrap();
+        assert_eq!(url, "https://my-db.turso.io/v2/pipeline");
+    }
+
+    #[test]
+    fn bearer_token_requires_https_endpoint() {
+        assert!(validate_https_url("http://remote.example/v2/pipeline").is_err());
+        assert!(validate_https_url("https://remote.example/v2/pipeline").is_ok());
+    }
 }

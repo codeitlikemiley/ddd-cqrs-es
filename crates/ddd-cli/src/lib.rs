@@ -8,11 +8,13 @@ use crate::model::{
     defaults_for_preset, AppSelection, DbBackend, OAuthProviderKind, OutputFormat, Preset,
     Realtime, Runtime, Transport, Ui,
 };
-use crate::operation::{apply_operations, write_operation, CommandReport, FileOperation};
+use crate::operation::{
+    apply_operations, contained_join, write_operation, CommandReport, FileOperation,
+};
 use crate::render::{
-    available_template_names, ensure_rust_identifier, ensure_snake_identifier, parse_field_specs,
-    render_aggregate, render_command_handle_arm, render_command_variant, render_domain_mod,
-    render_domain_test, render_event_type_arm, render_event_variant,
+    available_template_names, ensure_package_name, ensure_rust_identifier, ensure_snake_identifier,
+    parse_field_specs, render_aggregate, render_command_handle_arm, render_command_variant,
+    render_domain_mod, render_domain_test, render_event_type_arm, render_event_variant,
     render_fullstack_domain_app_mod, render_fullstack_domain_app_module,
     render_fullstack_domain_rest_arm, render_fullstack_domain_rest_bootstrap, render_init,
     sanitize_package_name, InitRenderInput, NameParts,
@@ -257,6 +259,9 @@ fn init_project(ctx: &ExecutionContext, args: InitArgs) -> Result<CommandReport>
         .and_then(|name| name.to_str())
         .map(sanitize_package_name)
         .unwrap_or_else(|| "ddd-app".to_string());
+    // Refuse now rather than writing a manifest that every later command
+    // (which re-reads and re-validates `project.name`) would reject.
+    ensure_package_name(&package_name, "project name")?;
     let input = InitRenderInput {
         package_name,
         domain_name: args.domain,
@@ -286,12 +291,12 @@ fn init_project(ctx: &ExecutionContext, args: InitArgs) -> Result<CommandReport>
             "preset": "fullstack",
             "next_steps": [
                 format!("cd {dir_name}"),
-                "cp .env.example .env",
                 "make db-up",
                 "make dev transport=both",
                 "open http://localhost:3008  # or visit in a browser"
             ],
             "notes": [
+                ".env is generated with a per-project AUTH_ROOT_KEY_BASE64; keep it out of version control",
                 "make dev starts Spin plus the wasi-auth outbox worker (required for verification mail)",
                 "ddd add aggregate wires src/domain + domain_app + /api/domain REST (InMemory demo store)",
                 "replace InMemoryEventStore for production; domain routes are not Cedar-gated by default"
@@ -358,6 +363,19 @@ fn ensure_domain_mod_content(
     }
 }
 
+/// Returns whether `src/lib.rs` already declares the product domain module.
+fn lib_declares_domain_mod(content: &str) -> bool {
+    content.lines().any(|line| {
+        matches!(
+            line.trim(),
+            "mod domain;"
+                | "pub mod domain;"
+                | "#[cfg(feature = \"ssr\")] mod domain;"
+                | "#[cfg(feature = \"ssr\")] pub mod domain;"
+        )
+    })
+}
+
 /// Register domain (+ domain_app / domain_rest) in fullstack `src/lib.rs`.
 fn ensure_fullstack_lib_domain_modules(cwd: &Path) -> Result<Option<String>> {
     let lib_path = cwd.join("src/lib.rs");
@@ -368,10 +386,13 @@ fn ensure_fullstack_lib_domain_modules(cwd: &Path) -> Result<Option<String>> {
         .with_context(|| format!("failed to read {}", lib_path.display()))?;
     let mut changed = false;
 
-    if !content.contains("mod domain;") && !content.contains("pub mod domain;") {
+    if !lib_declares_domain_mod(&content) {
         if content.contains("// ddd:product-domain:end") {
-            content =
-                insert_before_marker(&content, "// ddd:product-domain:end", "pub mod domain;\n")?;
+            content = insert_before_marker(
+                &content,
+                "// ddd:product-domain:end",
+                "#[cfg(feature = \"ssr\")]\npub mod domain;\n",
+            )?;
             changed = true;
         } else {
             anyhow::bail!(
@@ -635,6 +656,12 @@ fn add_to_project(ctx: &ExecutionContext, command: AddCommand) -> Result<Command
             let fields = parse_field_specs(&args.fields)?;
             let variant = args.name.to_upper_camel_case();
             ensure_rust_identifier(&variant, "event name")?;
+            if domain.events.iter().any(|event| event == &variant) {
+                anyhow::bail!(
+                    "event `{variant}` already exists for aggregate `{}`",
+                    domain.aggregate
+                );
+            }
             let event_type = args.event_type.unwrap_or_else(|| variant.to_snake_case());
             ensure_snake_identifier(&event_type, "event type")?;
             let path = format!("src/domain/{module}.rs");
@@ -677,6 +704,12 @@ fn add_to_project(ctx: &ExecutionContext, command: AddCommand) -> Result<Command
             let fields = parse_field_specs(&args.fields)?;
             let variant = args.name.to_upper_camel_case();
             ensure_rust_identifier(&variant, "command name")?;
+            if domain.commands.iter().any(|command| command == &variant) {
+                anyhow::bail!(
+                    "command `{variant}` already exists for aggregate `{}`",
+                    domain.aggregate
+                );
+            }
             let path = format!("src/domain/{module}.rs");
             let relative_path = PathBuf::from(&path);
             let content = read_project_file(&ctx.cwd, &relative_path)?;
@@ -1236,7 +1269,7 @@ impl DomainRecordNames for DomainRecord {
 }
 
 fn read_project_file(root: &Path, path: &Path) -> Result<String> {
-    let full_path = root.join(path);
+    let full_path = contained_join(root, path)?;
     std::fs::read_to_string(&full_path)
         .with_context(|| format!("failed to read {}", full_path.display()))
 }

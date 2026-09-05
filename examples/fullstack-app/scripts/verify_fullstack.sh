@@ -258,7 +258,12 @@ import time
 issuer, audience, key_id, session_id, expires_delta = sys.argv[1:6]
 now = int(time.time())
 exp = now + int(expires_delta)
-secret = os.environ.get("AUTH_JWT_SECRET", "dev-fullstack-app-secret-change-me").encode("utf-8")
+secret = os.environ.get("AUTH_JWT_SECRET", "").strip().encode("utf-8")
+if not secret:
+    # Mirror the app: HKDF-SHA256(AUTH_ROOT_KEY_BASE64) with the JWT info label.
+    root = base64.b64decode(os.environ["AUTH_ROOT_KEY_BASE64"].strip())
+    prk = hmac.new(b"fullstack-app:key-derivation:v1", root, hashlib.sha256).digest()
+    secret = hmac.new(prk, b"fullstack:jwt:v1\x01", hashlib.sha256).digest()
 
 def b64(value):
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")

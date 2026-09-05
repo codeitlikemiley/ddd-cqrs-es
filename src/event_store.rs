@@ -9,6 +9,10 @@ use std::num::NonZeroUsize;
 /// Committed events for one aggregate type.
 pub type EventStream<A> = Vec<EventEnvelope<<A as Aggregate>::Event, <A as Aggregate>::Id>>;
 
+/// Page size used by the provided `load_global_after` implementations when they
+/// drain a feed through the bounded `load_global_after_limited` primitive.
+pub const GLOBAL_REPLAY_PAGE_SIZE: NonZeroUsize = NonZeroUsize::new(500).expect("non-zero");
+
 /// Error returned by transaction-aware idempotent append operations.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IdempotentAppendError<StoreError> {
@@ -95,6 +99,10 @@ where
     fn load(&self, aggregate_id: &A::Id) -> Result<EventStream<A>, Self::Error>;
 
     /// Loads events for one aggregate stream after the given revision.
+    ///
+    /// The default implementation loads the full stream and filters in memory
+    /// (`O(stream)`). Stores with per-stream indexes should override this to
+    /// slice or query only the tail after `revision`.
     fn load_after_revision(
         &self,
         aggregate_id: &A::Id,
@@ -115,29 +123,70 @@ where
         events: Vec<NewEvent<A::Event>>,
     ) -> Result<EventStream<A>, Self::Error>;
 
-    /// Loads globally ordered events after a global sequence number.
+    /// Loads at most `limit` globally ordered events after a global sequence number.
+    ///
+    /// This is the bounded replay primitive every store must provide, and the
+    /// only global-feed read projection runners perform. Implementations must
+    /// push `limit` down to the backend (SQL `LIMIT`, Redis
+    /// `ZRANGEBYSCORE ... LIMIT`, a slice of an in-memory log) rather than
+    /// materializing the tail and truncating it.
     ///
     /// "Global" order is scoped to this store's aggregate type `A`: backends
     /// filter the feed by aggregate type, so a read model spanning several
     /// aggregate types needs one projection runner (and checkpoint) per type
-    /// and must not assume ordering across those feeds. See
+    /// and must not assume ordering across those feeds. Drive such a read model
+    /// with
+    /// [`PersistedProjectionRunner::with_aggregate_scoped_checkpoints`](crate::projection::PersistedProjectionRunner::with_aggregate_scoped_checkpoints);
+    /// the name-only checkpoint keying of
+    /// [`PersistedProjectionRunner::new`](crate::projection::PersistedProjectionRunner::new)
+    /// makes those per-type runs share one position and hide events. See
     /// ADR-0003 (per-aggregate global feeds) in `docs/adr/` for the
     /// rationale and workarounds.
-    fn load_global_after(&self, sequence: Option<u64>) -> Result<EventStream<A>, Self::Error>;
-
-    /// Loads at most `limit` globally ordered events after a global sequence number.
-    ///
-    /// Adapters should override this with backend-native limits. The default
-    /// implementation preserves compatibility for custom stores by loading the
-    /// unbounded tail and truncating it.
     fn load_global_after_limited(
         &self,
         sequence: Option<u64>,
         limit: NonZeroUsize,
-    ) -> Result<EventStream<A>, Self::Error> {
-        let mut events = self.load_global_after(sequence)?;
-        events.truncate(limit.get());
-        Ok(events)
+    ) -> Result<EventStream<A>, Self::Error>;
+
+    /// Loads **every** globally ordered event after a global sequence number.
+    ///
+    /// > [!WARNING]
+    /// > The result is unbounded: the whole backlog after `sequence` is held in
+    /// > memory at once. Use it for tests, small fixtures, and explicit
+    /// > maintenance jobs only. Production replay should call
+    /// > [`Self::load_global_after_limited`], or a projection runner, which
+    /// > pages through it.
+    ///
+    /// The provided implementation drains the feed in
+    /// [`GLOBAL_REPLAY_PAGE_SIZE`] pages so a store never has to answer one
+    /// unbounded backend query; adapters that can stream the tail in a single
+    /// query may override it. Paging is not a consistent snapshot — events
+    /// committed between pages are included.
+    ///
+    /// See [`Self::load_global_after_limited`] for how "global" order is scoped
+    /// to this store's aggregate type.
+    fn load_global_after(&self, sequence: Option<u64>) -> Result<EventStream<A>, Self::Error> {
+        let mut cursor = sequence;
+        let mut all = Vec::new();
+
+        loop {
+            let page = self.load_global_after_limited(cursor, GLOBAL_REPLAY_PAGE_SIZE)?;
+            let page_len = page.len();
+            let last_sequence = page.last().and_then(|event| event.sequence);
+            all.extend(page);
+
+            if page_len < GLOBAL_REPLAY_PAGE_SIZE.get() {
+                return Ok(all);
+            }
+            // A full page whose cursor does not advance would be re-read
+            // forever; stop instead of looping on it.
+            match last_sequence {
+                Some(sequence) if cursor.is_none_or(|cursor| sequence > cursor) => {
+                    cursor = Some(sequence);
+                }
+                _ => return Ok(all),
+            }
+        }
     }
 }
 

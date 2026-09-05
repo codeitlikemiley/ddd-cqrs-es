@@ -131,10 +131,27 @@ pub async fn complete_password_reset(
     crate::auth_product::complete_password_reset(&request, &redirect_url).await
 }
 
+/// OAuth start plus the `Set-Cookie` that binds the returned `state` to this
+/// browser. Browser transports must send the cookie back on the callback.
+pub struct OAuthLoginStart {
+    pub response: OAuthStartResponse,
+    pub set_cookie: String,
+}
+
+/// Proof that an OAuth callback belongs to the sign-in this browser started.
+pub enum OAuthFlowBinding {
+    /// Cookie presented on the callback request.
+    Browser(Option<String>),
+    /// Non-browser transports (gRPC) receive tokens in the response body and
+    /// are never issued a session cookie, so there is no ambient credential a
+    /// forged callback could plant.
+    NonBrowserTransport,
+}
+
 pub async fn start_oauth_login(
     provider_id: String,
     redirect_url: Option<String>,
-) -> AuthStackResult<OAuthStartResponse> {
+) -> AuthStackResult<OAuthLoginStart> {
     if !feature_enabled("AUTH_ENABLE_OAUTH", false).await {
         return Err(AuthStackError::configuration(
             "OAuth login is disabled; set AUTH_ENABLE_OAUTH=true and provider credentials to enable it",
@@ -144,34 +161,46 @@ pub async fn start_oauth_login(
     let redirect_url = safe_redirect_or_default(redirect_url);
     ensure_oauth_provider_ready(&provider_id).await?;
     let grant = crate::auth_product::start_oauth_flow(&provider_id, &redirect_url).await?;
+    let set_cookie = oauth_flow_cookie_header_value(
+        &crate::auth_product::issue_oauth_flow_binding(&provider_id, &grant.state).await?,
+        crate::auth_product::config_u64("AUTH_OAUTH_STATE_TTL_SECONDS", 10 * 60).await?,
+        session_cookie_secure_enabled().await,
+    );
 
     if development_oauth_callback_bypass_enabled().await {
-        return Ok(OAuthStartResponse {
-            provider_id: provider_id.clone(),
-            authorization_url: development_oauth_callback_url(
-                &provider_id,
-                &grant.state,
-                &redirect_url,
-            ),
-            state: grant.state,
+        return Ok(OAuthLoginStart {
+            response: OAuthStartResponse {
+                provider_id: provider_id.clone(),
+                authorization_url: development_oauth_callback_url(
+                    &provider_id,
+                    &grant.state,
+                    &redirect_url,
+                ),
+                state: grant.state,
+            },
+            set_cookie,
         });
     }
 
-    Ok(OAuthStartResponse {
-        provider_id: provider_id.clone(),
-        authorization_url: crate::oauth::authorization_url(
-            &provider_id,
-            &grant.state,
-            &grant.nonce,
-            &grant.pkce_challenge,
-        )
-        .await?,
-        state: grant.state,
+    Ok(OAuthLoginStart {
+        response: OAuthStartResponse {
+            provider_id: provider_id.clone(),
+            authorization_url: crate::oauth::authorization_url(
+                &provider_id,
+                &grant.state,
+                &grant.nonce,
+                &grant.pkce_challenge,
+            )
+            .await?,
+            state: grant.state,
+        },
+        set_cookie,
     })
 }
 
 pub async fn complete_oauth_callback(
     request: OAuthCallbackRequest,
+    binding: OAuthFlowBinding,
 ) -> AuthStackResult<LoginCompletionResponse> {
     if !feature_enabled("AUTH_ENABLE_OAUTH", false).await {
         return Err(AuthStackError::configuration(
@@ -205,6 +234,14 @@ pub async fn complete_oauth_callback(
 
     let code = request.code.as_deref().unwrap_or_default().trim();
     let state = request.state.as_deref().unwrap_or_default().trim();
+    if let OAuthFlowBinding::Browser(cookie) = &binding {
+        crate::auth_product::verify_oauth_flow_binding(
+            &request.provider_id,
+            state,
+            cookie.as_deref(),
+        )
+        .await?;
+    }
     let grant = crate::auth_product::load_oauth_callback(&request.provider_id, state).await?;
     let identity = if development_oauth_callback_bypass_enabled().await {
         if code != "development-oauth-code" {
@@ -346,9 +383,13 @@ pub async fn get_jwks() -> AuthStackResult<JwksDocument> {
     crate::auth_product::get_jwks().await
 }
 
+/// Reads any user's verification/reset link, so it is an account-takeover
+/// primitive: administrator-only, loopback-only, and compiled out of release
+/// builds (see `crate::auth_product::latest_captured_mail`).
 pub async fn latest_captured_mail(
     recipient: String,
     message_kind: String,
+    auth: RequestAuth,
 ) -> AuthStackResult<CapturedMailResponse> {
     validate_required_email(&recipient)?;
     if !matches!(
@@ -357,6 +398,7 @@ pub async fn latest_captured_mail(
     ) {
         return Err(AuthStackError::validation("message_kind is invalid"));
     }
+    require_step_up_permission_for("system.user.manage", auth).await?;
     crate::auth_product::latest_captured_mail(&recipient, &message_kind).await
 }
 
@@ -434,8 +476,12 @@ pub(crate) fn provider_enabled_env_name(provider_id: &str) -> String {
     format!("AUTH_{upper}_ENABLED")
 }
 
+/// The bypass mints a session from a fixed `development-oauth-code`, so it is
+/// only honoured on loopback (see `require_loopback_public_base_url`).
 pub(crate) async fn development_oauth_callback_bypass_enabled() -> bool {
     feature_enabled("AUTH_OAUTH_DEVELOPMENT_CALLBACK_BYPASS", false).await
+        && !feature_enabled("AUTH_PRODUCTION_MODE", false).await
+        && loopback_public_base_url().await
 }
 
 pub(crate) async fn all_config_values_present(names: &[&str]) -> bool {

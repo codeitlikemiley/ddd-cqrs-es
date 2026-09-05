@@ -13,8 +13,8 @@ mod routes;
 pub use context::{AccessContext, AssuranceLevel, PermissionSet};
 pub use features::{
     action_seed_demos, action_vault_create_secret, can_view_any_settings, filter_board_nodes,
-    filter_widget_catalog, nav_product_items, nav_settings_items, widget_manage_requirement,
-    widget_view_requirement, NavHref, NavItem, NavSection,
+    filter_widget_catalog, merge_hidden_board_nodes, nav_product_items, nav_settings_items,
+    widget_manage_requirement, widget_view_requirement, NavHref, NavItem, NavSection,
 };
 pub use permission::PermissionId;
 pub use requirement::{AccessRequirement, PermissionMode};

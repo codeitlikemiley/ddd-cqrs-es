@@ -36,6 +36,22 @@ use std::time::SystemTime;
 const DEFAULT_PREFIX: &str = "ddd_cqrs_es";
 const DEFAULT_CHECKPOINT_PREFIX: &str = "ddd_cqrs_es";
 
+/// Members read from a sorted-set index in one `ZRANGEBYSCORE` round trip.
+///
+/// Every index read is paged at this size so no single reply scales with the
+/// stream or backlog length. The reply carries two elements per member
+/// (`WITHSCORES`), so a page stays three orders of magnitude below the raw RESP
+/// client's `MAX_RESP_ARRAY_LEN` ceiling.
+const SEQUENCE_PAGE_SIZE: usize = 500;
+
+/// Event hashes fetched in one `EVAL` round trip.
+///
+/// A stored event has ten fields, so the flat length-prefixed reply for a full
+/// chunk is `256 * 21 = 5_376` elements. Fetching an unchunked backlog instead
+/// crossed the `MAX_RESP_ARRAY_LEN` element ceiling at roughly 47_600 events
+/// and made the stream or feed permanently unreadable.
+const HASH_FETCH_CHUNK_SIZE: usize = 256;
+
 const APPEND_LUA: &str = r#"
 local current = tonumber(redis.call('GET', KEYS[1]) or '0')
 local expected_kind = ARGV[1]
@@ -100,6 +116,42 @@ for i = 1, #KEYS do
     end
 end
 return out
+"#;
+
+/// Atomically advances a projection checkpoint only when the new sequence is
+/// greater than the stored value.
+const CHECKPOINT_SAVE_LUA: &str = r#"
+local current = redis.call('GET', KEYS[1])
+if current == false or tonumber(current) < tonumber(ARGV[1]) then
+    redis.call('SET', KEYS[1], ARGV[1])
+end
+return 1
+"#;
+
+const IDEMPOTENCY_RESERVE_LUA: &str = r#"
+local existing = redis.call('HGET', KEYS[1], 'state')
+if existing == false then
+    redis.call('HSET', KEYS[1], 'state', 'pending', 'owner', ARGV[1], 'expires_at_ms', ARGV[2])
+    return 1
+end
+if existing == 'complete' then
+    return 0
+end
+local expires = tonumber(redis.call('HGET', KEYS[1], 'expires_at_ms') or '0')
+if expires <= tonumber(ARGV[3]) then
+    redis.call('HSET', KEYS[1], 'owner', ARGV[1], 'expires_at_ms', ARGV[2])
+    return 1
+end
+return 0
+"#;
+
+const IDEMPOTENCY_SAVE_LUA: &str = r#"
+redis.call('HSET', KEYS[1], 'state', 'complete', 'value', ARGV[1], 'owner', '', 'expires_at_ms', '0')
+return 1
+"#;
+
+const IDEMPOTENCY_REMOVE_LUA: &str = r#"
+return redis.call('DEL', KEYS[1])
 "#;
 
 /// Redis protocol value returned by [`RedisCommandExecutor`].
@@ -226,12 +278,16 @@ where
     }
 
     /// Registers a sequential schema version upcaster for a specific event type.
-    pub fn register_upcaster<U>(&self, event_type: impl Into<String>, upcaster: U)
+    pub fn register_upcaster<U>(
+        &self,
+        event_type: impl Into<String>,
+        upcaster: U,
+    ) -> Result<(), crate::upcast::UpcasterRegistrationError>
     where
         U: crate::upcast::EventUpcaster + Send + Sync + 'static,
         U::Error: std::fmt::Debug + Display + Send + Sync + 'static,
     {
-        self.upcasters.register(event_type, upcaster);
+        self.upcasters.register(event_type, upcaster)
     }
 
     fn event_key_prefix(&self) -> String {
@@ -280,10 +336,16 @@ where
         redis_optional_u64(&value, "stream revision")
     }
 
-    /// Fetches the event hashes for `sequences` in a single round trip.
+    /// Fetches the event hashes for `sequences`, at most
+    /// [`HASH_FETCH_CHUNK_SIZE`] keys per round trip.
     ///
     /// The reply order matches `sequences`; every sequence must exist or the
     /// load fails (an indexed-but-missing event is store corruption).
+    ///
+    /// Chunking bounds each RESP reply so a long stream or replay backlog stays
+    /// readable; an unchunked fetch grew the reply with the event count and
+    /// tripped the raw client's array-length ceiling past roughly 47_600
+    /// events.
     ///
     /// The batched multi-key script requires all event keys to hash to one
     /// Redis Cluster slot (or a non-cluster deployment); CROSSSLOT errors
@@ -292,23 +354,88 @@ where
         &self,
         sequences: &[u64],
     ) -> Result<Vec<BTreeMap<String, Vec<u8>>>, EventStoreError> {
-        if sequences.is_empty() {
-            return Ok(Vec::new());
+        let mut hashes = Vec::with_capacity(sequences.len());
+
+        for chunk in sequences.chunks(HASH_FETCH_CHUNK_SIZE) {
+            let mut args = Vec::with_capacity(chunk.len() + 2);
+            args.push(FETCH_HASHES_LUA.as_bytes().to_vec());
+            args.push(chunk.len().to_string().into_bytes());
+            for sequence in chunk {
+                args.push(self.event_key(*sequence).into_bytes());
+            }
+            let value = self
+                .client
+                .execute("EVAL", args)
+                .await
+                .map_err(map_executor_error)?;
+
+            hashes.extend(unpack_flat_hash_batch(&value, chunk)?);
         }
 
-        let mut args = Vec::with_capacity(sequences.len() + 2);
-        args.push(FETCH_HASHES_LUA.as_bytes().to_vec());
-        args.push(sequences.len().to_string().into_bytes());
-        for sequence in sequences {
-            args.push(self.event_key(*sequence).into_bytes());
-        }
-        let value = self
-            .client
-            .execute("EVAL", args)
-            .await
-            .map_err(map_executor_error)?;
+        Ok(hashes)
+    }
 
-        unpack_flat_hash_batch(&value, sequences)
+    /// Reads member sequences from a sorted-set index in ascending score order,
+    /// paging at [`SEQUENCE_PAGE_SIZE`] members per round trip.
+    ///
+    /// `after_score` is exclusive, and `limit` caps the total member count;
+    /// `None` drains the index. Paging advances by score, which is exact here
+    /// because both indexes this store writes score members uniquely: the
+    /// global index scores each sequence by itself, and a stream index scores
+    /// each of its sequences by that event's stream revision.
+    ///
+    /// Paging is not a consistent snapshot — appends committed between pages
+    /// are picked up, which is what a replay cursor wants.
+    async fn load_indexed_sequences(
+        &self,
+        index_key: &str,
+        after_score: u64,
+        limit: Option<usize>,
+    ) -> Result<Vec<u64>, EventStoreError> {
+        let mut sequences = Vec::new();
+        let mut cursor = after_score;
+
+        loop {
+            let page_size = match limit {
+                Some(limit) => match limit.saturating_sub(sequences.len()) {
+                    0 => return Ok(sequences),
+                    remaining => remaining.min(SEQUENCE_PAGE_SIZE),
+                },
+                None => SEQUENCE_PAGE_SIZE,
+            };
+
+            let value = self
+                .client
+                .execute(
+                    "ZRANGEBYSCORE",
+                    vec![
+                        index_key.as_bytes().to_vec(),
+                        format!("({cursor}").into_bytes(),
+                        b"+inf".to_vec(),
+                        b"WITHSCORES".to_vec(),
+                        b"LIMIT".to_vec(),
+                        b"0".to_vec(),
+                        page_size.to_string().into_bytes(),
+                    ],
+                )
+                .await
+                .map_err(map_executor_error)?;
+
+            let page = redis_scored_sequence_page(&value)?;
+            let page_len = page.len();
+            let highest_score = page.last().map(|(_, score)| *score);
+            sequences.extend(page.into_iter().map(|(member, _)| member));
+
+            if page_len < page_size {
+                return Ok(sequences);
+            }
+            // A full page that did not move the score cursor would be re-read
+            // forever; stop instead of looping on it.
+            match highest_score {
+                Some(score) if score > cursor => cursor = score,
+                _ => return Ok(sequences),
+            }
+        }
     }
 }
 
@@ -324,16 +451,11 @@ where
 
     async fn load(&self, aggregate_id: &A::Id) -> Result<EventStream<A>, Self::Error> {
         let keys = self.stream_keys(aggregate_id)?;
-        let value = self
-            .client
-            .execute(
-                "ZRANGE",
-                vec![keys.stream_key.into_bytes(), b"0".to_vec(), b"-1".to_vec()],
-            )
-            .await
-            .map_err(map_executor_error)?;
-
-        let sequences = redis_sequence_list(&value)?;
+        // Stream members are scored by revision, which starts at 1, so an
+        // exclusive floor of 0 covers the whole stream.
+        let sequences = self
+            .load_indexed_sequences(&keys.stream_key, 0, None)
+            .await?;
         let hashes = self.load_sequence_hashes(&sequences).await?;
         let mut events = Vec::with_capacity(hashes.len());
         for hash in hashes {
@@ -351,20 +473,9 @@ where
         revision: u64,
     ) -> Result<EventStream<A>, Self::Error> {
         let keys = self.stream_keys(aggregate_id)?;
-        let value = self
-            .client
-            .execute(
-                "ZRANGEBYSCORE",
-                vec![
-                    keys.stream_key.into_bytes(),
-                    format!("({revision}").into_bytes(),
-                    b"+inf".to_vec(),
-                ],
-            )
-            .await
-            .map_err(map_executor_error)?;
-
-        let sequences = redis_sequence_list(&value)?;
+        let sequences = self
+            .load_indexed_sequences(&keys.stream_key, revision, None)
+            .await?;
         let hashes = self.load_sequence_hashes(&sequences).await?;
         let mut events = Vec::with_capacity(hashes.len());
         for hash in hashes {
@@ -450,21 +561,9 @@ where
         &self,
         sequence: Option<u64>,
     ) -> Result<EventStream<A>, Self::Error> {
-        let min_sequence = sequence.unwrap_or_default();
-        let value = self
-            .client
-            .execute(
-                "ZRANGEBYSCORE",
-                vec![
-                    self.global_key().into_bytes(),
-                    format!("({min_sequence}").into_bytes(),
-                    b"+inf".to_vec(),
-                ],
-            )
-            .await
-            .map_err(map_executor_error)?;
-
-        let sequences = redis_sequence_list(&value)?;
+        let sequences = self
+            .load_indexed_sequences(&self.global_key(), sequence.unwrap_or_default(), None)
+            .await?;
         let hashes = self.load_sequence_hashes(&sequences).await?;
         let mut events = Vec::with_capacity(hashes.len());
         for hash in hashes {
@@ -479,24 +578,13 @@ where
         sequence: Option<u64>,
         limit: NonZeroUsize,
     ) -> Result<EventStream<A>, Self::Error> {
-        let min_sequence = sequence.unwrap_or_default();
-        let value = self
-            .client
-            .execute(
-                "ZRANGEBYSCORE",
-                vec![
-                    self.global_key().into_bytes(),
-                    format!("({min_sequence}").into_bytes(),
-                    b"+inf".to_vec(),
-                    b"LIMIT".to_vec(),
-                    b"0".to_vec(),
-                    limit.get().to_string().into_bytes(),
-                ],
+        let sequences = self
+            .load_indexed_sequences(
+                &self.global_key(),
+                sequence.unwrap_or_default(),
+                Some(limit.get()),
             )
-            .await
-            .map_err(map_executor_error)?;
-
-        let sequences = redis_sequence_list(&value)?;
+            .await?;
         let hashes = self.load_sequence_hashes(&sequences).await?;
         let mut events = Vec::with_capacity(hashes.len());
         for hash in hashes {
@@ -525,24 +613,13 @@ where
         sequence: Option<u64>,
         limit: NonZeroUsize,
     ) -> Result<Vec<crate::raw_feed::RawEventEnvelope>, Self::Error> {
-        let min_sequence = sequence.unwrap_or_default();
-        let value = self
-            .client
-            .execute(
-                "ZRANGEBYSCORE",
-                vec![
-                    self.global_key().into_bytes(),
-                    format!("({min_sequence}").into_bytes(),
-                    b"+inf".to_vec(),
-                    b"LIMIT".to_vec(),
-                    b"0".to_vec(),
-                    limit.get().to_string().into_bytes(),
-                ],
+        let sequences = self
+            .load_indexed_sequences(
+                &self.global_key(),
+                sequence.unwrap_or_default(),
+                Some(limit.get()),
             )
-            .await
-            .map_err(map_executor_error)?;
-
-        let sequences = redis_sequence_list(&value)?;
+            .await?;
         let hashes = self.load_sequence_hashes(&sequences).await?;
         let mut events = Vec::with_capacity(hashes.len());
         for hash in hashes {
@@ -617,23 +694,230 @@ where
         projection_name: &str,
         sequence: u64,
     ) -> Result<(), Self::Error> {
-        // Checkpoints must be monotonic: a lagging writer (for example after a
-        // rebalance) must never regress a newer checkpoint. Redis offers no
-        // compare-and-set over plain GET/SET here, so guard with a read first;
-        // the remaining race window only affects concurrent writers of the
-        // same projection.
-        if let Some(existing) = self.load_checkpoint(projection_name).await? {
-            if sequence <= existing {
-                return Ok(());
-            }
-        }
         let _ = self
             .client
             .execute(
-                "SET",
+                "EVAL",
                 vec![
+                    CHECKPOINT_SAVE_LUA.as_bytes().to_vec(),
+                    "1".into(),
                     self.checkpoint_key(projection_name).into_bytes(),
                     sequence.to_string().into_bytes(),
+                ],
+            )
+            .await
+            .map_err(map_executor_error)?;
+        Ok(())
+    }
+}
+
+/// Experimental Redis-backed async idempotency store.
+#[derive(Clone, Debug)]
+pub struct RedisIdempotencyStore<C, V>
+where
+    C: RedisCommandExecutor,
+{
+    client: C,
+    prefix: String,
+    _marker: PhantomData<fn() -> V>,
+}
+
+impl<C, V> RedisIdempotencyStore<C, V>
+where
+    C: RedisCommandExecutor,
+{
+    pub fn new(client: C) -> Self {
+        Self {
+            client,
+            prefix: DEFAULT_PREFIX.to_owned(),
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn with_prefix(client: C, prefix: impl Into<String>) -> Result<Self, EventStoreError> {
+        let prefix = prefix.into();
+        validate_redis_prefix(&prefix)?;
+        Ok(Self {
+            client,
+            prefix,
+            _marker: PhantomData,
+        })
+    }
+
+    fn key(&self, idempotency_key: &crate::idempotency::IdempotencyKey) -> String {
+        format!(
+            "{}:idempotency:{}",
+            self.prefix,
+            hex_encode(idempotency_key.as_str().as_bytes())
+        )
+    }
+
+    fn field_from_hash(value: &RedisValue, field: &str) -> Option<String> {
+        let RedisValue::Array(items) = value else {
+            return None;
+        };
+        for chunk in items.chunks(2) {
+            if let [RedisValue::Bytes(key), RedisValue::Bytes(val)] = chunk {
+                if key == field.as_bytes() {
+                    return String::from_utf8(val.clone()).ok();
+                }
+            }
+        }
+        None
+    }
+}
+
+#[async_trait]
+impl<C, V> crate::async_api::AsyncIdempotencyStore<V> for RedisIdempotencyStore<C, V>
+where
+    C: RedisCommandExecutor,
+    V: Clone + serde::Serialize + serde::de::DeserializeOwned + Send + Sync + 'static,
+{
+    type Error = EventStoreError;
+
+    async fn load(
+        &self,
+        key: &crate::idempotency::IdempotencyKey,
+    ) -> Result<Option<crate::idempotency::IdempotencyState<V>>, Self::Error> {
+        let value = self
+            .client
+            .execute("HGETALL", vec![self.key(key).into_bytes()])
+            .await
+            .map_err(map_executor_error)?;
+        let RedisValue::Array(items) = &value else {
+            return Ok(None);
+        };
+        if items.is_empty() {
+            return Ok(None);
+        }
+        let state = Self::field_from_hash(&value, "state").unwrap_or_default();
+        match state.as_str() {
+            "complete" => {
+                let raw = Self::field_from_hash(&value, "value").ok_or_else(|| {
+                    EventStoreError::deserialization(
+                        "completed redis idempotency row is missing value".to_owned(),
+                    )
+                })?;
+                let parsed = serde_json::from_str(&raw).map_err(|error| {
+                    EventStoreError::deserialization(format!("idempotency value JSON: {error}"))
+                })?;
+                Ok(Some(crate::idempotency::IdempotencyState::Complete(parsed)))
+            }
+            "pending" => {
+                let owner = Self::field_from_hash(&value, "owner");
+                let expires_at_ms = Self::field_from_hash(&value, "expires_at_ms")
+                    .and_then(|v| v.parse::<i64>().ok());
+                Ok(crate::idempotency::pending_state_from_row(
+                    owner,
+                    expires_at_ms,
+                    crate::idempotency::now_ms(),
+                )
+                .map(crate::idempotency::IdempotencyState::Pending))
+            }
+            other => Err(EventStoreError::deserialization(format!(
+                "unknown idempotency state: {other}"
+            ))),
+        }
+    }
+
+    async fn reserve_with_lease(
+        &self,
+        key: crate::idempotency::IdempotencyKey,
+        config: &crate::idempotency::IdempotencyLeaseConfig,
+    ) -> Result<bool, Self::Error> {
+        let lease = crate::idempotency::new_lease(config);
+        let result = self
+            .client
+            .execute(
+                "EVAL",
+                vec![
+                    IDEMPOTENCY_RESERVE_LUA.as_bytes().to_vec(),
+                    "1".into(),
+                    self.key(&key).into_bytes(),
+                    lease.owner.into_bytes(),
+                    lease.expires_at_ms.to_string().into_bytes(),
+                    crate::idempotency::now_ms().to_string().into_bytes(),
+                ],
+            )
+            .await
+            .map_err(map_executor_error)?;
+        match result {
+            RedisValue::Int(1) => Ok(true),
+            RedisValue::Int(0) => Ok(false),
+            other => Err(EventStoreError::deserialization(format!(
+                "unexpected redis idempotency reserve reply: {other:?}"
+            ))),
+        }
+    }
+
+    async fn heartbeat(
+        &self,
+        key: &crate::idempotency::IdempotencyKey,
+        owner: &str,
+    ) -> Result<bool, Self::Error> {
+        let new_expiry =
+            crate::idempotency::expires_at_ms(crate::idempotency::DEFAULT_IDEMPOTENCY_LEASE);
+        let result = self
+            .client
+            .execute(
+                "EVAL",
+                vec![
+                    br#"
+if redis.call('HGET', KEYS[1], 'owner') == ARGV[1] then
+  redis.call('HSET', KEYS[1], 'expires_at_ms', ARGV[2])
+  return 1
+end
+return 0
+"#
+                    .to_vec(),
+                    "1".into(),
+                    self.key(key).into_bytes(),
+                    owner.as_bytes().to_vec(),
+                    new_expiry.to_string().into_bytes(),
+                ],
+            )
+            .await
+            .map_err(map_executor_error)?;
+        Ok(matches!(result, RedisValue::Int(1)))
+    }
+
+    async fn expire_stale_pending(&self, _now_ms: u64) -> Result<usize, Self::Error> {
+        Ok(0)
+    }
+
+    async fn save(
+        &self,
+        key: crate::idempotency::IdempotencyKey,
+        value: V,
+    ) -> Result<(), Self::Error> {
+        let value_json = serde_json::to_string(&value).map_err(|error| {
+            EventStoreError::serialization(format!("idempotency value JSON: {error}"))
+        })?;
+        let _ = self
+            .client
+            .execute(
+                "EVAL",
+                vec![
+                    IDEMPOTENCY_SAVE_LUA.as_bytes().to_vec(),
+                    "1".into(),
+                    self.key(&key).into_bytes(),
+                    value_json.into_bytes(),
+                ],
+            )
+            .await
+            .map_err(map_executor_error)?;
+        Ok(())
+    }
+
+    async fn remove(&self, key: &crate::idempotency::IdempotencyKey) -> Result<(), Self::Error> {
+        let _ = self
+            .client
+            .execute(
+                "EVAL",
+                vec![
+                    IDEMPOTENCY_REMOVE_LUA.as_bytes().to_vec(),
+                    "1".into(),
+                    self.key(key).into_bytes(),
                 ],
             )
             .await
@@ -1253,7 +1537,7 @@ where
 
     let aggregate_id = deserialize_id(&aggregate_id_json)?;
     let (event_version, upcasted_bytes) = upcasters
-        .upcast(&event_type, event_version, payload_bytes)
+        .prepare_payload(&event_type, event_version, payload_bytes)
         .map_err(|error| EventStoreError::deserialization(error.to_string()))?;
     let payload_value = serde_json::from_slice(&upcasted_bytes)
         .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
@@ -1295,7 +1579,7 @@ fn hash_to_raw_envelope(
     let recorded_at_ms = hash_field_i64(&hash, "recorded_at_ms")?;
 
     let (event_version, upcasted_bytes) = upcasters
-        .upcast(&event_type, event_version, payload_bytes)
+        .prepare_payload(&event_type, event_version, payload_bytes)
         .map_err(|error| EventStoreError::deserialization(error.to_string()))?;
     let payload: serde_json::Value = serde_json::from_slice(&upcasted_bytes)
         .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
@@ -1368,10 +1652,29 @@ fn redis_optional_u64(value: &RedisValue, label: &str) -> Result<u64, EventStore
     }
 }
 
-fn redis_sequence_list(value: &RedisValue) -> Result<Vec<u64>, EventStoreError> {
-    redis_array_items(value)?
+/// Parses one `ZRANGEBYSCORE ... WITHSCORES` page into `(member, score)` pairs.
+///
+/// Redis returns scores as strings; both indexes this store writes use integer
+/// scores (a global sequence or a stream revision), so a fractional score is
+/// rejected rather than silently rounded into a paging cursor.
+fn redis_scored_sequence_page(value: &RedisValue) -> Result<Vec<(u64, u64)>, EventStoreError> {
+    let items = redis_array_items(value)?;
+    if !items.len().is_multiple_of(2) {
+        return Err(EventStoreError::deserialization(
+            "Redis scored index page has an odd element count".to_owned(),
+        ));
+    }
+
+    items
+        .as_chunks::<2>()
+        .0
         .iter()
-        .map(|value| redis_value_u64(value, "Redis sequence"))
+        .map(|pair| {
+            Ok((
+                redis_value_u64(&pair[0], "Redis sequence")?,
+                redis_value_u64(&pair[1], "Redis index score")?,
+            ))
+        })
         .collect()
 }
 
@@ -1860,6 +2163,265 @@ mod tests {
         RedisValue::Bytes(value.as_bytes().to_vec())
     }
 
+    /// Fields in a stored event hash. The flat batch reply carries two
+    /// elements per field plus one length prefix per event.
+    const EVENT_HASH_FIELD_COUNT: usize = 10;
+
+    /// Elements the flat batch reply spends on one event.
+    const REPLY_ELEMENTS_PER_EVENT: usize = EVENT_HASH_FIELD_COUNT * 2 + 1;
+
+    /// Element ceiling the raw RESP client enforces on an array reply. Kept as
+    /// a literal so the chunking tests still describe the limit when the
+    /// `wasi-redis` client is compiled out.
+    const RESP_ARRAY_CEILING: usize = 1_000_000;
+
+    /// Backlog length at which an unchunked hash fetch first exceeded
+    /// [`RESP_ARRAY_CEILING`] and made a stream or feed permanently unreadable.
+    const LEGACY_UNREADABLE_BACKLOG: usize = RESP_ARRAY_CEILING / REPLY_ELEMENTS_PER_EVENT;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum FakeRedisCommand {
+        RangeByScore,
+        FetchHashes,
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    struct FakeRedisCall {
+        kind: FakeRedisCommand,
+        /// Index members or event keys the call asked for.
+        requested: usize,
+        /// Elements in the RESP array the call was answered with.
+        reply_len: usize,
+    }
+
+    /// Fake Redis serving a synthetic global feed of `event_count` events and
+    /// recording the shape of every command it answers, so the read paths can
+    /// be checked for unbounded index reads and unbounded batch fetches
+    /// without a live server.
+    #[derive(Clone)]
+    struct FakeRedisBackend {
+        prefix: String,
+        event_count: u64,
+        calls: Arc<Mutex<Vec<FakeRedisCall>>>,
+    }
+
+    impl FakeRedisBackend {
+        fn new(prefix: &str, event_count: u64) -> Self {
+            Self {
+                prefix: prefix.to_owned(),
+                event_count,
+                calls: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn record(&self, kind: FakeRedisCommand, requested: usize, reply_len: usize) {
+            self.calls.lock().unwrap().push(FakeRedisCall {
+                kind,
+                requested,
+                reply_len,
+            });
+        }
+
+        fn calls_of(&self, kind: FakeRedisCommand) -> Vec<FakeRedisCall> {
+            self.calls
+                .lock()
+                .unwrap()
+                .iter()
+                .copied()
+                .filter(|call| call.kind == kind)
+                .collect()
+        }
+
+        fn widest_reply(&self) -> usize {
+            self.calls
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|call| call.reply_len)
+                .max()
+                .unwrap_or_default()
+        }
+    }
+
+    fn fake_event_hash_items(sequence: u64) -> Vec<RedisValue> {
+        static METADATA_JSON: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        let metadata = METADATA_JSON
+            .get_or_init(|| serde_json::to_string(&Metadata::default()).unwrap())
+            .as_str();
+        let sequence_text = sequence.to_string();
+
+        [
+            ("event_id", format!("evt-{sequence}")),
+            ("aggregate_id", "\"stream-1\"".to_owned()),
+            ("aggregate_type", TestAggregate::aggregate_type().to_owned()),
+            ("revision", sequence_text.clone()),
+            ("sequence", sequence_text),
+            ("event_type", "created".to_owned()),
+            ("event_version", "1".to_owned()),
+            ("payload", "{\"Created\":{\"value\":1}}".to_owned()),
+            ("metadata", metadata.to_owned()),
+            ("recorded_at_ms", "1700000000000".to_owned()),
+        ]
+        .into_iter()
+        .flat_map(|(field, value)| [bytes(field), RedisValue::Bytes(value.into_bytes())])
+        .collect()
+    }
+
+    #[async_trait]
+    impl RedisCommandExecutor for FakeRedisBackend {
+        type Error = String;
+
+        async fn execute(
+            &self,
+            command: &str,
+            args: Vec<Vec<u8>>,
+        ) -> Result<RedisValue, Self::Error> {
+            let arg = |index: usize| String::from_utf8(args[index].clone()).unwrap();
+
+            match command {
+                "ZRANGEBYSCORE" => {
+                    assert_eq!(arg(0), format!("{}:global", self.prefix));
+                    assert_eq!(arg(2), "+inf");
+                    assert_eq!(arg(3), "WITHSCORES");
+                    assert_eq!(arg(4), "LIMIT");
+                    assert_eq!(arg(5), "0");
+                    let after: u64 = arg(1).trim_start_matches('(').parse().unwrap();
+                    let requested: usize = arg(6).parse().unwrap();
+                    let last = self.event_count.min(after.saturating_add(requested as u64));
+
+                    let mut items = Vec::new();
+                    for sequence in (after + 1)..=last {
+                        // The global index scores each member by its own
+                        // sequence.
+                        items.push(RedisValue::Bytes(sequence.to_string().into_bytes()));
+                        items.push(RedisValue::Bytes(sequence.to_string().into_bytes()));
+                    }
+
+                    self.record(FakeRedisCommand::RangeByScore, requested, items.len());
+                    Ok(RedisValue::Array(items))
+                }
+                "EVAL" => {
+                    let key_count: usize = arg(1).parse().unwrap();
+                    let mut items = Vec::new();
+                    for index in 0..key_count {
+                        let key = arg(2 + index);
+                        let sequence: u64 = key.rsplit(':').next().unwrap().parse().unwrap();
+                        items.push(RedisValue::Int((EVENT_HASH_FIELD_COUNT * 2) as i64));
+                        items.extend(fake_event_hash_items(sequence));
+                    }
+
+                    self.record(FakeRedisCommand::FetchHashes, key_count, items.len());
+                    Ok(RedisValue::Array(items))
+                }
+                other => Err(format!("unexpected command `{other}`")),
+            }
+        }
+    }
+
+    fn fake_backed_store(
+        prefix: &str,
+        event_count: u64,
+    ) -> (
+        FakeRedisBackend,
+        RedisEventStore<TestAggregate, FakeRedisBackend>,
+    ) {
+        let backend = FakeRedisBackend::new(prefix, event_count);
+        let store =
+            RedisEventStore::<TestAggregate, _>::with_prefix(backend.clone(), prefix).unwrap();
+        (backend, store)
+    }
+
+    #[tokio::test]
+    async fn global_replay_pages_the_index_and_chunks_hash_fetches() {
+        const EVENTS: u64 = 1_200;
+        let (backend, store) = fake_backed_store("ddd:paging", EVENTS);
+
+        let events = store.load_global_after(None).await.unwrap();
+
+        assert_eq!(events.len(), EVENTS as usize);
+        assert_eq!(events.first().unwrap().sequence, Some(1));
+        assert_eq!(events.last().unwrap().sequence, Some(EVENTS));
+
+        let index_pages = backend.calls_of(FakeRedisCommand::RangeByScore);
+        let hash_fetches = backend.calls_of(FakeRedisCommand::FetchHashes);
+
+        // 500 + 500 + 200: the short page ends the scan.
+        assert_eq!(index_pages.len(), 3);
+        assert!(index_pages
+            .iter()
+            .all(|call| call.requested == SEQUENCE_PAGE_SIZE));
+        assert_eq!(
+            hash_fetches.len(),
+            (EVENTS as usize).div_ceil(HASH_FETCH_CHUNK_SIZE)
+        );
+        assert!(hash_fetches
+            .iter()
+            .all(|call| call.requested <= HASH_FETCH_CHUNK_SIZE));
+    }
+
+    #[tokio::test]
+    async fn limited_global_replay_asks_the_index_for_no_more_than_the_limit() {
+        let (backend, store) = fake_backed_store("ddd:limited", 1_000);
+
+        let events = store
+            .load_global_after_limited(Some(10), NonZeroUsize::new(30).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(events.len(), 30);
+        assert_eq!(events.first().unwrap().sequence, Some(11));
+        assert_eq!(events.last().unwrap().sequence, Some(40));
+
+        let index_pages = backend.calls_of(FakeRedisCommand::RangeByScore);
+        assert_eq!(index_pages.len(), 1);
+        assert_eq!(index_pages[0].requested, 30);
+        assert_eq!(backend.calls_of(FakeRedisCommand::FetchHashes).len(), 1);
+    }
+
+    /// A backlog past the point where the previous single-`EVAL` fetch produced
+    /// an array reply the raw RESP client refused, permanently blocking replay.
+    #[tokio::test]
+    async fn backlog_past_the_legacy_resp_ceiling_stays_readable() {
+        let events_count = LEGACY_UNREADABLE_BACKLOG as u64 + 2_000;
+        let (backend, store) = fake_backed_store("ddd:ceiling", events_count);
+
+        let events = store.load_global_after(None).await.unwrap();
+
+        assert_eq!(events.len(), events_count as usize);
+        assert!(
+            events_count as usize * REPLY_ELEMENTS_PER_EVENT > RESP_ARRAY_CEILING,
+            "fixture must exceed what one unchunked reply could carry"
+        );
+        assert!(
+            backend.widest_reply() < RESP_ARRAY_CEILING,
+            "widest reply {} must stay under the {RESP_ARRAY_CEILING} element ceiling",
+            backend.widest_reply()
+        );
+    }
+
+    #[cfg(feature = "wasi-redis")]
+    #[test]
+    fn resp_array_ceiling_constant_matches_the_client() {
+        assert_eq!(RESP_ARRAY_CEILING, MAX_RESP_ARRAY_LEN);
+    }
+
+    #[test]
+    fn scored_index_page_parses_member_and_score_pairs() {
+        let page = RedisValue::Array(vec![bytes("7"), bytes("3"), bytes("9"), bytes("4")]);
+
+        assert_eq!(
+            redis_scored_sequence_page(&page).unwrap(),
+            vec![(7, 3), (9, 4)]
+        );
+    }
+
+    #[test]
+    fn scored_index_page_rejects_an_odd_element_count() {
+        let page = RedisValue::Array(vec![bytes("7"), bytes("3"), bytes("9")]);
+
+        assert!(redis_scored_sequence_page(&page).is_err());
+    }
+
     #[test]
     fn flat_hash_batch_unpacks_length_prefixed_hashes() {
         let reply = RedisValue::Array(vec![
@@ -2148,6 +2710,30 @@ mod tests {
             .map(WasiRedisClient::new)
     }
 
+    /// Returns a live Redis client, or `None` when no Redis URL is configured
+    /// and the caller should return early.
+    ///
+    /// Locally this only prints a skip notice. Under CI it panics: the workflow
+    /// starts a Redis service and exports the URL, so an unset variable means
+    /// the service is missing and a silent skip would hide backend regressions.
+    #[cfg(feature = "wasi-redis")]
+    fn live_client_or_skip(test_name: &str) -> Option<WasiRedisClient> {
+        if let Some(client) = live_client() {
+            return Some(client);
+        }
+        let running_in_ci = std::env::var("CI").is_ok_and(|value| {
+            let value = value.trim();
+            !value.is_empty() && !value.eq_ignore_ascii_case("false") && value != "0"
+        });
+        assert!(
+            !running_in_ci,
+            "live Redis {test_name} cannot be skipped in CI: \
+             neither DDD_CQRS_ES_REDIS_URL nor REDIS_URL is set"
+        );
+        eprintln!("skipping live Redis {test_name}: DDD_CQRS_ES_REDIS_URL or REDIS_URL is not set");
+        None
+    }
+
     #[cfg(feature = "wasi-redis")]
     async fn cleanup_prefix(client: &WasiRedisClient, prefix: &str) {
         let Ok(keys) = client
@@ -2183,8 +2769,7 @@ mod tests {
     #[cfg(feature = "wasi-redis")]
     #[tokio::test]
     async fn live_redis_async_event_store_passes_reusable_contract() {
-        let Some(client) = live_client() else {
-            eprintln!("skipping live Redis test: DDD_CQRS_ES_REDIS_URL or REDIS_URL is not set");
+        let Some(client) = live_client_or_skip("async contract test") else {
             return;
         };
         let prefix = unique_prefix("async_contract");
@@ -2207,8 +2792,7 @@ mod tests {
     #[cfg(feature = "wasi-redis")]
     #[tokio::test]
     async fn live_redis_expected_revision_conflicts() {
-        let Some(client) = live_client() else {
-            eprintln!("skipping live Redis test: DDD_CQRS_ES_REDIS_URL or REDIS_URL is not set");
+        let Some(client) = live_client_or_skip("expected-revision test") else {
             return;
         };
         let prefix = unique_prefix("expected_revision");
@@ -2250,8 +2834,7 @@ mod tests {
     #[cfg(feature = "wasi-redis")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn live_redis_concurrent_same_stream_append_has_one_revision_winner() {
-        let Some(client) = live_client() else {
-            eprintln!("skipping live Redis test: DDD_CQRS_ES_REDIS_URL or REDIS_URL is not set");
+        let Some(client) = live_client_or_skip("concurrent append test") else {
             return;
         };
         let prefix = unique_prefix("concurrent");
@@ -2299,8 +2882,7 @@ mod tests {
     #[cfg(feature = "wasi-redis")]
     #[tokio::test]
     async fn live_redis_global_ordering_and_checkpoint_update() {
-        let Some(client) = live_client() else {
-            eprintln!("skipping live Redis test: DDD_CQRS_ES_REDIS_URL or REDIS_URL is not set");
+        let Some(client) = live_client_or_skip("global ordering test") else {
             return;
         };
         let prefix = unique_prefix("global_checkpoint");
@@ -2350,10 +2932,7 @@ mod tests {
     #[cfg(feature = "wasi-redis")]
     #[tokio::test]
     async fn live_redis_publish_and_subscribe_round_trip() {
-        let Some(client) = live_client() else {
-            eprintln!(
-                "skipping live Redis pub/sub test: DDD_CQRS_ES_REDIS_URL or REDIS_URL is not set"
-            );
+        let Some(client) = live_client_or_skip("pub/sub test") else {
             return;
         };
         let channel = unique_prefix("pubsub");

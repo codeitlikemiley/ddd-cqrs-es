@@ -25,7 +25,7 @@ GENERATED_DIR="$STAGING_DIR/fullstack-app"
 
 # Compare against a normalized copy of the example:
 # - drop monorepo-only docs/artifacts that are not part of the CLI template
-# - strip the local wasi-auth path patch (CLI publish path removes it on init)
+# - strip the monorepo-only framework patch from `.cargo/config.toml`
 COMPARE_DIR="$STAGING_DIR/example-normalized"
 mkdir -p "$COMPARE_DIR"
 rsync -a \
@@ -42,9 +42,13 @@ rsync -a \
   --exclude='public/favicon.svg' \
   "$EXAMPLE_DIR/" "$COMPARE_DIR/"
 
-# Match render_fullstack: strip monorepo-only wasi-auth path override.
-perl -0pi -e 's/# Local wasi-auth for HTML mail templates until the next published rc\.\nwasi-auth = \{ path = "[^"]+" \}\n//' \
-  "$COMPARE_DIR/Cargo.toml"
+# `Cargo.toml` itself is mirrored byte-for-byte, so nothing there needs
+# normalizing. The example's `.cargo/config.toml` carries one entry the template
+# must never ship: a patch resolving `ddd_cqrs_es` to the library beside it,
+# because the version the manifest pins is unpublished until this repository
+# releases it. Drop the trailing comment block and patch table before diffing.
+perl -0pi -e 's/\n# `Cargo\.toml` pins the `ddd_cqrs_es` version.*\n\[patch\.crates-io\.ddd_cqrs_es\]\npath = "\.\.\/\.\."\n$//s' \
+  "$COMPARE_DIR/.cargo/config.toml"
 
 DIFF_EXCLUDES=(
   --exclude=.DS_Store

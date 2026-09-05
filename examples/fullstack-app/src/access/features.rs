@@ -178,29 +178,6 @@ pub fn filter_board_nodes(nodes: Vec<BoardNode>, ctx: &AccessContext) -> Vec<Boa
     nodes
         .into_iter()
         .filter_map(|node| match node {
-            BoardNode::Widget {
-                id,
-                kind,
-                col_span,
-                note_text,
-                source_id,
-                bind,
-                http_mode,
-            } => {
-                if widget_view_requirement(kind.clone()).is_satisfied_by(ctx) {
-                    Some(BoardNode::Widget {
-                        id,
-                        kind,
-                        col_span,
-                        note_text,
-                        source_id,
-                        bind,
-                        http_mode,
-                    })
-                } else {
-                    None
-                }
-            }
             BoardNode::Container {
                 id,
                 kind,
@@ -219,8 +196,141 @@ pub fn filter_board_nodes(nodes: Vec<BoardNode>, ctx: &AccessContext) -> Vec<Boa
                     })
                 }
             }
+            widget if is_hidden_from(&widget, ctx) => None,
+            widget => Some(widget),
         })
         .collect()
+}
+
+/// True when the viewer is not allowed to see this node.
+///
+/// Containers are structural and always visible; only widgets carry a view
+/// requirement.
+fn is_hidden_from(node: &BoardNode, ctx: &AccessContext) -> bool {
+    match node {
+        BoardNode::Widget { kind, .. } => {
+            !widget_view_requirement(kind.clone()).is_satisfied_by(ctx)
+        }
+        BoardNode::Container { .. } => false,
+    }
+}
+
+fn collect_node_ids(nodes: &[BoardNode], out: &mut std::collections::HashSet<String>) {
+    for node in nodes {
+        out.insert(node.id().to_owned());
+        if let BoardNode::Container { children, .. } = node {
+            collect_node_ids(children, out);
+        }
+    }
+}
+
+fn collect_hidden_nodes(
+    nodes: &[BoardNode],
+    ctx: &AccessContext,
+    present: &std::collections::HashSet<String>,
+    out: &mut Vec<BoardNode>,
+) {
+    for node in nodes {
+        if present.contains(node.id()) {
+            continue;
+        }
+        if is_hidden_from(node, ctx) {
+            out.push(node.clone());
+        } else if let BoardNode::Container { children, .. } = node {
+            collect_hidden_nodes(children, ctx, present, out);
+        }
+    }
+}
+
+fn stored_children<'a>(nodes: &'a [BoardNode], container_id: &str) -> Option<&'a [BoardNode]> {
+    for node in nodes {
+        if let BoardNode::Container { id, children, .. } = node {
+            if id == container_id {
+                return Some(children);
+            }
+            if let Some(found) = stored_children(children, container_id) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+fn merge_hidden_level(
+    stored_root: &[BoardNode],
+    stored_level: &[BoardNode],
+    incoming: Vec<BoardNode>,
+    ctx: &AccessContext,
+    present: &std::collections::HashSet<String>,
+    orphans: &mut Vec<BoardNode>,
+) -> Vec<BoardNode> {
+    // Containers the caller kept are matched by id against the stored tree, so a
+    // container that moved to a new parent still merges against its own children.
+    let mut merged: Vec<BoardNode> = incoming
+        .into_iter()
+        .map(|node| match node {
+            BoardNode::Container {
+                id,
+                kind,
+                col_span,
+                children,
+            } => {
+                let children = match stored_children(stored_root, &id) {
+                    Some(stored_children) => merge_hidden_level(
+                        stored_root,
+                        stored_children,
+                        children,
+                        ctx,
+                        present,
+                        orphans,
+                    ),
+                    None => children,
+                };
+                BoardNode::Container {
+                    id,
+                    kind,
+                    col_span,
+                    children,
+                }
+            }
+            widget => widget,
+        })
+        .collect();
+
+    for (index, node) in stored_level.iter().enumerate() {
+        if present.contains(node.id()) {
+            continue;
+        }
+        if is_hidden_from(node, ctx) {
+            merged.insert(index.min(merged.len()), node.clone());
+        } else if let BoardNode::Container { children, .. } = node {
+            // The caller removed a container they could see; anything inside it
+            // they could not see is rescued to the board root instead of lost.
+            collect_hidden_nodes(children, ctx, present, orphans);
+        }
+    }
+    merged
+}
+
+/// Restore board nodes the caller was never allowed to see into an incoming tree.
+///
+/// The board is rendered permission-filtered, so a save carries only the nodes
+/// the caller can see. Writing that tree verbatim would delete other members'
+/// widgets. Hidden stored nodes missing from `incoming` are put back at their
+/// stored position; hidden nodes whose parent container the caller deleted are
+/// appended at the root so they survive the write.
+#[must_use]
+pub fn merge_hidden_board_nodes(
+    stored: Vec<BoardNode>,
+    incoming: Vec<BoardNode>,
+    ctx: &AccessContext,
+) -> Vec<BoardNode> {
+    let mut present = std::collections::HashSet::new();
+    collect_node_ids(&incoming, &mut present);
+    let mut orphans = Vec::new();
+    let mut merged = merge_hidden_level(&stored, &stored, incoming, ctx, &present, &mut orphans);
+    merged.append(&mut orphans);
+    merged
 }
 
 /// Widget kinds the user may add from the picker.
@@ -274,5 +384,121 @@ mod tests {
         assert!(
             widget_view_requirement(DashboardWidgetKind::BoundTable).is_satisfied_by(&with_query)
         );
+    }
+
+    fn widget(id: &str, kind: DashboardWidgetKind) -> BoardNode {
+        BoardNode::Widget {
+            id: id.to_owned(),
+            kind,
+            col_span: 6,
+            note_text: None,
+            source_id: None,
+            bind: crate::contracts::WidgetBind::default(),
+            http_mode: crate::contracts::HttpDisplayMode::List,
+        }
+    }
+
+    fn row(id: &str, children: Vec<BoardNode>) -> BoardNode {
+        BoardNode::Container {
+            id: id.to_owned(),
+            kind: crate::contracts::BoardContainerKind::Row,
+            col_span: 12,
+            children,
+        }
+    }
+
+    fn ids(nodes: &[BoardNode]) -> Vec<String> {
+        nodes.iter().map(|node| node.id().to_owned()).collect()
+    }
+
+    /// The exact #85 data-loss case: a member without `query.view` saves the
+    /// board they can see, which omits every bound widget.
+    #[test]
+    fn merge_restores_widgets_the_caller_could_not_see() {
+        let viewer = ctx(&["dashboard.view"]);
+        let stored = vec![
+            widget("w-notes", DashboardWidgetKind::Notes),
+            widget("w-bound", DashboardWidgetKind::BoundTable),
+            widget("w-sessions", DashboardWidgetKind::Sessions),
+        ];
+        let incoming = filter_board_nodes(stored.clone(), &viewer);
+        assert_eq!(ids(&incoming), ["w-notes", "w-sessions"]);
+
+        let merged = merge_hidden_board_nodes(stored, incoming, &viewer);
+        assert_eq!(ids(&merged), ["w-notes", "w-bound", "w-sessions"]);
+    }
+
+    #[test]
+    fn merge_restores_hidden_children_inside_kept_containers() {
+        let viewer = ctx(&["dashboard.view"]);
+        let stored = vec![row(
+            "c-row",
+            vec![
+                widget("w-bound", DashboardWidgetKind::BoundMetric),
+                widget("w-notes", DashboardWidgetKind::Notes),
+            ],
+        )];
+        let incoming = filter_board_nodes(stored.clone(), &viewer);
+
+        let merged = merge_hidden_board_nodes(stored, incoming, &viewer);
+        match &merged[..] {
+            [BoardNode::Container { children, .. }] => {
+                assert_eq!(ids(children), ["w-bound", "w-notes"]);
+            }
+            other => panic!("expected one container, got {other:?}"),
+        }
+    }
+
+    /// Deleting a container the caller can see must not silently take unseen
+    /// widgets with it.
+    #[test]
+    fn merge_rescues_hidden_nodes_from_a_deleted_container() {
+        let viewer = ctx(&["dashboard.view"]);
+        let stored = vec![
+            row(
+                "c-row",
+                vec![
+                    widget("w-bound", DashboardWidgetKind::BoundList),
+                    widget("w-notes", DashboardWidgetKind::Notes),
+                ],
+            ),
+            widget("w-sessions", DashboardWidgetKind::Sessions),
+        ];
+        let incoming = vec![widget("w-sessions", DashboardWidgetKind::Sessions)];
+
+        let merged = merge_hidden_board_nodes(stored, incoming, &viewer);
+        assert_eq!(ids(&merged), ["w-sessions", "w-bound"]);
+    }
+
+    /// Removals a caller is entitled to make still take effect.
+    #[test]
+    fn merge_keeps_deletions_the_caller_was_allowed_to_make() {
+        let manager = ctx(&["dashboard.view", "query.view", "audit.view"]);
+        let stored = vec![
+            widget("w-notes", DashboardWidgetKind::Notes),
+            widget("w-bound", DashboardWidgetKind::BoundTable),
+        ];
+        let incoming = vec![widget("w-notes", DashboardWidgetKind::Notes)];
+
+        let merged = merge_hidden_board_nodes(stored, incoming, &manager);
+        assert_eq!(ids(&merged), ["w-notes"]);
+    }
+
+    /// Reordering and moving visible tiles round-trips unchanged.
+    #[test]
+    fn merge_preserves_caller_reordering() {
+        let viewer = ctx(&["dashboard.view"]);
+        let stored = vec![
+            widget("w-notes", DashboardWidgetKind::Notes),
+            widget("w-bound", DashboardWidgetKind::BoundMetric),
+            widget("w-sessions", DashboardWidgetKind::Sessions),
+        ];
+        let incoming = vec![
+            widget("w-sessions", DashboardWidgetKind::Sessions),
+            widget("w-notes", DashboardWidgetKind::Notes),
+        ];
+
+        let merged = merge_hidden_board_nodes(stored, incoming, &viewer);
+        assert_eq!(ids(&merged), ["w-sessions", "w-bound", "w-notes"]);
     }
 }

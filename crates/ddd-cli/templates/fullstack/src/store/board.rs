@@ -93,6 +93,7 @@ pub(crate) fn default_dashboard_layout() -> crate::contracts::DashboardLayout {
     };
     DashboardLayout {
         version: 2,
+        revision: 0,
         nodes: vec![
             metrics,
             activity_row,
@@ -225,37 +226,45 @@ pub async fn load_dashboard_layout(
     #[cfg(all(feature = "postgres", runtime_spin))]
     {
         let rows = execute_postgres(
-            "SELECT payload FROM fullstack_app.dashboard_layouts \
+            "SELECT payload, revision FROM fullstack_app.dashboard_layouts \
              WHERE organization_id = ?1::text::uuid",
             vec![Value::String(org_id.to_owned())],
         )
         .await?;
         let Some(row) = rows.first() else {
-            let layout = default_dashboard_layout();
-            save_dashboard_layout(org_id, &layout).await?;
+            let mut layout = default_dashboard_layout();
+            layout.revision = save_dashboard_layout(org_id, &layout, None).await?;
             return Ok(layout);
         };
+        let stored_revision = row_i64(row, "revision").unwrap_or(0);
         match serde_json::from_str::<crate::contracts::DashboardLayout>(&required_string(
             row, "payload",
         )?) {
             Ok(mut layout) => {
+                layout.revision = stored_revision;
                 layout.migrate_if_needed();
                 if layout.nodes.is_empty() {
-                    let layout = default_dashboard_layout();
-                    save_dashboard_layout(org_id, &layout).await?;
+                    let mut layout = default_dashboard_layout();
+                    layout.revision = save_dashboard_layout(org_id, &layout, None).await?;
                     return Ok(layout);
                 }
-                // Persist migration so clients always see v2.
+                // Persist migration so clients always see v2. A losing race here
+                // means another writer already stored v2; the caller keeps the
+                // stale revision and gets a conflict on its next save.
                 if layout.version < 2 || !layout.widgets.is_empty() {
                     layout.widgets.clear();
                     layout.version = 2;
-                    let _ = save_dashboard_layout(org_id, &layout).await;
+                    if let Ok(revision) =
+                        save_dashboard_layout(org_id, &layout, Some(stored_revision)).await
+                    {
+                        layout.revision = revision;
+                    }
                 }
                 Ok(layout)
             }
             _ => {
-                let layout = default_dashboard_layout();
-                save_dashboard_layout(org_id, &layout).await?;
+                let mut layout = default_dashboard_layout();
+                layout.revision = save_dashboard_layout(org_id, &layout, None).await?;
                 Ok(layout)
             }
         }
@@ -267,14 +276,25 @@ pub async fn load_dashboard_layout(
     }
 }
 
+/// Persist the board and return its new stored revision.
+///
+/// `expected_revision` is the optimistic-concurrency guard: `Some(n)` writes
+/// only while the stored revision is still `n` and fails with
+/// [`AuthStackError::Conflict`] otherwise. `None` is reserved for bootstrap and
+/// repair writes, where the stored payload is unusable and there is no revision
+/// worth preserving.
 pub async fn save_dashboard_layout(
     org_id: &str,
     layout: &crate::contracts::DashboardLayout,
-) -> AuthStackResult<()> {
+    expected_revision: Option<i64>,
+) -> AuthStackResult<i64> {
     let mut layout = layout.clone();
     layout.migrate_if_needed();
     layout.widgets.clear();
     layout.version = 2;
+    // The `revision` column is the source of truth; never bake a stale copy of
+    // it into the stored payload.
+    layout.revision = 0;
     if layout.total_nodes() > MAX_BOARD_NODES {
         return Err(AuthStackError::validation(format!(
             "dashboard supports at most {MAX_BOARD_NODES} nodes"
@@ -291,21 +311,52 @@ pub async fn save_dashboard_layout(
     {
         let payload = serde_json::to_value(&layout)
             .map_err(|error| AuthStackError::serialization(error.to_string()))?;
-        execute_postgres(
-            "INSERT INTO fullstack_app.dashboard_layouts (organization_id, payload) \
-             VALUES (?1::text::uuid, ?2::text::jsonb) \
-             ON CONFLICT (organization_id) DO UPDATE SET \
-                 payload = EXCLUDED.payload, \
-                 revision = fullstack_app.dashboard_layouts.revision + 1, \
-                 updated_at = CURRENT_TIMESTAMP",
-            vec![Value::String(org_id.to_owned()), payload],
-        )
-        .await
-        .map(|_| ())
+        let expected_revision = expected_revision.filter(|revision| *revision > 0);
+        let (sql, params) = match expected_revision {
+            Some(expected) => (
+                "INSERT INTO fullstack_app.dashboard_layouts (organization_id, payload) \
+                 VALUES (?1::text::uuid, ?2::text::jsonb) \
+                 ON CONFLICT (organization_id) DO UPDATE SET \
+                     payload = EXCLUDED.payload, \
+                     revision = fullstack_app.dashboard_layouts.revision + 1, \
+                     updated_at = CURRENT_TIMESTAMP \
+                 WHERE fullstack_app.dashboard_layouts.revision = ?3 \
+                 RETURNING revision",
+                vec![
+                    Value::String(org_id.to_owned()),
+                    payload,
+                    Value::Number(expected.into()),
+                ],
+            ),
+            None => (
+                "INSERT INTO fullstack_app.dashboard_layouts (organization_id, payload) \
+                 VALUES (?1::text::uuid, ?2::text::jsonb) \
+                 ON CONFLICT (organization_id) DO UPDATE SET \
+                     payload = EXCLUDED.payload, \
+                     revision = fullstack_app.dashboard_layouts.revision + 1, \
+                     updated_at = CURRENT_TIMESTAMP \
+                 RETURNING revision",
+                vec![Value::String(org_id.to_owned()), payload],
+            ),
+        };
+        let rows = execute_postgres(sql, params).await?;
+        match (
+            rows.first().and_then(|row| row_i64(row, "revision")),
+            expected_revision,
+        ) {
+            (Some(revision), _) => Ok(revision),
+            // The guarded UPDATE matched no row: someone else wrote first.
+            (None, Some(_)) => Err(AuthStackError::conflict(
+                "the board changed in another session; reload it and reapply your edit",
+            )),
+            (None, None) => Err(AuthStackError::store(
+                "dashboard layout write returned no revision",
+            )),
+        }
     }
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
-        let _ = (org_id, layout);
+        let _ = (org_id, layout, expected_revision);
         Err(AuthStackError::configuration(
             "dashboard storage requires Spin key-value",
         ))

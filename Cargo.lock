@@ -83,6 +83,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
+name = "arc-swap"
+version = "1.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c049c0be4daef0b145cb3555416b3b8ef5b7888a38aea1a3a155801fe7b0810b"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -212,9 +221,9 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "chacha20"
-version = "0.10.1"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d524456ba66e72eb8b115ff89e01e497f8e6d11d78b70b1aa13c0fbd97540a81"
+checksum = "65c35e4b699c7e15ccbe7ee35c005e4fc0a278d22238a2857e6ce2dadeda1b06"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
@@ -409,7 +418,9 @@ version = "0.3.0-rc.7"
 dependencies = [
  "anyhow",
  "assert_cmd",
+ "base64",
  "clap",
+ "getrandom 0.3.4",
  "heck",
  "include_dir",
  "predicates",
@@ -1116,10 +1127,11 @@ dependencies = [
 
 [[package]]
 name = "mysql"
-version = "28.0.0"
+version = "28.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a732193888328fc060ab901c0ed1355521267a51ffbfd9a0b3786434c6b8e7f"
+checksum = "e99968f000e2aadff1545932ac7f7ed4002eeb0207061f377f15ac95ae82626c"
 dependencies = [
+ "arc-swap",
  "bufstream",
  "bytes",
  "crossbeam-queue",

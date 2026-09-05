@@ -119,6 +119,58 @@ mod tests {
     }
 
     #[test]
+    fn oauth_flow_cookie_is_host_prefixed_and_short_lived_when_secure() {
+        assert_eq!(
+            oauth_flow_cookie_header_value("binding_1", 600, true),
+            "__Host-oauth_flow=binding_1; Path=/; HttpOnly; SameSite=Lax; Max-Age=600; Secure"
+        );
+        assert_eq!(
+            oauth_flow_cookie_header_value("binding_1", 600, false),
+            "wasi_auth_dev_oauth_flow=binding_1; Path=/; HttpOnly; SameSite=Lax; Max-Age=600"
+        );
+    }
+
+    #[test]
+    fn expired_oauth_flow_cookie_clears_the_binding() {
+        assert!(expired_oauth_flow_cookie_header_value(true).contains("__Host-oauth_flow=;"));
+        assert!(expired_oauth_flow_cookie_header_value(true).contains("Max-Age=0"));
+    }
+
+    #[test]
+    fn oauth_flow_cookie_is_read_from_a_multi_cookie_header() {
+        assert_eq!(
+            oauth_flow_value_from_cookie_header(
+                "__Host-session=session_1; __Host-oauth_flow=binding_1"
+            )
+            .as_deref(),
+            Some("binding_1")
+        );
+        assert_eq!(
+            oauth_flow_value_from_cookie_header("__Host-session=session_1"),
+            None
+        );
+    }
+
+    #[test]
+    fn role_permissions_reject_system_administration() {
+        let error = validate_role_permissions(&["system.user.manage".to_owned()]).unwrap_err();
+
+        assert_eq!(error.public_code(), "validation");
+    }
+
+    #[test]
+    fn role_permissions_accept_assignable_workspace_permissions() {
+        let assignable = crate::auth_product::organization_permission_options();
+        let permissions = assignable
+            .iter()
+            .map(|option| option.id.clone())
+            .collect::<Vec<_>>();
+
+        assert!(!permissions.is_empty());
+        assert!(validate_role_permissions(&permissions).is_ok());
+    }
+
+    #[test]
     fn embedded_cedar_policy_passes_strict_validation() {
         assert!(
             CedarProvider::new_validated(

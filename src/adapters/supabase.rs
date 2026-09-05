@@ -1,31 +1,42 @@
-use super::http::wasi_http_post;
-use super::sql_text::interpolate_query;
+use super::http::{truncate_body_for_error, wasi_http_post};
 
 // -------------------------------------------------------------------------
 // Supabase PostgREST RPC HTTP adapter
 // -------------------------------------------------------------------------
-#[cfg(feature = "wasi-supabase-rpc")]
-/// Execute SQL via Supabase PostgREST `execute_sql` RPC.
+
+/// RPC contract for Supabase SQL execution.
 ///
-/// This helper interpolates the SQL template and extracts RPC SQL errors into
-/// readable string failures.
+/// The `execute_sql` function must accept:
+/// - `query_text`: SQL with `$1`, `$2`, … placeholders
+/// - `query_params`: positional parameter values bound server-side
+///
+/// Client-side interpolation is not used; callers pass parameterized SQL only.
+pub const SUPABASE_EXECUTE_SQL_RPC: &str = "execute_sql";
+
+#[cfg(feature = "wasi-supabase-rpc")]
+/// Execute SQL via Supabase PostgREST [`SUPABASE_EXECUTE_SQL_RPC`] RPC.
+///
+/// Positional `$n` placeholders in `sql` are bound through `query_params`.
+/// The RPC must be deployed with server-side parameter binding; see
+/// [`SUPABASE_EXECUTE_SQL_RPC`] for the expected contract.
 pub async fn execute_supabase_query(
     url: &str,
     secret_key: Option<&str>,
     sql: &str,
     params: Vec<serde_json::Value>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let rpc_url = if url.ends_with("/rest/v1/rpc/execute_sql") {
+    let rpc_url = if url.ends_with(&format!("/rest/v1/rpc/{SUPABASE_EXECUTE_SQL_RPC}")) {
         url.to_string()
     } else {
-        format!("{}/rest/v1/rpc/execute_sql", url.trim_end_matches('/'))
+        format!(
+            "{}/rest/v1/rpc/{SUPABASE_EXECUTE_SQL_RPC}",
+            url.trim_end_matches('/')
+        )
     };
 
-    let interpolated_sql = interpolate_query(sql, &params)?;
-
     let req_payload = serde_json::json!({
-        "query_text": interpolated_sql,
-        "query_params": Vec::<serde_json::Value>::new(),
+        "query_text": sql,
+        "query_params": params,
     });
     let body_data = serde_json::to_vec(&req_payload).map_err(|e| e.to_string())?;
 
@@ -36,8 +47,12 @@ pub async fn execute_supabase_query(
     }
 
     let resp_bytes = wasi_http_post(&rpc_url, headers, body_data).await?;
-    let resp_val: serde_json::Value = serde_json::from_slice(&resp_bytes)
-        .map_err(|e| format!("Failed to parse Supabase response: {}", e))?;
+    let resp_val: serde_json::Value = serde_json::from_slice(&resp_bytes).map_err(|error| {
+        format!(
+            "Failed to parse Supabase response JSON: {error}; body={}",
+            truncate_body_for_error(&resp_bytes)
+        )
+    })?;
 
     if let Some(err_obj) = resp_val.as_object() {
         if let Some(err_msg) = err_obj.get("error") {

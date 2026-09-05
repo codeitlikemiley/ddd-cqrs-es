@@ -233,26 +233,14 @@ pub(crate) async fn outbox_key() -> AuthStackResult<OutboxSealingKey> {
         .filter(|value| !value.trim().is_empty());
     let production = config_bool("AUTH_PRODUCTION_MODE", false).await;
     let key: [u8; 32] = match configured {
-        Some(encoded) => STANDARD
-            .decode(encoded.trim())
-            .ok()
-            .and_then(|bytes| bytes.try_into().ok())
-            .ok_or_else(|| {
-                AuthStackError::configuration("AUTH_OUTBOX_KEY_BASE64 must decode to 32 bytes")
-            })?,
+        Some(encoded) => decode_key_material("AUTH_OUTBOX_KEY_BASE64", &encoded)?,
         None if production => {
             return Err(AuthStackError::configuration(
                 "AUTH_OUTBOX_KEY_BASE64 is required in production",
             ));
         }
-        None => Sha256::digest(DEVELOPMENT_OUTBOX_KEY).into(),
+        None => derived_key(OUTBOX_KEY_INFO).await?,
     };
-    let development_key: [u8; 32] = Sha256::digest(DEVELOPMENT_OUTBOX_KEY).into();
-    if production && key == development_key {
-        return Err(AuthStackError::configuration(
-            "production forbids the development outbox key",
-        ));
-    }
     let configured_version = runtime_config_value("AUTH_OUTBOX_KEY_VERSION")
         .await
         .filter(|value| !value.trim().is_empty());
@@ -275,9 +263,11 @@ pub(crate) async fn outbox_key() -> AuthStackResult<OutboxSealingKey> {
 }
 
 pub(crate) async fn flow_sealing_key() -> AuthStackResult<FlowSealingKey> {
-    let (version, key) = vault_key_material().await?;
-    FlowSealingKey::new(format!("flow:{version}"), key)
-        .map_err(|_| AuthStackError::configuration("flow sealing key is invalid"))
+    FlowSealingKey::new(
+        format!("flow:{}", key_version().await),
+        derived_key(FLOW_KEY_INFO).await?,
+    )
+    .map_err(|_| AuthStackError::configuration("flow sealing key is invalid"))
 }
 
 pub(crate) async fn oauth_flow_service()
@@ -402,31 +392,27 @@ pub(crate) async fn passkey_service()
     ))
 }
 
-pub(crate) async fn vault_key_material() -> AuthStackResult<(String, [u8; 32])> {
-    let configured = runtime_config_value("AUTH_VAULT_KEY_BASE64")
-        .await
-        .filter(|value| !value.trim().is_empty());
-    let production = config_bool("AUTH_PRODUCTION_MODE", false).await;
-    let key: [u8; 32] = match configured {
-        Some(encoded) => STANDARD
-            .decode(encoded.trim())
-            .ok()
-            .and_then(|bytes| bytes.try_into().ok())
-            .ok_or_else(|| {
-                AuthStackError::configuration("AUTH_VAULT_KEY_BASE64 must decode to 32 bytes")
-            })?,
-        None if production => {
-            return Err(AuthStackError::configuration(
-                "AUTH_VAULT_KEY_BASE64 is required in production",
-            ));
-        }
-        None => Sha256::digest(DEVELOPMENT_OUTBOX_KEY).into(),
-    };
-    let key_version = runtime_config_value("AUTH_VAULT_KEY_VERSION")
+pub(crate) async fn key_version() -> String {
+    runtime_config_value("AUTH_VAULT_KEY_VERSION")
         .await
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "development-v1".to_owned());
-    Ok((key_version, key))
+        .unwrap_or_else(|| "development-v1".to_owned())
+}
+
+pub(crate) async fn vault_key_material() -> AuthStackResult<(String, [u8; 32])> {
+    if config_bool("AUTH_PRODUCTION_MODE", false).await
+        && runtime_config_value("AUTH_VAULT_KEY_BASE64")
+            .await
+            .is_none_or(|value| value.trim().is_empty())
+    {
+        return Err(AuthStackError::configuration(
+            "AUTH_VAULT_KEY_BASE64 is required in production",
+        ));
+    }
+    Ok((
+        key_version().await,
+        purpose_key("AUTH_VAULT_KEY_BASE64", VAULT_KEY_INFO).await?,
+    ))
 }
 
 pub(crate) async fn transactional_mail_config()
@@ -557,9 +543,11 @@ pub(crate) fn remove_cached_verified_token(token: &str) {
 pub(crate) async fn configured_token_service(
     key_ring: JwtKeyRing,
 ) -> AuthStackResult<RuntimeTokenService> {
-    let (version, key) = vault_key_material().await?;
-    let sealing_key = RefreshSealingKey::new(format!("refresh:{version}"), key)
-        .map_err(|_| AuthStackError::configuration("refresh sealing key is invalid"))?;
+    let sealing_key = RefreshSealingKey::new(
+        format!("refresh:{}", key_version().await),
+        derived_key(REFRESH_KEY_INFO).await?,
+    )
+    .map_err(|_| AuthStackError::configuration("refresh sealing key is invalid"))?;
     let issuer = runtime_config_value("AUTH_JWT_ISSUER")
         .await
         .unwrap_or_else(|| crate::application::DEFAULT_PUBLIC_BASE_URL.to_owned());
@@ -602,17 +590,16 @@ pub(crate) async fn configured_jwt_key_ring() -> AuthStackResult<JwtKeyRing> {
                 let kid = runtime_config_value("AUTH_JWT_KID")
                     .await
                     .unwrap_or_else(|| "fullstack-app-dev-hs256".to_owned());
-                let secret = runtime_config_value("AUTH_JWT_SECRET")
+                let secret = match runtime_config_value("AUTH_JWT_SECRET")
                     .await
-                    .unwrap_or_else(|| {
-                        tracing::warn!(
-                            "AUTH_JWT_SECRET is not set; signing tokens with the public \
-                             development key. Set AUTH_PRODUCTION_MODE=true and provide \
-                             AUTH_JWT_KEY_RING_JSON before exposing this app."
-                        );
-                        "dev-fullstack-app-secret-change-me".to_owned()
-                    });
-                JwtKeyRing::development_hs256(kid, secret.into_bytes())
+                    .filter(|value| !value.trim().is_empty())
+                {
+                    Some(secret) => secret.into_bytes(),
+                    // Derived per project, so an unset secret is still unique to
+                    // this deployment instead of a published constant.
+                    None => derived_key(JWT_KEY_INFO).await?.to_vec(),
+                };
+                JwtKeyRing::development_hs256(kid, secret)
                     .map_err(|_| AuthStackError::configuration("development JWT key is invalid"))?
             }
         },
@@ -648,7 +635,8 @@ pub(crate) async fn synchronize_signing_keys(key_ring: &mut JwtKeyRing) -> AuthS
 
 pub(crate) async fn mfa_service()
 -> AuthStackResult<MfaService<SpinPostgresTransport, RuntimeClock, RuntimeRandom>> {
-    let (version, encryption_key) = vault_key_material().await?;
+    let version = key_version().await;
+    let encryption_key = derived_key(MFA_KEY_INFO).await?;
     let production = config_bool("AUTH_PRODUCTION_MODE", false).await;
     let recovery_pepper = match runtime_config_value("AUTH_RECOVERY_CODE_PEPPER_BASE64")
         .await
@@ -662,7 +650,7 @@ pub(crate) async fn mfa_service()
                 "AUTH_RECOVERY_CODE_PEPPER_BASE64 is required in production",
             ));
         }
-        None => Sha256::digest(b"fullstack-development-recovery-pepper").to_vec(),
+        None => derived_key(RECOVERY_PEPPER_INFO).await?.to_vec(),
     };
     let keys = MfaKeyMaterial::new(format!("mfa:{version}"), encryption_key, recovery_pepper)
         .map_err(|_| AuthStackError::configuration("MFA key configuration is invalid"))?;
@@ -692,12 +680,10 @@ pub(crate) async fn issue_tokens(session_id: &SessionId) -> AuthStackResult<(Str
 pub(crate) async fn finalize_new_session(
     session_id: &SessionId,
 ) -> AuthStackResult<(String, String, u64)> {
+    // Sessions keep the assurance they actually earned. Callers relax the AAL2
+    // *requirement* outside production (see `effective_assurance`); they never
+    // rewrite the recorded fact.
     let result = async {
-        // wasi-auth management SQL hard-requires AAL2 for org/member/role mutations.
-        // Local password login is AAL1. When mutation step-up is not enforced
-        // (default outside production), promote the session so the demo UI works
-        // without MFA. Production keeps AAL1 until real step-up.
-        maybe_promote_development_session_assurance(session_id.as_str()).await?;
         bind_default_organization_for_session(session_id.as_str()).await?;
         issue_tokens(session_id).await
     }
@@ -706,28 +692,6 @@ pub(crate) async fn finalize_new_session(
         let _ = revoke_user_session(session_id.as_str(), session_id.as_str()).await;
     }
     result
-}
-
-/// Promote AAL1 → AAL2 for local/dev sessions when step-up is not required.
-async fn maybe_promote_development_session_assurance(session_id: &str) -> AuthStackResult<()> {
-    if crate::application::mutation_step_up_required().await {
-        return Ok(());
-    }
-    let sid = session_id.trim();
-    if sid.is_empty() {
-        return Ok(());
-    }
-    // Direct SQL: wasi-auth has no public "promote assurance without TOTP" API.
-    crate::store::execute_sql(
-        "UPDATE auth_sessions \
-         SET assurance = 'aal2', updated_at_ms = (EXTRACT(EPOCH FROM NOW()) * 1000)::bigint \
-         WHERE session_id = ?1::text::uuid \
-           AND revoked_at_ms IS NULL \
-           AND assurance = 'aal1'",
-        vec![serde_json::Value::String(sid.to_owned())],
-    )
-    .await
-    .map(|_| ())
 }
 
 pub(crate) async fn argon2_policy() -> AuthStackResult<Argon2Policy> {

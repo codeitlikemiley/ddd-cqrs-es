@@ -95,12 +95,25 @@ where
 pub enum InMemorySnapshotError {
     /// Shared state was poisoned by a panic while holding a lock.
     Poisoned,
+    /// A snapshot save offered a revision older than the stored snapshot.
+    StaleRevision {
+        /// Revision offered by the caller.
+        offered: u64,
+        /// Revision currently stored for the stream.
+        current: u64,
+    },
 }
 
 impl Display for InMemorySnapshotError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             InMemorySnapshotError::Poisoned => f.write_str("snapshot store lock was poisoned"),
+            InMemorySnapshotError::StaleRevision { offered, current } => {
+                write!(
+                    f,
+                    "stale snapshot revision: offered {offered}, current {current}"
+                )
+            }
         }
     }
 }
@@ -192,11 +205,27 @@ where
     }
 
     fn save_snapshot(&self, snapshot: Snapshot<A>) -> Result<(), Self::Error> {
+        use std::collections::hash_map::Entry;
+
         let mut snapshots = self
             .snapshots
             .write()
             .map_err(|_| InMemorySnapshotError::Poisoned)?;
-        snapshots.insert(snapshot.aggregate_id.clone(), snapshot);
+        match snapshots.entry(snapshot.aggregate_id.clone()) {
+            Entry::Vacant(entry) => {
+                entry.insert(snapshot);
+            }
+            Entry::Occupied(mut entry) => {
+                let current = entry.get().revision;
+                if snapshot.revision < current {
+                    return Err(InMemorySnapshotError::StaleRevision {
+                        offered: snapshot.revision,
+                        current,
+                    });
+                }
+                entry.insert(snapshot);
+            }
+        }
         Ok(())
     }
 }

@@ -76,18 +76,38 @@ pub(crate) async fn set_session_cookie(response: &LoginCompletionResponse) {
 
 #[cfg(feature = "ssr")]
 pub(crate) async fn clear_session_cookie() {
+    append_response_cookie(&crate::application::expired_session_cookie_header_value(
+        crate::application::session_cookie_secure_enabled().await,
+    ));
+}
+
+#[cfg(feature = "ssr")]
+pub(crate) fn append_response_cookie(cookie_value: &str) {
     use http::HeaderValue;
     use http::header::SET_COOKIE;
 
-    let cookie_value = crate::application::expired_session_cookie_header_value(
-        crate::application::session_cookie_secure_enabled().await,
-    );
-    let Ok(cookie) = HeaderValue::from_str(&cookie_value) else {
+    let Ok(cookie) = HeaderValue::from_str(cookie_value) else {
         return;
     };
     if let Some(resp) = use_context::<leptos_wasi::response::ResponseOptions>() {
         resp.append_header(SET_COOKIE, cookie);
     }
+}
+
+#[cfg(feature = "ssr")]
+pub(crate) fn current_oauth_flow_cookie_value() -> Option<String> {
+    use http::header::COOKIE;
+
+    let parts = use_context::<http::request::Parts>()?;
+    let cookie_header = parts.headers.get(COOKIE)?.to_str().ok()?;
+    crate::application::oauth_flow_value_from_cookie_header(cookie_header)
+}
+
+#[cfg(feature = "ssr")]
+pub(crate) async fn clear_oauth_flow_cookie() {
+    append_response_cookie(&crate::application::expired_oauth_flow_cookie_header_value(
+        crate::application::session_cookie_secure_enabled().await,
+    ));
 }
 
 #[cfg(any(feature = "ssr", test))]

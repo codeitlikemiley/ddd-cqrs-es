@@ -194,29 +194,46 @@ pub fn ensure_snake_identifier(value: &str, label: &str) -> anyhow::Result<()> {
     }
 }
 
+/// Ensures a `ddd.toml` `project.name` is usable as a crate name.
+///
+/// The module-path form (dashes replaced by underscores) is embedded verbatim
+/// in generated `use` statements, so it has to be a snake_case identifier.
+pub fn ensure_package_name(value: &str, label: &str) -> anyhow::Result<()> {
+    ensure_snake_identifier(&value.replace('-', "_"), label)
+}
+
 pub fn parse_field_specs(fields: &[String]) -> anyhow::Result<Vec<(String, String)>> {
-    fields
-        .iter()
-        .map(|field| {
-            let Some((name, ty)) = field.split_once(':') else {
-                anyhow::bail!("field `{field}` must use name:type syntax");
-            };
-            if name.trim().is_empty() || ty.trim().is_empty() {
-                anyhow::bail!("field `{field}` must use non-empty name and type");
-            }
-            let ty = ty.trim();
-            let type_safe = ty
-                .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || " _:<>[],&'*+|".contains(ch));
-            if !type_safe {
-                anyhow::bail!(
-                    "field type `{ty}` in `{field}` contains characters that are \
-                     not allowed in generated code"
-                );
-            }
-            Ok((name.trim().to_snake_case(), ty.to_string()))
-        })
-        .collect()
+    let mut parsed = Vec::with_capacity(fields.len());
+    for field in fields {
+        let Some((name, ty)) = field.split_once(':') else {
+            anyhow::bail!("field `{field}` must use name:type syntax");
+        };
+        if name.trim().is_empty() || ty.trim().is_empty() {
+            anyhow::bail!("field `{field}` must use non-empty name and type");
+        }
+        if name.contains(',') {
+            anyhow::bail!(
+                "field name `{name}` in `{field}` must not contain commas; pass one `--field` per field"
+            );
+        }
+        let name = name.trim().to_snake_case();
+        ensure_snake_identifier(&name, "field name")?;
+        if parsed.iter().any(|(existing, _)| existing == &name) {
+            anyhow::bail!("duplicate field name `{name}`");
+        }
+        let ty = ty.trim();
+        let type_safe = ty
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || " _:<>[],&'*+|".contains(ch));
+        if !type_safe {
+            anyhow::bail!(
+                "field type `{ty}` in `{field}` contains characters that are \
+                 not allowed in generated code"
+            );
+        }
+        parsed.push((name, ty.to_string()));
+    }
+    Ok(parsed)
 }
 
 pub fn render_event_variant(name: &str, fields: &[(String, String)]) -> String {
@@ -361,10 +378,6 @@ fn render_fullstack(input: &InitRenderInput) -> Vec<FileOperation> {
             // Keep in sync with templates/fullstack/Cargo.toml.template pin; rewritten to CLI version.
             "ddd_cqrs_es = { version = \"=0.3.0-rc.7\"",
             &format!("ddd_cqrs_es = {{ version = \"={}\"", framework_version()),
-        )
-        .replace(
-            "# Local wasi-auth for HTML mail templates until the next published rc.\nwasi-auth = { path = \"../../../wasi-auth/crates/wasi-auth\" }\n",
-            "",
         );
     let mut operations = vec![write_operation(
         "Cargo.toml",
@@ -373,7 +386,44 @@ fn render_fullstack(input: &InitRenderInput) -> Vec<FileOperation> {
         "fullstack Cargo manifest",
     )];
     append_fullstack_template_operations(fullstack_template_dir(), input, &mut operations);
+    operations.push(write_operation(
+        ".env",
+        render_fullstack_env_file(input),
+        false,
+        "fullstack local environment with a generated root key",
+    ));
     operations
+}
+
+/// `.env` is generated rather than copied so every project gets its own
+/// `AUTH_ROOT_KEY_BASE64`. The app derives its vault, refresh, flow, MFA, CSRF,
+/// and JWT keys from it and refuses to start when it is missing, which is what
+/// keeps one published constant from being every deployment's key. The outbox
+/// key is emitted too because the native outbox worker cannot run that
+/// derivation itself.
+fn render_fullstack_env_file(input: &InitRenderInput) -> String {
+    let raw = TEMPLATE_DIR
+        .get_file("fullstack/.env.example")
+        .expect("fullstack .env.example must be embedded")
+        .contents_utf8()
+        .expect("fullstack .env.example must be UTF-8");
+    render_fullstack_template_content(".env.example", raw, input)
+        .replace(
+            "AUTH_ROOT_KEY_BASE64=\n",
+            &format!("AUTH_ROOT_KEY_BASE64={}\n", generated_key()),
+        )
+        .replace(
+            "AUTH_OUTBOX_KEY_BASE64=\n",
+            &format!("AUTH_OUTBOX_KEY_BASE64={}\n", generated_key()),
+        )
+}
+
+fn generated_key() -> String {
+    use base64::Engine as _;
+
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes).expect("the host must provide cryptographic randomness");
+    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 fn fullstack_template_dir() -> &'static Dir<'static> {
@@ -731,7 +781,7 @@ impl Aggregate for {aggregate} {{
 }
 
 pub fn render_domain_test(input: &InitRenderInput, names: &NameParts) -> String {
-    format!(
+    let test_body = format!(
         r#"use ddd_cqrs_es::Aggregate;
 use {module_path}::domain::{{{aggregate}, {command_type}, {event_type}}};
 
@@ -758,7 +808,12 @@ fn create_command_emits_created_event() {{
         event_type = names.event_type,
         create_command = names.create_command,
         created_event = names.created_event
-    )
+    );
+    if input.selection.preset == Preset::Fullstack {
+        format!("#![cfg(feature = \"ssr\")]\n\n{test_body}")
+    } else {
+        test_body
+    }
 }
 
 fn render_native_api_main(names: &NameParts) -> String {
@@ -1047,6 +1102,44 @@ pub use {module}::*;
     )
 }
 
+pub fn render_fullstack_domain_rest_match_arms(names: &NameParts) -> String {
+    format!(
+        r#"        (Method::GET, path) if path.starts_with("/api/domain/{module}/") => {{
+            let id = path
+                .strip_prefix("/api/domain/{module}/")
+                .unwrap_or_default()
+                .trim_matches('/')
+                .to_string();
+            if id.is_empty() || id.contains('/') {{
+                return Err(AuthStackError::not_found("unknown domain route"));
+            }}
+            let view = domain_app::get_{module}_view({id_type}::from(id))
+                .await
+                .map_err(AuthStackError::store)?;
+            json_ok(&view)
+        }}
+        (Method::POST, path) if path.starts_with("/api/domain/{module}/") && path.ends_with("/commands") => {{
+            let trimmed = path
+                .strip_prefix("/api/domain/{module}/")
+                .and_then(|rest| rest.strip_suffix("/commands"))
+                .unwrap_or_default()
+                .trim_matches('/');
+            if trimmed.is_empty() || trimmed.contains('/') {{
+                return Err(AuthStackError::not_found("unknown domain route"));
+            }}
+            let command = parse_json::<{command_type}>(req).await?;
+            let view = domain_app::execute_{module}_command({id_type}::from(trimmed.to_string()), command)
+                .await
+                .map_err(AuthStackError::store)?;
+            json_ok(&view)
+        }}
+"#,
+        module = names.module,
+        command_type = names.command_type,
+        id_type = names.id_type
+    )
+}
+
 pub fn render_fullstack_domain_rest_bootstrap(names: &NameParts) -> String {
     format!(
         r#"//! REST surface for product-domain aggregates (`/api/domain/...`).
@@ -1075,41 +1168,7 @@ pub async fn dispatch(req: RestRequest) -> AuthStackResult<RestResponse> {{
     let path = req.uri().path().to_string();
 
     match (method, path.as_str()) {{
-        (Method::GET, path) if path.starts_with("/api/domain/{module}/") => {{
-            let id = path
-                .strip_prefix("/api/domain/{module}/")
-                .unwrap_or_default()
-                .trim_matches('/')
-                .to_string();
-            if id.is_empty() || id.contains('/') {{
-                return Err(AuthStackError::not_found("unknown domain route"));
-            }}
-            let view = domain_app::get_{module}_view({id_type}::from(id))
-                .await
-                .map_err(AuthStackError::store)?;
-            json_ok(&view)
-        }}
-        (Method::POST, path)
-            if path.starts_with("/api/domain/{module}/") && path.ends_with("/commands") =>
-        {{
-            let trimmed = path
-                .strip_prefix("/api/domain/{module}/")
-                .and_then(|rest| rest.strip_suffix("/commands"))
-                .unwrap_or_default()
-                .trim_matches('/');
-            if trimmed.is_empty() || trimmed.contains('/') {{
-                return Err(AuthStackError::not_found("unknown domain route"));
-            }}
-            let command = parse_json::<{command_type}>(req).await?;
-            let view = domain_app::execute_{module}_command(
-                {id_type}::from(trimmed.to_string()),
-                command,
-            )
-            .await
-            .map_err(AuthStackError::store)?;
-            json_ok(&view)
-        }}
-        // ddd:domain-rest-arms
+{match_arms}        // ddd:domain-rest-arms
         // ddd:domain-rest-arms:end
         _ => Err(AuthStackError::not_found("unknown domain API route")),
     }}
@@ -1148,53 +1207,22 @@ fn json_ok<T: Serialize>(value: &T) -> AuthStackResult<RestResponse> {{
         .map_err(|error| AuthStackError::transport(error.to_string()))
 }}
 "#,
-        module = names.module,
         command_type = names.command_type,
-        id_type = names.id_type
+        id_type = names.id_type,
+        match_arms = render_fullstack_domain_rest_match_arms(names)
     )
 }
 
 pub fn render_fullstack_domain_rest_arm(names: &NameParts) -> String {
-    format!(
-        r#"        (Method::GET, path) if path.starts_with("/api/domain/{module}/") => {{
-            let id = path
-                .strip_prefix("/api/domain/{module}/")
-                .unwrap_or_default()
-                .trim_matches('/')
-                .to_string();
-            if id.is_empty() || id.contains('/') {{
-                return Err(AuthStackError::not_found("unknown domain route"));
-            }}
-            let view = domain_app::get_{module}_view({id_type}::from(id))
-                .await
-                .map_err(AuthStackError::store)?;
-            json_ok(view)
-        }}
-        (Method::POST, path) if path.starts_with("/api/domain/{module}/") && path.ends_with("/commands") => {{
-            let trimmed = path
-                .strip_prefix("/api/domain/{module}/")
-                .and_then(|rest| rest.strip_suffix("/commands"))
-                .unwrap_or_default()
-                .trim_matches('/');
-            if trimmed.is_empty() || trimmed.contains('/') {{
-                return Err(AuthStackError::not_found("unknown domain route"));
-            }}
-            let command = parse_json::<{command_type}>(req).await?;
-            let view = domain_app::execute_{module}_command({id_type}::from(trimmed.to_string()), command)
-                .await
-                .map_err(AuthStackError::store)?;
-            json_ok(view)
-        }}
-"#,
-        module = names.module,
-        command_type = names.command_type,
-        id_type = names.id_type
-    )
+    render_fullstack_domain_rest_match_arms(names)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ensure_rust_identifier, ensure_snake_identifier};
+    use super::{
+        ensure_rust_identifier, ensure_snake_identifier, parse_field_specs,
+        render_fullstack_domain_rest_arm, render_fullstack_domain_rest_bootstrap, NameParts,
+    };
 
     #[test]
     fn rust_identifier_rejects_keywords() {
@@ -1208,5 +1236,28 @@ mod tests {
         assert!(ensure_snake_identifier("order", "aggregate module").is_ok());
         let error = ensure_snake_identifier("type", "aggregate module").unwrap_err();
         assert!(error.to_string().contains("Rust keyword"));
+    }
+
+    #[test]
+    fn field_specs_reject_duplicates_commas_and_invalid_names() {
+        assert!(parse_field_specs(&["amount:i64".to_string()]).is_ok());
+        let duplicate =
+            parse_field_specs(&["amount:i64".to_string(), "amount:u64".to_string()]).unwrap_err();
+        assert!(duplicate.to_string().contains("duplicate field name"));
+        let comma = parse_field_specs(&["amount,total:i64".to_string()]).unwrap_err();
+        assert!(comma.to_string().contains("must not contain commas"));
+        let keyword = parse_field_specs(&["type:i64".to_string()]).unwrap_err();
+        assert!(keyword.to_string().contains("Rust keyword"));
+    }
+
+    #[test]
+    fn fullstack_domain_rest_codegen_uses_borrowed_json_ok_for_two_aggregates() {
+        let billing = NameParts::new("Billing");
+        let invoice = NameParts::new("Invoice");
+        let bootstrap = render_fullstack_domain_rest_bootstrap(&billing);
+        let second = render_fullstack_domain_rest_arm(&invoice);
+        let combined = format!("{bootstrap}\n{second}");
+        assert_eq!(combined.matches("json_ok(&view)").count(), 4);
+        assert!(!combined.contains("json_ok(view)"));
     }
 }

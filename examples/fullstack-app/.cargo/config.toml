@@ -8,3 +8,17 @@ rustflags = ['--cfg', 'getrandom_backend="custom"']
 # getrandom's wasm_js backend.
 [target.wasm32-unknown-unknown]
 rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
+
+# `Cargo.toml` pins the `ddd_cqrs_es` version a generated project resolves from
+# crates.io, and is mirrored byte-for-byte into
+# `crates/ddd-cli/templates/fullstack/Cargo.toml.template`. That pin names the
+# version this repository is preparing, which is unpublished for the whole
+# development cycle, so the manifest alone cannot resolve here. Patching in
+# config instead of in the manifest keeps the mirrored file identical while
+# building this example against the library beside it — which is also what a
+# monorepo example should verify. The template's own `.cargo/config.toml`
+# carries no such entry, and `.cargo` is outside the sync allowlist in
+# `scripts/sync_fullstack_template.sh`, so this cannot reach a generated
+# project.
+[patch.crates-io.ddd_cqrs_es]
+path = "../.."

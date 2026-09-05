@@ -56,11 +56,15 @@ pub async fn seed_dashboard_demos(org_id: &str) -> AuthStackResult<bool> {
     const DEMO_W_LIST: &str = "demo-w-list";
     const DEMO_W_METRIC: &str = "demo-w-metric";
 
-    let mut resources = load_resources(org_id).await.unwrap_or_default();
-    let mut queries = load_queries(org_id).await.unwrap_or_default();
+    let resources = load_resources(org_id).await.unwrap_or_default();
+    let queries = load_queries(org_id).await.unwrap_or_default();
     let mut layout = load_dashboard_layout(org_id).await?;
     layout.migrate_if_needed();
     let mut changed = false;
+    // Only the rows this run actually adds are written back, so seeding never
+    // rewrites resources and queries other members created.
+    let mut new_resources: Vec<DashboardResource> = Vec::new();
+    let mut new_queries: Vec<DashboardQuery> = Vec::new();
 
     // Placeholder vault secret for demos that show how auth pickers work.
     let secrets = load_secrets_raw(org_id).await?;
@@ -85,7 +89,7 @@ pub async fn seed_dashboard_demos(org_id: &str) -> AuthStackResult<bool> {
     }
 
     if !resources.iter().any(|r| r.id == DEMO_REST_RES) {
-        resources.push(DashboardResource {
+        new_resources.push(DashboardResource {
             id: DEMO_REST_RES.to_owned(),
             name: "Demo · JSONPlaceholder".to_owned(),
             kind: ResourceKind::Rest,
@@ -100,7 +104,7 @@ pub async fn seed_dashboard_demos(org_id: &str) -> AuthStackResult<bool> {
     }
 
     if !queries.iter().any(|q| q.id == DEMO_Q_LIST) {
-        queries.push(DashboardQuery {
+        new_queries.push(DashboardQuery {
             id: DEMO_Q_LIST.to_owned(),
             name: "Demo todos".to_owned(),
             resource_id: DEMO_REST_RES.to_owned(),
@@ -117,7 +121,7 @@ pub async fn seed_dashboard_demos(org_id: &str) -> AuthStackResult<bool> {
     }
 
     if !queries.iter().any(|q| q.id == DEMO_Q_METRIC) {
-        queries.push(DashboardQuery {
+        new_queries.push(DashboardQuery {
             id: DEMO_Q_METRIC.to_owned(),
             name: "Demo todo #1".to_owned(),
             resource_id: DEMO_REST_RES.to_owned(),
@@ -133,9 +137,12 @@ pub async fn seed_dashboard_demos(org_id: &str) -> AuthStackResult<bool> {
         changed = true;
     }
 
-    if changed {
-        save_resources(org_id, &resources).await?;
-        save_queries(org_id, &queries).await?;
+    // Resources before queries: the queries table has a foreign key on them.
+    for resource in &new_resources {
+        upsert_resource_row(org_id, resource).await?;
+    }
+    for query in &new_queries {
+        upsert_query_row(org_id, query).await?;
     }
 
     let has_demo_row = layout.nodes.iter().any(|n| n.id() == DEMO_ROW);
@@ -177,7 +184,7 @@ pub async fn seed_dashboard_demos(org_id: &str) -> AuthStackResult<bool> {
                 ],
             },
         );
-        save_dashboard_layout(org_id, &layout).await?;
+        save_dashboard_layout(org_id, &layout, Some(layout.revision)).await?;
         changed = true;
     }
 

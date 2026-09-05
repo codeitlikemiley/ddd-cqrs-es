@@ -199,3 +199,22 @@ pub(crate) fn parse_browser_origin(value: &str) -> Option<BrowserOrigin> {
 pub(crate) fn is_loopback_host(host: &str) -> bool {
     host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "::1"
 }
+
+/// Whether the app is served on loopback. Development shortcuts (mail capture,
+/// the OAuth callback bypass, derived development secrets) are unauthenticated
+/// account-takeover primitives, so they are only allowed on a developer's own
+/// machine — a routable `AUTH_PUBLIC_BASE_URL` means real users.
+pub async fn loopback_public_base_url() -> bool {
+    let base_url = public_base_url().await;
+    parse_browser_origin(base_url.trim().trim_end_matches('/'))
+        .is_some_and(|origin| is_loopback_host(&origin.host))
+}
+
+pub async fn require_loopback_public_base_url(surface: &str) -> AuthStackResult<()> {
+    if loopback_public_base_url().await {
+        return Ok(());
+    }
+    Err(AuthStackError::configuration(format!(
+        "{surface} requires a loopback AUTH_PUBLIC_BASE_URL"
+    )))
+}

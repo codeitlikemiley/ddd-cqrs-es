@@ -629,10 +629,16 @@ pub(crate) fn truthy(value: &str) -> bool {
     )
 }
 
-pub(crate) fn system_administrator_may(permission: &str, session: &SessionView) -> bool {
+pub(crate) async fn system_administrator_may(permission: &str, session: &SessionView) -> bool {
     session.system_administrator
-        && session.assurance == "aal2"
+        && step_up_satisfied(&session.assurance).await
         && is_system_administration_permission(permission)
+}
+
+/// AAL2 when the session earned it, or when step-up is not enforced for this
+/// deployment. Mirrors `effective_assurance` so every gate relaxes identically.
+pub(crate) async fn step_up_satisfied(assurance: &str) -> bool {
+    assurance == "aal2" || !mutation_step_up_required().await
 }
 
 pub(crate) fn is_system_administration_permission(permission: &str) -> bool {

@@ -50,6 +50,39 @@ pub(crate) fn validate_table_name(table_name: &str) -> Result<(), EventStoreErro
     feature = "mysql",
     feature = "redis"
 ))]
+/// Maps a stream-revision unique violation into the appropriate concurrency error.
+pub(crate) fn map_stream_unique_violation(
+    expected: ExpectedRevision,
+    current_revision: u64,
+) -> EventStoreError {
+    match expected {
+        ExpectedRevision::NoStream => {
+            EventStoreError::Concurrency(ConcurrencyError::StreamAlreadyExists)
+        }
+        _ => EventStoreError::Concurrency(ConcurrencyError::WrongExpectedRevision {
+            expected,
+            actual: current_revision,
+        }),
+    }
+}
+
+#[cfg(any(
+    feature = "sqlite",
+    feature = "postgres",
+    feature = "mysql",
+    feature = "redis"
+))]
+/// Returns an error when a snapshot save did not advance stored revision.
+pub(crate) fn stale_snapshot_revision_error(offered: u64, current: u64) -> EventStoreError {
+    EventStoreError::Concurrency(ConcurrencyError::StaleSnapshotRevision { offered, current })
+}
+
+#[cfg(any(
+    feature = "sqlite",
+    feature = "postgres",
+    feature = "mysql",
+    feature = "redis"
+))]
 pub(crate) fn check_expected_revision(
     expected: ExpectedRevision,
     actual: u64,

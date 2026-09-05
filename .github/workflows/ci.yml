@@ -18,6 +18,45 @@ jobs:
   quality:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    env:
+      DDD_CQRS_ES_POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/ddd_test
+      DDD_CQRS_ES_MYSQL_URL: mysql://root:mysql@127.0.0.1:3306/ddd_test
+      DDD_CQRS_ES_REDIS_URL: redis://127.0.0.1:6379
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ddd_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ddd_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: mysql
+          MYSQL_DATABASE: ddd_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -u root -pmysql"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 15
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -49,3 +88,35 @@ jobs:
 
       - name: Run CI quality suite
         run: bash scripts/ci-check.sh
+
+  # `quality` never compiles the fullstack preset, so a template that names a
+  # `wasi-auth` API no published version exports reached users unnoticed. This
+  # job generates a project on a runner that has no sibling checkout to fall
+  # back on, and compiles it for both the server and the browser.
+  generated-fullstack:
+    name: generated fullstack project
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+          targets: wasm32-wasip2, wasm32-unknown-unknown
+
+      - name: Cache cargo artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-fullstack-${{ hashFiles('**/Cargo.lock', 'crates/ddd-cli/templates/fullstack/Cargo.toml.template') }}
+          restore-keys: |
+            ${{ runner.os }}-fullstack-
+
+      - name: Compile a generated fullstack project
+        run: bash scripts/check-generated-fullstack.sh

@@ -140,7 +140,7 @@ async fn dispatch(req: RestRequest) -> AuthStackResult<RestResponse> {
         }
         (Method::GET, path) if path.starts_with("/api/auth/oauth/") && path.ends_with("/start") => {
             let provider_id = oauth_provider_from_path(path, "/start")?;
-            json_result(
+            oauth_start_result(
                 crate::application::start_oauth_login(
                     provider_id.to_string(),
                     query_value(&uri, "next"),
@@ -152,6 +152,9 @@ async fn dispatch(req: RestRequest) -> AuthStackResult<RestResponse> {
             if path.starts_with("/api/auth/oauth/") && path.ends_with("/callback") =>
         {
             let provider_id = oauth_provider_from_path(path, "/callback")?;
+            let binding = crate::application::OAuthFlowBinding::Browser(
+                oauth_flow_binding_from_request(&req),
+            );
             let request = OAuthCallbackRequest {
                 provider_id: provider_id.to_string(),
                 code: query_value(&uri, "code"),
@@ -161,7 +164,7 @@ async fn dispatch(req: RestRequest) -> AuthStackResult<RestResponse> {
             oauth_callback_result(
                 provider_id,
                 wants_json_response(&req, &uri),
-                crate::application::complete_oauth_callback(request).await,
+                crate::application::complete_oauth_callback(request, binding).await,
             )
             .await
         }
@@ -227,10 +230,14 @@ async fn dispatch(req: RestRequest) -> AuthStackResult<RestResponse> {
         (Method::GET, "/api/auth/.well-known/jwks.json") => {
             json_result(crate::application::get_jwks().await)
         }
+        #[cfg(all(feature = "mail-capture", debug_assertions))]
         (Method::GET, "/api/auth/dev/mail/latest") => {
             let recipient = query_value(&uri, "recipient").unwrap_or_default();
             let message_kind = query_value(&uri, "kind").unwrap_or_default();
-            json_result(crate::application::latest_captured_mail(recipient, message_kind).await)
+            json_result(
+                crate::application::latest_captured_mail(recipient, message_kind, request_auth)
+                    .await,
+            )
         }
         #[cfg(feature = "mail-capture")]
         (Method::POST, "/api/auth/dev/storage/rollback-probe") => {
@@ -421,12 +428,24 @@ fn json_result<T: Serialize>(result: AuthStackResult<T>) -> AuthStackResult<Rest
     }
 }
 
+fn oauth_start_result(
+    result: AuthStackResult<crate::application::OAuthLoginStart>,
+) -> AuthStackResult<RestResponse> {
+    let start = match result {
+        Ok(start) => start,
+        Err(error) => return auth_error_response(&error),
+    };
+    let mut response = json_response(StatusCode::OK, &start.response)?;
+    append_set_cookie(&mut response, &start.set_cookie);
+    Ok(response)
+}
+
 async fn oauth_callback_result(
     provider_id: &str,
     json_mode: bool,
     result: AuthStackResult<LoginCompletionResponse>,
 ) -> AuthStackResult<RestResponse> {
-    match result {
+    let mut response = match result {
         Ok(value) if json_mode => json_response(StatusCode::OK, &value),
         Ok(value) => oauth_redirect_response(&value).await,
         Err(error) if json_mode => auth_error_response(&error),
@@ -434,6 +453,22 @@ async fn oauth_callback_result(
             log_rest_error(&error, error.http_status());
             redirect_response(&format!("/auth/callback/{provider_id}/error"), None)
         }
+    }?;
+    // The flow binding is single-use whatever the outcome.
+    append_set_cookie(
+        &mut response,
+        &crate::application::expired_oauth_flow_cookie_header_value(
+            crate::application::session_cookie_secure_enabled().await,
+        ),
+    );
+    Ok(response)
+}
+
+fn append_set_cookie(response: &mut RestResponse, value: &str) {
+    if let Ok(value) = http::HeaderValue::from_str(value) {
+        response
+            .headers_mut()
+            .append(http::header::SET_COOKIE, value);
     }
 }
 
@@ -588,6 +623,13 @@ fn cookie_session_id_from_request(req: &RestRequest) -> Option<String> {
         .and_then(session_id_from_cookie_header)
 }
 
+fn oauth_flow_binding_from_request(req: &RestRequest) -> Option<String> {
+    req.headers()
+        .get(http::header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(crate::application::oauth_flow_value_from_cookie_header)
+}
+
 fn access_token_from_request(req: &RestRequest) -> Option<String> {
     req.headers()
         .get(http::header::AUTHORIZATION)
@@ -688,7 +730,6 @@ fn known_rest_path(path: &str) -> bool {
                 | "/api/auth/sessions/revoke"
                 | "/api/auth/logout"
                 | "/api/auth/.well-known/jwks.json"
-                | "/api/auth/dev/mail/latest"
                 | "/api/auth/signing-keys"
                 | "/api/auth/storage/status"
                 | "/api/auth/storage/projections/run"
@@ -699,6 +740,8 @@ fn known_rest_path(path: &str) -> bool {
         )
         || (path.starts_with("/api/auth/oauth/")
             && (path.ends_with("/start") || path.ends_with("/callback")))
+        || (cfg!(all(feature = "mail-capture", debug_assertions))
+            && path == "/api/auth/dev/mail/latest")
         || (cfg!(feature = "mail-capture") && path == "/api/auth/dev/storage/rollback-probe")
 }
 

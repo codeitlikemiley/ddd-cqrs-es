@@ -1,0 +1,5 @@
+# `ddd init` writes real key material into .env, and `make` persists locally
+# generated keys next to it. None of it belongs in version control.
+.env
+.auth-root-key
+.auth-outbox-key

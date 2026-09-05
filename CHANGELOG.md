@@ -2,6 +2,57 @@
 
 ## 0.3.0-rc.7
 
+- **Fixed (unbounded memory / Redis data loss):** projection runners no longer
+  buffer the entire tail after their checkpoint. Every `run(...)` (in-memory,
+  persisted, checkpointed, transactional, and the async twins) now repeats
+  `run_batch(...)` until a batch reports `caught_up`, so catching up on a large
+  backlog costs one batch of memory at a time instead of one allocation the
+  size of the backlog. A full batch that fails to move the feed position ends
+  the loop rather than replaying forever.
+- **Breaking (custom stores):** `load_global_after_limited` is now the required
+  replay primitive on `EventStore` / `AsyncEventStore`, and `load_global_after`
+  is provided — its default pages through the bounded method instead of the
+  bounded method collecting the whole tail and truncating it. Custom stores that
+  implemented only `load_global_after` must implement
+  `load_global_after_limited` (pushing the limit into the backend query) and may
+  drop their unbounded override. `load_global_after` is kept, not deprecated,
+  and documented as unbounded: use it for tests, small fixtures, and explicit
+  maintenance jobs only.
+- **Fixed (Redis, permanently unreadable streams):** the Redis adapter chunks
+  and pages every read. Event hashes are fetched at most 256 keys per `EVAL`,
+  and sorted-set indexes are read through
+  `ZRANGEBYSCORE ... WITHSCORES LIMIT` pages of 500 members with a score cursor
+  instead of one unbounded `ZRANGE` / `ZRANGEBYSCORE`. Previously a single
+  batched `HGETALL` reply carried 21 RESP elements per event, so any stream or
+  replay backlog past roughly 47,600 events exceeded the raw RESP client's
+  1,000,000 element array limit and could never be loaded again.
+
+- **New:** `PersistedProjectionRunner::with_aggregate_scoped_checkpoints` (and
+  the async twin) keys checkpoints on the projection name **and** the feed being
+  replayed, so one projection driven by several aggregate types no longer shares
+  a single checkpoint row. Global replay feeds are aggregate-type scoped, so
+  under the old name-only keying whichever feed advanced furthest hid the other
+  feeds' events permanently. `run_raw_batch` gets its own cross-aggregate scope
+  under the new keying instead of sharing a position with a typed feed.
+  `PersistedProjectionRunner::new` keeps name-only keying, so no existing
+  deployment is rewound; when opting in, seed the new rows from the old one with
+  the exposed `aggregate_scoped_checkpoint_key` / `raw_checkpoint_key` helpers
+  rather than replaying from zero.
+- **Fixed (CLI, path traversal):** `ddd` validates `ddd.toml` before codegen —
+  every `[domains]` module key must be a snake_case identifier, aggregates must
+  be Rust identifiers, and `project.name` must be a usable crate name — and every
+  generated read and write is joined through a containment check that rejects
+  absolute paths and `..` components. A crafted manifest in a cloned repository
+  (for example a `[domains."../../../outside"]` key) can no longer make
+  `ddd add` write outside the project root.
+- **Fixed (data loss):** the schema migrator no longer answers a failed
+  "does the bookkeeping table have a `table_name` column?" probe with
+  `DROP TABLE`. Postgres and MySQL propagate the probe error instead of
+  collapsing it to `false`, the Postgres probe is resolved through
+  `to_regclass` (so it cannot match a same-named table in another schema) and
+  ignores dropped columns, and all three dialects now refuse with a recovery
+  message when the migrations table exists in an unexpected shape instead of
+  dropping it.
 - **New:** `RawEventFeed` / `AsyncRawEventFeed` — a bounded cross-aggregate
   replay feed returning `RawEventEnvelope`
   (`EventEnvelope<serde_json::Value, String>`) in global commit order with no
