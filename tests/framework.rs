@@ -585,23 +585,10 @@ fn postgres_query_plans_use_expected_indexes_when_url_is_provided() {
     .unwrap();
     store.initialize_schema().unwrap();
 
-    let repo = Repository::new(store);
-    for index in 0..50 {
-        let counter_id = format!("postgres-plan-counter-{index}");
-        repo.execute(&counter_id, CounterCommand::Create, Metadata::default())
-            .unwrap();
-        repo.execute(
-            &counter_id,
-            CounterCommand::Increment { by: 1 },
-            Metadata::default(),
-        )
-        .unwrap();
-    }
-
     let mut client = postgres::Client::connect(&database_url, postgres::NoTls).unwrap();
-    // Seed a second aggregate_type so `aggregate_type = $1` is selective. With only
-    // one type, Postgres may prefer the sequence primary key over the composite
-    // global-replay index even when that index exists.
+    // Insert noise first so low sequences are a different aggregate_type. If counters
+    // occupy the lowest sequences, a LIMIT 10 primary-key scan never sees the noise
+    // and the planner prefers the pkey over `{table}_global_replay_idx`.
     client
         .execute(
             &format!(
@@ -624,6 +611,20 @@ fn postgres_query_plans_use_expected_indexes_when_url_is_provided() {
             &[],
         )
         .unwrap();
+
+    let repo = Repository::new(store);
+    for index in 0..50 {
+        let counter_id = format!("postgres-plan-counter-{index}");
+        repo.execute(&counter_id, CounterCommand::Create, Metadata::default())
+            .unwrap();
+        repo.execute(
+            &counter_id,
+            CounterCommand::Increment { by: 1 },
+            Metadata::default(),
+        )
+        .unwrap();
+    }
+
     client
         .batch_execute(&format!("ANALYZE {table_name}; SET enable_seqscan = off;"))
         .unwrap();
