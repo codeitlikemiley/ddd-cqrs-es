@@ -13,9 +13,9 @@ use crate::pool::{resolve_pool_size, ConnectionPool};
 use crate::projection::CheckpointStore;
 use crate::snapshot::{Snapshot, SnapshotStore};
 use crate::sql_common::{
-    check_expected_revision, deserialize_id, deserialize_metadata, deserialize_payload,
-    millis_to_system_time, serialize_id, serialize_metadata, serialize_payload,
-    system_time_to_millis, validate_table_name,
+    aggregate_id_lookup_keys, check_expected_revision, deserialize_id, deserialize_metadata,
+    deserialize_payload, max_revision_for_lookup_keys, millis_to_system_time, serialize_id,
+    serialize_metadata, serialize_payload, system_time_to_millis, validate_table_name,
 };
 use crate::upcast::UpcasterRegistry;
 use mysql::prelude::*;
@@ -314,7 +314,7 @@ where
     type Error = EventStoreError;
 
     fn load(&self, aggregate_id: &A::Id) -> Result<EventStream<A>, Self::Error> {
-        let aggregate_id = serialize_id(aggregate_id)?;
+        let keys = aggregate_id_lookup_keys(aggregate_id)?;
         let table_name = self.table_name.clone();
         let upcasters = self.upcasters.clone();
         self.pool.read(move |connection| {
@@ -324,9 +324,16 @@ where
                  WHERE aggregate_type = ? AND aggregate_id = ? ORDER BY revision ASC",
                 table = table_name
             );
-            let rows: Vec<Row> = connection
-                .exec(&query, (A::aggregate_type(), &aggregate_id))
-                .map_err(map_mysql_error)?;
+            let aggregate_type = A::aggregate_type();
+            let mut rows = Vec::new();
+            for key in &keys {
+                rows = connection
+                    .exec(&query, (aggregate_type, key))
+                    .map_err(map_mysql_error)?;
+                if !rows.is_empty() {
+                    break;
+                }
+            }
 
             rows.into_iter()
                 .map(|row| row_to_envelope::<A>(&upcasters, row))
@@ -341,7 +348,7 @@ where
     ) -> Result<EventStream<A>, Self::Error> {
         let revision_i64 = i64::try_from(revision)
             .map_err(|_| EventStoreError::serialization("revision exceeds i64".to_owned()))?;
-        let aggregate_id = serialize_id(aggregate_id)?;
+        let keys = aggregate_id_lookup_keys(aggregate_id)?;
         let table_name = self.table_name.clone();
         let upcasters = self.upcasters.clone();
         self.pool.read(move |connection| {
@@ -352,9 +359,16 @@ where
                  ORDER BY revision ASC",
                 table = table_name
             );
-            let rows: Vec<Row> = connection
-                .exec(&query, (A::aggregate_type(), &aggregate_id, revision_i64))
-                .map_err(map_mysql_error)?;
+            let aggregate_type = A::aggregate_type();
+            let mut rows = Vec::new();
+            for key in &keys {
+                rows = connection
+                    .exec(&query, (aggregate_type, key, revision_i64))
+                    .map_err(map_mysql_error)?;
+                if !rows.is_empty() {
+                    break;
+                }
+            }
 
             rows.into_iter()
                 .map(|row| row_to_envelope::<A>(&upcasters, row))
@@ -368,7 +382,8 @@ where
         expected_revision: ExpectedRevision,
         events: Vec<NewEvent<A::Event>>,
     ) -> Result<EventStream<A>, Self::Error> {
-        let aggregate_id_key = serialize_id(aggregate_id)?;
+        let keys = aggregate_id_lookup_keys(aggregate_id)?;
+        let aggregate_id_key = keys[0].clone();
         let prepared = events
             .into_iter()
             .map(PreparedMySqlEvent::new)
@@ -379,17 +394,8 @@ where
                 .start_transaction(TxOpts::default())
                 .map_err(map_mysql_error)?;
 
-            let revision_query = format!(
-                "SELECT COALESCE(MAX(revision), 0) FROM {table} \
-                 WHERE aggregate_type = ? AND aggregate_id = ?",
-                table = table_name
-            );
-            let actual_revision: i64 = transaction
-                .exec_first(&revision_query, (A::aggregate_type(), &aggregate_id_key))
-                .map_err(map_mysql_error)?
-                .unwrap_or(0);
-            let actual_revision = u64::try_from(actual_revision).map_err(|_| {
-                EventStoreError::deserialization("stored revision cannot be negative".to_owned())
+            let actual_revision = max_revision_for_lookup_keys(&keys, |key| {
+                current_revision_mysql(&mut transaction, &table_name, A::aggregate_type(), key)
             })?;
             check_expected_revision(expected_revision, actual_revision)?;
 

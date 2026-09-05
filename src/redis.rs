@@ -32,9 +32,9 @@ use crate::event::{EventEnvelope, EventId, ExpectedRevision, NewEvent};
 use crate::event_store::EventStream;
 use crate::projection::AsyncCheckpointStore;
 use crate::sql_common::{
-    check_expected_revision, deserialize_id, deserialize_metadata, deserialize_payload,
-    millis_to_system_time, serialize_id, serialize_metadata, serialize_payload,
-    system_time_to_millis,
+    aggregate_id_lookup_keys, check_expected_revision, deserialize_id, deserialize_metadata,
+    deserialize_payload, millis_to_system_time, serialize_id, serialize_metadata,
+    serialize_payload, system_time_to_millis,
 };
 use crate::upcast::UpcasterRegistry;
 use async_trait::async_trait;
@@ -354,16 +354,41 @@ where
     where
         A::Id: serde::Serialize,
     {
-        let aggregate_id_json = serialize_id(aggregate_id)?;
-        let aggregate_type_key = hex_encode(A::aggregate_type().as_bytes());
+        let keys = aggregate_id_lookup_keys(aggregate_id)?;
+        self.stream_keys_for_storage_key(A::aggregate_type(), &keys[0])
+    }
+
+    fn stream_keys_for_storage_key(
+        &self,
+        aggregate_type: &str,
+        aggregate_id_json: &str,
+    ) -> Result<RedisStreamKeys, EventStoreError> {
+        let aggregate_type_key = hex_encode(aggregate_type.as_bytes());
         let aggregate_id_key = hex_encode(aggregate_id_json.as_bytes());
 
         let tagged = redis_hash_tagged_prefix(&self.prefix);
         Ok(RedisStreamKeys {
-            aggregate_id_json,
+            aggregate_id_json: aggregate_id_json.to_owned(),
             revision_key: format!("{tagged}:revision:{aggregate_type_key}:{aggregate_id_key}"),
             stream_key: format!("{tagged}:stream:{aggregate_type_key}:{aggregate_id_key}"),
         })
+    }
+
+    async fn max_revision_for_aggregate_id(
+        &self,
+        aggregate_type: &str,
+        aggregate_id: &A::Id,
+    ) -> Result<u64, EventStoreError>
+    where
+        A::Id: serde::Serialize,
+    {
+        let keys = aggregate_id_lookup_keys(aggregate_id)?;
+        let mut revision = 0;
+        for storage_key in keys {
+            let stream_keys = self.stream_keys_for_storage_key(aggregate_type, &storage_key)?;
+            revision = revision.max(self.current_revision(&stream_keys.revision_key).await?);
+        }
+        Ok(revision)
     }
 
     async fn current_revision(&self, revision_key: &str) -> Result<u64, EventStoreError> {
@@ -489,17 +514,22 @@ where
     type Error = EventStoreError;
 
     async fn load(&self, aggregate_id: &A::Id) -> Result<EventStream<A>, Self::Error> {
-        let keys = self.stream_keys(aggregate_id)?;
-        // Stream members are scored by revision, which starts at 1, so an
-        // exclusive floor of 0 covers the whole stream.
-        let sequences = self
-            .load_indexed_sequences(&keys.stream_key, 0, None)
-            .await?;
-        let hashes = self.load_sequence_hashes(&sequences).await?;
-        let mut events = Vec::with_capacity(hashes.len());
-        for hash in hashes {
-            if hash_field_string(&hash, "aggregate_type")? == A::aggregate_type() {
-                events.push(hash_to_envelope::<A>(&self.upcasters, hash)?);
+        let storage_keys = aggregate_id_lookup_keys(aggregate_id)?;
+        let aggregate_type = A::aggregate_type();
+        let mut events = Vec::new();
+        for storage_key in storage_keys {
+            let keys = self.stream_keys_for_storage_key(aggregate_type, &storage_key)?;
+            let sequences = self
+                .load_indexed_sequences(&keys.stream_key, 0, None)
+                .await?;
+            let hashes = self.load_sequence_hashes(&sequences).await?;
+            for hash in hashes {
+                if hash_field_string(&hash, "aggregate_type")? == aggregate_type {
+                    events.push(hash_to_envelope::<A>(&self.upcasters, hash)?);
+                }
+            }
+            if !events.is_empty() {
+                break;
             }
         }
 
@@ -511,15 +541,22 @@ where
         aggregate_id: &A::Id,
         revision: u64,
     ) -> Result<EventStream<A>, Self::Error> {
-        let keys = self.stream_keys(aggregate_id)?;
-        let sequences = self
-            .load_indexed_sequences(&keys.stream_key, revision, None)
-            .await?;
-        let hashes = self.load_sequence_hashes(&sequences).await?;
-        let mut events = Vec::with_capacity(hashes.len());
-        for hash in hashes {
-            if hash_field_string(&hash, "aggregate_type")? == A::aggregate_type() {
-                events.push(hash_to_envelope::<A>(&self.upcasters, hash)?);
+        let storage_keys = aggregate_id_lookup_keys(aggregate_id)?;
+        let aggregate_type = A::aggregate_type();
+        let mut events = Vec::new();
+        for storage_key in storage_keys {
+            let keys = self.stream_keys_for_storage_key(aggregate_type, &storage_key)?;
+            let sequences = self
+                .load_indexed_sequences(&keys.stream_key, revision, None)
+                .await?;
+            let hashes = self.load_sequence_hashes(&sequences).await?;
+            for hash in hashes {
+                if hash_field_string(&hash, "aggregate_type")? == aggregate_type {
+                    events.push(hash_to_envelope::<A>(&self.upcasters, hash)?);
+                }
+            }
+            if !events.is_empty() {
+                break;
             }
         }
 
@@ -539,7 +576,9 @@ where
             .collect::<Result<Vec<_>, _>>()?;
 
         if prepared.is_empty() {
-            let actual = self.current_revision(&keys.revision_key).await?;
+            let actual = self
+                .max_revision_for_aggregate_id(A::aggregate_type(), aggregate_id)
+                .await?;
             check_expected_revision(expected_revision, actual)?;
             return Ok(Vec::new());
         }

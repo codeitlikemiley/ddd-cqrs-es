@@ -308,6 +308,11 @@ pub struct EventEnvelope<E, Id> {
     /// Aggregate stream identifier.
     pub aggregate_id: Id,
     /// Stable aggregate type name.
+    ///
+    /// Stored as an owned [`String`] today. A `Cow<'static, str>` newtype (like
+    /// [`EventType`]) is planned for 0.4 so typed feeds can borrow
+    /// [`crate::aggregate::Aggregate::aggregate_type`] without allocating per
+    /// envelope.
     pub aggregate_type: String,
     /// Per-aggregate stream revision assigned on append.
     pub revision: Revision,

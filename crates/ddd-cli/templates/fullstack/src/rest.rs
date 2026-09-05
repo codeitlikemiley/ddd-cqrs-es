@@ -250,6 +250,7 @@ async fn dispatch(req: RestRequest) -> AuthStackResult<RestResponse> {
             json_result(crate::application::storage_status(request_auth).await)
         }
         (Method::POST, "/api/auth/storage/projections/run") => {
+            validate_csrf_if_cookie_authenticated(&req, &request_auth).await?;
             let batch_limit = optional_usize_query(&uri, "limit")?;
             json_result(
                 crate::application::run_storage_projections(request_auth, batch_limit).await,
@@ -557,6 +558,24 @@ fn response_with_bytes(
         .header(http::header::CONTENT_TYPE, content_type)
         .body(body)
         .map_err(|error| AuthStackError::transport(error.to_string()))
+        .map(apply_api_security_headers)
+}
+
+fn apply_api_security_headers(mut response: RestResponse) -> RestResponse {
+    let headers = response.headers_mut();
+    headers.insert(
+        http::header::CACHE_CONTROL,
+        http::HeaderValue::from_static("no-store"),
+    );
+    headers.insert(
+        "Content-Security-Policy",
+        http::HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
+    );
+    headers.insert(
+        "X-Frame-Options",
+        http::HeaderValue::from_static("DENY"),
+    );
+    response
 }
 
 fn oauth_provider_from_path<'a>(path: &'a str, suffix: &str) -> AuthStackResult<&'a str> {

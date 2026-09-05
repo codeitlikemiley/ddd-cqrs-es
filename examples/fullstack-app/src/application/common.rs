@@ -27,6 +27,17 @@ use crate::error::{AuthStackError, AuthStackResult};
 pub(crate) const DEFAULT_PASSWORD_MIN_LENGTH: usize = 15;
 pub(crate) const MAX_PASSWORD_LENGTH: usize = 128;
 
+/// Compares two secret strings in constant time.
+pub(crate) fn constant_time_eq(left: &str, right: &str) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    left.bytes()
+        .zip(right.bytes())
+        .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+        == 0
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ApplicationClock;
 

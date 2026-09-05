@@ -3872,7 +3872,7 @@ fn sqlite_raw_feed_interleaves_aggregate_types_and_drives_raw_projections() {
     assert_eq!(raw[0].aggregate_type, "counter");
     assert_eq!(raw[1].aggregate_type, "audit");
     assert_eq!(raw[1].payload["Recorded"]["note"], "first");
-    assert_eq!(raw[1].aggregate_id, "\"audit-1\"");
+    assert_eq!(raw[1].aggregate_id, "audit-1");
     let typed = EventStore::load_global_after(&counters, None).unwrap();
     assert_eq!(typed.len(), 2);
 

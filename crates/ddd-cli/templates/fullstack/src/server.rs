@@ -320,7 +320,9 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
             .await
             .map_err(internal_error)?;
 
-        Ok(wasi_res)
+        let mut http_res = wasip3::http_compat::http_from_wasi_response(wasi_res)?;
+        apply_browser_security_headers(http_res.headers_mut());
+        wasip3::http_compat::http_into_wasi_response(http_res)
     }
 }
 
@@ -591,6 +593,25 @@ async fn transport_mode() -> String {
 #[cfg(all(feature = "spin-grpc", runtime_spin))]
 fn grpc_enabled(transport_mode: &str) -> bool {
     matches!(transport_mode, "grpc" | "both")
+}
+
+fn apply_browser_security_headers(headers: &mut http::HeaderMap) {
+    headers.insert(
+        http::header::CACHE_CONTROL,
+        http::HeaderValue::from_static("no-store"),
+    );
+    headers.insert(
+        "Content-Security-Policy",
+        http::HeaderValue::from_static(
+            "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; \
+             style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; \
+             connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+        ),
+    );
+    headers.insert(
+        "X-Frame-Options",
+        http::HeaderValue::from_static("DENY"),
+    );
 }
 
 fn plain_text_response(
