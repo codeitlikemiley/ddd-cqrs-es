@@ -129,35 +129,15 @@ pub fn validate_org_slug(slug: &str) -> AuthStackResult<()> {
 
 pub async fn resolve_org_id_for_slug(slug: &str) -> AuthStackResult<String> {
     validate_org_slug(slug)?;
-    // Prefer Postgres (via org list cache is done in application); KV is fallback.
     #[cfg(all(feature = "postgres", runtime_spin))]
     {
-        // Direct SQL via app DATABASE_URL when available would be ideal; for now
-        // KV remains the resolve path and is dual-written on create/list.
-        let store = profile_kv().await?;
-        if let Some(bytes) = store
-            .get(org_slug_key(slug))
-            .await
-            .map_err(|e| AuthStackError::store(format!("org slug read failed: {e}")))?
-        {
-            let id = String::from_utf8(bytes)
-                .map_err(|_| AuthStackError::store("org slug mapping is corrupt"))?;
-            if !id.trim().is_empty() {
-                return Ok(id);
-            }
-        }
-        // Fallback: scan is not available; try postgres lookup.
-        if let Ok(id) = resolve_org_id_for_slug_postgres(slug).await {
-            let _ = register_org_slug(&id, slug).await;
-            return Ok(id);
-        }
-        Err(AuthStackError::not_found("workspace not found"))
+        resolve_org_id_for_slug_postgres(slug).await
     }
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
         let _ = slug;
         Err(AuthStackError::configuration(
-            "org slug storage requires Spin key-value",
+            "org slug resolution requires Postgres",
         ))
     }
 }
@@ -208,8 +188,8 @@ pub async fn slug_for_organization(org_id: &str) -> AuthStackResult<Option<Strin
     }
 }
 
-/// Register a unique slug for an organization. Fails if slug is taken by another org.
-pub async fn register_org_slug(org_id: &str, slug: &str) -> AuthStackResult<()> {
+/// Best-effort KV cache after Postgres has accepted the slug (create/update paths only).
+pub async fn cache_org_slug(org_id: &str, slug: &str) -> AuthStackResult<()> {
     validate_org_slug(slug)?;
     let org_id = org_id.trim();
     if org_id.is_empty() {
@@ -219,21 +199,6 @@ pub async fn register_org_slug(org_id: &str, slug: &str) -> AuthStackResult<()> 
     #[cfg(all(feature = "postgres", runtime_spin))]
     {
         let store = profile_kv().await?;
-        if let Some(existing) = store
-            .get(org_slug_key(&slug))
-            .await
-            .map_err(|e| AuthStackError::store(format!("org slug read failed: {e}")))?
-        {
-            let existing_id = String::from_utf8(existing).unwrap_or_default();
-            if existing_id != org_id {
-                return Err(AuthStackError::validation(format!(
-                    "workspace URL “{slug}” is already taken"
-                )));
-            }
-            // Same org re-registering — ok.
-            return Ok(());
-        }
-        // Clear previous slug for this org if any.
         if let Some(prev) = store
             .get(org_id_slug_key(org_id))
             .await
@@ -256,8 +221,34 @@ pub async fn register_org_slug(org_id: &str, slug: &str) -> AuthStackResult<()> 
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
         let _ = (org_id, slug);
+        Ok(())
+    }
+}
+
+/// Register a unique slug for an organization. Fails if slug is taken by another org.
+pub async fn register_org_slug(org_id: &str, slug: &str) -> AuthStackResult<()> {
+    validate_org_slug(slug)?;
+    let org_id = org_id.trim();
+    if org_id.is_empty() {
+        return Err(AuthStackError::validation("organization_id is required"));
+    }
+    let slug = slug.trim().to_ascii_lowercase();
+    #[cfg(all(feature = "postgres", runtime_spin))]
+    {
+        if let Ok(existing_id) = resolve_org_id_for_slug_postgres(&slug).await {
+            if existing_id != org_id {
+                return Err(AuthStackError::validation(format!(
+                    "workspace URL “{slug}” is already taken"
+                )));
+            }
+        }
+        cache_org_slug(org_id, &slug).await
+    }
+    #[cfg(not(all(feature = "postgres", runtime_spin)))]
+    {
+        let _ = (org_id, slug);
         Err(AuthStackError::configuration(
-            "org slug storage requires Spin key-value",
+            "org slug storage requires Postgres",
         ))
     }
 }

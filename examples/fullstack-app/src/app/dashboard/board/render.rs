@@ -2,6 +2,8 @@
 
 #![allow(unused_imports)]
 
+use std::sync::Arc;
+
 use super::layout::{
     commit_layout, find_col_span, find_node, move_into_container, remove_node,
     reorder_siblings, set_span_by_id,
@@ -36,7 +38,7 @@ use wasm_bindgen::JsCast;
 
 pub(crate) fn render_node_list(
     nodes: Vec<BoardNode>,
-    snap: Option<DashboardSnapshot>,
+    snap: Option<Arc<DashboardSnapshot>>,
     notifs: Vec<DashboardNotification>,
     http_results: Vec<HttpQueryResult>,
     query_results: Vec<QueryResult>,
@@ -61,7 +63,7 @@ pub(crate) fn render_node_list(
                 <div class=BOARD_NODE_SLOT data-node-id=key>
                     {render_node(
                         node,
-                        snap.clone(),
+                        snap.as_ref().map(Arc::clone),
                         notifs.clone(),
                         http_results.clone(),
                         query_results.clone(),
@@ -85,7 +87,7 @@ pub(crate) fn render_node_list(
 
 pub(crate) fn render_node(
     node: BoardNode,
-    snap: Option<DashboardSnapshot>,
+    snap: Option<Arc<DashboardSnapshot>>,
     notifs: Vec<DashboardNotification>,
     http_results: Vec<HttpQueryResult>,
     query_results: Vec<QueryResult>,
@@ -262,7 +264,7 @@ pub(crate) fn render_node(
                                         .unwrap_or_default();
                                     render_node_list(
                                         kids,
-                                        snap.clone(),
+                                        snap.as_ref().map(Arc::clone),
                                         notifs.clone(),
                                         http_results.clone(),
                                         query_results.clone(),
@@ -703,7 +705,7 @@ pub(crate) fn span_chips(
 
 pub(crate) fn render_widget_body(
     kind: DashboardWidgetKind,
-    data: Option<DashboardSnapshot>,
+    data: Option<Arc<DashboardSnapshot>>,
     notifications: Vec<DashboardNotification>,
     note_text: String,
     widget_id: String,
@@ -766,7 +768,7 @@ pub(crate) fn render_widget_body(
             } else {
                 view! {
                     <ul class=BOARD_FEED>
-                        {data.activity.into_iter().take(8).map(|event| {
+                        {data.activity.clone().into_iter().take(8).map(|event| {
                             let outcome = event.outcome.clone();
                             let dot = match outcome.as_str() {
                                 "success" | "allowed" | "ok" => BOARD_FEED_DOT_OK,
@@ -821,7 +823,7 @@ pub(crate) fn render_widget_body(
         }
         DashboardWidgetKind::Sessions => view! {
             <ul class=BOARD_LIST>
-                {data.sessions.into_iter().take(6).map(|session| view! {
+                {data.sessions.clone().into_iter().take(6).map(|session| view! {
                     <li class=BOARD_LIST_ROW>
                         <div class=BOARD_LIST_GROW>
                             <strong class=BOARD_LIST_STRONG>{if session.current { "This browser" } else { "Other session" }}</strong>
@@ -843,7 +845,7 @@ pub(crate) fn render_widget_body(
                 let active = data.tenant_label.clone();
                 view! {
                     <ul class=BOARD_LIST>
-                        {data.organizations.into_iter().take(6).map(|org| {
+                        {data.organizations.clone().into_iter().take(6).map(|org| {
                             let is_active = active.as_ref().is_some_and(|t| t == &org.organization_id);
                             view! {
                                 <li class=BOARD_LIST_ROW>

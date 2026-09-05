@@ -95,7 +95,7 @@ pub async fn list_organizations(user_id: &str) -> AuthStackResult<OrganizationLi
         .map_err(map_organization_error)?;
     let mut summaries = Vec::with_capacity(organizations.len());
     for record in organizations {
-        summaries.push(organization_summary_with_slug(record).await);
+        summaries.push(organization_summary_with_slug(record));
     }
     Ok(OrganizationListResponse {
         organizations: summaries,
@@ -123,8 +123,9 @@ pub async fn create_organization(
         .await
         .map_err(map_organization_error)?;
     let summary = organization_summary(organization);
-    // Dual-write slug to Spin KV for resolve fallback during transition.
     let _ = crate::store::register_org_slug(&summary.organization_id, &summary.slug).await;
+    let _ = crate::store::bootstrap_dashboard_layout(&summary.organization_id).await;
+    let _ = crate::store::bootstrap_dashboard_notifications(&summary.organization_id).await;
     Ok(summary)
 }
 

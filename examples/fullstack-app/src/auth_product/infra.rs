@@ -99,21 +99,8 @@ pub(crate) fn organization_summary(record: OrganizationRecord) -> OrganizationSu
     }
 }
 
-pub(crate) async fn organization_summary_with_slug(
-    record: OrganizationRecord,
-) -> OrganizationSummary {
-    let mut summary = organization_summary(record);
-    // Prefer DB slug; fill KV cache and backfill empty DB slugs via ensure.
-    if summary.slug.trim().is_empty() {
-        if let Ok(slug) =
-            crate::store::ensure_org_slug(&summary.organization_id, &summary.name).await
-        {
-            summary.slug = slug;
-        }
-    } else {
-        let _ = crate::store::register_org_slug(&summary.organization_id, &summary.slug).await;
-    }
-    summary
+pub(crate) fn organization_summary_with_slug(record: OrganizationRecord) -> OrganizationSummary {
+    organization_summary(record)
 }
 
 pub(crate) fn membership_summary(record: MembershipRecord) -> MembershipSummary {

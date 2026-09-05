@@ -73,23 +73,6 @@ impl AuditService for AuditGrpcService {
             }
             loop {
                 if let Some(event) = state.buffered.pop_front() {
-                    if let Err(error) = crate::application::list_audit_events(
-                        state.organization_id.clone(),
-                        state.cursor,
-                        1,
-                        state.auth.for_revalidation(),
-                    )
-                    .await
-                    {
-                        state.terminated = true;
-                        return Some((
-                            Err(status_from_app_error(
-                                "Audit.WatchAuditEvents.reauthorize",
-                                error,
-                            )),
-                            state,
-                        ));
-                    }
                     state.cursor = event.sequence;
                     return Some((Ok(event.into()), state));
                 }

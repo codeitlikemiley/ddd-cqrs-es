@@ -39,6 +39,28 @@ use crate::error::{AuthStackError, AuthStackResult};
 
 use super::*;
 
+/// Seed welcome notifications when a workspace has none yet (create/bootstrap only).
+pub async fn bootstrap_dashboard_notifications(org_id: &str) -> AuthStackResult<()> {
+    #[cfg(all(feature = "postgres", runtime_spin))]
+    {
+        let rows = execute_postgres(
+            "SELECT 1 FROM fullstack_app.dashboard_notifications \
+             WHERE organization_id = ?1::text::uuid LIMIT 1",
+            vec![Value::String(org_id.to_owned())],
+        )
+        .await?;
+        if rows.is_empty() {
+            save_dashboard_notifications(org_id, &default_notifications()).await?;
+        }
+        Ok(())
+    }
+    #[cfg(not(all(feature = "postgres", runtime_spin)))]
+    {
+        let _ = org_id;
+        Ok(())
+    }
+}
+
 pub async fn load_dashboard_notifications(
     org_id: &str,
 ) -> AuthStackResult<Vec<crate::contracts::DashboardNotification>> {
@@ -50,11 +72,6 @@ pub async fn load_dashboard_notifications(
             vec![Value::String(org_id.to_owned())],
         )
         .await?;
-        if rows.is_empty() {
-            let notifs = default_notifications();
-            save_dashboard_notifications(org_id, &notifs).await?;
-            return Ok(notifs);
-        }
         rows.iter()
             .map(|row| {
                 serde_json::from_str(&required_string(row, "payload")?)

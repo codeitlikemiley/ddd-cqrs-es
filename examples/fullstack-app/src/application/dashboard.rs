@@ -46,15 +46,12 @@ pub async fn get_dashboard_snapshot(auth: RequestAuth) -> AuthStackResult<Dashbo
         context.principal().user_id().as_str(),
         context.session_id().as_str(),
     )
-    .await
-    .map(|response| response.sessions)
-    .unwrap_or_default();
+    .await?
+    .sessions;
 
-    let organizations =
-        crate::auth_product::list_organizations(context.principal().user_id().as_str())
-            .await
-            .map(|response| response.organizations)
-            .unwrap_or_default();
+    let organizations = crate::auth_product::list_organizations(context.principal().user_id().as_str())
+        .await?
+        .organizations;
 
     // Prefer human workspace name (+ slug) over raw UUID for UI labels.
     let tenant_label = session.tenant_id.as_ref().and_then(|tid| {
@@ -83,16 +80,23 @@ pub async fn get_dashboard_snapshot(auth: RequestAuth) -> AuthStackResult<Dashbo
         .map(|status| status.recovery_codes_remaining)
         .unwrap_or(0);
 
+    let mut load_warnings = Vec::new();
+
     let activity = if has_tenant {
-        crate::auth_product::list_audit_events(
+        match crate::auth_product::list_audit_events(
             context.session_id().as_str(),
             session.tenant_id.as_deref(),
             0,
             12,
         )
         .await
-        .map(|response| response.events)
-        .unwrap_or_default()
+        {
+            Ok(response) => response.events,
+            Err(error) => {
+                load_warnings.push(format!("activity: {error}"));
+                Vec::new()
+            }
+        }
     } else {
         Vec::new()
     };
@@ -123,9 +127,7 @@ pub async fn get_dashboard_snapshot(auth: RequestAuth) -> AuthStackResult<Dashbo
         None => crate::store::default_dashboard_layout_public(),
     };
     let secrets = match vault_org_id.as_deref() {
-        Some(org) if can_view_vault => crate::store::list_secret_summaries(org)
-            .await
-            .unwrap_or_default(),
+        Some(org) if can_view_vault => crate::store::list_secret_summaries(org).await?,
         _ => Vec::new(),
     };
     let http_enabled = dashboard_http_enabled().await;
@@ -179,13 +181,11 @@ pub async fn get_dashboard_snapshot(auth: RequestAuth) -> AuthStackResult<Dashbo
         .collect();
 
     let resources = match vault_org_id.as_deref() {
-        Some(org) if can_view_resources => {
-            crate::store::load_resources(org).await.unwrap_or_default()
-        }
+        Some(org) if can_view_resources => crate::store::load_resources(org).await?,
         _ => Vec::new(),
     };
     let queries = match vault_org_id.as_deref() {
-        Some(org) if can_view_queries => crate::store::load_queries(org).await.unwrap_or_default(),
+        Some(org) if can_view_queries => crate::store::load_queries(org).await?,
         _ => Vec::new(),
     };
     let resource_summaries: Vec<crate::contracts::ResourceSummary> = resources
@@ -292,6 +292,7 @@ pub async fn get_dashboard_snapshot(auth: RequestAuth) -> AuthStackResult<Dashbo
         query_results,
         postgres_resources_enabled,
         grpc_resources_enabled,
+        load_warnings,
     })
 }
 
