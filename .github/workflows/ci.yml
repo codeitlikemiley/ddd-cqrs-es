@@ -12,7 +12,8 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Let main runs finish; still cancel superseded PR pushes.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   msrv:
@@ -76,8 +77,12 @@ jobs:
             "wasm,uuid"
             "wasm,json,uuid"
             "wasi-http,json,uuid,wasm"
+            "wasi-neon,wasi-http,json,uuid,wasm"
             "wasi-supabase-rpc,wasi-http,json,uuid,wasm"
             "async,json,redis,wasm"
+            "wasi-redis,async,json,redis,wasm"
+            "spin-postgres,json,uuid,wasm"
+            "spin-redis,async,json,redis,wasm"
           )
           for feature_set in "${features[@]}"; do
             echo "==> checking ${feature_set}"
