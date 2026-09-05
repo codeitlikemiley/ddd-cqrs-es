@@ -11,13 +11,13 @@
 //! general-purpose SQL parameterization APIs and are not full event-store or
 //! checkpoint-store backends until they implement the reusable library traits.
 //!
-//! HTTP-backed adapters (Neon, LibSQL, Supabase) execute one statement per
-//! request and do not yet expose portable optimistic-concurrency append
-//! (`append_atomic`). Use native SQL adapters or Spin host transactions
+//! HTTP-backed adapters (Neon, LibSQL, Supabase) expose portable
+//! optimistic-concurrency append via [`append_atomic`]. Spin host transactions
 //! (`execute_spin_sqlite_atomic`, `execute_spin_pg_atomic`,
-//! `execute_spin_mysql_atomic`) when a command path needs read-check-write in
-//! one round trip.
+//! `execute_spin_mysql_atomic`) remain available for other read-check-write
+//! paths.
 
+mod append_atomic;
 #[cfg(feature = "wasi-http")]
 mod http;
 #[cfg(feature = "json-file")]
@@ -36,6 +36,18 @@ mod sql_text;
 #[cfg(feature = "wasi-supabase-rpc")]
 mod supabase;
 
+#[cfg(feature = "wasi-libsql")]
+pub use append_atomic::append_atomic_libsql;
+#[cfg(feature = "wasi-neon")]
+pub use append_atomic::append_atomic_neon;
+#[cfg(feature = "wasi-supabase-rpc")]
+pub use append_atomic::append_atomic_supabase;
+pub use append_atomic::{
+    build_postgres_append_statement, build_sqlite_append_statement, conflict_for_revision,
+    current_revision_query_postgres, current_revision_query_sqlite, is_revision_unique_violation,
+    parse_committed_rows, parse_current_revision, resolve_append_outcome, AppendAtomicResult,
+    AppendCommittedRow, AppendEventRow,
+};
 #[cfg(feature = "wasi-http")]
 pub use http::{
     redact_url_userinfo, truncate_body_for_error, validate_https_url, wasi_http_post,

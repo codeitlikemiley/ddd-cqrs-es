@@ -276,6 +276,264 @@ async fn execute_query_routed(
     }
 }
 
+const EVENTS_TABLE: &str = "events";
+
+fn prepare_append_event_rows<A: Aggregate>(
+    events: Vec<NewEvent<A::Event>>,
+    now_ms: i64,
+) -> Result<Vec<ddd_cqrs_es::adapters::AppendEventRow>, EventStoreError> {
+    events
+        .into_iter()
+        .map(|event| {
+            let payload = serde_json::to_value(&event.payload)
+                .map_err(|error| EventStoreError::serialization(error.to_string()))?;
+            let metadata = serde_json::to_value(&event.metadata)
+                .map_err(|error| EventStoreError::serialization(error.to_string()))?;
+            Ok(ddd_cqrs_es::adapters::AppendEventRow {
+                event_id: EventId::new().to_string(),
+                event_type: event.event_type.as_str().to_owned(),
+                event_version: event.event_version,
+                payload,
+                metadata,
+                recorded_at_ms: now_ms,
+            })
+        })
+        .collect()
+}
+
+fn envelopes_from_atomic_append<A: Aggregate>(
+    aggregate_id: &A::Id,
+    source_events: Vec<NewEvent<A::Event>>,
+    append_rows: &[ddd_cqrs_es::adapters::AppendEventRow],
+    committed: Vec<ddd_cqrs_es::adapters::AppendCommittedRow>,
+    recorded_at: std::time::SystemTime,
+) -> Result<Vec<EventEnvelope<A::Event, A::Id>>, EventStoreError> {
+    if source_events.len() != append_rows.len() || source_events.len() != committed.len() {
+        return Err(EventStoreError::backend(format!(
+            "atomic append returned {} rows for {} events",
+            committed.len(),
+            source_events.len()
+        )));
+    }
+
+    let mut envelopes = Vec::with_capacity(source_events.len());
+    for ((event, append_row), committed_row) in source_events
+        .into_iter()
+        .zip(append_rows.iter())
+        .zip(committed.iter())
+    {
+        envelopes.push(EventEnvelope::new(
+            EventId::from_string(append_row.event_id.clone()),
+            aggregate_id.clone(),
+            A::aggregate_type().to_string(),
+            committed_row.revision,
+            Some(committed_row.sequence),
+            event.event_type,
+            event.event_version,
+            event.payload,
+            event.metadata,
+            recorded_at,
+        ));
+    }
+    Ok(envelopes)
+}
+
+async fn read_current_revision_routed(
+    aggregate_type: &str,
+    aggregate_id_json: &str,
+) -> Result<u64, String> {
+    let sqlite_sql = ddd_cqrs_es::adapters::current_revision_query_sqlite(EVENTS_TABLE);
+    let postgres_sql = ddd_cqrs_es::adapters::current_revision_query_postgres(EVENTS_TABLE);
+    let params = vec![
+        serde_json::Value::String(aggregate_type.to_owned()),
+        serde_json::Value::String(aggregate_id_json.to_owned()),
+    ];
+    let rows = execute_query_routed(&sqlite_sql, &postgres_sql, params).await?;
+    ddd_cqrs_es::adapters::parse_current_revision(&rows)
+}
+
+async fn append_atomic_routed(
+    aggregate_type: &str,
+    aggregate_id_json: &str,
+    expected_revision: ExpectedRevision,
+    rows: &[ddd_cqrs_es::adapters::AppendEventRow],
+) -> Result<ddd_cqrs_es::adapters::AppendAtomicResult, String> {
+    if rows.is_empty() {
+        return Ok(ddd_cqrs_es::adapters::AppendAtomicResult::Committed(Vec::new()));
+    }
+
+    let backend = get_backend();
+    match backend.as_str() {
+        "libsql" | "turso" => {
+            #[cfg(feature = "libsql")]
+            {
+                ddd_cqrs_es::adapters::append_atomic_libsql(
+                    &get_turso_url(),
+                    get_turso_auth_token().as_deref(),
+                    EVENTS_TABLE,
+                    aggregate_type,
+                    aggregate_id_json,
+                    expected_revision,
+                    rows,
+                )
+                .await
+            }
+            #[cfg(not(feature = "libsql"))]
+            {
+                Err("libsql feature is not enabled".to_string())
+            }
+        }
+        "supabase" => {
+            #[cfg(feature = "supabase")]
+            {
+                ddd_cqrs_es::adapters::append_atomic_supabase(
+                    &get_postgres_url(),
+                    get_supabase_secret_key().as_deref(),
+                    EVENTS_TABLE,
+                    aggregate_type,
+                    aggregate_id_json,
+                    expected_revision,
+                    rows,
+                )
+                .await
+            }
+            #[cfg(not(feature = "supabase"))]
+            {
+                Err("supabase feature is not enabled".to_string())
+            }
+        }
+        "neon" => {
+            #[cfg(feature = "neon")]
+            {
+                ddd_cqrs_es::adapters::append_atomic_neon(
+                    &get_postgres_url(),
+                    EVENTS_TABLE,
+                    aggregate_type,
+                    aggregate_id_json,
+                    expected_revision,
+                    rows,
+                )
+                .await
+            }
+            #[cfg(not(feature = "neon"))]
+            {
+                Err("neon feature is not enabled".to_string())
+            }
+        }
+        _ => {
+            let (sql, params) = if backend == "mysql" {
+                ddd_cqrs_es::adapters::build_sqlite_append_statement(
+                    EVENTS_TABLE,
+                    aggregate_type,
+                    aggregate_id_json,
+                    expected_revision,
+                    rows,
+                )?
+            } else {
+                ddd_cqrs_es::adapters::build_postgres_append_statement(
+                    EVENTS_TABLE,
+                    aggregate_type,
+                    aggregate_id_json,
+                    expected_revision,
+                    rows,
+                )?
+            };
+            match execute_query_routed(&sql, &sql, params).await {
+                Ok(inserted) if !inserted.is_empty() => ddd_cqrs_es::adapters::parse_committed_rows(
+                    &inserted,
+                )
+                .map(ddd_cqrs_es::adapters::AppendAtomicResult::Committed),
+                Ok(_) => {
+                    let actual =
+                        read_current_revision_routed(aggregate_type, aggregate_id_json).await?;
+                    Ok(ddd_cqrs_es::adapters::conflict_for_revision(
+                        expected_revision,
+                        actual,
+                    ))
+                }
+                Err(error)
+                    if ddd_cqrs_es::adapters::is_revision_unique_violation(&error) =>
+                {
+                    let actual =
+                        read_current_revision_routed(aggregate_type, aggregate_id_json).await?;
+                    Ok(ddd_cqrs_es::adapters::conflict_for_revision(
+                        expected_revision,
+                        actual,
+                    ))
+                }
+                Err(error) => Err(error),
+            }
+        }
+    }
+}
+
+async fn append_spin_sqlite_atomic<A: Aggregate>(
+    aggregate_id: &A::Id,
+    expected_revision: ExpectedRevision,
+    events: Vec<NewEvent<A::Event>>,
+) -> Result<Vec<EventEnvelope<A::Event, A::Id>>, EventStoreError>
+where
+    A::Event: Clone,
+{
+    let agg_id_str = serde_json::to_string(aggregate_id)
+        .map_err(|error| EventStoreError::serialization(error.to_string()))?;
+    let now = std::time::SystemTime::now();
+    let now_ms = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+
+    if events.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let append_rows = prepare_append_event_rows::<A>(events.clone(), now_ms)?;
+    let (sql, params) = ddd_cqrs_es::adapters::build_sqlite_append_statement(
+        EVENTS_TABLE,
+        A::aggregate_type(),
+        &agg_id_str,
+        expected_revision,
+        &append_rows,
+    )
+    .map_err(EventStoreError::backend)?;
+
+    let inserted = match ddd_cqrs_es::adapters::execute_spin_sqlite(&sql, params).await {
+        Ok(rows) => rows,
+        Err(error) if ddd_cqrs_es::adapters::is_revision_unique_violation(&error) => {
+            let actual = read_current_revision_routed(A::aggregate_type(), &agg_id_str)
+                .await
+                .map_err(EventStoreError::backend)?;
+            return Err(map_append_atomic_conflict(expected_revision, actual));
+        }
+        Err(error) => return Err(EventStoreError::backend(error)),
+    };
+
+    if inserted.is_empty() {
+        let actual = read_current_revision_routed(A::aggregate_type(), &agg_id_str)
+            .await
+            .map_err(EventStoreError::backend)?;
+        return Err(map_append_atomic_conflict(expected_revision, actual));
+    }
+
+    let committed = ddd_cqrs_es::adapters::parse_committed_rows(&inserted)
+        .map_err(EventStoreError::backend)?;
+    envelopes_from_atomic_append::<A>(aggregate_id, events, &append_rows, committed, now)
+}
+
+fn map_append_atomic_conflict(
+    expected_revision: ExpectedRevision,
+    actual: u64,
+) -> EventStoreError {
+    match ddd_cqrs_es::adapters::conflict_for_revision(expected_revision, actual) {
+        ddd_cqrs_es::adapters::AppendAtomicResult::Conflict(source) => {
+            EventStoreError::Concurrency(source)
+        }
+        ddd_cqrs_es::adapters::AppendAtomicResult::Committed(_) => EventStoreError::backend(
+            "atomic append conflict mapping received committed rows".to_owned(),
+        ),
+    }
+}
+
 // =========================================================================
 // MIGRATIONS AT BOOT (ONCE)
 // =========================================================================
@@ -586,104 +844,12 @@ where
             {
                 #[cfg(feature = "sqlite")]
                 {
-                    // In spin SQLite, we query current revision first
-                    let query_rev = "SELECT COALESCE(MAX(revision), 0) as max_rev FROM events WHERE aggregate_type = ? AND aggregate_id = ?";
-                    let agg_id_str = serde_json::to_string(aggregate_id)
-                        .map_err(|e| EventStoreError::serialization(e.to_string()))?;
-                    let params_rev = vec![
-                        serde_json::Value::String(A::aggregate_type().to_string()),
-                        serde_json::Value::String(agg_id_str.clone()),
-                    ];
-                    let rows_rev =
-                        ddd_cqrs_es::adapters::execute_spin_sqlite(query_rev, params_rev)
-                            .await
-                            .map_err(EventStoreError::backend)?;
-
-                    let current_revision = rows_rev
-                        .first()
-                        .and_then(|r| r.get("max_rev"))
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
-
-                    match expected_revision {
-                        ExpectedRevision::Any => {}
-                        ExpectedRevision::NoStream if current_revision == 0 => {}
-                        ExpectedRevision::NoStream => {
-                            return Err(EventStoreError::Concurrency(
-                                ddd_cqrs_es::ConcurrencyError::StreamAlreadyExists,
-                            ));
-                        }
-                        ExpectedRevision::Exact(expected) if expected == current_revision => {}
-                        ExpectedRevision::Exact(_) => {
-                            return Err(EventStoreError::Concurrency(
-                                ddd_cqrs_es::ConcurrencyError::WrongExpectedRevision {
-                                    expected: expected_revision,
-                                    actual: current_revision,
-                                },
-                            ));
-                        }
-                    }
-
-                    let mut envelopes = Vec::new();
-                    let now = std::time::SystemTime::now();
-                    let now_ms = now
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis() as i64;
-
-                    for (i, event) in events.into_iter().enumerate() {
-                        let revision = current_revision + i as u64 + 1;
-                        let event_id = EventId::new();
-
-                        let insert_query = "INSERT INTO events (event_id, aggregate_id, aggregate_type, revision, event_type, event_version, payload, metadata, recorded_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING sequence";
-                        let payload_str = serde_json::to_string(&event.payload)
-                            .map_err(|e| EventStoreError::serialization(e.to_string()))?;
-                        let metadata_str = serde_json::to_string(&event.metadata)
-                            .map_err(|e| EventStoreError::serialization(e.to_string()))?;
-                        let params_insert = vec![
-                            serde_json::Value::String(event_id.to_string()),
-                            serde_json::Value::String(agg_id_str.clone()),
-                            serde_json::Value::String(A::aggregate_type().to_string()),
-                            serde_json::Value::Number(revision.into()),
-                            serde_json::Value::String(event.event_type.as_str().to_owned()),
-                            serde_json::Value::Number(event.event_version.into()),
-                            serde_json::Value::String(payload_str),
-                            serde_json::Value::String(metadata_str),
-                            serde_json::Value::Number(now_ms.into()),
-                        ];
-
-                        let insert_rows =
-                            ddd_cqrs_es::adapters::execute_spin_sqlite(insert_query, params_insert)
-                                .await
-                                .map_err(EventStoreError::backend)?;
-
-                        let sequence = insert_rows
-                            .first()
-                            .and_then(|r| r.get("sequence"))
-                            .and_then(|v| {
-                                if let Some(u) = v.as_u64() {
-                                    Some(u)
-                                } else {
-                                    v.as_i64().map(|i| i as u64)
-                                }
-                            });
-
-                        let envelope = EventEnvelope::new(
-                            event_id.clone(),
-                            aggregate_id.clone(),
-                            A::aggregate_type().to_string(),
-                            revision,
-                            sequence,
-                            event.event_type,
-                            event.event_version,
-                            event.payload,
-                            event.metadata,
-                            now,
-                        );
-
-                        envelopes.push(envelope);
-                    }
-                    return Ok(envelopes);
+                    return append_spin_sqlite_atomic::<A>(
+                        aggregate_id,
+                        expected_revision,
+                        events,
+                    )
+                    .await;
                 }
                 #[cfg(not(feature = "sqlite"))]
                 {
@@ -701,123 +867,41 @@ where
             }
         }
 
-        let query_sqlite_rev = "SELECT COALESCE(MAX(revision), 0) as max_rev FROM events WHERE aggregate_type = ? AND aggregate_id = ?";
-        let query_postgres_rev = "SELECT COALESCE(MAX(revision), 0) as max_rev FROM events WHERE aggregate_type = $1 AND aggregate_id = $2";
-
         let agg_id_str = serde_json::to_string(aggregate_id)
-            .map_err(|e| EventStoreError::serialization(e.to_string()))?;
-        let params_rev = vec![
-            serde_json::Value::String(A::aggregate_type().to_string()),
-            serde_json::Value::String(agg_id_str.clone()),
-        ];
-
-        let rows_rev = execute_query_routed(query_sqlite_rev, query_postgres_rev, params_rev)
-            .await
-            .map_err(EventStoreError::backend)?;
-
-        let current_revision = rows_rev
-            .first()
-            .and_then(|r| r.get("max_rev"))
-            .and_then(|v| {
-                if let Some(u) = v.as_u64() {
-                    Some(u)
-                } else if let Some(i) = v.as_i64() {
-                    Some(i as u64)
-                } else if let Some(s) = v.as_str() {
-                    s.parse::<u64>().ok()
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(0);
-
-        match expected_revision {
-            ExpectedRevision::Any => {}
-            ExpectedRevision::NoStream if current_revision == 0 => {}
-            ExpectedRevision::NoStream => {
-                return Err(EventStoreError::Concurrency(
-                    ddd_cqrs_es::ConcurrencyError::StreamAlreadyExists,
-                ));
-            }
-            ExpectedRevision::Exact(expected) if expected == current_revision => {}
-            ExpectedRevision::Exact(_) => {
-                return Err(EventStoreError::Concurrency(
-                    ddd_cqrs_es::ConcurrencyError::WrongExpectedRevision {
-                        expected: expected_revision,
-                        actual: current_revision,
-                    },
-                ));
-            }
+            .map_err(|error| EventStoreError::serialization(error.to_string()))?;
+        if events.is_empty() {
+            return Ok(Vec::new());
         }
 
-        let mut envelopes = Vec::new();
         let now = std::time::SystemTime::now();
         let now_ms = now
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64;
+        let append_rows = prepare_append_event_rows::<A>(events.clone(), now_ms)?;
+        let outcome = append_atomic_routed(
+            A::aggregate_type(),
+            &agg_id_str,
+            expected_revision,
+            &append_rows,
+        )
+        .await
+        .map_err(EventStoreError::backend)?;
 
-        for (i, event) in events.into_iter().enumerate() {
-            let revision = current_revision + i as u64 + 1;
-            let event_id = EventId::new();
-
-            let sql_sqlite_insert = "INSERT INTO events (event_id, aggregate_id, aggregate_type, revision, event_type, event_version, payload, metadata, recorded_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING sequence";
-            let sql_postgres_insert = "INSERT INTO events (event_id, aggregate_id, aggregate_type, revision, event_type, event_version, payload, metadata, recorded_at_ms) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING sequence";
-
-            let payload_val = serde_json::to_value(&event.payload)
-                .map_err(|e| EventStoreError::serialization(e.to_string()))?;
-            let metadata_val = serde_json::to_value(&event.metadata)
-                .map_err(|e| EventStoreError::serialization(e.to_string()))?;
-
-            let params_insert = vec![
-                serde_json::Value::String(event_id.to_string()),
-                serde_json::Value::String(agg_id_str.clone()),
-                serde_json::Value::String(A::aggregate_type().to_string()),
-                serde_json::Value::Number(revision.into()),
-                serde_json::Value::String(event.event_type.as_str().to_owned()),
-                serde_json::Value::Number(event.event_version.into()),
-                payload_val,
-                metadata_val,
-                serde_json::Value::Number(now_ms.into()),
-            ];
-
-            let insert_rows =
-                execute_query_routed(sql_sqlite_insert, sql_postgres_insert, params_insert)
-                    .await
-                    .map_err(EventStoreError::backend)?;
-
-            let sequence = insert_rows
-                .first()
-                .and_then(|r| r.get("sequence"))
-                .and_then(|v| {
-                    if let Some(u) = v.as_u64() {
-                        Some(u)
-                    } else if let Some(i) = v.as_i64() {
-                        Some(i as u64)
-                    } else if let Some(s) = v.as_str() {
-                        s.parse::<u64>().ok()
-                    } else {
-                        None
-                    }
-                });
-
-            let envelope = EventEnvelope::new(
-                event_id.clone(),
-                aggregate_id.clone(),
-                A::aggregate_type().to_string(),
-                revision,
-                sequence,
-                event.event_type,
-                event.event_version,
-                event.payload,
-                event.metadata,
-                now,
-            );
-
-            envelopes.push(envelope);
+        match outcome {
+            ddd_cqrs_es::adapters::AppendAtomicResult::Committed(committed) => {
+                envelopes_from_atomic_append::<A>(
+                    aggregate_id,
+                    events,
+                    &append_rows,
+                    committed,
+                    now,
+                )
+            }
+            ddd_cqrs_es::adapters::AppendAtomicResult::Conflict(source) => {
+                Err(EventStoreError::Concurrency(source))
+            }
         }
-
-        Ok(envelopes)
     }
 
     async fn load_global_after(
