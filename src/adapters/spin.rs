@@ -370,15 +370,6 @@ fn spin_sql_returns_rows(sql: &str) -> bool {
     upper.starts_with("SELECT") || upper.contains("RETURNING")
 }
 
-#[cfg(feature = "spin-postgres")]
-fn normalize_postgres_transaction_error(error: String) -> String {
-    let lower = error.to_ascii_lowercase();
-    if lower.contains("23505") || lower.contains("unique constraint") {
-        "concurrency conflict: unique constraint violated".to_owned()
-    } else {
-        error
-    }
-}
 /// Execute a Spin Postgres query and return JSON rows for read operations.
 ///
 /// For write commands this returns an empty rowset after successful execution.
@@ -508,12 +499,7 @@ pub async fn execute_spin_pg_atomic(
                     .await
                     .map(|_| ())
                     .map_err(|rollback_error| format!("{rollback_error:?}"));
-                return Err(transaction_failure(
-                    "Postgres",
-                    index,
-                    normalize_postgres_transaction_error(error),
-                    rollback,
-                ));
+                return Err(transaction_failure("Postgres", index, error, rollback));
             }
         }
     }
@@ -706,18 +692,6 @@ mod spin_transaction_tests {
         assert!(!spin_sql_returns_rows("UPDATE t SET x = 1"));
     }
 
-    #[cfg(feature = "spin-postgres")]
-    #[test]
-    fn postgres_unique_violations_are_normalized() {
-        assert_eq!(
-            normalize_postgres_transaction_error(
-                "ERROR: duplicate key value violates unique constraint (SQLSTATE 23505)".to_owned()
-            ),
-            "concurrency conflict: unique constraint violated"
-        );
-    }
-
-    #[cfg(feature = "spin-postgres")]
     #[test]
     fn postgres_text_columns_are_not_retyped_as_json() {
         let value = spin_postgres_db_value_json(&spin_sdk::pg::DbValue::Str("123".to_owned()));
