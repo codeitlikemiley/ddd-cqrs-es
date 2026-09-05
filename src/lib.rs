@@ -236,9 +236,10 @@ pub use testing::{
     assert_atomic_idempotent_store_contract, assert_checkpoint_store_contract,
     assert_event_store_any_writers_contract, assert_event_store_append_race_contract,
     assert_event_store_contract, assert_event_store_global_replay_contract,
-    assert_idempotency_store_contract, assert_snapshot_store_contract, assert_upcaster_contract,
+    assert_idempotency_store_contract, assert_snapshot_store_contract,
     assert_upcaster_registry_contract, AggregateFixture, EventStoreContractOptions,
-    UpcasterContractStore,
 };
+#[cfg(feature = "serde")]
+pub use testing::{assert_upcaster_contract, UpcasterContractStore};
 /// Upcaster abstractions for event schema migration over time.
 pub use upcast::{ErasedUpcaster, EventUpcaster, UpcasterRegistrationError, UpcasterRegistry};

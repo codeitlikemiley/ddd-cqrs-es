@@ -952,6 +952,7 @@ pub fn assert_upcaster_registry_contract(event_type: &str) {
 }
 
 /// Store surface exercised by [`assert_upcaster_contract`].
+#[cfg(feature = "serde")]
 pub trait UpcasterContractStore<A: Aggregate> {
     /// Store-specific error type.
     type Error: Debug;
@@ -971,7 +972,7 @@ pub trait UpcasterContractStore<A: Aggregate> {
         -> Result<crate::event_store::EventStream<A>, Self::Error>;
 }
 
-#[cfg(feature = "sqlite")]
+#[cfg(all(feature = "serde", feature = "sqlite"))]
 impl<A> UpcasterContractStore<A> for crate::SqliteEventStore<A>
 where
     A: Aggregate + 'static,
@@ -1000,7 +1001,7 @@ where
     }
 }
 
-#[cfg(feature = "postgres")]
+#[cfg(all(feature = "serde", feature = "postgres"))]
 impl<A> UpcasterContractStore<A> for crate::PostgresEventStore<A>
 where
     A: Aggregate + 'static,
@@ -1029,7 +1030,7 @@ where
     }
 }
 
-#[cfg(feature = "mysql")]
+#[cfg(all(feature = "serde", feature = "mysql"))]
 impl<A> UpcasterContractStore<A> for crate::MySqlEventStore<A>
 where
     A: Aggregate + 'static,
@@ -1059,6 +1060,7 @@ where
 }
 
 /// Verifies that a store applies registered upcasters when loading legacy rows.
+#[cfg(feature = "serde")]
 pub fn assert_upcaster_contract<A, S>(
     store: &S,
     aggregate_id: &A::Id,
