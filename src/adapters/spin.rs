@@ -548,8 +548,6 @@ async fn collect_postgres_statement(
     sql: &str,
     params: Vec<spin_sdk::pg::ParameterValue>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    use spin_sdk::pg::DbValue;
-
     let mut rowset = connection
         .query(sql, params)
         .await
