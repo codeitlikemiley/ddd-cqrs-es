@@ -74,6 +74,9 @@ consolidated template. PostgreSQL must be re-verified against the current
 
 3. Apply additive schema changes with the generated `wasi-auth-migrate`
    binary before starting Spin. The request component never mutates schema.
+   For `wasi-auth` `0.1.0-rc.5` and later, this **must** include migration
+   `0014_totp_last_consumed_step` before serving MFA step-up traffic; see
+   [TOTP replay protection](#totp-replay-protection-0014_totp_last_consumed_step).
 4. Start the Spin app with the selected backend URL.
 5. Check storage status:
 
@@ -103,6 +106,52 @@ consolidated template. PostgreSQL must be re-verified against the current
 - Run `wasi-auth-migrate verify-database` after apply and before serving.
 - Back up authoritative relational tables before a destructive transform.
 
+## TOTP replay protection (`0014_totp_last_consumed_step`)
+
+`wasi-auth` `0.1.0-rc.5` closes the TOTP replay window by persisting
+`auth_totp_factors.last_consumed_step` and rejecting an RFC 6238 step that was
+already consumed (enrollment confirm and step-up verification). **Do not rely
+on that protection until migration `0014_totp_last_consumed_step` is applied.**
+An older schema with rc.5 application code still accepts the same step more than
+once within skew.
+
+The fullstack template ships `wasi-auth-migrate` behind the `migrate` feature.
+Operators run it as a deploy step; the Spin request component never mutates
+schema.
+
+```bash
+# From the fullstack tree (local compose Postgres must be up for db-migrate):
+POSTGRES_URL=postgresql://fullstack:fullstack@127.0.0.1:54329/fullstack_app \
+  make -C examples/fullstack-app db-migrate db-verify
+
+# Or directly (any consumer that vendors wasi-auth-migrate):
+DATABASE_URL='postgresql://user:password@host:5432/fullstack_app' \
+  cargo run --quiet --no-default-features --features migrate --bin wasi-auth-migrate -- plan
+
+DATABASE_URL='postgresql://user:password@host:5432/fullstack_app' \
+  cargo run --quiet --no-default-features --features migrate --bin wasi-auth-migrate -- apply
+
+DATABASE_URL='postgresql://user:password@host:5432/fullstack_app' \
+  cargo run --quiet --no-default-features --features migrate --bin wasi-auth-migrate -- verify-database
+```
+
+The apply report must list `0014_totp_last_consumed_step` under `applied` with
+`pending: none` and `database verified: true`. Confirm the column exists:
+
+```bash
+psql "$DATABASE_URL" -c '\d auth_totp_factors' | grep last_consumed_step
+# expect: last_consumed_step | bigint | ...
+```
+
+Install a pinned migration binary in production instead of `cargo run` when
+the deploy host does not carry the application workspace:
+
+```bash
+cargo install wasi-auth --version 0.1.0-rc.5 --bin wasi-auth-migrate
+DATABASE_URL='postgresql://...' wasi-auth-migrate apply
+DATABASE_URL='postgresql://...' wasi-auth-migrate verify-database
+```
+
 ## Rollback Rules
 
 - If command writes fail after a deploy, stop writes first.
@@ -119,6 +168,9 @@ Before a backend is marked stable for fullstack production use, capture:
 - Compile evidence for HTTP and gRPC features.
 - Reset evidence against a disposable live database.
 - `CHECK_STORAGE_EVENTS=1` smoke evidence.
-- `wasi-auth-migrate verify-database` after the final migration.
+- `wasi-auth-migrate verify-database` after the final migration, including
+  `0014_totp_last_consumed_step` when running `wasi-auth` `0.1.0-rc.5` or
+  later.
 - The dedicated live PostgreSQL kernel contracts, including final-owner
-  concurrency, token replay, outbox delivery, and invalidation notification.
+  concurrency, token replay, TOTP step replay rejection, outbox delivery, and
+  invalidation notification.

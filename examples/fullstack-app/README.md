@@ -348,7 +348,7 @@ Start from `spin.production.toml.example`:
 2. Real JWT issuer/audience/keys — not sample HS256  
 3. Distinct ingress, vault, outbox, recovery, CSRF secrets  
 4. Trusted ingress (`AUTH_REQUIRE_TRUSTED_INGRESS`) when fronting with `wasi-auth-ingress`  
-5. Migrations as a deploy step (`make db-migrate` / `wasi-auth-migrate apply`)  
+5. Migrations as a deploy step — **apply `0014_totp_last_consumed_step` before MFA step-up** (`make db-migrate` then `db-verify`, or `wasi-auth-migrate apply` / `verify-database`)  
 6. Outbox worker always running; production rejects capture mail, `AUTH_DEV_TOOLS`, and the OAuth callback bypass  
 7. `AUTH_COOKIE_SECURE=true`  
 8. Exact OAuth callbacks + passkey rpId/origin  
