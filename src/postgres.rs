@@ -1962,10 +1962,7 @@ mod tests {
             "duplicate key value violates unique constraint \
              \"events_aggregate_type_aggregate_id_revision_key\"",
         ));
-        let mapped = crate::sql_common::map_stream_unique_violation(
-            ExpectedRevision::Exact(1),
-            3,
-        );
+        let mapped = crate::sql_common::map_stream_unique_violation(ExpectedRevision::Exact(1), 3);
         assert!(matches!(
             mapped,
             EventStoreError::Concurrency(ConcurrencyError::WrongExpectedRevision {
@@ -1977,19 +1974,21 @@ mod tests {
 
     #[test]
     fn map_postgres_insert_error_leaves_non_revision_errors_unmapped() {
-        let mapped = map_postgres_insert_error(
-            connect_error(),
-            ExpectedRevision::Exact(1),
-            1,
-            || Ok(3),
-        );
-        assert!(matches!(mapped, EventStoreError::Backend { code: None, .. }));
+        let mapped =
+            map_postgres_insert_error(connect_error(), ExpectedRevision::Exact(1), 1, || Ok(3));
+        assert!(matches!(
+            mapped,
+            EventStoreError::Backend { code: None, .. }
+        ));
     }
 
     #[test]
     fn map_postgres_error_maps_backend_without_sqlstate() {
         let mapped = map_postgres_error(connect_error());
-        assert!(matches!(mapped, EventStoreError::Backend { code: None, .. }));
+        assert!(matches!(
+            mapped,
+            EventStoreError::Backend { code: None, .. }
+        ));
     }
 
     #[test]
