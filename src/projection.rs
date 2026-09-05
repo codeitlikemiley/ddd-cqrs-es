@@ -316,12 +316,7 @@ where
     C: CheckpointStore,
 {
     let (applied, last_sequence, failure) = apply_projection_events(projection, events);
-    let flushed = persist_projection_checkpoint(
-        projection,
-        checkpoint_store,
-        key,
-        last_sequence,
-    );
+    let flushed = persist_projection_checkpoint(projection, checkpoint_store, key, last_sequence);
     finish_projection_batch(failure.map(ProjectionRunnerError::Projection), flushed)?;
     Ok(projection_batch_outcome(applied, last_sequence, config))
 }
@@ -339,13 +334,8 @@ where
     C: AsyncCheckpointStore,
 {
     let (applied, last_sequence, failure) = apply_projection_events(projection, events);
-    let flushed = persist_projection_checkpoint_async(
-        projection,
-        checkpoint_store,
-        key,
-        last_sequence,
-    )
-    .await;
+    let flushed =
+        persist_projection_checkpoint_async(projection, checkpoint_store, key, last_sequence).await;
     finish_projection_batch(failure.map(ProjectionRunnerError::Projection), flushed)?;
     Ok(projection_batch_outcome(applied, last_sequence, config))
 }
