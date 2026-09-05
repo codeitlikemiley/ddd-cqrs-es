@@ -55,6 +55,7 @@ spin-postgres = ["dep:spin-sdk", "json"]
 spin-mysql = ["dep:spin-sdk", "spin-sdk/mysql", "json"]
 spin-redis = ["redis", "dep:spin-sdk", "spin-sdk/redis"]
 wasi-redis = ["redis"]
+wasi-redis-tls = ["wasi-redis", "dep:rustls", "dep:rustls-native-certs"]
 wasi-supabase-rpc = ["wasi-http"]
 
 
@@ -75,6 +76,8 @@ http = { version = "1.1.0", optional = true }
 http-body-util = { version = "0.1.2", optional = true }
 bytes = { version = "1.6", optional = true }
 spin-sdk = { git = "https://github.com/codeitlikemiley/spin-rust-sdk", rev = "a02d330fe9357be2d18e6deef400511195ce6f7f", version = "6.0.0", optional = true }
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12"], optional = true }
+rustls-native-certs = { version = "0.8", optional = true }
 
 
 [dev-dependencies]

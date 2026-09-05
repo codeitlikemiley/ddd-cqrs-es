@@ -45,7 +45,11 @@ use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::marker::PhantomData;
 #[cfg(feature = "wasi-redis")]
 use std::net::TcpStream;
+#[cfg(feature = "wasi-redis")]
+use std::net::ToSocketAddrs;
 use std::num::NonZeroUsize;
+#[cfg(all(feature = "wasi-redis", feature = "wasi-redis-tls"))]
+use std::sync::Arc;
 #[cfg(any(feature = "wasi-redis", feature = "spin-redis"))]
 use std::sync::{Arc, Mutex as StdMutex};
 #[cfg(feature = "wasi-redis")]
@@ -1142,17 +1146,86 @@ impl RedisCommandExecutor for SpinRedisClient {
 pub struct WasiRedisClient {
     url: String,
     read_timeout: Option<Duration>,
+    connect_timeout: Option<Duration>,
+    allow_insecure_remote: bool,
     nonblocking_subscription_reads: bool,
-    cached_connection: Arc<StdMutex<Option<BufReader<TcpStream>>>>,
+    cached_connection: Arc<StdMutex<Option<BufReader<RedisStream>>>>,
+}
+
+#[cfg(feature = "wasi-redis")]
+#[derive(Debug)]
+enum RedisStream {
+    Plain(TcpStream),
+    #[cfg(feature = "wasi-redis-tls")]
+    Tls(rustls::StreamOwned<rustls::ClientConnection, TcpStream>),
+}
+
+#[cfg(feature = "wasi-redis")]
+impl Read for RedisStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            RedisStream::Plain(stream) => stream.read(buf),
+            #[cfg(feature = "wasi-redis-tls")]
+            RedisStream::Tls(stream) => stream.read(buf),
+        }
+    }
+}
+
+#[cfg(feature = "wasi-redis")]
+impl Write for RedisStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            RedisStream::Plain(stream) => stream.write(buf),
+            #[cfg(feature = "wasi-redis-tls")]
+            RedisStream::Tls(stream) => stream.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            RedisStream::Plain(stream) => stream.flush(),
+            #[cfg(feature = "wasi-redis-tls")]
+            RedisStream::Tls(stream) => stream.flush(),
+        }
+    }
+}
+
+#[cfg(feature = "wasi-redis")]
+impl RedisStream {
+    fn tcp(&self) -> &TcpStream {
+        match self {
+            RedisStream::Plain(stream) => stream,
+            #[cfg(feature = "wasi-redis-tls")]
+            RedisStream::Tls(stream) => stream.get_ref(),
+        }
+    }
+
+    fn set_read_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()> {
+        self.tcp().set_read_timeout(timeout)
+    }
+
+    fn set_write_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()> {
+        self.tcp().set_write_timeout(timeout)
+    }
+
+    fn set_nonblocking(&self, nonblocking: bool) -> std::io::Result<()> {
+        self.tcp().set_nonblocking(nonblocking)
+    }
+
+    fn peek(&self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.tcp().peek(buf)
+    }
 }
 
 #[cfg(feature = "wasi-redis")]
 impl WasiRedisClient {
-    /// Creates a raw RESP Redis client for a `redis://` URL.
+    /// Creates a raw RESP Redis client for a `redis://` or `rediss://` URL.
     pub fn new(url: impl Into<String>) -> Self {
         Self {
             url: url.into(),
             read_timeout: Some(Duration::from_secs(5)),
+            connect_timeout: Some(Duration::from_secs(5)),
+            allow_insecure_remote: false,
             nonblocking_subscription_reads: false,
             cached_connection: Arc::new(StdMutex::new(None)),
         }
@@ -1168,6 +1241,22 @@ impl WasiRedisClient {
         self
     }
 
+    /// Sets the TCP connect timeout used when opening new connections.
+    pub fn with_connect_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.connect_timeout = timeout;
+        self
+    }
+
+    /// Allows plain `redis://` connections to non-loopback hosts.
+    ///
+    /// By default only loopback hosts (`localhost`, `127.0.0.1`, `::1`) are
+    /// accepted without TLS. Remote `redis://` URLs require this opt-in or
+    /// `rediss://` with the `wasi-redis-tls` feature.
+    pub fn with_allow_insecure_remote(mut self, allowed: bool) -> Self {
+        self.allow_insecure_remote = allowed;
+        self
+    }
+
     /// Configures subscriptions opened by this client to use nonblocking socket
     /// reads after the initial `SUBSCRIBE` acknowledgement is received.
     pub fn with_nonblocking_subscription_reads(mut self, enabled: bool) -> Self {
@@ -1178,6 +1267,38 @@ impl WasiRedisClient {
     /// Returns the Redis URL.
     pub fn url(&self) -> &str {
         &self.url
+    }
+
+    /// Executes one Redis command on a blocking worker thread.
+    ///
+    /// Prefer the async [`RedisCommandExecutor::execute`] surface in production;
+    /// this method exists for callers that already run on a blocking thread.
+    pub fn execute_blocking(
+        &self,
+        command: &str,
+        args: Vec<Vec<u8>>,
+    ) -> Result<RedisValue, RedisClientError> {
+        if let Some(mut reader) = self.take_cached_connection() {
+            match write_command(reader.get_mut(), command, &args) {
+                Ok(()) => {
+                    let result = read_resp_value(&mut reader);
+                    if result.is_ok() {
+                        self.store_cached_connection(reader);
+                    }
+                    return result;
+                }
+                Err(RedisClientError::Io(_) | RedisClientError::Timeout) => {}
+                Err(error) => return Err(error),
+            }
+        }
+
+        let mut reader = self.open_reader()?;
+        write_command(reader.get_mut(), command, &args)?;
+        let result = read_resp_value(&mut reader);
+        if result.is_ok() {
+            self.store_cached_connection(reader);
+        }
+        result
     }
 
     /// Subscribes to one Redis channel using a blocking raw RESP connection.
@@ -1196,12 +1317,20 @@ impl WasiRedisClient {
         Ok(WasiRedisSubscription {
             channel: channel.to_owned(),
             reader,
+            desynced: false,
         })
     }
 
-    fn open_reader(&self) -> Result<BufReader<TcpStream>, RedisClientError> {
+    fn open_reader(&self) -> Result<BufReader<RedisStream>, RedisClientError> {
         let address = RedisAddress::parse(&self.url)?;
-        let stream = TcpStream::connect((address.host.as_str(), address.port))?;
+        if !address.tls && !address.is_loopback() && !self.allow_insecure_remote {
+            return Err(RedisClientError::InvalidUrl(format!(
+                "plain redis:// to `{}` requires with_allow_insecure_remote(true) \
+                 or use rediss:// with the wasi-redis-tls feature",
+                address.host
+            )));
+        }
+        let stream = connect_redis_stream(&address, self.connect_timeout)?;
         stream.set_read_timeout(self.read_timeout)?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
         let mut reader = BufReader::new(stream);
@@ -1232,7 +1361,7 @@ impl WasiRedisClient {
     }
 
     /// Takes the cached connection when it still looks healthy.
-    fn take_cached_connection(&self) -> Option<BufReader<TcpStream>> {
+    fn take_cached_connection(&self) -> Option<BufReader<RedisStream>> {
         let reader = self
             .cached_connection
             .lock()
@@ -1245,7 +1374,7 @@ impl WasiRedisClient {
     ///
     /// A reader with buffered bytes left over is out of protocol sync and is
     /// dropped instead of cached.
-    fn store_cached_connection(&self, reader: BufReader<TcpStream>) {
+    fn store_cached_connection(&self, reader: BufReader<RedisStream>) {
         if !reader.buffer().is_empty() {
             return;
         }
@@ -1263,7 +1392,7 @@ impl WasiRedisClient {
 /// Runtimes without non-blocking or peek support skip the probe and reuse the
 /// connection — write failures still fall back to a fresh connection.
 #[cfg(feature = "wasi-redis")]
-fn cached_connection_is_reusable(reader: &BufReader<TcpStream>) -> bool {
+fn cached_connection_is_reusable(reader: &BufReader<RedisStream>) -> bool {
     let stream = reader.get_ref();
     if let Err(error) = stream.set_nonblocking(true) {
         return error.kind() == ErrorKind::Unsupported;
@@ -1283,33 +1412,11 @@ impl RedisCommandExecutor for WasiRedisClient {
     type Error = RedisClientError;
 
     async fn execute(&self, command: &str, args: Vec<Vec<u8>>) -> Result<RedisValue, Self::Error> {
-        if let Some(mut reader) = self.take_cached_connection() {
-            match write_command(reader.get_mut(), command, &args) {
-                Ok(()) => {
-                    let result = read_resp_value(&mut reader);
-                    if result.is_ok() {
-                        self.store_cached_connection(reader);
-                    }
-                    // A failed read is not retried: the fully written command
-                    // may have executed server-side. The connection is dropped
-                    // and the error surfaces to the caller.
-                    return result;
-                }
-                Err(RedisClientError::Io(_) | RedisClientError::Timeout) => {
-                    // The cached connection went stale before a complete
-                    // command reached the server; retry once on a fresh one.
-                }
-                Err(error) => return Err(error),
-            }
-        }
-
-        let mut reader = self.open_reader()?;
-        write_command(reader.get_mut(), command, &args)?;
-        let result = read_resp_value(&mut reader);
-        if result.is_ok() {
-            self.store_cached_connection(reader);
-        }
-        result
+        let this = self.clone();
+        let command = command.to_owned();
+        tokio::task::spawn_blocking(move || this.execute_blocking(&command, args))
+            .await
+            .map_err(|error| RedisClientError::Io(error.to_string()))?
     }
 }
 
@@ -1318,7 +1425,8 @@ impl RedisCommandExecutor for WasiRedisClient {
 #[derive(Debug)]
 pub struct WasiRedisSubscription {
     channel: String,
-    reader: BufReader<TcpStream>,
+    reader: BufReader<RedisStream>,
+    desynced: bool,
 }
 
 #[cfg(feature = "wasi-redis")]
@@ -1328,10 +1436,32 @@ impl WasiRedisSubscription {
         &self.channel
     }
 
+    /// Opens a fresh subscription to the same channel.
+    pub fn resubscribe(self, client: &WasiRedisClient) -> Result<Self, RedisClientError> {
+        client.subscribe(&self.channel)
+    }
+
     /// Reads the next published message payload.
     pub fn next_message(&mut self) -> Result<Vec<u8>, RedisClientError> {
+        if self.desynced {
+            return Err(RedisClientError::ConnectionDesynced(
+                "subscription connection is desynced; call resubscribe()".to_owned(),
+            ));
+        }
         loop {
-            let value = read_resp_value(&mut self.reader)?;
+            let value = match read_resp_value(&mut self.reader) {
+                Ok(value) => value,
+                Err(error @ RedisClientError::Timeout) => {
+                    if !self.reader.buffer().is_empty() {
+                        self.desynced = true;
+                    }
+                    return Err(error);
+                }
+                Err(error) => {
+                    self.mark_desynced(&error);
+                    return Err(error);
+                }
+            };
             let RedisValue::Array(items) = value else {
                 continue;
             };
@@ -1347,13 +1477,71 @@ impl WasiRedisSubscription {
         }
     }
 
-    /// Reads the next message, returning `Ok(None)` when the configured socket
-    /// timeout expires before a message arrives.
+    /// Reads the next message, returning `Ok(None)` when no full RESP frame is
+    /// available before the configured socket timeout.
+    ///
+    /// A timeout while a RESP frame is partially read is treated as fatal
+    /// connection desync; callers must [`resubscribe`](Self::resubscribe).
     pub fn try_next_message(&mut self) -> Result<Option<Vec<u8>>, RedisClientError> {
-        match self.next_message() {
-            Ok(message) => Ok(Some(message)),
-            Err(RedisClientError::Timeout) => Ok(None),
-            Err(error) => Err(error),
+        if self.desynced {
+            return Err(RedisClientError::ConnectionDesynced(
+                "subscription connection is desynced; call resubscribe()".to_owned(),
+            ));
+        }
+        if self.reader.buffer().is_empty() {
+            let stream = self.reader.get_mut();
+            let saved_timeout = stream
+                .tcp()
+                .read_timeout()
+                .map_err(RedisClientError::from)?;
+            stream.set_read_timeout(Some(Duration::ZERO))?;
+            let mut probe = [0_u8; 1];
+            let poll = stream.peek(&mut probe);
+            stream
+                .set_read_timeout(saved_timeout)
+                .map_err(RedisClientError::from)?;
+            match poll {
+                Ok(0) => {
+                    self.desynced = true;
+                    return Err(RedisClientError::ConnectionDesynced(
+                        "subscription connection closed by peer".to_owned(),
+                    ));
+                }
+                Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(None),
+                Err(error) if error.kind() == ErrorKind::TimedOut => return Ok(None),
+                Err(error) => return Err(RedisClientError::from(error)),
+                Ok(_) => {}
+            }
+        }
+        self.next_message().map(Some).map_err(|error| {
+            if matches!(error, RedisClientError::Timeout) {
+                self.desynced = true;
+                RedisClientError::ConnectionDesynced(
+                    "subscription read timed out mid-frame; call resubscribe()".to_owned(),
+                )
+            } else {
+                error
+            }
+        })
+    }
+
+    fn mark_desynced(&mut self, error: &RedisClientError) {
+        if matches!(
+            error,
+            RedisClientError::Protocol(_)
+                | RedisClientError::Io(_)
+                | RedisClientError::Timeout
+                | RedisClientError::ConnectionDesynced(_)
+        ) && !self.reader.buffer().is_empty()
+        {
+            self.desynced = true;
+            return;
+        }
+        if matches!(
+            error,
+            RedisClientError::Protocol(_) | RedisClientError::ConnectionDesynced(_)
+        ) {
+            self.desynced = true;
         }
     }
 }
@@ -1372,6 +1560,8 @@ pub enum RedisClientError {
     Redis(String),
     /// RESP protocol data was malformed or unexpected.
     Protocol(String),
+    /// Subscription or command connection lost mid-frame and must reconnect.
+    ConnectionDesynced(String),
 }
 
 #[cfg(feature = "wasi-redis")]
@@ -1383,6 +1573,9 @@ impl Display for RedisClientError {
             RedisClientError::Timeout => f.write_str("Redis read timed out"),
             RedisClientError::Redis(message) => write!(f, "Redis error: {message}"),
             RedisClientError::Protocol(message) => write!(f, "Redis protocol error: {message}"),
+            RedisClientError::ConnectionDesynced(message) => {
+                write!(f, "Redis connection desynced: {message}")
+            }
         }
     }
 }
@@ -1913,14 +2106,19 @@ struct RedisAddress {
     username: Option<String>,
     password: Option<String>,
     db: Option<u32>,
+    tls: bool,
 }
 
 #[cfg(feature = "wasi-redis")]
 impl RedisAddress {
     fn parse(url: &str) -> Result<Self, RedisClientError> {
-        let Some(rest) = url.strip_prefix("redis://") else {
+        let (tls, rest) = if let Some(rest) = url.strip_prefix("rediss://") {
+            (true, rest)
+        } else if let Some(rest) = url.strip_prefix("redis://") {
+            (false, rest)
+        } else {
             return Err(RedisClientError::InvalidUrl(
-                "only redis:// URLs are supported".to_owned(),
+                "only redis:// and rediss:// URLs are supported".to_owned(),
             ));
         };
         let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
@@ -1967,13 +2165,79 @@ impl RedisAddress {
             username,
             password,
             db,
+            tls,
         })
+    }
+
+    fn is_loopback(&self) -> bool {
+        matches!(
+            self.host.as_str(),
+            "localhost" | "127.0.0.1" | "::1" | "[::1]"
+        )
     }
 }
 
 #[cfg(feature = "wasi-redis")]
+fn connect_redis_stream(
+    address: &RedisAddress,
+    connect_timeout: Option<Duration>,
+) -> Result<RedisStream, RedisClientError> {
+    let endpoint = (address.host.as_str(), address.port);
+    let tcp = match connect_timeout {
+        Some(timeout) => TcpStream::connect_timeout(
+            &endpoint
+                .to_socket_addrs()
+                .map_err(|error| RedisClientError::Io(error.to_string()))?
+                .next()
+                .ok_or_else(|| RedisClientError::Io("Redis host did not resolve".to_owned()))?,
+            timeout,
+        )
+        .map_err(RedisClientError::from)?,
+        None => TcpStream::connect(endpoint).map_err(RedisClientError::from)?,
+    };
+
+    if address.tls {
+        upgrade_tls_stream(tcp, &address.host)
+    } else {
+        Ok(RedisStream::Plain(tcp))
+    }
+}
+
+#[cfg(all(feature = "wasi-redis", feature = "wasi-redis-tls"))]
+fn upgrade_tls_stream(tcp: TcpStream, host: &str) -> Result<RedisStream, RedisClientError> {
+    let mut root_store = rustls::RootCertStore::empty();
+    for cert in rustls_native_certs::load_native_certs().map_err(|error| {
+        RedisClientError::Io(format!("failed to load native TLS certificates: {error}"))
+    })? {
+        root_store.add(cert).map_err(|error| {
+            RedisClientError::Io(format!("invalid native certificate: {error}"))
+        })?;
+    }
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+    let server_name =
+        rustls::pki_types::ServerName::try_from(host.to_owned()).map_err(|error| {
+            RedisClientError::InvalidUrl(format!("invalid TLS server name: {error}"))
+        })?;
+    let connection = rustls::ClientConnection::new(Arc::new(config), server_name)
+        .map_err(|error| RedisClientError::Io(format!("TLS client config: {error}")))?;
+    let mut tls = rustls::StreamOwned::new(connection, tcp);
+    tls.flush()
+        .map_err(|error| RedisClientError::Io(format!("TLS handshake: {error}")))?;
+    Ok(RedisStream::Tls(tls))
+}
+
+#[cfg(all(feature = "wasi-redis", not(feature = "wasi-redis-tls")))]
+fn upgrade_tls_stream(_tcp: TcpStream, _host: &str) -> Result<RedisStream, RedisClientError> {
+    Err(RedisClientError::InvalidUrl(
+        "rediss:// URLs require enabling the wasi-redis-tls feature".to_owned(),
+    ))
+}
+
+#[cfg(feature = "wasi-redis")]
 fn write_command(
-    stream: &mut TcpStream,
+    stream: &mut RedisStream,
     command: &str,
     args: &[Vec<u8>],
 ) -> Result<(), RedisClientError> {
@@ -2738,6 +3002,7 @@ mod tests {
                 username: None,
                 password: Some("secret".to_owned()),
                 db: Some(2),
+                tls: false,
             }
         );
     }
@@ -2755,8 +3020,109 @@ mod tests {
                 username: Some("app".to_owned()),
                 password: Some("secret".to_owned()),
                 db: Some(0),
+                tls: false,
             }
         );
+    }
+
+    #[cfg(feature = "wasi-redis")]
+    #[test]
+    fn redis_url_parser_supports_rediss_scheme() {
+        let parsed = RedisAddress::parse("rediss://localhost:6380/1").unwrap();
+
+        assert_eq!(
+            parsed,
+            RedisAddress {
+                host: "localhost".to_owned(),
+                port: 6380,
+                username: None,
+                password: None,
+                db: Some(1),
+                tls: true,
+            }
+        );
+    }
+
+    #[cfg(feature = "wasi-redis")]
+    #[test]
+    fn wasi_client_rejects_remote_plain_redis_without_opt_in() {
+        let client = WasiRedisClient::new("redis://redis.example.com:6379");
+        let error = client.execute_blocking("PING", Vec::new()).unwrap_err();
+
+        assert!(matches!(error, RedisClientError::InvalidUrl(_)));
+    }
+
+    #[cfg(feature = "wasi-redis")]
+    #[test]
+    fn wasi_client_allows_remote_plain_redis_when_opted_in() {
+        let client = WasiRedisClient::new("redis://127.0.0.1:1")
+            .with_allow_insecure_remote(true)
+            .with_connect_timeout(Some(Duration::from_millis(100)));
+        let error = client.execute_blocking("PING", Vec::new()).unwrap_err();
+
+        assert!(matches!(
+            error,
+            RedisClientError::Io(_) | RedisClientError::Timeout
+        ));
+    }
+
+    #[cfg(feature = "wasi-redis")]
+    #[test]
+    fn subscription_mid_frame_timeout_is_fatal() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("redis://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let Ok((mut server, _)) = listener.accept() else {
+                return;
+            };
+            let mut request = Vec::new();
+            let mut byte = [0_u8; 1];
+            while !request.ends_with(b"events\r\n") {
+                if server.read(&mut byte).ok() != Some(1) {
+                    return;
+                }
+                request.push(byte[0]);
+            }
+            let ack = b"*3\r\n$9\r\nsubscribe\r\n$6\r\nevents\r\n:1\r\n";
+            if server.write_all(ack).is_err() {
+                return;
+            }
+            // Begin a bulk-string reply but stop before the payload completes.
+            let _ = server.write_all(b"$8\r\npart");
+            std::thread::sleep(Duration::from_secs(2));
+        });
+
+        let client = WasiRedisClient::new(url).with_read_timeout(Some(Duration::from_millis(200)));
+        let mut subscription = client.subscribe("events").unwrap();
+        let error = subscription.try_next_message().unwrap_err();
+
+        assert!(matches!(
+            error,
+            RedisClientError::Timeout
+                | RedisClientError::ConnectionDesynced(_)
+                | RedisClientError::Io(_)
+        ));
+        assert!(subscription
+            .try_next_message()
+            .unwrap_err()
+            .to_string()
+            .contains("desynced"));
+    }
+
+    #[cfg(feature = "wasi-redis")]
+    #[test]
+    fn rediss_url_without_tls_feature_is_rejected() {
+        let client = WasiRedisClient::new("rediss://127.0.0.1:6379")
+            .with_connect_timeout(Some(Duration::from_millis(100)));
+        let error = client.execute_blocking("PING", Vec::new()).unwrap_err();
+
+        #[cfg(not(feature = "wasi-redis-tls"))]
+        assert!(matches!(error, RedisClientError::InvalidUrl(_)));
+        #[cfg(feature = "wasi-redis-tls")]
+        let _ = error;
     }
 
     #[cfg(feature = "wasi-redis")]
