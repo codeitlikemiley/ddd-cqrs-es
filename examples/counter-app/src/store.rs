@@ -449,6 +449,7 @@ async fn append_legacy_routed<A: Aggregate>(
 ) -> Result<Vec<EventEnvelope<A::Event, A::Id>>, EventStoreError>
 where
     A::Event: serde::Serialize + Clone,
+    A::Id: serde::Serialize,
 {
     let query_sqlite_rev = "SELECT COALESCE(MAX(revision), 0) as max_rev FROM events WHERE aggregate_type = ? AND aggregate_id = ?";
     let query_postgres_rev = "SELECT COALESCE(MAX(revision), 0) as max_rev FROM events WHERE aggregate_type = $1 AND aggregate_id = $2";
@@ -573,6 +574,7 @@ async fn append_spin_sqlite_atomic<A: Aggregate>(
 ) -> Result<Vec<EventEnvelope<A::Event, A::Id>>, EventStoreError>
 where
     A::Event: Clone + serde::Serialize,
+    A::Id: serde::Serialize,
 {
     let agg_id_str = serde_json::to_string(aggregate_id)
         .map_err(|error| EventStoreError::serialization(error.to_string()))?;
