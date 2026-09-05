@@ -423,7 +423,7 @@ pub(crate) async fn load_secrets_raw_for_ids(
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
         let _ = (org_id, secret_ids);
-        Ok(Vec::new())
+        Err(dashboard_storage_requires_postgres())
     }
 }
 
@@ -465,7 +465,7 @@ pub async fn load_data_sources(
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
         let _ = user_id;
-        Ok(Vec::new())
+        Err(dashboard_storage_requires_postgres())
     }
 }
 
@@ -491,9 +491,7 @@ pub async fn save_data_sources(
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
         let _ = (user_id, sources);
-        Err(AuthStackError::configuration(
-            "dashboard storage requires Spin key-value",
-        ))
+        Err(dashboard_storage_requires_postgres())
     }
 }
 
@@ -516,7 +514,7 @@ pub(crate) async fn load_secrets_raw(org_id: &str) -> AuthStackResult<Vec<Stored
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
         let _ = org_id;
-        Ok(Vec::new())
+        Err(dashboard_storage_requires_postgres())
     }
 }
 
@@ -567,9 +565,7 @@ pub(crate) async fn save_secrets_raw(
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
         let _ = (org_id, secrets);
-        Err(AuthStackError::configuration(
-            "dashboard storage requires Spin key-value",
-        ))
+        Err(dashboard_storage_requires_postgres())
     }
 }
 
@@ -632,7 +628,7 @@ pub async fn migrate_legacy_user_secrets_to_org_detailed(
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
         let _ = (user_id, org_id, dry_run);
-        Ok((false, 0, 0, Vec::new()))
+        Err(dashboard_storage_requires_postgres())
     }
 }
 

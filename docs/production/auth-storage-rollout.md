@@ -24,6 +24,11 @@ allowlisting.
 | Spin SQLite | Removed from auth product | The former migration-only feature diverged and implemented no product workflows |
 | Other adapters | Not part of this template | Keep unrelated adapters in `ddd_cqrs_es`; this identity template intentionally has one PostgreSQL path. |
 
+App-owned dashboard state (board layout, resources, queries, notifications,
+and vault secrets) follows the same Postgres-on-Spin contract. Builds without
+`--features postgres` or without the Spin runtime fail fast with a
+configuration error instead of returning empty dashboard data.
+
 ## Configuration
 
 Use the public Makefile inputs. `DATABASE_URL` is an internal value passed from
