@@ -35,7 +35,7 @@ pub async fn execute_counter_command(command: CounterCommand) -> CounterAppResul
             Ok(outcome) => break outcome,
             Err(error)
                 if attempts < COMMAND_CONCURRENCY_RETRIES
-                    && is_retryable_counter_write_conflict(&error) =>
+                    && error.is_retryable() =>
             {
                 attempts += 1;
                 tracing::warn!(
@@ -97,22 +97,4 @@ fn log_nonfatal_error(message: &'static str, error: &CounterAppError) {
         public_message = %error.public_message(),
         "{message}"
     );
-}
-
-fn is_retryable_counter_write_conflict(
-    error: &ddd_cqrs_es::RepositoryError<String, ddd_cqrs_es::EventStoreError>,
-) -> bool {
-    match error {
-        ddd_cqrs_es::RepositoryError::Concurrency(_) => true,
-        ddd_cqrs_es::RepositoryError::Store(ddd_cqrs_es::EventStoreError::Backend { message, .. }) => {
-            let message = message.to_ascii_lowercase();
-            (message.contains("unique")
-                || message.contains("duplicate")
-                || message.contains("constraint"))
-                && (message.contains("revision")
-                    || message.contains("aggregate")
-                    || message.contains("idx_aggregate_revision"))
-        }
-        _ => false,
-    }
 }

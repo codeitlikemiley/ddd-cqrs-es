@@ -135,7 +135,9 @@ pub use adapters::{JsonFileCheckpointStore, JsonFileEventStore};
 /// Command and query dispatch interfaces.
 pub use command::{CommandBus, CommandHandler, IdempotentCommandBus, QueryHandler};
 /// Top-level repository and event-store error types.
-pub use error::{ConcurrencyError, EventStoreError, EventStoreFailure, RepositoryError};
+pub use error::{
+    ConcurrencyError, EventStoreError, EventStoreErrorKind, EventStoreFailure, RepositoryError,
+};
 /// Shared event envelope and stream metadata types.
 pub use event::{
     AggregateType, DomainEvent, EventEnvelope, EventEnvelopeBuilder, EventId, EventType,
