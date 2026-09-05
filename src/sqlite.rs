@@ -71,20 +71,20 @@ fn query_stored_event_rows(
         .map_err(map_sqlite_row_collect_error)
 }
 
-fn begin_immediate_transaction<'connection>(
-    connection: &'connection mut Connection,
-) -> Result<rusqlite::Transaction<'connection>, EventStoreError> {
-    connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|error| map_sqlite_contention_error(error, None, || Ok(0)))
-}
-
 fn is_sqlite_contention(error: &rusqlite::Error) -> bool {
-    matches!(
-        error,
-        rusqlite::Error::SqliteFailure(failure, _)
+    match error {
+        rusqlite::Error::SqliteFailure(failure, message) => {
             if failure.code == ErrorCode::DatabaseBusy || failure.code == ErrorCode::DatabaseLocked
-    )
+            {
+                return true;
+            }
+            message.as_deref().is_some_and(|msg| {
+                let lower = msg.to_ascii_lowercase();
+                lower.contains("database is locked") || lower.contains("database table is locked")
+            })
+        }
+        _ => false,
+    }
 }
 
 fn map_sqlite_contention_error(
@@ -342,7 +342,13 @@ where
             .map(PreparedSqliteEvent::new)
             .collect::<Result<Vec<_>, _>>()?;
         let mut connection = lock_connection(&self.connection);
-        let transaction = begin_immediate_transaction(&mut connection)?;
+        let stale_revision =
+            Self::current_revision_locked(&self.table_name, &connection, &aggregate_id_key)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| {
+                map_sqlite_contention_error(error, Some(expected_revision), || Ok(stale_revision))
+            })?;
         let actual_revision =
             Self::current_revision_locked(&self.table_name, &transaction, &aggregate_id_key)?;
         check_expected_revision(expected_revision, actual_revision)?;
@@ -617,8 +623,18 @@ where
             .collect::<Result<Vec<_>, _>>()
             .map_err(IdempotentAppendError::Store)?;
         let mut connection = lock_connection(&self.connection);
-        let transaction =
-            begin_immediate_transaction(&mut connection).map_err(IdempotentAppendError::Store)?;
+        let stale_revision =
+            Self::current_revision_locked(&self.table_name, &connection, &aggregate_id_key)
+                .map_err(IdempotentAppendError::Store)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| {
+                IdempotentAppendError::Store(map_sqlite_contention_error(
+                    error,
+                    Some(expected_revision),
+                    || Ok(stale_revision),
+                ))
+            })?;
 
         let load_idempotency = format!(
             "SELECT state, value, owner, expires_at_ms FROM {} WHERE idempotency_key = ?1;",
