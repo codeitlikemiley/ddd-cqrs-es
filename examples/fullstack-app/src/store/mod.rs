@@ -51,7 +51,11 @@ mod tests {
     #[test]
     fn dashboard_storage_requires_postgres_is_configuration_error() {
         let error = dashboard_storage_requires_postgres();
-        assert_eq!(error.to_string(), DASHBOARD_STORAGE_REQUIRES_POSTGRES);
+        assert!(matches!(
+            error,
+            crate::error::AuthStackError::Configuration { message }
+            if message == DASHBOARD_STORAGE_REQUIRES_POSTGRES
+        ));
     }
 
     #[test]
