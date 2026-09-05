@@ -3,7 +3,7 @@ fn env_non_empty(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|s| !s.is_empty())
 }
 
-use super::http::{redact_url_userinfo, truncate_body_for_error, wasi_http_post};
+use super::http::{redact_url_userinfo, truncate_body_for_error, validate_https_url, wasi_http_post};
 
 // -------------------------------------------------------------------------
 // Neon / Serverless Postgres HTTP adapter
@@ -41,6 +41,24 @@ pub async fn execute_neon_query(
     }
 
     let http_url = neon_http_endpoint(url)?;
+
+    if let Some(conn_str) = env_non_empty("DATABASE_URL")
+        .or_else(|| env_non_empty("NEON_DB_URL"))
+        .filter(|value| {
+            value.starts_with("postgres://") || value.starts_with("postgresql://")
+        })
+    {
+        if let (Some(conn_host), Some(endpoint_host)) = (
+            postgres_connection_host(&conn_str),
+            https_endpoint_host(&http_url),
+        ) {
+            if conn_host != endpoint_host {
+                return Err(format!(
+                    "Neon connection string host `{conn_host}` does not match endpoint host `{endpoint_host}`"
+                ));
+            }
+        }
+    }
 
     let resp_bytes = wasi_http_post(&http_url, headers, body_data).await?;
 
@@ -82,8 +100,40 @@ fn neon_http_endpoint(url: &str) -> Result<String, String> {
         };
         Ok(format!("https://{host_name}/sql"))
     } else {
+        validate_https_url(url)?;
         Ok(url.to_string())
     }
+}
+
+#[cfg(feature = "wasi-neon")]
+fn postgres_connection_host(connection_string: &str) -> Option<String> {
+    let stripped = connection_string
+        .strip_prefix("postgres://")
+        .or_else(|| connection_string.strip_prefix("postgresql://"))?;
+    let host_part = stripped.rfind('@').map_or(stripped, |idx| &stripped[idx + 1..]);
+    let host = host_part
+        .split(['/', '?'])
+        .next()
+        .unwrap_or(host_part);
+    host.split(':').next().map(str::to_owned)
+}
+
+#[cfg(feature = "wasi-neon")]
+fn https_endpoint_host(url: &str) -> Option<String> {
+    let scheme_end = url.find("://")?;
+    if !url[..scheme_end].eq_ignore_ascii_case("https") {
+        return None;
+    }
+    let authority = url[scheme_end + 3..]
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or_default();
+    let host = authority
+        .rsplit('@')
+        .next()
+        .unwrap_or(authority)
+        .trim_matches(['[', ']']);
+    host.split(':').next().map(str::to_owned)
 }
 
 #[cfg(feature = "wasi-neon")]
@@ -151,5 +201,19 @@ mod tests {
         let redacted = redact_url_userinfo("postgres://user:secret@ep-example.neon.tech/neondb");
         assert!(!redacted.contains("secret"));
         assert!(redacted.contains("***@"));
+    }
+
+    #[test]
+    fn neon_endpoint_rejects_plaintext_http_urls() {
+        assert!(neon_http_endpoint("http://evil.example/sql").is_err());
+        assert!(neon_http_endpoint("https://ep-example.neon.tech/sql").is_ok());
+    }
+
+    #[test]
+    fn postgres_connection_host_uses_last_at_separator() {
+        assert_eq!(
+            postgres_connection_host("postgres://user:p@ss@word@ep-example.neon.tech/db"),
+            Some("ep-example.neon.tech".to_owned())
+        );
     }
 }

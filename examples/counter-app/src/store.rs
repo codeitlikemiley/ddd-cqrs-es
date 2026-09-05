@@ -875,7 +875,7 @@ where
         }
 
         let query_sqlite = if backend == "mysql" {
-            "SELECT sequence, event_id, aggregate_id, aggregate_type, revision, event_type, event_version, CAST(payload AS CHAR(10000) CHARACTER SET utf8mb4) AS payload, CAST(metadata AS CHAR(10000) CHARACTER SET utf8mb4) AS metadata, recorded_at_ms FROM events WHERE aggregate_type = ? AND aggregate_id = ? ORDER BY revision ASC"
+            "SELECT sequence, event_id, aggregate_id, aggregate_type, revision, event_type, event_version, CAST(payload AS CHAR CHARACTER SET utf8mb4) AS payload, CAST(metadata AS CHAR CHARACTER SET utf8mb4) AS metadata, recorded_at_ms FROM events WHERE aggregate_type = ? AND aggregate_id = ? ORDER BY revision ASC"
         } else {
             "SELECT sequence, event_id, aggregate_id, aggregate_type, revision, event_type, event_version, payload, metadata, recorded_at_ms FROM events WHERE aggregate_type = ? AND aggregate_id = ? ORDER BY revision ASC"
         };
@@ -1081,7 +1081,7 @@ where
         }
 
         let query_sqlite = if backend == "mysql" {
-            "SELECT sequence, event_id, aggregate_id, aggregate_type, revision, event_type, event_version, CAST(payload AS CHAR(10000) CHARACTER SET utf8mb4) AS payload, CAST(metadata AS CHAR(10000) CHARACTER SET utf8mb4) AS metadata, recorded_at_ms FROM events WHERE sequence > ? ORDER BY sequence ASC"
+            "SELECT sequence, event_id, aggregate_id, aggregate_type, revision, event_type, event_version, CAST(payload AS CHAR CHARACTER SET utf8mb4) AS payload, CAST(metadata AS CHAR CHARACTER SET utf8mb4) AS metadata, recorded_at_ms FROM events WHERE sequence > ? ORDER BY sequence ASC"
         } else {
             "SELECT sequence, event_id, aggregate_id, aggregate_type, revision, event_type, event_version, payload, metadata, recorded_at_ms FROM events WHERE sequence > ? ORDER BY sequence ASC"
         };
@@ -1181,7 +1181,7 @@ where
         }
 
         let query_sqlite = if backend == "mysql" {
-            "SELECT sequence, event_id, aggregate_id, aggregate_type, revision, event_type, event_version, CAST(payload AS CHAR(10000) CHARACTER SET utf8mb4) AS payload, CAST(metadata AS CHAR(10000) CHARACTER SET utf8mb4) AS metadata, recorded_at_ms FROM events WHERE sequence > ? ORDER BY sequence ASC LIMIT ?"
+            "SELECT sequence, event_id, aggregate_id, aggregate_type, revision, event_type, event_version, CAST(payload AS CHAR CHARACTER SET utf8mb4) AS payload, CAST(metadata AS CHAR CHARACTER SET utf8mb4) AS metadata, recorded_at_ms FROM events WHERE sequence > ? ORDER BY sequence ASC LIMIT ?"
         } else {
             "SELECT sequence, event_id, aggregate_id, aggregate_type, revision, event_type, event_version, payload, metadata, recorded_at_ms FROM events WHERE sequence > ? ORDER BY sequence ASC LIMIT ?"
         };
@@ -2100,7 +2100,7 @@ pub async fn get_latest_events_db() -> Result<Vec<crate::app::EventLogDto>, Stri
     }
 
     let query_sqlite = if backend == "mysql" {
-        "SELECT sequence, event_type, revision, CAST(payload AS CHAR(10000) CHARACTER SET utf8mb4) AS payload, recorded_at_ms FROM events ORDER BY sequence DESC LIMIT 5"
+        "SELECT sequence, event_type, revision, CAST(payload AS CHAR CHARACTER SET utf8mb4) AS payload, recorded_at_ms FROM events ORDER BY sequence DESC LIMIT 5"
     } else {
         "SELECT sequence, event_type, revision, payload, recorded_at_ms FROM events ORDER BY sequence DESC LIMIT 5"
     };

@@ -21,8 +21,8 @@ use crate::upcast::UpcasterRegistry;
 use async_trait::async_trait;
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
-#[cfg(feature = "wasi-redis")]
-use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
+#[cfg(feature = "spin-redis")]
+use crate::adapters::http::redact_url_userinfo;
 use std::marker::PhantomData;
 #[cfg(feature = "wasi-redis")]
 use std::net::TcpStream;
@@ -1003,7 +1003,7 @@ pub struct SpinRedisClient {
 impl std::fmt::Debug for SpinRedisClient {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SpinRedisClient")
-            .field("url", &self.url)
+            .field("url", &redact_url_userinfo(&self.url))
             .finish_non_exhaustive()
     }
 }
