@@ -18,6 +18,22 @@ use crate::snapshot::{Snapshot, SnapshotRepositoryError};
 use async_trait::async_trait;
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
+use std::time::Duration;
+
+/// Waits asynchronously between idempotency retries.
+///
+/// Native builds use Tokio timers. WASM/Spin targets block the current task
+/// with `std::thread::sleep` because Tokio's timer wheel is unavailable there.
+#[cfg(feature = "async")]
+pub(crate) async fn async_retry_delay(duration: Duration) {
+    if duration.is_zero() {
+        return;
+    }
+    #[cfg(target_family = "wasm")]
+    std::thread::sleep(duration);
+    #[cfg(not(target_family = "wasm"))]
+    tokio::time::sleep(duration).await;
+}
 
 /// Async event persistence abstraction for one aggregate type.
 #[async_trait]
@@ -463,7 +479,7 @@ where
                     if !lease.is_expired(crate::idempotency::now_ms()) =>
                 {
                     let delay = pending_wait_delay(&wait_config, started, &idempotency_key)?;
-                    tokio::time::sleep(delay).await;
+                    async_retry_delay(delay).await;
                     continue;
                 }
                 None | Some(IdempotencyState::Pending(_)) => {
@@ -475,7 +491,7 @@ where
                         break;
                     }
                     let delay = pending_wait_delay(&wait_config, started, &idempotency_key)?;
-                    tokio::time::sleep(delay).await;
+                    async_retry_delay(delay).await;
                 }
             }
         }
@@ -572,7 +588,7 @@ where
                     if !lease.is_expired(crate::idempotency::now_ms()) =>
                 {
                     let delay = pending_wait_delay(&wait_config, started, &idempotency_key)?;
-                    tokio::time::sleep(delay).await;
+                    async_retry_delay(delay).await;
                 }
                 None | Some(IdempotencyState::Pending(_)) => break,
             }
@@ -601,7 +617,7 @@ where
                 Ok(committed) => return Ok(committed),
                 Err(IdempotentAppendError::Pending { .. }) => {
                     let delay = pending_wait_delay(&wait_config, started, &idempotency_key)?;
-                    tokio::time::sleep(delay).await;
+                    async_retry_delay(delay).await;
                 }
                 Err(IdempotentAppendError::Store(error)) => {
                     return Err(IdempotentRepositoryError::from_store_error(error));

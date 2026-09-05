@@ -2936,6 +2936,92 @@ fn persisted_projection_runner_flushes_progress_before_reporting_failure() {
 }
 
 #[test]
+fn persisted_projection_runner_surfaces_checkpoint_failure_with_projection_error() {
+    use ddd_cqrs_es::projection::{PersistedProjectionRunner, ProjectionRunnerError};
+
+    struct TrippingProjection {
+        total: u64,
+        trip_at: u64,
+    }
+
+    impl Projection<CounterEvent, String> for TrippingProjection {
+        type Error = &'static str;
+
+        fn name(&self) -> &'static str {
+            "tripping_projection"
+        }
+
+        fn apply(
+            &mut self,
+            event: &ddd_cqrs_es::EventEnvelope<CounterEvent, String>,
+        ) -> Result<(), Self::Error> {
+            if let CounterEvent::Incremented { by } = event.payload {
+                if self.total + by > self.trip_at {
+                    return Err("tripped");
+                }
+                self.total += by;
+            }
+            Ok(())
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct FailingCheckpointStore;
+
+    impl ddd_cqrs_es::projection::CheckpointStore for FailingCheckpointStore {
+        type Error = &'static str;
+
+        fn load_checkpoint(&self, _projection_name: &str) -> Result<Option<u64>, Self::Error> {
+            Ok(None)
+        }
+
+        fn save_checkpoint(
+            &self,
+            _projection_name: &str,
+            _sequence: u64,
+        ) -> Result<(), Self::Error> {
+            Err("checkpoint down")
+        }
+
+        fn reset_checkpoint(&self, _projection_name: &str) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    let store = InMemoryEventStore::<Counter>::new();
+    let repo = Repository::new(store.clone());
+    let counter_id = "counter-1".to_owned();
+
+    repo.execute(&counter_id, CounterCommand::Create, Metadata::default())
+        .unwrap();
+    for _ in 0..4 {
+        repo.execute(
+            &counter_id,
+            CounterCommand::Increment { by: 1 },
+            Metadata::default(),
+        )
+        .unwrap();
+    }
+
+    let mut runner = PersistedProjectionRunner::new(
+        TrippingProjection {
+            total: 0,
+            trip_at: 2,
+        },
+        FailingCheckpointStore,
+    );
+
+    let error = runner.run::<Counter, _>(&store).unwrap_err();
+    assert!(matches!(
+        error,
+        ProjectionRunnerError::PartialBatchFailure {
+            projection: "tripped",
+            checkpoint: "checkpoint down",
+        }
+    ));
+}
+
+#[test]
 fn persisted_projection_runner_flushes_before_advancing_checkpoint() {
     use ddd_cqrs_es::projection::PersistedProjectionRunner;
     use std::sync::{Arc, Mutex};
