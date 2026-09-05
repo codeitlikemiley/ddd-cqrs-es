@@ -3,13 +3,16 @@
 #![allow(dead_code)]
 
 use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 #[cfg(feature = "mail-capture")]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+use futures::future::{join_all, FutureExt as _};
 use futures::lock::Mutex;
 use serde_json::Value;
 #[cfg(feature = "mail-capture")]
@@ -39,6 +42,29 @@ use crate::error::{AuthStackError, AuthStackResult};
 
 use super::*;
 
+/// Preloaded org board data for batched dashboard query execution.
+pub(crate) struct DashboardExecBundle {
+    pub queries: Vec<crate::contracts::DashboardQuery>,
+    pub resources: Vec<crate::contracts::DashboardResource>,
+    pub secrets: Vec<StoredSecret>,
+}
+
+struct CachedOAuthToken {
+    token: String,
+    expires_at_ms: u64,
+}
+
+static OAUTH_TOKEN_CACHE: OnceLock<Mutex<HashMap<String, CachedOAuthToken>>> = OnceLock::new();
+static POSTGRES_URL_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+
+fn oauth_cache() -> &'static Mutex<HashMap<String, CachedOAuthToken>> {
+    OAUTH_TOKEN_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn postgres_url_cache() -> &'static Mutex<HashMap<String, String>> {
+    POSTGRES_URL_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 /// Execute a saved dashboard query (REST fully supported; other kinds return clear errors).
 /// Board data and vault secrets are both scoped to `org_id`.
 pub async fn execute_dashboard_query(
@@ -46,19 +72,91 @@ pub async fn execute_dashboard_query(
     query_id: &str,
     allow_private: bool,
 ) -> AuthStackResult<crate::contracts::QueryResult> {
+    let queries = load_queries(org_id).await?;
+    let resources = load_resources(org_id).await?;
+    let bundle = DashboardExecBundle {
+        queries,
+        resources,
+        secrets: Vec::new(),
+    };
+    execute_dashboard_query_with_bundle(org_id, query_id, allow_private, &bundle, true).await
+}
+
+pub(crate) async fn execute_dashboard_queries_batch(
+    org_id: &str,
+    query_ids: &[String],
+    allow_private: bool,
+    queries: &[crate::contracts::DashboardQuery],
+    resources: &[crate::contracts::DashboardResource],
+) -> Vec<crate::contracts::QueryResult> {
+    use crate::contracts::{QueryExecutionClass, QueryResult, ResourceKind};
+    let mut secret_ids = HashSet::new();
+    for query_id in query_ids {
+        let Some(query) = queries.iter().find(|query| query.id == *query_id) else {
+            continue;
+        };
+        let Some(resource) = resources.iter().find(|resource| resource.id == query.resource_id)
+        else {
+            continue;
+        };
+        if query.config.execution_class() != QueryExecutionClass::Read {
+            continue;
+        }
+        secret_ids.extend(collect_connector_secret_ids(resource, Some(query)));
+    }
+    let secrets = load_secrets_resolved_for_ids(org_id, &secret_ids)
+        .await
+        .unwrap_or_default();
+    let bundle = Arc::new(DashboardExecBundle {
+        queries: queries.to_owned(),
+        resources: resources.to_owned(),
+        secrets,
+    });
+    let futures = query_ids.iter().map(|query_id| {
+        let org_id = org_id.to_owned();
+        let query_id = query_id.clone();
+        let bundle = Arc::clone(&bundle);
+        async move {
+            match execute_dashboard_query_with_bundle(
+                &org_id,
+                &query_id,
+                allow_private,
+                &bundle,
+                false,
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(error) => QueryResult::err(
+                    &query_id,
+                    ResourceKind::Rest,
+                    error.public_message(),
+                ),
+            }
+        }
+    });
+    join_all(futures).await
+}
+
+async fn execute_dashboard_query_with_bundle(
+    org_id: &str,
+    query_id: &str,
+    allow_private: bool,
+    bundle: &DashboardExecBundle,
+    load_secrets_on_demand: bool,
+) -> AuthStackResult<crate::contracts::QueryResult> {
     use crate::contracts::{QueryConfig, QueryResult, ResourceConfig, ResourceKind};
     let started = dashboard_now_ms();
     let vault_org_id = Some(org_id);
-    let queries = load_queries(org_id).await?;
-    let Some(query) = queries.iter().find(|q| q.id == query_id).cloned() else {
+    let Some(query) = bundle.queries.iter().find(|q| q.id == query_id).cloned() else {
         return Ok(QueryResult::err(
             query_id,
             ResourceKind::Rest,
             "query not found",
         ));
     };
-    let resources = load_resources(org_id).await?;
-    let Some(resource) = resources
+    let Some(resource) = bundle
+        .resources
         .iter()
         .find(|r| r.id == query.resource_id)
         .cloned()
@@ -68,6 +166,19 @@ pub async fn execute_dashboard_query(
             ResourceKind::Rest,
             "resource not found for query",
         ));
+    };
+
+    let secrets = if bundle.secrets.is_empty() && load_secrets_on_demand {
+        let ids = collect_connector_secret_ids(&resource, Some(&query));
+        if ids.is_empty() {
+            Vec::new()
+        } else {
+            load_secrets_resolved_for_ids(org_id, &ids).await?
+        }
+    } else if bundle.secrets.is_empty() {
+        Vec::new()
+    } else {
+        bundle.secrets.clone()
     };
 
     match (&resource.config, &query.config) {
@@ -80,15 +191,26 @@ pub async fn execute_dashboard_query(
                 allow_private,
                 started,
                 vault_org_id,
+                &secrets,
             )
             .await
         }
         (ResourceConfig::Postgres { .. }, QueryConfig::Postgres { sql }) => {
-            execute_postgres_dashboard_query(org_id, &resource, &query, sql, started, vault_org_id)
-                .await
+            execute_postgres_dashboard_query(
+                org_id,
+                &resource,
+                &query,
+                sql,
+                started,
+                vault_org_id,
+                allow_private,
+                &secrets,
+            )
+            .await
         }
         (ResourceConfig::Grpc { .. }, QueryConfig::Grpc { .. }) => {
-            execute_grpc_dashboard_query(org_id, &resource, &query, allow_private, started).await
+            execute_grpc_dashboard_query(org_id, &resource, &query, allow_private, started, &secrets)
+                .await
         }
         (ResourceConfig::Builtin, QueryConfig::Builtin { .. }) => Ok(QueryResult::err(
             query_id,
@@ -100,6 +222,100 @@ pub async fn execute_dashboard_query(
             resource.kind,
             "resource kind does not match query kind",
         )),
+    }
+}
+
+fn collect_connector_secret_ids(
+    resource: &crate::contracts::DashboardResource,
+    query: Option<&crate::contracts::DashboardQuery>,
+) -> HashSet<String> {
+    use crate::contracts::{HeaderValue, QueryConfig, ResourceAuth, ResourceConfig};
+    let mut ids = HashSet::new();
+    for header in &resource.default_headers {
+        if let HeaderValue::Secret { secret_id } = &header.value {
+            ids.insert(secret_id.clone());
+        }
+    }
+    match &resource.auth {
+        ResourceAuth::Bearer { secret_id } => {
+            ids.insert(secret_id.clone());
+        }
+        ResourceAuth::Basic {
+            password_secret_id, ..
+        } => {
+            ids.insert(password_secret_id.clone());
+        }
+        ResourceAuth::ApiKey { secret_id, .. } => {
+            ids.insert(secret_id.clone());
+        }
+        ResourceAuth::OAuth2ClientCredentials {
+            client_secret_id, ..
+        } => {
+            ids.insert(client_secret_id.clone());
+        }
+        ResourceAuth::None => {}
+    }
+    if let ResourceConfig::Postgres {
+        password_secret_id, ..
+    } = &resource.config
+    {
+        ids.insert(password_secret_id.clone());
+    }
+    if let Some(query) = query {
+        if let QueryConfig::Rest { headers, query_params, .. } = &query.config {
+            for header in headers {
+                if let HeaderValue::Secret { secret_id } = &header.value {
+                    ids.insert(secret_id.clone());
+                }
+            }
+            for param in query_params {
+                if let HeaderValue::Secret { secret_id } = &param.value {
+                    ids.insert(secret_id.clone());
+                }
+            }
+        }
+    }
+    ids
+}
+
+async fn run_with_timeout_ms<F, T>(timeout_ms: u32, fut: F) -> AuthStackResult<T>
+where
+    F: std::future::Future<Output = AuthStackResult<T>>,
+{
+    #[cfg(all(feature = "postgres", runtime_spin))]
+    {
+        let deadline_ns = wasip3::clocks::monotonic_clock::now()
+            .saturating_add(u64::from(timeout_ms).saturating_mul(1_000_000));
+        futures::pin_mut!(fut);
+        loop {
+            let remaining = deadline_ns.saturating_sub(wasip3::clocks::monotonic_clock::now());
+            if remaining == 0 {
+                return Err(AuthStackError::transport("query timed out"));
+            }
+            let poll_ns = remaining.min(250_000_000);
+            futures::select! {
+                result = fut => return result,
+                _ = async {
+                    wasip3::clocks::monotonic_clock::wait_for(poll_ns).await;
+                }.fuse() => {}
+            }
+        }
+    }
+    #[cfg(not(all(feature = "postgres", runtime_spin)))]
+    {
+        let _ = timeout_ms;
+        fut.await
+    }
+}
+
+fn rest_timeout_ms(resource: &crate::contracts::DashboardResource) -> u32 {
+    use crate::contracts::ResourceConfig;
+    match &resource.config {
+        ResourceConfig::Rest { timeout_ms, .. } => {
+            let ms = *timeout_ms;
+            if ms == 0 { 30_000 } else { ms.min(120_000) }
+        }
+        _ => 30_000,
     }
 }
 
@@ -191,13 +407,37 @@ pub(crate) fn build_postgres_connection_url(
     let pass_enc = form_urlencoded_encode(password);
     let db_enc = form_urlencoded_encode(database);
     Ok(format!(
-        "postgres://{user_enc}:{pass_enc}@{host}:{port}/{db_enc}?sslmode={ssl}"
+        "postgres://{user_enc}:{pass_enc}@{host}:{port}/{db_enc}?sslmode={ssl}&options=-c%20default_transaction_read_only%3Don%20-c%20statement_timeout%3D30000"
     ))
 }
 
-pub(crate) async fn resolve_postgres_url(
+fn postgres_url_cache_key(
+    org_id: &str,
     resource: &crate::contracts::DashboardResource,
-    vault_org_id: Option<&str>,
+) -> String {
+    use crate::contracts::ResourceConfig;
+    let ResourceConfig::Postgres {
+        host,
+        port,
+        database,
+        user,
+        password_secret_id,
+        ssl_mode,
+    } = &resource.config
+    else {
+        return String::new();
+    };
+    format!(
+        "{org_id}:{}:{host}:{port}:{database}:{user}:{password_secret_id}:{ssl_mode:?}",
+        resource.id
+    )
+}
+
+pub(crate) async fn resolve_postgres_url(
+    org_id: &str,
+    resource: &crate::contracts::DashboardResource,
+    allow_private: bool,
+    secrets: &[StoredSecret],
 ) -> AuthStackResult<String> {
     use crate::contracts::ResourceConfig;
     let ResourceConfig::Postgres {
@@ -211,20 +451,27 @@ pub(crate) async fn resolve_postgres_url(
     else {
         return Err(AuthStackError::validation("not a postgres resource"));
     };
-    let secrets = match vault_org_id.filter(|s| !s.trim().is_empty()) {
-        Some(org) => load_secrets_resolved(org).await?,
-        None => {
-            return Err(AuthStackError::validation(
-                "select a workspace to resolve vault secrets for Postgres",
-            ));
+    validate_postgres_host(host, allow_private)?;
+    let cache_key = postgres_url_cache_key(org_id, resource);
+    if !cache_key.is_empty() {
+        let cache = postgres_url_cache().lock().await;
+        if let Some(url) = cache.get(&cache_key) {
+            return Ok(url.clone());
         }
-    };
+    }
     let password = secrets
         .iter()
         .find(|s| s.id == *password_secret_id)
         .map(|s| s.value.clone())
         .ok_or_else(|| AuthStackError::validation("postgres password secret missing"))?;
-    build_postgres_connection_url(host, *port, database, user, &password, ssl_mode)
+    let url = build_postgres_connection_url(host, *port, database, user, &password, ssl_mode)?;
+    if !cache_key.is_empty() {
+        postgres_url_cache()
+            .lock()
+            .await
+            .insert(cache_key, url.clone());
+    }
+    Ok(url)
 }
 
 pub(crate) async fn execute_postgres_dashboard_query(
@@ -234,6 +481,8 @@ pub(crate) async fn execute_postgres_dashboard_query(
     sql: &str,
     started: u64,
     vault_org_id: Option<&str>,
+    allow_private: bool,
+    secrets: &[StoredSecret],
 ) -> AuthStackResult<crate::contracts::QueryResult> {
     use crate::contracts::{QueryMeta, QueryResult, ResourceKind};
     let _ = user_id;
@@ -244,7 +493,8 @@ pub(crate) async fn execute_postgres_dashboard_query(
             e.public_message(),
         ));
     }
-    let url = match resolve_postgres_url(resource, vault_org_id).await {
+    let org_id = vault_org_id.unwrap_or_default();
+    let url = match resolve_postgres_url(org_id, resource, allow_private, secrets).await {
         Ok(u) => u,
         Err(e) => {
             return Ok(QueryResult::err(
@@ -312,6 +562,7 @@ pub(crate) async fn execute_grpc_dashboard_query(
     query: &crate::contracts::DashboardQuery,
     allow_private: bool,
     started: u64,
+    secrets: &[StoredSecret],
 ) -> AuthStackResult<crate::contracts::QueryResult> {
     use crate::contracts::{
         HeaderBag, HeaderValue, HttpMethod, QueryConfig, QueryMeta, QueryResult, ResourceConfig,
@@ -409,11 +660,18 @@ pub(crate) async fn execute_grpc_dashboard_query(
             allow_private,
             started,
             None,
+            secrets,
         )
         .await;
     }
 
-    // Native gRPC is intentionally gated — document Spin HTTP/2 + wasi-grpc for a future cut.
+    if let Err(error) = validate_grpc_host(host, allow_private) {
+        return Ok(QueryResult::err(
+            &query.id,
+            ResourceKind::Grpc,
+            error.public_message(),
+        ));
+    }
     let _ = (host, port, tls, started);
     Ok(QueryResult::err(
         &query.id,
@@ -462,6 +720,7 @@ pub(crate) async fn execute_rest_query(
     allow_private: bool,
     started: u64,
     vault_org_id: Option<&str>,
+    secrets: &[StoredSecret],
 ) -> AuthStackResult<crate::contracts::QueryResult> {
     use crate::contracts::{
         HttpMethod, QueryConfig, QueryMeta, QueryResult, ResourceAuth, ResourceKind,
@@ -482,9 +741,20 @@ pub(crate) async fn execute_rest_query(
         ));
     };
 
-    let secrets = match vault_org_id.filter(|s| !s.trim().is_empty()) {
-        Some(org) => load_secrets_resolved(org).await?,
-        None => Vec::new(),
+    let secrets = if secrets.is_empty() {
+        match vault_org_id.filter(|s| !s.trim().is_empty()) {
+            Some(org) => {
+                let ids = collect_connector_secret_ids(resource, Some(query));
+                if ids.is_empty() {
+                    Vec::new()
+                } else {
+                    load_secrets_resolved_for_ids(org, &ids).await?
+                }
+            }
+            None => Vec::new(),
+        }
+    } else {
+        secrets.to_vec()
     };
     let merged = merge_headers(&resource.default_headers, query_headers);
     let mut resolved_headers: Vec<(String, String)> = Vec::new();
@@ -559,6 +829,7 @@ pub(crate) async fn execute_rest_query(
         url.push_str(&qs);
     }
     validate_http_url(&url, allow_private)?;
+    let timeout_ms = rest_timeout_ms(resource);
 
     #[cfg(all(feature = "postgres", runtime_spin))]
     {
@@ -595,9 +866,12 @@ pub(crate) async fn execute_rest_query(
         let request = builder
             .body(FullBody::new(body_bytes))
             .map_err(|e| AuthStackError::transport(format!("build request failed: {e}")))?;
-        let response = send(request)
-            .await
-            .map_err(|e| AuthStackError::transport(format!("HTTP request failed: {e}")))?;
+        let response = run_with_timeout_ms(timeout_ms, async {
+            send(request)
+                .await
+                .map_err(|e| AuthStackError::transport(format!("HTTP request failed: {e}")))
+        })
+        .await?;
         let status = response.status();
         let status_code = status.as_u16();
         let bytes = response
@@ -721,6 +995,15 @@ pub(crate) async fn fetch_oauth2_client_credentials(
     allow_private: bool,
 ) -> AuthStackResult<String> {
     validate_http_url(token_url, allow_private)?;
+    let cache_key = format!("{token_url}|{client_id}|{client_secret_id}");
+    {
+        let cache = oauth_cache().lock().await;
+        if let Some(entry) = cache.get(&cache_key) {
+            if entry.expires_at_ms > dashboard_now_ms() {
+                return Ok(entry.token.clone());
+            }
+        }
+    }
     let client_secret = secrets
         .iter()
         .find(|s| s.id == *client_secret_id)
@@ -782,11 +1065,24 @@ pub(crate) async fn fetch_oauth2_client_credentials(
             .to_bytes();
         let parsed: Value = serde_json::from_slice(&bytes)
             .map_err(|e| AuthStackError::serialization(format!("oauth token json: {e}")))?;
-        parsed
+        let token = parsed
             .get("access_token")
             .and_then(|v| v.as_str())
             .map(|s| s.to_owned())
-            .ok_or_else(|| AuthStackError::transport("oauth token response missing access_token"))
+            .ok_or_else(|| AuthStackError::transport("oauth token response missing access_token"))?;
+        let ttl_secs = parsed
+            .get("expires_in")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(3_600)
+            .clamp(60, 3_600);
+        oauth_cache().lock().await.insert(
+            cache_key,
+            CachedOAuthToken {
+                token: token.clone(),
+                expires_at_ms: dashboard_now_ms().saturating_add(ttl_secs.saturating_mul(1_000)),
+            },
+        );
+        Ok(token)
     }
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {

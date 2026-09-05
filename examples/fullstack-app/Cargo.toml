@@ -43,6 +43,7 @@ web-sys = { version = "0.3", features = ["DataTransfer", "Document", "DomTokenLi
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", optional = true }
 thiserror = { version = "2", optional = true }
+url = { version = "2.5", optional = true }
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3.18", features = ["fmt", "env-filter"], optional = true }
 prost = { version = "0.13", optional = true }
@@ -102,6 +103,7 @@ ssr = [
   "dep:serde_json",
   "dep:sha2",
   "dep:thiserror",
+  "dep:url",
   "dep:tracing",
   "dep:wasi-auth",
   "wasi-auth/fullstack-spin",

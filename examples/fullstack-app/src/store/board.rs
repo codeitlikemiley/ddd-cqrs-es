@@ -108,66 +108,6 @@ pub(crate) fn default_dashboard_layout() -> crate::contracts::DashboardLayout {
 
 pub use crate::app::dashboard::bind::json_path_get;
 
-/// SSRF: reject private / link-local / metadata hosts unless allow_private.
-pub fn validate_http_url(url: &str, allow_private: bool) -> AuthStackResult<()> {
-    let url = url.trim();
-    if url.is_empty() {
-        return Err(AuthStackError::validation("url is required"));
-    }
-    if url.len() > 2_048 {
-        return Err(AuthStackError::validation("url is too long"));
-    }
-    let lower = url.to_ascii_lowercase();
-    if !(lower.starts_with("https://") || lower.starts_with("http://")) {
-        return Err(AuthStackError::validation("url must be http(s)"));
-    }
-    let without_scheme = lower
-        .strip_prefix("https://")
-        .or_else(|| lower.strip_prefix("http://"))
-        .unwrap_or("");
-    let host_port = without_scheme
-        .split('/')
-        .next()
-        .unwrap_or("")
-        .split('@')
-        .next_back()
-        .unwrap_or("");
-    let host = host_port
-        .split(':')
-        .next()
-        .unwrap_or("")
-        .trim_matches(|c| c == '[' || c == ']');
-    if host.is_empty() {
-        return Err(AuthStackError::validation("url host is missing"));
-    }
-    if host == "localhost" || host.ends_with(".localhost") {
-        if !allow_private {
-            return Err(AuthStackError::validation(
-                "localhost targets are blocked (set AUTH_DASHBOARD_HTTP_ALLOW_PRIVATE=true to allow)",
-            ));
-        }
-        return Ok(());
-    }
-    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        let blocked = match ip {
-            std::net::IpAddr::V4(v4) => {
-                v4.is_private()
-                    || v4.is_loopback()
-                    || v4.is_link_local()
-                    || v4.octets()[0] == 169 && v4.octets()[1] == 254
-                    || v4.octets()[0] == 0
-            }
-            std::net::IpAddr::V6(v6) => v6.is_loopback() || v6.is_unique_local(),
-        };
-        if blocked && !allow_private {
-            return Err(AuthStackError::validation(
-                "private or link-local IP targets are blocked",
-            ));
-        }
-    }
-    Ok(())
-}
-
 pub(crate) fn default_notifications() -> Vec<crate::contracts::DashboardNotification> {
     use std::time::{SystemTime, UNIX_EPOCH};
     let ms = SystemTime::now()

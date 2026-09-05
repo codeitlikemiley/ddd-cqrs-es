@@ -2,6 +2,7 @@
 //! Domain modules re-exported so existing `crate::store::*` call sites keep working.
 
 mod board;
+mod egress;
 mod health;
 mod keys;
 mod notifications;
@@ -14,6 +15,7 @@ mod sql;
 mod vault;
 
 pub(crate) use board::*;
+pub(crate) use egress::*;
 pub(crate) use health::*;
 pub(crate) use keys::*;
 pub(crate) use notifications::*;
@@ -165,6 +167,30 @@ mod tests {
         assert!(validate_http_url("http://169.254.169.254/latest", false).is_err());
         assert!(validate_http_url("http://127.0.0.1:9/", true).is_ok());
         assert!(validate_http_url("ftp://example.com", false).is_err());
+        assert!(validate_http_url("https://user:pass@example.com/v1", false).is_err());
+    }
+
+    #[test]
+    fn validate_postgres_host_blocks_private_by_default() {
+        assert!(validate_postgres_host("example.com", false).is_ok());
+        assert!(validate_postgres_host("10.0.0.5", false).is_err());
+        assert!(validate_postgres_host("localhost", false).is_err());
+        assert!(validate_postgres_host("localhost", true).is_ok());
+    }
+
+    #[test]
+    fn build_postgres_connection_url_sets_readonly_options() {
+        let url = super::build_postgres_connection_url(
+            "db.example.com",
+            5432,
+            "analytics",
+            "dash_ro",
+            "secret",
+            &crate::contracts::PostgresSslMode::Prefer,
+        )
+        .expect("url");
+        assert!(url.contains("default_transaction_read_only"));
+        assert!(url.contains("statement_timeout"));
     }
 
     #[test]

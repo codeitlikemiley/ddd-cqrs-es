@@ -296,11 +296,14 @@ Legacy user keys migrate opportunistically on first access.
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `AUTH_DASHBOARD_HTTP_ENABLED` | on | REST/gateway master switch |
+| `AUTH_DASHBOARD_HTTP_ENABLED` | off | REST/gateway master switch (set `true` to enable) |
 | `AUTH_DASHBOARD_HTTP_ALLOW_PRIVATE` | off | Allow localhost/RFC1918 |
+| `AUTH_DASHBOARD_GRPC_ENABLED` | off | gRPC / gateway connectors |
 | `AUTH_VAULT_REVEAL_REQUIRE_STEP_UP` | production=on | Gate reveal behind AAL2 |
 
-Tighten `spin.toml` outbound hosts in production (`https://*:*` is for local convenience).
+Tighten `spin.toml` outbound hosts in production — copy `spin.production.toml.example` (exact OAuth/database hosts; no wildcards). Local dev may keep `https://*:*` entries in `spin.toml` when `AUTH_DASHBOARD_HTTP_ALLOW_PRIVATE=true`.
+
+**Postgres dashboard connectors:** create a dedicated read-only database role (`GRANT SELECT` only) and prefer that user in Resources. The runtime also sets libpq `default_transaction_read_only=on` and `statement_timeout=30s` on connector URLs as defense-in-depth (keyword blocklists alone are not sufficient).
 
 ### Email verification: register vs resend
 
