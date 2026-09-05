@@ -1,5 +1,6 @@
 use crate::metadata::Metadata;
 use std::fmt::{Display, Formatter};
+use std::str::FromStr;
 #[cfg(not(feature = "uuid"))]
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
@@ -100,11 +101,6 @@ impl AggregateType {
         Self(std::borrow::Cow::Borrowed(value))
     }
 
-    /// Creates an aggregate type from a dynamic string slice.
-    pub fn from_str(value: &str) -> Self {
-        Self(std::borrow::Cow::Owned(value.to_owned()))
-    }
-
     /// Returns the aggregate type as a string slice.
     pub fn as_str(&self) -> &str {
         &self.0
@@ -125,6 +121,14 @@ impl From<&'static str> for AggregateType {
 impl From<String> for AggregateType {
     fn from(value: String) -> Self {
         Self(std::borrow::Cow::Owned(value))
+    }
+}
+
+impl FromStr for AggregateType {
+    type Err = std::convert::Infallible;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Ok(Self::new(value))
     }
 }
 
