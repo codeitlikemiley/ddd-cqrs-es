@@ -402,12 +402,10 @@ pub fn assert_event_store_append_race_contract<A, S, F>(
             Err(error) => {
                 losers += 1;
                 match error.into_repository_error::<()>() {
-                    RepositoryError::Concurrency(
-                        ConcurrencyError::WrongExpectedRevision {
-                            expected: ExpectedRevision::Exact(1),
-                            actual,
-                        },
-                    ) => {
+                    RepositoryError::Concurrency(ConcurrencyError::WrongExpectedRevision {
+                        expected: ExpectedRevision::Exact(1),
+                        actual,
+                    }) => {
                         assert!(
                             actual >= 1,
                             "race loser should observe the stream at or past the seeded revision"
