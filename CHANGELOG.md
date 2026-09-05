@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0-alpha.3
+
+- **Internal:** projection runner catch-up loops (sync), persisted batch apply, and
+  owned-checkpoint sync batch paths now share helpers in `projection.rs`
+  (`run_projection_catch_up`, `run_persisted_projection_batch`,
+  `run_owned_checkpoint_projection_batch`, and async persisted twins). Async runner
+  catch-up and owned-checkpoint `run_batch` loops stay inline because async methods
+  return futures borrowing `&mut self` until `.await` completes.
+
 ## 0.4.0-alpha.2
 
 - **Additive:** [`EventStoreErrorKind`], [`EventStoreError::kind`],
