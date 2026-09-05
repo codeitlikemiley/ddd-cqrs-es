@@ -52,7 +52,31 @@ Our Projection Runner guarantees sequential processing by executing in a single 
 ### Rule 3: Run One Active Runner Per Projection Scope
 The built-in runners (`PersistedProjectionRunner`, `AsyncPersistedProjectionRunner`, checkpointed variants, and in-memory helpers) load a checkpoint, apply a batch, and save the advanced sequence without acquiring an exclusive lease. If two processes run the same `(projection name, aggregate type)` pair concurrently—during a rolling restart, `replicas: 2`, or a duplicated cron job—both can apply the same events. Idempotent projections survive the overlap; accumulators and counters may not.
 
-Operate exactly one active worker per projection scope in production. Use aggregate-scoped checkpoint keys (`aggregate_scoped_checkpoint_key`) when one projection serves multiple aggregate types so each type keeps its own single-runner contract.
+Operate exactly one active worker per projection scope in production. Since 0.4, built-in runners key checkpoints per feed by default (`projection_name@aggregate_type`). When upgrading from 0.3 name-only rows, copy the legacy sequence into each scoped row with [`aggregate_scoped_checkpoint_key`](https://docs.rs/ddd_cqrs_es/latest/ddd_cqrs_es/projection/fn.aggregate_scoped_checkpoint_key.html) before switching runners, or keep [`PersistedProjectionRunner::with_projection_name_checkpoints`] until migration completes.
+
+### Migrating 0.3 name-only checkpoints
+
+If your deployment already stores checkpoints under the bare projection name (for example `order_summary`), seed scoped rows before adopting the new default:
+
+```rust
+use ddd_cqrs_es::projection::{aggregate_scoped_checkpoint_key, CheckpointStore};
+
+fn seed_scoped_checkpoint<C: CheckpointStore>(
+    store: &C,
+    projection_name: &str,
+    aggregate_type: &str,
+) -> Result<(), C::Error> {
+    if let Some(sequence) = store.load_checkpoint(projection_name)? {
+        store.save_checkpoint(
+            &aggregate_scoped_checkpoint_key(projection_name, aggregate_type),
+            sequence,
+        )?;
+    }
+    Ok(())
+}
+```
+
+Multi-type projections must use scoped keys (the default since 0.4). Single-type projections may keep the legacy row via `with_projection_name_checkpoints` until you seed the scoped key shown above.
 
 ---
 

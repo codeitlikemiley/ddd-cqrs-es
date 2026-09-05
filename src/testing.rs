@@ -839,6 +839,244 @@ where
     assert!(stale.is_err());
 }
 
+/// Runs a focused async snapshot-store contract.
+#[cfg(feature = "async")]
+pub async fn assert_async_snapshot_store_contract<A, S>(
+    store: S,
+    aggregate_id: A::Id,
+    older: A,
+    newer: A,
+) where
+    A: Aggregate + Clone + PartialEq + Debug + Send + Sync + 'static,
+    A::Id: Debug + Send + Sync + 'static,
+    S: crate::async_api::AsyncSnapshotStore<A>,
+    S::Error: Debug,
+{
+    assert_eq!(store.load_snapshot(&aggregate_id).await.unwrap(), None);
+
+    store
+        .save_snapshot(Snapshot::new(
+            aggregate_id.clone(),
+            1,
+            older.clone(),
+            Metadata::default(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .load_snapshot(&aggregate_id)
+            .await
+            .unwrap()
+            .map(|snapshot| snapshot.state),
+        Some(older.clone())
+    );
+
+    store
+        .save_snapshot(Snapshot::new(
+            aggregate_id.clone(),
+            2,
+            newer.clone(),
+            Metadata::default(),
+        ))
+        .await
+        .unwrap();
+    let loaded = store.load_snapshot(&aggregate_id).await.unwrap().unwrap();
+    assert_eq!(loaded.revision, 2);
+    assert_eq!(loaded.state, newer);
+
+    let stale = store
+        .save_snapshot(Snapshot::new(
+            aggregate_id.clone(),
+            1,
+            older,
+            Metadata::default(),
+        ))
+        .await;
+    assert!(stale.is_err());
+}
+
+/// Runs a focused upcaster-registry contract.
+///
+/// Adapter authors can call this before wiring store-specific upcaster tests.
+pub fn assert_upcaster_registry_contract(event_type: &str) {
+    use crate::upcast::{EventUpcaster, UpcasterRegistry};
+
+    #[derive(Clone, Copy)]
+    struct Step {
+        from: u32,
+        to: u32,
+    }
+
+    impl EventUpcaster for Step {
+        type Error = std::convert::Infallible;
+
+        fn source_version(&self) -> u32 {
+            self.from
+        }
+
+        fn target_version(&self) -> u32 {
+            self.to
+        }
+
+        fn upcast(&self, mut raw_payload: Vec<u8>) -> Result<Vec<u8>, Self::Error> {
+            raw_payload.push(self.to as u8);
+            Ok(raw_payload)
+        }
+    }
+
+    let registry = UpcasterRegistry::new();
+    registry
+        .register(event_type, Step { from: 1, to: 2 })
+        .unwrap();
+    registry
+        .register(event_type, Step { from: 2, to: 3 })
+        .unwrap();
+
+    let (version, payload) = registry.upcast(event_type, 1, vec![0]).unwrap();
+    assert_eq!(version, 3);
+    assert_eq!(payload, vec![0, 2, 3]);
+
+    let duplicate = registry
+        .register(event_type, Step { from: 1, to: 4 })
+        .unwrap_err();
+    assert_eq!(duplicate.source_version, 1);
+    assert_eq!(duplicate.event_type, event_type);
+
+    let registry = UpcasterRegistry::new();
+    registry
+        .register(event_type, Step { from: 2, to: 2 })
+        .unwrap();
+    let error = registry.upcast(event_type, 2, Vec::new()).unwrap_err();
+    assert!(error.to_string().contains("does not advance"));
+}
+
+/// Store surface exercised by [`assert_upcaster_contract`].
+pub trait UpcasterContractStore<A: Aggregate> {
+    /// Store-specific error type.
+    type Error: Debug;
+
+    /// Registers a sequential schema version upcaster for a specific event type.
+    fn register_upcaster<U>(
+        &self,
+        event_type: impl Into<String>,
+        upcaster: U,
+    ) -> Result<(), crate::upcast::UpcasterRegistrationError>
+    where
+        U: crate::upcast::EventUpcaster + Send + Sync + 'static,
+        U::Error: std::fmt::Debug + std::fmt::Display + Send + Sync + 'static;
+
+    /// Loads the committed stream for one aggregate.
+    fn load(&self, aggregate_id: &A::Id)
+        -> Result<crate::event_store::EventStream<A>, Self::Error>;
+}
+
+#[cfg(feature = "sqlite")]
+impl<A> UpcasterContractStore<A> for crate::SqliteEventStore<A>
+where
+    A: Aggregate + 'static,
+    A::Event: serde::Serialize + serde::de::DeserializeOwned,
+    A::Id: serde::Serialize + serde::de::DeserializeOwned,
+{
+    type Error = crate::EventStoreError;
+
+    fn register_upcaster<U>(
+        &self,
+        event_type: impl Into<String>,
+        upcaster: U,
+    ) -> Result<(), crate::upcast::UpcasterRegistrationError>
+    where
+        U: crate::upcast::EventUpcaster + Send + Sync + 'static,
+        U::Error: std::fmt::Debug + std::fmt::Display + Send + Sync + 'static,
+    {
+        self.register_upcaster(event_type, upcaster)
+    }
+
+    fn load(
+        &self,
+        aggregate_id: &A::Id,
+    ) -> Result<crate::event_store::EventStream<A>, Self::Error> {
+        crate::EventStore::load(self, aggregate_id)
+    }
+}
+
+#[cfg(feature = "postgres")]
+impl<A> UpcasterContractStore<A> for crate::PostgresEventStore<A>
+where
+    A: Aggregate + 'static,
+    A::Event: serde::Serialize + serde::de::DeserializeOwned,
+    A::Id: serde::Serialize + serde::de::DeserializeOwned,
+{
+    type Error = crate::EventStoreError;
+
+    fn register_upcaster<U>(
+        &self,
+        event_type: impl Into<String>,
+        upcaster: U,
+    ) -> Result<(), crate::upcast::UpcasterRegistrationError>
+    where
+        U: crate::upcast::EventUpcaster + Send + Sync + 'static,
+        U::Error: std::fmt::Debug + std::fmt::Display + Send + Sync + 'static,
+    {
+        self.register_upcaster(event_type, upcaster)
+    }
+
+    fn load(
+        &self,
+        aggregate_id: &A::Id,
+    ) -> Result<crate::event_store::EventStream<A>, Self::Error> {
+        crate::EventStore::load(self, aggregate_id)
+    }
+}
+
+#[cfg(feature = "mysql")]
+impl<A> UpcasterContractStore<A> for crate::MySqlEventStore<A>
+where
+    A: Aggregate + 'static,
+    A::Event: serde::Serialize + serde::de::DeserializeOwned,
+    A::Id: serde::Serialize + serde::de::DeserializeOwned,
+{
+    type Error = crate::EventStoreError;
+
+    fn register_upcaster<U>(
+        &self,
+        event_type: impl Into<String>,
+        upcaster: U,
+    ) -> Result<(), crate::upcast::UpcasterRegistrationError>
+    where
+        U: crate::upcast::EventUpcaster + Send + Sync + 'static,
+        U::Error: std::fmt::Debug + std::fmt::Display + Send + Sync + 'static,
+    {
+        self.register_upcaster(event_type, upcaster)
+    }
+
+    fn load(
+        &self,
+        aggregate_id: &A::Id,
+    ) -> Result<crate::event_store::EventStream<A>, Self::Error> {
+        crate::EventStore::load(self, aggregate_id)
+    }
+}
+
+/// Verifies that a store applies registered upcasters when loading legacy rows.
+pub fn assert_upcaster_contract<A, S>(
+    store: &S,
+    aggregate_id: &A::Id,
+    expected_payload: A::Event,
+    expected_version: u32,
+) where
+    A: Aggregate + 'static,
+    A::Event: PartialEq + Debug + serde::Serialize + serde::de::DeserializeOwned,
+    A::Id: serde::Serialize + serde::de::DeserializeOwned,
+    S: UpcasterContractStore<A>,
+    S::Error: Debug,
+{
+    let events = store.load(aggregate_id).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].payload, expected_payload);
+    assert_eq!(events[0].event_version, expected_version);
+}
+
 impl<A> AggregateFixture<A>
 where
     A: Aggregate,

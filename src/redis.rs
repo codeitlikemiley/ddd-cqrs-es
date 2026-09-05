@@ -182,6 +182,22 @@ const IDEMPOTENCY_REMOVE_LUA: &str = r#"
 return redis.call('DEL', KEYS[1])
 "#;
 
+/// Atomically saves a snapshot only when the offered revision is not stale.
+const SNAPSHOT_SAVE_LUA: &str = r#"
+local current = tonumber(redis.call('HGET', KEYS[1], 'revision') or '0')
+local offered = tonumber(ARGV[1])
+if current ~= 0 and offered < current then
+    return {'ERR', 'stale_revision', current}
+end
+redis.call('HSET', KEYS[1],
+    'revision', ARGV[1],
+    'state', ARGV[2],
+    'metadata', ARGV[3],
+    'recorded_at_ms', ARGV[4],
+    'aggregate_type', ARGV[5])
+return {'OK'}
+"#;
+
 /// Redis protocol value returned by [`RedisCommandExecutor`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RedisValue {
@@ -958,6 +974,217 @@ return 0
             .await
             .map_err(map_executor_error)?;
         Ok(())
+    }
+}
+
+/// Experimental Redis-backed async snapshot store.
+#[derive(Clone, Debug)]
+pub struct RedisSnapshotStore<C, A>
+where
+    C: RedisCommandExecutor,
+{
+    client: C,
+    prefix: String,
+    _marker: PhantomData<fn() -> A>,
+}
+
+impl<C, A> RedisSnapshotStore<C, A>
+where
+    C: RedisCommandExecutor,
+{
+    /// Creates a Redis snapshot store with the default `ddd_cqrs_es` prefix.
+    pub fn new(client: C) -> Self {
+        Self {
+            client,
+            prefix: DEFAULT_PREFIX.to_owned(),
+            _marker: PhantomData,
+        }
+    }
+
+    /// Creates a Redis snapshot store with a custom key prefix.
+    pub fn with_prefix(client: C, prefix: impl Into<String>) -> Result<Self, EventStoreError> {
+        let prefix = prefix.into();
+        validate_redis_prefix(&prefix)?;
+        Ok(Self {
+            client,
+            prefix,
+            _marker: PhantomData,
+        })
+    }
+
+    fn snapshot_key(&self, aggregate_type: &str, aggregate_id: &str) -> String {
+        format!(
+            "{}:snapshot:{}:{}",
+            redis_hash_tagged_prefix(&self.prefix),
+            hex_encode(aggregate_type.as_bytes()),
+            hex_encode(aggregate_id.as_bytes())
+        )
+    }
+
+    fn field_from_hash(value: &RedisValue, field: &str) -> Option<String> {
+        let RedisValue::Array(items) = value else {
+            return None;
+        };
+        for chunk in items.chunks(2) {
+            if let [RedisValue::Bytes(key), RedisValue::Bytes(val)] = chunk {
+                if key == field.as_bytes() {
+                    return String::from_utf8(val.clone()).ok();
+                }
+            }
+        }
+        None
+    }
+}
+
+#[async_trait]
+impl<C, A> crate::async_api::AsyncSnapshotStore<A> for RedisSnapshotStore<C, A>
+where
+    C: RedisCommandExecutor,
+    A: Aggregate + Clone + serde::Serialize + serde::de::DeserializeOwned + Send + Sync + 'static,
+    A::Id: serde::Serialize + serde::de::DeserializeOwned + Send + Sync,
+{
+    type Error = EventStoreError;
+
+    async fn load_snapshot(
+        &self,
+        aggregate_id: &A::Id,
+    ) -> Result<Option<crate::snapshot::Snapshot<A>>, Self::Error> {
+        let aggregate_id = serialize_id(aggregate_id)?;
+        let key = self.snapshot_key(A::aggregate_type(), &aggregate_id);
+        let value = self
+            .client
+            .execute("HGETALL", vec![key.into_bytes()])
+            .await
+            .map_err(map_executor_error)?;
+        let RedisValue::Array(items) = &value else {
+            return Ok(None);
+        };
+        if items.is_empty() {
+            return Ok(None);
+        }
+
+        let revision = Self::field_from_hash(&value, "revision")
+            .ok_or_else(|| {
+                EventStoreError::deserialization("redis snapshot missing revision".to_owned())
+            })?
+            .parse::<u64>()
+            .map_err(|error| {
+                EventStoreError::deserialization(format!("redis snapshot revision: {error}"))
+            })?;
+        let state_raw = Self::field_from_hash(&value, "state").ok_or_else(|| {
+            EventStoreError::deserialization("redis snapshot missing state".to_owned())
+        })?;
+        let metadata_raw = Self::field_from_hash(&value, "metadata").ok_or_else(|| {
+            EventStoreError::deserialization("redis snapshot missing metadata".to_owned())
+        })?;
+        let recorded_at_ms = Self::field_from_hash(&value, "recorded_at_ms")
+            .ok_or_else(|| {
+                EventStoreError::deserialization("redis snapshot missing recorded_at_ms".to_owned())
+            })?
+            .parse::<i64>()
+            .map_err(|error| {
+                EventStoreError::deserialization(format!("redis snapshot recorded_at_ms: {error}"))
+            })?;
+        let aggregate_type = Self::field_from_hash(&value, "aggregate_type")
+            .unwrap_or_else(|| A::aggregate_type().to_owned());
+
+        let state = serde_json::from_str(&state_raw).map_err(|error| {
+            EventStoreError::deserialization(format!("snapshot state JSON: {error}"))
+        })?;
+        let metadata = serde_json::from_str(&metadata_raw).map_err(|error| {
+            EventStoreError::deserialization(format!("snapshot metadata JSON: {error}"))
+        })?;
+        let recorded_at = millis_to_system_time(recorded_at_ms)?;
+        let aggregate_id = deserialize_id(&aggregate_id)?;
+
+        Ok(Some(crate::snapshot::Snapshot {
+            aggregate_id,
+            aggregate_type,
+            revision,
+            state,
+            metadata,
+            recorded_at,
+        }))
+    }
+
+    async fn save_snapshot(
+        &self,
+        snapshot: crate::snapshot::Snapshot<A>,
+    ) -> Result<(), Self::Error> {
+        let aggregate_id = serialize_id(&snapshot.aggregate_id)?;
+        let key = self.snapshot_key(A::aggregate_type(), &aggregate_id);
+        let state_json = serde_json::to_string(&snapshot.state).map_err(|error| {
+            EventStoreError::serialization(format!("snapshot state JSON: {error}"))
+        })?;
+        let metadata_json = serde_json::to_string(&snapshot.metadata).map_err(|error| {
+            EventStoreError::serialization(format!("snapshot metadata JSON: {error}"))
+        })?;
+        let recorded_at_ms = system_time_to_millis(snapshot.recorded_at)?;
+
+        let result = self
+            .client
+            .execute(
+                "EVAL",
+                vec![
+                    SNAPSHOT_SAVE_LUA.as_bytes().to_vec(),
+                    "1".into(),
+                    key.into_bytes(),
+                    snapshot.revision.to_string().into_bytes(),
+                    state_json.into_bytes(),
+                    metadata_json.into_bytes(),
+                    recorded_at_ms.to_string().into_bytes(),
+                    snapshot.aggregate_type.as_bytes().to_vec(),
+                ],
+            )
+            .await
+            .map_err(map_executor_error)?;
+
+        match result {
+            RedisValue::Status(status) if status.eq_ignore_ascii_case("OK") => Ok(()),
+            RedisValue::Array(ref items) if items.len() >= 3 => {
+                let RedisValue::Bytes(kind) = &items[0] else {
+                    return Err(EventStoreError::deserialization(format!(
+                        "unexpected redis snapshot save reply: {result:?}"
+                    )));
+                };
+                if kind == b"ERR" {
+                    let RedisValue::Bytes(reason) = &items[1] else {
+                        return Err(EventStoreError::deserialization(format!(
+                            "unexpected redis snapshot save reply: {result:?}"
+                        )));
+                    };
+                    if reason == b"stale_revision" {
+                        let RedisValue::Bytes(current) = &items[2] else {
+                            return Err(EventStoreError::deserialization(format!(
+                                "unexpected redis snapshot save reply: {result:?}"
+                            )));
+                        };
+                        let current = String::from_utf8(current.clone())
+                            .map_err(|error| {
+                                EventStoreError::deserialization(format!(
+                                    "redis snapshot stale revision: {error}"
+                                ))
+                            })?
+                            .parse::<u64>()
+                            .map_err(|error| {
+                                EventStoreError::deserialization(format!(
+                                    "redis snapshot stale revision: {error}"
+                                ))
+                            })?;
+                        return Err(crate::sql_common::stale_snapshot_revision_error(
+                            snapshot.revision,
+                            current,
+                        ));
+                    }
+                }
+                Err(EventStoreError::deserialization(format!(
+                    "redis snapshot save failed: {result:?}"
+                )))
+            }
+            other => Err(EventStoreError::deserialization(format!(
+                "unexpected redis snapshot save reply: {other:?}"
+            ))),
+        }
     }
 }
 
@@ -2425,7 +2652,7 @@ mod tests {
         }
     }
 
-    #[derive(Clone, Debug, Default, PartialEq, Eq)]
+    #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     struct TestAggregate {
         value: i32,
         revision: u64,
@@ -3362,6 +3589,32 @@ mod tests {
         let loaded_checkpoint = checkpoint.load_checkpoint("projection").await.unwrap();
 
         assert_eq!((global[0].sequence, loaded_checkpoint), (Some(2), Some(1)));
+        cleanup_prefix(&client, &prefix).await;
+    }
+
+    #[cfg(feature = "wasi-redis")]
+    #[tokio::test]
+    async fn live_redis_snapshot_store_passes_contract() {
+        let Some(client) = live_client_or_skip("snapshot contract test") else {
+            return;
+        };
+        let prefix = unique_prefix("snapshot_contract");
+        cleanup_prefix(&client, &prefix).await;
+        let store =
+            RedisSnapshotStore::<_, TestAggregate>::with_prefix(client.clone(), prefix.clone())
+                .unwrap();
+        let aggregate_id = "stream-1".to_owned();
+        let older = TestAggregate {
+            value: 1,
+            revision: 0,
+        };
+        let newer = TestAggregate {
+            value: 7,
+            revision: 0,
+        };
+
+        crate::testing::assert_async_snapshot_store_contract(store, aggregate_id, older, newer)
+            .await;
         cleanup_prefix(&client, &prefix).await;
     }
 

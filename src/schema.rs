@@ -1052,3 +1052,54 @@ impl std::fmt::Debug for AsyncSchemaInitializer {
             .finish()
     }
 }
+
+#[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
+#[cfg(test)]
+mod tests {
+    use super::{SqlDialect, SqlSchemaConfig};
+
+    #[test]
+    fn interpolate_replaces_configured_table_placeholders() {
+        let config = SqlSchemaConfig::new(SqlDialect::Sqlite)
+            .with_events_table("custom_events")
+            .unwrap()
+            .with_checkpoints_table("custom_checkpoints")
+            .unwrap()
+            .with_idempotency_table("custom_idempotency")
+            .unwrap()
+            .with_snapshots_table("custom_snapshots")
+            .unwrap()
+            .with_migrations_table("custom_migrations")
+            .unwrap();
+
+        let sql = config.interpolate(
+            "SELECT * FROM {events_table} JOIN {checkpoints_table} \
+             JOIN {idempotency_table} JOIN {snapshots_table} JOIN {migrations_table};",
+        );
+
+        assert!(sql.contains("custom_events"));
+        assert!(sql.contains("custom_checkpoints"));
+        assert!(sql.contains("custom_idempotency"));
+        assert!(sql.contains("custom_snapshots"));
+        assert!(sql.contains("custom_migrations"));
+    }
+
+    #[test]
+    fn validate_rejects_invalid_table_names() {
+        let error = SqlSchemaConfig::new(SqlDialect::Postgres)
+            .with_events_table("events;drop")
+            .unwrap_err();
+        assert!(error.to_string().contains("table name"));
+    }
+
+    #[test]
+    fn built_in_migrations_are_monotonic_per_dialect() {
+        for dialect in [SqlDialect::Sqlite, SqlDialect::Postgres, SqlDialect::MySql] {
+            let migrations = super::get_migrations(dialect);
+            assert!(!migrations.is_empty());
+            assert!(migrations
+                .windows(2)
+                .all(|window| window[0].version < window[1].version));
+        }
+    }
+}

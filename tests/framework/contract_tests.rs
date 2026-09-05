@@ -44,6 +44,11 @@ fn in_memory_store_passes_append_race_contract() {
 }
 
 #[test]
+fn upcaster_registry_passes_contract() {
+    ddd_cqrs_es::assert_upcaster_registry_contract("counter_created");
+}
+
+#[test]
 fn in_memory_snapshot_store_passes_contract() {
     use ddd_cqrs_es::{assert_snapshot_store_contract, InMemorySnapshotStore};
 

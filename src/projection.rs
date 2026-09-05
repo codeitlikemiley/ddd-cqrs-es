@@ -566,17 +566,19 @@ enum CheckpointKeying {
 ///
 /// # Checkpoint keys
 ///
-/// [`Self::new`] keys checkpoints on [`Projection::name()`] alone. Because
-/// global replay feeds are scoped to one aggregate type (see
-/// [`EventStore::load_global_after`]),
-/// running one projection against several aggregate types under that keying
-/// makes those runs share a single position: whichever feed advances furthest
-/// hides the others' events permanently.
+/// [`Self::new`] keys checkpoints on the projection name **and** the feed being
+/// replayed (see [`aggregate_scoped_checkpoint_key`]). Each aggregate type's
+/// global replay feed and each cross-aggregate raw feed therefore keep an
+/// independent position, which is required when one projection spans several
+/// aggregate types (see [`EventStore::load_global_after`]).
 ///
-/// [`Self::with_aggregate_scoped_checkpoints`] gives every feed its own row and
-/// is the correct choice for a projection spanning more than one aggregate type.
-/// It is opt-in so upgrading does not silently rewind existing deployments to
-/// zero; see [`aggregate_scoped_checkpoint_key`] for seeding the new rows.
+/// Deployments upgrading from 0.3 name-only rows should seed scoped keys from
+/// the legacy row instead of replaying from zero — see
+/// [`aggregate_scoped_checkpoint_key`] and `docs/production/persisted-views.md`.
+///
+/// [`Self::with_projection_name_checkpoints`] preserves the 0.3 name-only key
+/// for single-type feeds that already store checkpoints under
+/// [`Projection::name()`] alone.
 #[derive(Debug)]
 pub struct PersistedProjectionRunner<P, C> {
     projection: P,
@@ -585,30 +587,45 @@ pub struct PersistedProjectionRunner<P, C> {
 }
 
 impl<P, C> PersistedProjectionRunner<P, C> {
-    /// Creates a new persisted runner that keys checkpoints on
-    /// [`Projection::name()`] alone.
+    /// Creates a persisted runner with aggregate-scoped checkpoint keys.
     ///
-    /// Correct for a projection driven by exactly one aggregate type's feed.
-    /// Use [`Self::with_aggregate_scoped_checkpoints`] otherwise.
+    /// This is the recommended default for all projections, including those
+    /// driven by exactly one aggregate type.
     pub fn new(projection: P, checkpoint_store: C) -> Self {
         Self {
             projection,
             checkpoint_store,
-            keying: CheckpointKeying::ProjectionName,
+            keying: CheckpointKeying::AggregateScoped,
         }
     }
 
     /// Creates a persisted runner that keys checkpoints on the projection name
-    /// **and** the feed being replayed, so a projection spanning several
-    /// aggregate types tracks each feed independently.
+    /// **and** the feed being replayed.
     ///
-    /// [`Self::run_raw_batch`] gets its own cross-aggregate scope rather than
-    /// sharing a position with any typed feed.
+    /// Equivalent to [`Self::new`]; kept for explicit call sites and docs.
     pub fn with_aggregate_scoped_checkpoints(projection: P, checkpoint_store: C) -> Self {
+        Self::new(projection, checkpoint_store)
+    }
+
+    /// Creates a persisted runner that keys checkpoints on [`Projection::name()`]
+    /// alone.
+    ///
+    /// # Migration from 0.3
+    ///
+    /// Name-only keys make multi-type projections share one position (whichever
+    /// feed advances furthest hides the others). Prefer [`Self::new`]. When you
+    /// must keep a legacy row, operate one runner per aggregate type or seed
+    /// scoped rows via [`aggregate_scoped_checkpoint_key`] before switching to
+    /// [`Self::new`].
+    #[deprecated(
+        since = "0.4.0",
+        note = "aggregate-scoped checkpoints are the default since 0.4; seed scoped rows from legacy name-only checkpoints before switching to PersistedProjectionRunner::new"
+    )]
+    pub fn with_projection_name_checkpoints(projection: P, checkpoint_store: C) -> Self {
         Self {
             projection,
             checkpoint_store,
-            keying: CheckpointKeying::AggregateScoped,
+            keying: CheckpointKeying::ProjectionName,
         }
     }
 
@@ -815,10 +832,9 @@ where
 
 /// An async projection runner that uses a persistent `AsyncCheckpointStore` to coordinate progress.
 ///
-/// Checkpoint keying matches [`PersistedProjectionRunner`]: [`Self::new`] keys
-/// on [`Projection::name()`] alone, and
-/// [`Self::with_aggregate_scoped_checkpoints`] gives each replayed feed its own
-/// row.
+/// Checkpoint keying matches [`PersistedProjectionRunner`]: [`Self::new`] uses
+/// aggregate-scoped keys; [`Self::with_projection_name_checkpoints`] preserves
+/// the 0.3 name-only layout.
 #[cfg(feature = "async")]
 #[derive(Debug)]
 pub struct AsyncPersistedProjectionRunner<P, C> {
@@ -829,27 +845,35 @@ pub struct AsyncPersistedProjectionRunner<P, C> {
 
 #[cfg(feature = "async")]
 impl<P, C> AsyncPersistedProjectionRunner<P, C> {
-    /// Creates a new async persisted runner that keys checkpoints on
-    /// [`Projection::name()`] alone.
-    ///
-    /// Correct for a projection driven by exactly one aggregate type's feed.
-    /// Use [`Self::with_aggregate_scoped_checkpoints`] otherwise.
+    /// Creates an async persisted runner with aggregate-scoped checkpoint keys.
     pub fn new(projection: P, checkpoint_store: C) -> Self {
         Self {
             projection,
             checkpoint_store,
-            keying: CheckpointKeying::ProjectionName,
+            keying: CheckpointKeying::AggregateScoped,
         }
     }
 
-    /// Creates an async persisted runner that keys checkpoints on the
-    /// projection name **and** the feed being replayed, so a projection
-    /// spanning several aggregate types tracks each feed independently.
+    /// Creates an async persisted runner with aggregate-scoped checkpoint keys.
+    ///
+    /// Equivalent to [`Self::new`].
     pub fn with_aggregate_scoped_checkpoints(projection: P, checkpoint_store: C) -> Self {
+        Self::new(projection, checkpoint_store)
+    }
+
+    /// Creates an async persisted runner that keys checkpoints on
+    /// [`Projection::name()`] alone.
+    ///
+    /// See [`PersistedProjectionRunner::with_projection_name_checkpoints`].
+    #[deprecated(
+        since = "0.4.0",
+        note = "aggregate-scoped checkpoints are the default since 0.4; seed scoped rows from legacy name-only checkpoints before switching to AsyncPersistedProjectionRunner::new"
+    )]
+    pub fn with_projection_name_checkpoints(projection: P, checkpoint_store: C) -> Self {
         Self {
             projection,
             checkpoint_store,
-            keying: CheckpointKeying::AggregateScoped,
+            keying: CheckpointKeying::ProjectionName,
         }
     }
 

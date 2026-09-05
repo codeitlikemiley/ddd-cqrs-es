@@ -134,14 +134,13 @@ where
     /// "Global" order is scoped to this store's aggregate type `A`: backends
     /// filter the feed by aggregate type, so a read model spanning several
     /// aggregate types needs one projection runner (and checkpoint) per type
-    /// and must not assume ordering across those feeds. Drive such a read model
-    /// with
-    /// [`PersistedProjectionRunner::with_aggregate_scoped_checkpoints`](crate::projection::PersistedProjectionRunner::with_aggregate_scoped_checkpoints);
-    /// the name-only checkpoint keying of
-    /// [`PersistedProjectionRunner::new`](crate::projection::PersistedProjectionRunner::new)
+    /// and must not assume ordering across those feeds. Use
+    /// [`PersistedProjectionRunner::new`](crate::projection::PersistedProjectionRunner::new),
+    /// which keys checkpoints per feed by default. The legacy name-only keying of
+    /// [`PersistedProjectionRunner::with_projection_name_checkpoints`](crate::projection::PersistedProjectionRunner::with_projection_name_checkpoints)
     /// makes those per-type runs share one position and hide events. See
     /// ADR-0003 (per-aggregate global feeds) in `docs/adr/` for the
-    /// rationale and workarounds.
+    /// rationale and migration path.
     fn load_global_after_limited(
         &self,
         sequence: Option<u64>,
