@@ -1327,20 +1327,6 @@ pub trait AsyncCheckpointedProjection<E, Id> {
         &mut self,
         event: &EventEnvelope<E, Id>,
     ) -> Result<(), Self::Error>;
-
-    /// Applies a batch of events, advancing the checkpoint once for the batch.
-    ///
-    /// The default implementation calls [`Self::apply_and_checkpoint`] for each
-    /// event in order. Override to commit one read-model transaction per batch.
-    async fn apply_batch_and_checkpoint(
-        &mut self,
-        events: &[EventEnvelope<E, Id>],
-    ) -> Result<(), Self::Error> {
-        for event in events {
-            self.apply_and_checkpoint(event).await?;
-        }
-        Ok(())
-    }
 }
 
 /// An async projection runner for projections that manage their own checkpoints atomically.
@@ -1374,22 +1360,6 @@ pub trait AsyncTransactionalCheckpointedProjection<E, Id> {
         &mut self,
         event: &EventEnvelope<E, Id>,
     ) -> Result<(), Self::Error>;
-
-    /// Applies a batch of events in one or more backing-store transactions.
-    ///
-    /// The default implementation calls
-    /// [`Self::apply_and_checkpoint_transactionally`] for each event in order,
-    /// preserving today's per-event transaction semantics. Override to commit
-    /// one read-model transaction per batch.
-    async fn apply_batch_and_checkpoint_transactionally(
-        &mut self,
-        events: &[EventEnvelope<E, Id>],
-    ) -> Result<(), Self::Error> {
-        for event in events {
-            self.apply_and_checkpoint_transactionally(event).await?;
-        }
-        Ok(())
-    }
 }
 
 /// Async runner for transaction-aware checkpointed projections.
@@ -1477,13 +1447,19 @@ impl<P> AsyncTransactionalCheckpointedProjectionRunner<P> {
             .load_global_after_limited(checkpoint, config.batch_size())
             .await
             .map_err(ProjectionRunnerError::Store)?;
+        let mut applied = 0;
+        let mut last_sequence = None;
 
-        self.projection
-            .apply_batch_and_checkpoint_transactionally(&events)
-            .await
-            .map_err(ProjectionRunnerError::Projection)?;
-        let applied = events.len();
-        let last_sequence = events.iter().rev().find_map(|event| event.sequence);
+        for event in events {
+            self.projection
+                .apply_and_checkpoint_transactionally(&event)
+                .await
+                .map_err(ProjectionRunnerError::Projection)?;
+            if let Some(sequence) = event.sequence {
+                last_sequence = Some(sequence);
+            }
+            applied += 1;
+        }
 
         Ok(projection_batch_outcome(applied, last_sequence, config))
     }
@@ -1568,13 +1544,19 @@ impl<P> AsyncCheckpointedProjectionRunner<P> {
             .load_global_after_limited(checkpoint, config.batch_size())
             .await
             .map_err(ProjectionRunnerError::Store)?;
+        let mut applied = 0;
+        let mut last_sequence = None;
 
-        self.projection
-            .apply_batch_and_checkpoint(&events)
-            .await
-            .map_err(ProjectionRunnerError::Projection)?;
-        let applied = events.len();
-        let last_sequence = events.iter().rev().find_map(|event| event.sequence);
+        for event in events {
+            self.projection
+                .apply_and_checkpoint(&event)
+                .await
+                .map_err(ProjectionRunnerError::Projection)?;
+            if let Some(sequence) = event.sequence {
+                last_sequence = Some(sequence);
+            }
+            applied += 1;
+        }
 
         Ok(projection_batch_outcome(applied, last_sequence, config))
     }
