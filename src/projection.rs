@@ -389,10 +389,10 @@ where
     Ok(projection_batch_outcome(applied, last_sequence, config))
 }
 
-/// Async runner catch-up and owned-checkpoint `run_batch` loops stay inline in their
-/// runners: async methods return futures that borrow `&mut self` (and often the current
-/// envelope) until `.await` completes, so shared closure helpers would need higher-ranked
-/// lifetime bounds that Rust cannot express cleanly with `async_trait` methods today.
+// Async runner catch-up and owned-checkpoint `run_batch` loops stay inline in their
+// runners: async methods return futures that borrow `&mut self` (and often the current
+// envelope) until `.await` completes, so shared closure helpers would need higher-ranked
+// lifetime bounds that Rust cannot express cleanly with `async_trait` methods today.
 
 /// In-memory projection runner with a sequence checkpoint.
 ///
