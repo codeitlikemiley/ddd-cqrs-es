@@ -195,7 +195,7 @@ redis.call('HSET', KEYS[1],
     'metadata', ARGV[3],
     'recorded_at_ms', ARGV[4],
     'aggregate_type', ARGV[5])
-return {'OK'}
+return 'OK'
 "#;
 
 /// Redis protocol value returned by [`RedisCommandExecutor`].
