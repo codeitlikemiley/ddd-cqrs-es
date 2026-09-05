@@ -364,7 +364,7 @@ pub fn assert_event_store_append_race_contract<A, S, F>(
     racers: usize,
 ) where
     A: Aggregate,
-    A::Event: PartialEq + Debug,
+    A::Event: PartialEq + Debug + Clone,
     A::Id: Clone + Send + Sync,
     S: EventStore<A> + Send + Sync + 'static,
     S::Error: EventStoreFailure + Debug + Display + Send + 'static,
@@ -391,11 +391,28 @@ pub fn assert_event_store_append_race_contract<A, S, F>(
         let race_event = race_event.clone();
         handles.push(thread::spawn(move || {
             barrier.wait();
-            factory().append(
-                &aggregate_id,
-                ExpectedRevision::Exact(1),
-                vec![NewEvent::new(race_event, Metadata::default())],
-            )
+            for attempt in 0..8 {
+                match factory().append(
+                    &aggregate_id,
+                    ExpectedRevision::Exact(1),
+                    vec![NewEvent::new(race_event.clone(), Metadata::default())],
+                ) {
+                    Ok(committed) => return Ok(committed),
+                    Err(error) => match error.into_repository_error::<()>() {
+                        RepositoryError::Store(store_error)
+                            if store_error
+                                .to_string()
+                                .to_ascii_lowercase()
+                                .contains("locked")
+                                && attempt + 1 < 8 =>
+                        {
+                            continue;
+                        }
+                        other => return Err(other),
+                    },
+                }
+            }
+            panic!("race append exhausted retries");
         }));
     }
 
@@ -408,9 +425,9 @@ pub fn assert_event_store_append_race_contract<A, S, F>(
                 assert_eq!(committed.len(), 1);
                 assert_eq!(committed[0].revision, 2);
             }
-            Err(error) => {
+            Err(other) => {
                 losers += 1;
-                match error.into_repository_error::<()>() {
+                match other {
                     RepositoryError::Concurrency(ConcurrencyError::WrongExpectedRevision {
                         expected: ExpectedRevision::Exact(1),
                         actual,
@@ -421,11 +438,6 @@ pub fn assert_event_store_append_race_contract<A, S, F>(
                         );
                     }
                     RepositoryError::Concurrency(_) => {}
-                    RepositoryError::Store(store_error)
-                        if store_error
-                            .to_string()
-                            .to_ascii_lowercase()
-                            .contains("locked") => {}
                     other => panic!("expected concurrency error for race loser, got {other:?}"),
                 }
             }
