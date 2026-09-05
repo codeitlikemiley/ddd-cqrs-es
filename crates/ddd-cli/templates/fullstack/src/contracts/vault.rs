@@ -45,7 +45,7 @@ fn default_vault_scope_user() -> String {
 }
 
 /// Client-safe vault entry — **never** includes the secret value.
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SecretSummary {
     pub id: String,
     /// Env-like key for connectors (`STRIPE_SECRET_KEY`).

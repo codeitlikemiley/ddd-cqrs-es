@@ -576,7 +576,7 @@ where
                 .await?;
             let hashes = self.load_sequence_hashes(&sequences).await?;
             for mut hash in hashes {
-                if hash_field_string(&mut hash, "aggregate_type")? == aggregate_type {
+                if hash_field_string_peek(&hash, "aggregate_type")? == aggregate_type {
                     events.push(hash_to_envelope::<A>(&self.upcasters, hash)?);
                 }
             }
@@ -603,7 +603,7 @@ where
                 .await?;
             let hashes = self.load_sequence_hashes(&sequences).await?;
             for mut hash in hashes {
-                if hash_field_string(&mut hash, "aggregate_type")? == aggregate_type {
+                if hash_field_string_peek(&hash, "aggregate_type")? == aggregate_type {
                     events.push(hash_to_envelope::<A>(&self.upcasters, hash)?);
                 }
             }
@@ -2353,6 +2353,23 @@ fn redis_value_u64(value: &RedisValue, label: &str) -> Result<u64, EventStoreErr
             "{label}: expected Redis integer scalar, got {value:?}"
         ))),
     }
+}
+
+fn hash_field_string_peek(
+    hash: &BTreeMap<String, Vec<u8>>,
+    field: &str,
+) -> Result<String, EventStoreError> {
+    hash.get(field)
+        .ok_or_else(|| {
+            EventStoreError::deserialization(format!("Redis event hash missing `{field}`"))
+        })
+        .and_then(|value| {
+            String::from_utf8(value.clone()).map_err(|error| {
+                EventStoreError::deserialization(format!(
+                    "Redis event hash `{field}` UTF-8: {error}"
+                ))
+            })
+        })
 }
 
 fn take_hash_field(
