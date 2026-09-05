@@ -7,7 +7,7 @@
 //! source of truth.
 
 #[cfg(feature = "spin-redis")]
-use crate::adapters::http::redact_url_userinfo;
+use crate::adapters::redact_url_userinfo;
 use crate::aggregate::Aggregate;
 use crate::async_api::AsyncEventStore;
 use crate::error::EventStoreError;
@@ -23,6 +23,8 @@ use crate::upcast::UpcasterRegistry;
 use async_trait::async_trait;
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
+#[cfg(feature = "wasi-redis")]
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::marker::PhantomData;
 #[cfg(feature = "wasi-redis")]
 use std::net::TcpStream;
