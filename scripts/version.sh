@@ -66,9 +66,25 @@ fi
 target_version="${1:-}"
 
 if [ -z "$target_version" ]; then
-  IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
-  PATCH=$((PATCH + 1))
-  target_version="${MAJOR}.${MINOR}.${PATCH}"
+  if [[ "$CURRENT_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-(.+))?$ ]]; then
+    MAJOR="${BASH_REMATCH[1]}"
+    MINOR="${BASH_REMATCH[2]}"
+    PATCH="${BASH_REMATCH[3]}"
+    PRERELEASE="${BASH_REMATCH[5]:-}"
+    if [ -n "$PRERELEASE" ]; then
+      if [[ "$PRERELEASE" =~ ^rc\.([0-9]+)$ ]]; then
+        RC="${BASH_REMATCH[1]}"
+        target_version="${MAJOR}.${MINOR}.${PATCH}-rc.$((RC + 1))"
+      else
+        target_version="${MAJOR}.${MINOR}.$((PATCH + 1))"
+      fi
+    else
+      target_version="${MAJOR}.${MINOR}.$((PATCH + 1))"
+    fi
+  else
+    echo "Error: could not parse version from $LIB_MANIFEST" >&2
+    exit 1
+  fi
 fi
 
 if ! [[ "$target_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then

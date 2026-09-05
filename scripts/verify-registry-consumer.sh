@@ -16,7 +16,7 @@ read_manifest_version() {
 
 DDD_VERSION="$(read_manifest_version "$REPO_ROOT/Cargo.toml")"
 CLI_VERSION="$(read_manifest_version "$REPO_ROOT/crates/ddd-cli/Cargo.toml")"
-WASI_AUTH_VERSION="${WASI_AUTH_VERSION:-0.1.0-rc.2}"
+WASI_AUTH_VERSION="${WASI_AUTH_VERSION:-0.1.0-rc.4}"
 LEPTOS_WASI_VERSION="${LEPTOS_WASI_VERSION:-0.4.2-rc.1}"
 
 if [[ -z "$DDD_VERSION" || "$DDD_VERSION" != "$CLI_VERSION" ]]; then
@@ -73,6 +73,10 @@ cargo install \
     --preset fullstack
 
 APP_ROOT="$GENERATED_ROOT/fullstack-app"
+if ! command -v rg >/dev/null 2>&1; then
+  echo "error: ripgrep (rg) is required for registry consumer verification" >&2
+  exit 1
+fi
 if rg -n '^[[:space:]]*path[[:space:]]*=' "$APP_ROOT/Cargo.toml"; then
     echo "error: generated registry consumer contains a local path dependency" >&2
     exit 1

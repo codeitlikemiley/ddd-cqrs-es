@@ -251,6 +251,16 @@ fn init_project(ctx: &ExecutionContext, args: InitArgs) -> Result<CommandReport>
     selection.validate()?;
 
     let target = resolve_path(&ctx.cwd, &args.path);
+    if !ctx.dry_run && !ctx.force && target.exists() {
+        let mut entries = std::fs::read_dir(&target)
+            .with_context(|| format!("failed to inspect {}", target.display()))?;
+        if entries.next().is_some() {
+            anyhow::bail!(
+                "target `{}` is not empty; choose an empty directory or rerun with --force",
+                target.display()
+            );
+        }
+    }
     let domain_names = NameParts::new(&args.domain);
     ensure_rust_identifier(&domain_names.aggregate, "domain name")?;
     ensure_snake_identifier(&domain_names.module, "domain module")?;

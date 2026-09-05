@@ -312,6 +312,15 @@ pub fn get_migrations(dialect: SqlDialect) -> Vec<SchemaMigration> {
                         WHERE state = 'pending';
                 "#,
             },
+            SchemaMigration {
+                version: 8,
+                description: "idempotency_completed_purge_index",
+                up_sql: r#"
+                    CREATE INDEX IF NOT EXISTS {idempotency_table}_completed_updated_idx
+                        ON {idempotency_table} (updated_at_ms)
+                        WHERE state = 'complete';
+                "#,
+            },
         ],
         SqlDialect::Postgres => vec![
             SchemaMigration {
@@ -396,6 +405,15 @@ pub fn get_migrations(dialect: SqlDialect) -> Vec<SchemaMigration> {
                         WHERE state = 'pending';
                 "#,
             },
+            SchemaMigration {
+                version: 8,
+                description: "idempotency_completed_purge_index",
+                up_sql: r#"
+                    CREATE INDEX IF NOT EXISTS {idempotency_table}_completed_updated_idx
+                        ON {idempotency_table} (updated_at_ms)
+                        WHERE state = 'complete';
+                "#,
+            },
         ],
         SqlDialect::MySql => vec![
             SchemaMigration {
@@ -478,6 +496,14 @@ pub fn get_migrations(dialect: SqlDialect) -> Vec<SchemaMigration> {
                         ON {idempotency_table} (updated_at_ms);
                 "#,
             },
+            SchemaMigration {
+                version: 8,
+                description: "idempotency_completed_purge_index",
+                up_sql: r#"
+                    CREATE INDEX {idempotency_table}_completed_updated_idx
+                        ON {idempotency_table} (updated_at_ms, state);
+                "#,
+            },
         ],
     }
 }
@@ -492,6 +518,7 @@ fn get_target_table_name(version: i32, config: &SqlSchemaConfig) -> &str {
         5 => &config.events_table,
         6 => &config.events_table,
         7 => &config.idempotency_table,
+        8 => &config.idempotency_table,
         _ => "",
     }
 }

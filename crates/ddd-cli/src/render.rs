@@ -375,6 +375,14 @@ fn render_fullstack(input: &InitRenderInput) -> Vec<FileOperation> {
             1,
         )
         .replace(
+            "output-name = \"fullstack_app\"",
+            &format!("output-name = \"{}\"", input.package_name.replace('-', "_")),
+        )
+        .replace(
+            "bin-target = \"fullstack-app\"",
+            &format!("bin-target = \"{}\"", input.package_name),
+        )
+        .replace(
             // Keep in sync with templates/fullstack/Cargo.toml.template pin; rewritten to CLI version.
             "ddd_cqrs_es = { version = \"=0.3.0-rc.7\"",
             &format!("ddd_cqrs_es = {{ version = \"={}\"", framework_version()),
@@ -477,6 +485,7 @@ fn render_fullstack_template_content(
 ) -> String {
     let crate_name = input.package_name.replace('-', "_");
     let mut content = raw.replace("/pkg/fullstack_app.css", &format!("/pkg/{crate_name}.css"));
+    content = content.replace("fullstack_app.css", &format!("{crate_name}.css"));
 
     if matches!(
         relative_path,
