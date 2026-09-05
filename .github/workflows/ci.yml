@@ -139,7 +139,7 @@ jobs:
       - name: Install release policy tools
         uses: taiki-e/install-action@d6d752794628f1e1fffa3c4d3c8874e06f043d50 # v2.62.15
         with:
-          tool: cargo-audit@0.22.2,cargo-deny,cargo-hack
+          tool: cargo-audit@0.22.2,cargo-deny@0.20.2,cargo-hack
 
       - name: Cache cargo artifacts
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
