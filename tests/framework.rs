@@ -1,14 +1,20 @@
-#[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
+use ddd_cqrs_es::{
+    assert_atomic_idempotent_store_contract, assert_event_store_any_writers_contract,
+    assert_event_store_append_race_contract, assert_event_store_contract, Aggregate,
+    AggregateFixture, ConcurrencyError, DomainEvent, EventStore, EventStoreContractOptions,
+    EventStoreError, EventStream, EventType, ExpectedRevision, IdempotencyKey, IdempotencyStore,
+    IdempotencyWaitConfig, InMemoryEventStore, InMemoryIdempotencyStore, InMemoryProjectionRunner,
+    InMemorySnapshotStore, Metadata, NewEvent, Projection, ProjectionBatchConfig, Repository,
+    RepositoryError, Snapshot, SnapshotStore, DEFAULT_PROJECTION_BATCH_SIZE,
+};
+#[cfg(any(
+    feature = "sqlite",
+    feature = "postgres",
+    feature = "mysql",
+    feature = "json-file"
+))]
 use ddd_cqrs_es::{
     assert_checkpoint_store_contract, assert_idempotency_store_contract, IdempotencyState,
-};
-use ddd_cqrs_es::{
-    assert_event_store_contract, Aggregate, AggregateFixture, ConcurrencyError, DomainEvent,
-    EventStore, EventStoreContractOptions, EventStoreError, EventStream, EventType,
-    ExpectedRevision, IdempotencyKey, IdempotencyStore, IdempotencyWaitConfig, InMemoryEventStore,
-    InMemoryIdempotencyStore, InMemoryProjectionRunner, InMemorySnapshotStore, Metadata, NewEvent,
-    Projection, ProjectionBatchConfig, Repository, RepositoryError, Snapshot, SnapshotStore,
-    DEFAULT_PROJECTION_BATCH_SIZE,
 };
 use std::collections::HashMap;
 use std::error::Error;
