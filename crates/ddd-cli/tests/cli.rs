@@ -1284,6 +1284,57 @@ fn add_rejects_manifest_project_name_that_is_not_a_crate_name() {
     );
 }
 
+#[test]
+fn init_refuses_non_empty_target_without_force() {
+    let temp = tempfile::tempdir().unwrap();
+    let target = temp.path().join("occupied");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(target.join("README.md"), "existing\n").unwrap();
+
+    let mut command = Command::cargo_bin("ddd").unwrap();
+    command
+        .arg("--cwd")
+        .arg(temp.path())
+        .arg("init")
+        .arg("occupied")
+        .arg("--preset")
+        .arg("basic");
+
+    command
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not empty"));
+    assert_eq!(
+        std::fs::read_to_string(target.join("README.md")).unwrap(),
+        "existing\n"
+    );
+}
+
+#[test]
+fn fullstack_init_renames_leptos_targets_and_stylesheet() {
+    let temp = tempfile::tempdir().unwrap();
+
+    let mut command = Command::cargo_bin("ddd").unwrap();
+    command
+        .arg("--cwd")
+        .arg(temp.path())
+        .arg("init")
+        .arg("my-saas")
+        .arg("--preset")
+        .arg("fullstack");
+    command.assert().success();
+
+    let app_root = temp.path().join("my-saas");
+    let cargo_toml = std::fs::read_to_string(app_root.join("Cargo.toml")).unwrap();
+    assert!(cargo_toml.contains("name = \"my-saas\""));
+    assert!(cargo_toml.contains("output-name = \"my_saas\""));
+    assert!(cargo_toml.contains("bin-target = \"my-saas\""));
+
+    let router = std::fs::read_to_string(app_root.join("src/app/router.rs")).unwrap();
+    assert!(router.contains("/pkg/my_saas.css"));
+    assert!(!router.contains("fullstack_app.css"));
+}
+
 fn init_basic_project(temp: &tempfile::TempDir, name: &str) {
     init_basic_project_with_domain(temp, name, "Counter");
 }

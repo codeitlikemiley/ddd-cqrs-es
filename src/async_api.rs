@@ -676,6 +676,18 @@ where
     /// Removes or reclaims stale pending rows whose leases have expired.
     async fn expire_stale_pending(&self, now_ms: u64) -> Result<usize, Self::Error>;
 
+    /// Deletes completed rows whose `updated_at_ms` is strictly before `cutoff_ms`.
+    async fn expire_completed_before(&self, cutoff_ms: u64) -> Result<usize, Self::Error> {
+        let _ = cutoff_ms;
+        Ok(0)
+    }
+
+    /// Deletes completed rows older than `max_age` relative to the current wall clock.
+    async fn purge_completed_older_than(&self, max_age: Duration) -> Result<usize, Self::Error> {
+        let cutoff_ms = crate::idempotency::now_ms().saturating_sub(max_age.as_millis() as u64);
+        self.expire_completed_before(cutoff_ms).await
+    }
+
     /// Saves a completed result for an idempotency key.
     async fn save(&self, key: IdempotencyKey, value: V) -> Result<(), Self::Error>;
 
