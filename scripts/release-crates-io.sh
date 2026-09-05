@@ -116,7 +116,7 @@ for package in "${PACKAGES[@]}"; do
 done
 
 if [[ "$MODE" == "publish" ]]; then
-  WASI_AUTH_VERSION="${WASI_AUTH_VERSION:-0.1.0-rc.4}"
+  WASI_AUTH_VERSION="${WASI_AUTH_VERSION:-0.1.0-rc.5}"
   LEPTOS_WASI_VERSION="${LEPTOS_WASI_VERSION:-0.4.2-rc.1}"
   require_registry_package wasi-auth "$WASI_AUTH_VERSION"
   require_registry_package leptos-wasi-runtime "$LEPTOS_WASI_VERSION"

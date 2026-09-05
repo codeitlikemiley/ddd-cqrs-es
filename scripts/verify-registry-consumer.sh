@@ -16,7 +16,7 @@ read_manifest_version() {
 
 DDD_VERSION="$(read_manifest_version "$REPO_ROOT/Cargo.toml")"
 CLI_VERSION="$(read_manifest_version "$REPO_ROOT/crates/ddd-cli/Cargo.toml")"
-WASI_AUTH_VERSION="${WASI_AUTH_VERSION:-0.1.0-rc.4}"
+WASI_AUTH_VERSION="${WASI_AUTH_VERSION:-0.1.0-rc.5}"
 LEPTOS_WASI_VERSION="${LEPTOS_WASI_VERSION:-0.4.2-rc.1}"
 
 if [[ -z "$DDD_VERSION" || "$DDD_VERSION" != "$CLI_VERSION" ]]; then

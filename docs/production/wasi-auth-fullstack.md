@@ -65,12 +65,6 @@ See also the fullstack README production checklist:
 Rate limits and password policy for TOTP enrollment, step-up, recovery codes, and
 password change are enforced in `wasi-auth` (not reimplemented in the template).
 
-One remaining gap is **TOTP replay within the standard time skew**: `wasi-auth`
-0.1.0-rc.4 verifies codes across the skew window but does not yet persist
-consumed codes for that window, so replaying the same code before the window
-advances is possible until upstream adds replay tracking. Document this for
-operators; do not treat it as an in-repo open item.
-
 ### Spin is not the mail sender
 
 `spin.toml` defines the **request-facing** product only (Leptos UI, REST, gRPC).

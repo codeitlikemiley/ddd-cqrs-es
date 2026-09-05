@@ -129,7 +129,7 @@ make db-up && make dev transport=both
 1. Copy `examples/fullstack-app/` into your repository.  
 2. Ensure `Cargo.toml` uses **crates.io versions** (not monorepo `path =` patches), e.g.:
    - `ddd_cqrs_es = "=0.3.0-rc.7"`
-   - `wasi-auth = "=0.1.0-rc.4"`
+   - `wasi-auth = "=0.1.0-rc.5"`
 3. Remove any `[patch.crates-io]` entries that point at sibling checkouts unless you keep those crates locally.  
 4. Run `make db-up && make dev transport=both`.
 
@@ -304,8 +304,6 @@ Legacy user keys migrate opportunistically on first access.
 Tighten `spin.toml` outbound hosts in production — copy `spin.production.toml.example` (exact OAuth/database hosts; no wildcards). Local dev may keep `https://*:*` entries in `spin.toml` when `AUTH_DASHBOARD_HTTP_ALLOW_PRIVATE=true`.
 
 **Postgres dashboard connectors:** create a dedicated read-only database role (`GRANT SELECT` only) and prefer that user in Resources. The runtime also sets libpq `default_transaction_read_only=on` and `statement_timeout=30s` on connector URLs as defense-in-depth (keyword blocklists alone are not sufficient).
-
-**TOTP step-up:** codes are verified within the standard time skew, but `wasi-auth` 0.1.0-rc.4 does not yet record consumed codes across that window — replaying the same code before the window advances remains a known limitation until upstream adds replay tracking.
 
 ### Email verification: register vs resend
 
