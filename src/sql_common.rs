@@ -205,6 +205,15 @@ where
     Ok(keys)
 }
 
+/// Returns the highest stream revision observed under any legacy or current key.
+pub(crate) fn max_revision_for_lookup_keys<E>(
+    keys: &[String],
+    mut read: impl FnMut(&str) -> Result<u64, E>,
+) -> Result<u64, E> {
+    keys.iter()
+        .try_fold(0u64, |max, key| read(key).map(|revision| max.max(revision)))
+}
+
 #[cfg(all(
     feature = "json",
     any(

@@ -13,8 +13,8 @@ use crate::idempotency::{
 use crate::snapshot::{Snapshot, SnapshotStore};
 use crate::sql_common::{
     aggregate_id_lookup_keys, check_expected_revision, deserialize_id, deserialize_metadata,
-    deserialize_payload, millis_to_system_time, serialize_id, serialize_metadata,
-    serialize_payload, system_time_to_millis, validate_table_name,
+    deserialize_payload, max_revision_for_lookup_keys, millis_to_system_time, serialize_id,
+    serialize_metadata, serialize_payload, system_time_to_millis, validate_table_name,
 };
 use crate::upcast::UpcasterRegistry;
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension, TransactionBehavior};
@@ -344,27 +344,32 @@ where
         expected_revision: ExpectedRevision,
         events: Vec<NewEvent<A::Event>>,
     ) -> Result<EventStream<A>, Self::Error> {
-        let aggregate_id_key = serialize_id(aggregate_id)?;
+        let keys = aggregate_id_lookup_keys(aggregate_id)?;
+        let aggregate_id_key = keys[0].clone();
         let prepared = events
             .into_iter()
             .map(PreparedSqliteEvent::new)
             .collect::<Result<Vec<_>, _>>()?;
         let mut connection = lock_connection(&self.connection);
+        let table_name = self.table_name.clone();
+        let read_revision = |connection: &Connection, key: &str| {
+            Self::current_revision_locked(&table_name, connection, key)
+        };
         let stale_revision =
-            Self::current_revision_locked(&self.table_name, &connection, &aggregate_id_key)?;
+            max_revision_for_lookup_keys(&keys, |key| read_revision(&connection, key))?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| {
                 map_sqlite_contention_error(error, Some(expected_revision), || Ok(stale_revision))
             })?;
         let actual_revision =
-            Self::current_revision_locked(&self.table_name, &transaction, &aggregate_id_key)?;
+            max_revision_for_lookup_keys(&keys, |key| read_revision(&transaction, key))?;
         check_expected_revision(expected_revision, actual_revision)?;
 
         if prepared.is_empty() {
             transaction.commit().map_err(|error| {
                 map_sqlite_contention_error(error, Some(expected_revision), || {
-                    Self::current_revision_locked(&self.table_name, &connection, &aggregate_id_key)
+                    max_revision_for_lookup_keys(&keys, |key| read_revision(&connection, key))
                 })
             })?;
             return Ok(Vec::new());
@@ -382,7 +387,7 @@ where
 
         transaction.commit().map_err(|error| {
             map_sqlite_contention_error(error, Some(expected_revision), || {
-                Self::current_revision_locked(&self.table_name, &connection, &aggregate_id_key)
+                max_revision_for_lookup_keys(&keys, |key| read_revision(&connection, key))
             })
         })?;
         Ok(committed)
