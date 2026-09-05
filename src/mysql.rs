@@ -1486,10 +1486,12 @@ where
             .map_err(|error| EventStoreError::backend(error.to_string()))?;
         let updated_at_ms = system_time_to_millis(SystemTime::now())?;
 
-        // MySQL INSERT IGNORE behaves like INSERT OR IGNORE / ON CONFLICT DO NOTHING
+        // MySQL reserve uses a no-op ON DUPLICATE KEY UPDATE so overlong keys
+        // fail at validation instead of being silently truncated by INSERT IGNORE.
         let sql = format!(
-            "INSERT IGNORE INTO {} (idempotency_key, state, value, updated_at_ms) \
-             VALUES (?, 'pending', NULL, ?);",
+            "INSERT INTO {} (idempotency_key, state, value, updated_at_ms) \
+             VALUES (?, 'pending', NULL, ?) \
+             ON DUPLICATE KEY UPDATE idempotency_key = idempotency_key;",
             self.table_name
         );
         self.pool.write(|connection| {
@@ -1876,5 +1878,14 @@ where
         tokio::task::spawn_blocking(move || IdempotencyStore::expire_stale_pending(&this, now_ms))
             .await
             .map_err(|e| EventStoreError::backend(e.to_string()))?
+    }
+
+    async fn expire_completed_before(&self, cutoff_ms: u64) -> Result<usize, Self::Error> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || {
+            IdempotencyStore::expire_completed_before(&this, cutoff_ms)
+        })
+        .await
+        .map_err(|e| EventStoreError::backend(e.to_string()))?
     }
 }

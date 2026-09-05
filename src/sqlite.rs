@@ -1853,6 +1853,15 @@ where
             .map_err(|e| EventStoreError::backend(e.to_string()))?
     }
 
+    async fn expire_completed_before(&self, cutoff_ms: u64) -> Result<usize, Self::Error> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || {
+            IdempotencyStore::expire_completed_before(&this, cutoff_ms)
+        })
+        .await
+        .map_err(|e| EventStoreError::backend(e.to_string()))?
+    }
+
     async fn save(&self, key: IdempotencyKey, value: V) -> Result<(), Self::Error> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || IdempotencyStore::save(&this, key, value))

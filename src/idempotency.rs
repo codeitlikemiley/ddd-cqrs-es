@@ -14,6 +14,12 @@ pub const DEFAULT_IDEMPOTENCY_POLL_INTERVAL: Duration = Duration::from_millis(50
 /// Default lease duration for a pending idempotency reservation.
 pub const DEFAULT_IDEMPOTENCY_LEASE: Duration = Duration::from_secs(60);
 
+/// Suggested retention for completed idempotency rows when operators run periodic purge.
+///
+/// Completed rows are not removed automatically; call
+/// [`IdempotencyStore::purge_completed_older_than`] on a schedule in production.
+pub const DEFAULT_IDEMPOTENCY_COMPLETED_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
 /// Lease metadata attached to a pending idempotency key.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -265,6 +271,12 @@ where
         Ok(0)
     }
 
+    /// Deletes completed rows older than `max_age` relative to the current wall clock.
+    fn purge_completed_older_than(&self, max_age: Duration) -> Result<usize, Self::Error> {
+        let cutoff_ms = now_ms().saturating_sub(max_age.as_millis() as u64);
+        self.expire_completed_before(cutoff_ms)
+    }
+
     /// Saves a completed result for an idempotency key.
     fn save(&self, key: IdempotencyKey, value: V) -> Result<(), Self::Error>;
 
@@ -307,11 +319,17 @@ impl Error for InMemoryIdempotencyError {}
 /// assert_eq!(value, Some(IdempotencyState::Complete("processed".to_string())));
 /// ```
 #[derive(Clone, Debug)]
+struct InMemoryIdempotencyEntry<V> {
+    state: IdempotencyState<V>,
+    updated_at_ms: u64,
+}
+
+#[derive(Clone, Debug)]
 pub struct InMemoryIdempotencyStore<V>
 where
     V: Clone,
 {
-    entries: Arc<RwLock<HashMap<IdempotencyKey, IdempotencyState<V>>>>,
+    entries: Arc<RwLock<HashMap<IdempotencyKey, InMemoryIdempotencyEntry<V>>>>,
 }
 
 impl<V> Default for InMemoryIdempotencyStore<V>
@@ -355,7 +373,7 @@ where
             .entries
             .read()
             .map_err(|_| InMemoryIdempotencyError::Poisoned)?;
-        Ok(entries.get(key).cloned())
+        Ok(entries.get(key).map(|entry| entry.state.clone()))
     }
 
     fn reserve_with_lease(
@@ -369,15 +387,23 @@ where
             .map_err(|_| InMemoryIdempotencyError::Poisoned)?;
         let now = now_ms();
         match entries.entry(key) {
-            std::collections::hash_map::Entry::Occupied(mut occupied) => match occupied.get() {
-                IdempotencyState::Pending(lease) if lease.is_expired(now) => {
-                    occupied.insert(IdempotencyState::Pending(new_lease(config)));
-                    Ok(true)
+            std::collections::hash_map::Entry::Occupied(mut occupied) => {
+                match &occupied.get().state {
+                    IdempotencyState::Pending(lease) if lease.is_expired(now) => {
+                        occupied.insert(InMemoryIdempotencyEntry {
+                            state: IdempotencyState::Pending(new_lease(config)),
+                            updated_at_ms: now,
+                        });
+                        Ok(true)
+                    }
+                    _ => Ok(false),
                 }
-                _ => Ok(false),
-            },
+            }
             std::collections::hash_map::Entry::Vacant(vacant) => {
-                vacant.insert(IdempotencyState::Pending(new_lease(config)));
+                vacant.insert(InMemoryIdempotencyEntry {
+                    state: IdempotencyState::Pending(new_lease(config)),
+                    updated_at_ms: now,
+                });
                 Ok(true)
             }
         }
@@ -388,13 +414,17 @@ where
             .entries
             .write()
             .map_err(|_| InMemoryIdempotencyError::Poisoned)?;
-        let Some(IdempotencyState::Pending(lease)) = entries.get_mut(key) else {
+        let Some(entry) = entries.get_mut(key) else {
+            return Ok(false);
+        };
+        let IdempotencyState::Pending(lease) = &mut entry.state else {
             return Ok(false);
         };
         if lease.owner != owner {
             return Ok(false);
         }
         lease.expires_at_ms = expires_at_ms(DEFAULT_IDEMPOTENCY_LEASE);
+        entry.updated_at_ms = now_ms();
         Ok(true)
     }
 
@@ -404,7 +434,22 @@ where
             .write()
             .map_err(|_| InMemoryIdempotencyError::Poisoned)?;
         let before = entries.len();
-        entries.retain(|_, state| !state.is_expired_pending(now_ms));
+        entries.retain(|_, entry| !entry.state.is_expired_pending(now_ms));
+        Ok(before.saturating_sub(entries.len()))
+    }
+
+    fn expire_completed_before(&self, cutoff_ms: u64) -> Result<usize, Self::Error> {
+        let mut entries = self
+            .entries
+            .write()
+            .map_err(|_| InMemoryIdempotencyError::Poisoned)?;
+        let before = entries.len();
+        entries.retain(|_, entry| {
+            !matches!(
+                entry.state,
+                IdempotencyState::Complete(_) if entry.updated_at_ms < cutoff_ms
+            )
+        });
         Ok(before.saturating_sub(entries.len()))
     }
 
@@ -413,7 +458,13 @@ where
             .entries
             .write()
             .map_err(|_| InMemoryIdempotencyError::Poisoned)?;
-        entries.insert(key, IdempotencyState::Complete(value));
+        entries.insert(
+            key,
+            InMemoryIdempotencyEntry {
+                state: IdempotencyState::Complete(value),
+                updated_at_ms: now_ms(),
+            },
+        );
         Ok(())
     }
 
@@ -582,6 +633,10 @@ where
         IdempotencyStore::expire_stale_pending(self, now_ms)
     }
 
+    async fn expire_completed_before(&self, cutoff_ms: u64) -> Result<usize, Self::Error> {
+        IdempotencyStore::expire_completed_before(self, cutoff_ms)
+    }
+
     async fn save(&self, key: IdempotencyKey, value: V) -> Result<(), Self::Error> {
         IdempotencyStore::save(self, key, value)
     }
@@ -646,5 +701,30 @@ mod tests {
             Some(IdempotencyState::Pending(_))
         ));
         assert!(store.reserve_with_lease(key.clone(), &config).unwrap());
+    }
+
+    #[test]
+    fn purge_completed_older_than_removes_stale_completed_rows() {
+        let store = InMemoryIdempotencyStore::<String>::new();
+        let fresh_key = IdempotencyKey::new("fresh");
+        let stale_key = IdempotencyKey::new("stale");
+
+        store.save(fresh_key.clone(), "fresh".to_string()).unwrap();
+        store.save(stale_key.clone(), "stale".to_string()).unwrap();
+
+        let removed = store
+            .purge_completed_older_than(Duration::from_secs(60))
+            .unwrap();
+        assert_eq!(removed, 0);
+        assert_eq!(
+            store.load(&fresh_key).unwrap(),
+            Some(IdempotencyState::Complete("fresh".to_string()))
+        );
+
+        let cutoff = super::now_ms().saturating_add(1);
+        let removed = store.expire_completed_before(cutoff).unwrap();
+        assert_eq!(removed, 2);
+        assert!(store.load(&fresh_key).unwrap().is_none());
+        assert!(store.load(&stale_key).unwrap().is_none());
     }
 }

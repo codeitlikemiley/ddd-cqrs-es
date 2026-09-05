@@ -55,7 +55,8 @@ log "Running docs hardening checks"
 bash scripts/verify-docs-rust.sh
 
 log "Running CLI tests and generated fullstack drift check"
-cargo test --all-targets -p ddd-cqrs-es-cli
+cargo clippy --locked --all-targets -p ddd-cqrs-es-cli -- -D warnings
+cargo test --locked --all-targets -p ddd-cqrs-es-cli
 bash scripts/regenerate-fullstack-example.sh --check
 
 log "Compiling counter-app example with sqlite"
