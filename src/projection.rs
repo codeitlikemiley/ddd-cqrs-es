@@ -445,6 +445,12 @@ pub trait CheckpointStore {
     /// must not rewind a newer stored value. See
     /// [`assert_checkpoint_store_contract`](crate::testing::assert_checkpoint_store_contract).
     fn save_checkpoint(&self, projection_name: &str, sequence: u64) -> Result<(), Self::Error>;
+
+    /// Clears the stored checkpoint so a projection can replay from the beginning.
+    ///
+    /// Use this when rebuilding a read model; [`Self::save_checkpoint`] alone
+    /// cannot move a checkpoint backwards.
+    fn reset_checkpoint(&self, projection_name: &str) -> Result<(), Self::Error>;
 }
 
 /// An async persistent store for tracking projection sequence checkpoints.
@@ -463,6 +469,9 @@ pub trait AsyncCheckpointStore {
         projection_name: &str,
         sequence: u64,
     ) -> Result<(), Self::Error>;
+
+    /// Clears the stored checkpoint so a projection can replay from the beginning.
+    async fn reset_checkpoint(&self, projection_name: &str) -> Result<(), Self::Error>;
 }
 
 /// Separator between a projection name and its checkpoint scope.

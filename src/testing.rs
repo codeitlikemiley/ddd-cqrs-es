@@ -703,6 +703,11 @@ where
     assert_eq!(store.load_checkpoint(projection_name).unwrap(), Some(100));
     store.save_checkpoint(projection_name, 90).unwrap();
     assert_eq!(store.load_checkpoint(projection_name).unwrap(), Some(100));
+
+    store.reset_checkpoint(projection_name).unwrap();
+    assert_eq!(store.load_checkpoint(projection_name).unwrap(), None);
+    store.save_checkpoint(projection_name, 7).unwrap();
+    assert_eq!(store.load_checkpoint(projection_name).unwrap(), Some(7));
 }
 
 /// Runs a focused async checkpoint-store contract.
@@ -728,6 +733,9 @@ where
         store.load_checkpoint(projection_name).await.unwrap(),
         Some(100)
     );
+
+    store.reset_checkpoint(projection_name).await.unwrap();
+    assert_eq!(store.load_checkpoint(projection_name).await.unwrap(), None);
 }
 
 /// Runs a focused idempotency-store contract.

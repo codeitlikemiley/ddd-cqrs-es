@@ -709,6 +709,18 @@ where
             .map_err(map_executor_error)?;
         Ok(())
     }
+
+    async fn reset_checkpoint(&self, projection_name: &str) -> Result<(), Self::Error> {
+        let _ = self
+            .client
+            .execute(
+                "DEL",
+                vec![self.checkpoint_key(projection_name).into_bytes()],
+            )
+            .await
+            .map_err(map_executor_error)?;
+        Ok(())
+    }
 }
 
 /// Experimental Redis-backed async idempotency store.

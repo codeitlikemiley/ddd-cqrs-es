@@ -1136,6 +1136,18 @@ impl crate::projection::CheckpointStore for SqliteCheckpointStore {
             .map_err(map_sqlite_error)?;
         Ok(())
     }
+
+    fn reset_checkpoint(&self, projection_name: &str) -> Result<(), Self::Error> {
+        let connection = lock_connection(&self.connection);
+        let sql = format!(
+            "DELETE FROM {} WHERE projection_name = ?1;",
+            self.table_name
+        );
+        connection
+            .execute(&sql, params![projection_name])
+            .map_err(map_sqlite_error)?;
+        Ok(())
+    }
 }
 
 #[cfg(feature = "async")]
@@ -1162,6 +1174,16 @@ impl crate::projection::AsyncCheckpointStore for SqliteCheckpointStore {
         let name = projection_name.to_owned();
         tokio::task::spawn_blocking(move || {
             crate::projection::CheckpointStore::save_checkpoint(&this, &name, sequence)
+        })
+        .await
+        .map_err(|e| EventStoreError::backend(e.to_string()))?
+    }
+
+    async fn reset_checkpoint(&self, projection_name: &str) -> Result<(), Self::Error> {
+        let this = self.clone();
+        let name = projection_name.to_owned();
+        tokio::task::spawn_blocking(move || {
+            crate::projection::CheckpointStore::reset_checkpoint(&this, &name)
         })
         .await
         .map_err(|e| EventStoreError::backend(e.to_string()))?
@@ -1296,6 +1318,8 @@ where
         key: IdempotencyKey,
         config: &IdempotencyLeaseConfig,
     ) -> Result<bool, Self::Error> {
+        key.validate_storage_length()
+            .map_err(|error| EventStoreError::backend(error.to_string()))?;
         let connection = lock_connection(&self.connection);
         let updated_at_ms = system_time_to_millis(SystemTime::now())?;
         let lease = new_lease(config);
@@ -1371,6 +1395,18 @@ where
         );
         let removed = connection
             .execute(&sql, params![i64::try_from(now_ms).unwrap_or(i64::MAX)])
+            .map_err(map_sqlite_error)?;
+        Ok(removed)
+    }
+
+    fn expire_completed_before(&self, cutoff_ms: u64) -> Result<usize, Self::Error> {
+        let connection = lock_connection(&self.connection);
+        let sql = format!(
+            "DELETE FROM {} WHERE state = 'complete' AND updated_at_ms < ?1;",
+            self.table_name
+        );
+        let removed = connection
+            .execute(&sql, params![i64::try_from(cutoff_ms).unwrap_or(i64::MAX)])
             .map_err(map_sqlite_error)?;
         Ok(removed)
     }

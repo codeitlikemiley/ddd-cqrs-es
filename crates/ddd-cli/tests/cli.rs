@@ -1062,6 +1062,34 @@ fn add_event_fails_when_domain_markers_are_missing() {
 }
 
 #[test]
+fn add_command_is_not_suppressed_by_similar_text_outside_marker_block() {
+    let temp = tempfile::tempdir().unwrap();
+    init_basic_project_with_domain(&temp, "marker-block", "Order");
+    let domain_file = temp.path().join("marker-block/src/domain/order.rs");
+    let mut content = std::fs::read_to_string(&domain_file).unwrap();
+    content = content.replace(
+        "    // ddd:commands",
+        "    // note: OrderCommand::DispatchCargo { .. } handler lives elsewhere\n    // ddd:commands",
+    );
+    std::fs::write(&domain_file, content).unwrap();
+
+    Command::cargo_bin("ddd")
+        .unwrap()
+        .arg("--cwd")
+        .arg(temp.path().join("marker-block"))
+        .arg("add")
+        .arg("command")
+        .arg("Order")
+        .arg("DispatchCargo")
+        .assert()
+        .success();
+
+    let updated = std::fs::read_to_string(&domain_file).unwrap();
+    assert!(updated.contains("DispatchCargo"));
+    assert!(updated.contains("OrderCommand::DispatchCargo"));
+}
+
+#[test]
 fn add_route_rejects_unknown_method() {
     let temp = tempfile::tempdir().unwrap();
     init_basic_project(&temp, "routes-method");

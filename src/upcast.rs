@@ -210,6 +210,12 @@ impl UpcasterRegistry {
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(versions) = map.get(event_type) {
+            let max_target = versions
+                .values()
+                .map(|upcaster| upcaster.target_version())
+                .max()
+                .unwrap_or(current_version);
+
             while let Some(upcaster) = versions.get(&current_version) {
                 let target_version = upcaster.target_version();
                 if target_version <= current_version {
@@ -221,6 +227,13 @@ impl UpcasterRegistry {
                 }
                 raw_payload = upcaster.upcast(raw_payload)?;
                 current_version = target_version;
+            }
+
+            if current_version < max_target {
+                return Err(Box::new(UpcastError(format!(
+                    "no upcast path for `{event_type}` from stored version {current_version} \
+                     to registered version {max_target}"
+                ))));
             }
         }
         Ok((current_version, raw_payload))
@@ -325,5 +338,26 @@ mod tests {
         let (version, payload) = registry.prepare_payload("evt", 1, vec![0]).unwrap();
         assert_eq!(version, 2);
         assert_eq!(payload, vec![0, 2]);
+    }
+
+    #[test]
+    fn upcast_rejects_missing_migration_path() {
+        let registry = UpcasterRegistry::new();
+        registry.register("evt", Step { from: 2, to: 3 }).unwrap();
+
+        let error = registry.upcast("evt", 1, Vec::new()).unwrap_err();
+
+        assert!(error.to_string().contains("no upcast path"));
+    }
+
+    #[test]
+    fn upcast_allows_stored_version_beyond_registered_chain() {
+        let registry = UpcasterRegistry::new();
+        registry.register("evt", Step { from: 1, to: 2 }).unwrap();
+
+        let (version, payload) = registry.upcast("evt", 5, b"future".to_vec()).unwrap();
+
+        assert_eq!(version, 5);
+        assert_eq!(payload, b"future");
     }
 }
