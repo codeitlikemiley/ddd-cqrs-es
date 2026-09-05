@@ -73,6 +73,27 @@ impl std::fmt::Display for UpcastError {
 
 impl std::error::Error for UpcastError {}
 
+/// Error returned when registering a duplicate upcaster for the same source version.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UpcasterRegistrationError {
+    /// Event type that already has an upcaster registered.
+    pub event_type: String,
+    /// Source schema version that is already registered.
+    pub source_version: u32,
+}
+
+impl std::fmt::Display for UpcasterRegistrationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "upcaster for `{}` at source version {} is already registered",
+            self.event_type, self.source_version
+        )
+    }
+}
+
+impl std::error::Error for UpcasterRegistrationError {}
+
 impl<T> ErasedUpcaster for T
 where
     T: EventUpcaster + Send + Sync + 'static,
@@ -100,7 +121,7 @@ where
 #[derive(Clone, Default)]
 pub struct UpcasterRegistry {
     #[allow(clippy::type_complexity)]
-    upcasters: Arc<RwLock<HashMap<String, Vec<Arc<dyn ErasedUpcaster>>>>>,
+    upcasters: Arc<RwLock<HashMap<String, HashMap<u32, Arc<dyn ErasedUpcaster>>>>>,
 }
 
 impl UpcasterRegistry {
@@ -146,18 +167,30 @@ impl UpcasterRegistry {
     /// Upcasters must strictly increase the version (`target_version >
     /// source_version`); a non-advancing upcaster causes [`Self::upcast`] to
     /// return an error when its source version is reached.
-    pub fn register<U>(&self, event_type: impl Into<String>, upcaster: U)
+    pub fn register<U>(
+        &self,
+        event_type: impl Into<String>,
+        upcaster: U,
+    ) -> Result<(), UpcasterRegistrationError>
     where
         U: EventUpcaster + Send + Sync + 'static,
         U::Error: std::fmt::Debug + std::fmt::Display + Send + Sync + 'static,
     {
+        let event_type = event_type.into();
+        let source_version = upcaster.source_version();
         let mut map = self
             .upcasters
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        map.entry(event_type.into())
-            .or_default()
-            .push(Arc::new(upcaster));
+        let versions = map.entry(event_type.clone()).or_default();
+        if versions.contains_key(&source_version) {
+            return Err(UpcasterRegistrationError {
+                event_type,
+                source_version,
+            });
+        }
+        versions.insert(source_version, Arc::new(upcaster));
+        Ok(())
     }
 
     /// Automatically chains matching upcasters sequentially to upgrade the payload
@@ -176,25 +209,21 @@ impl UpcasterRegistry {
             .upcasters
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(list) = map.get(event_type) {
+        if let Some(versions) = map.get(event_type) {
             loop {
-                // Find an upcaster that starts from current_version
-                let matching = list.iter().find(|u| u.source_version() == current_version);
-
-                if let Some(upcaster) = matching {
-                    let target_version = upcaster.target_version();
-                    if target_version <= current_version {
-                        return Err(Box::new(UpcastError(format!(
-                            "upcaster for `{event_type}` maps version {current_version} to \
-                             {target_version}, which does not advance the schema version; \
-                             refusing a non-terminating upcast chain"
-                        ))));
-                    }
-                    raw_payload = upcaster.upcast(raw_payload)?;
-                    current_version = target_version;
-                } else {
+                let Some(upcaster) = versions.get(&current_version) else {
                     break;
+                };
+                let target_version = upcaster.target_version();
+                if target_version <= current_version {
+                    return Err(Box::new(UpcastError(format!(
+                        "upcaster for `{event_type}` maps version {current_version} to \
+                         {target_version}, which does not advance the schema version; \
+                         refusing a non-terminating upcast chain"
+                    ))));
                 }
+                raw_payload = upcaster.upcast(raw_payload)?;
+                current_version = target_version;
             }
         }
         Ok((current_version, raw_payload))
@@ -236,8 +265,8 @@ mod tests {
     #[test]
     fn upcast_chains_strictly_increasing_versions() {
         let registry = UpcasterRegistry::new();
-        registry.register("evt", Step { from: 1, to: 2 });
-        registry.register("evt", Step { from: 2, to: 3 });
+        registry.register("evt", Step { from: 1, to: 2 }).unwrap();
+        registry.register("evt", Step { from: 2, to: 3 }).unwrap();
 
         let (version, payload) = registry.upcast("evt", 1, vec![0]).unwrap();
 
@@ -246,9 +275,18 @@ mod tests {
     }
 
     #[test]
+    fn register_rejects_duplicate_source_version() {
+        let registry = UpcasterRegistry::new();
+        registry.register("evt", Step { from: 1, to: 2 }).unwrap();
+        let error = registry.register("evt", Step { from: 1, to: 3 }).unwrap_err();
+        assert_eq!(error.source_version, 1);
+        assert_eq!(error.event_type, "evt");
+    }
+
+    #[test]
     fn upcast_rejects_non_advancing_upcaster_instead_of_looping() {
         let registry = UpcasterRegistry::new();
-        registry.register("evt", Step { from: 2, to: 2 });
+        registry.register("evt", Step { from: 2, to: 2 }).unwrap();
 
         let error = registry.upcast("evt", 2, Vec::new()).unwrap_err();
 
@@ -258,7 +296,7 @@ mod tests {
     #[test]
     fn upcast_rejects_version_cycle_instead_of_looping() {
         let registry = UpcasterRegistry::new();
-        registry.register("evt", Step { from: 1, to: 2 });
+        registry.register("evt", Step { from: 1, to: 2 }).unwrap();
         registry.register("evt", Step { from: 2, to: 1 });
 
         let error = registry.upcast("evt", 1, Vec::new()).unwrap_err();
@@ -280,7 +318,7 @@ mod tests {
     #[test]
     fn prepare_payload_upcasts_when_registered() {
         let registry = UpcasterRegistry::new();
-        registry.register("evt", Step { from: 1, to: 2 });
+        registry.register("evt", Step { from: 1, to: 2 }).unwrap();
 
         assert!(registry.has_upcasters("evt"));
         assert!(!registry.has_upcasters("other"));

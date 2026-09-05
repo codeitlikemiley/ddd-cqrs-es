@@ -10,51 +10,14 @@ use crate::idempotency::{
 };
 use crate::metadata::Metadata;
 use crate::repository_support::{
-    apply_committed_events, handle_command_as_new_events, new_events_with_metadata,
+    apply_committed_events, async_release_idempotency_key_with_result,
+    async_save_idempotency_result_with_retry, handle_command_as_new_events,
+    new_events_with_metadata,
 };
 use crate::snapshot::{Snapshot, SnapshotRepositoryError};
 use async_trait::async_trait;
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
-
-/// Releases a reserved idempotency key after a failed execution.
-///
-/// A key left `Pending` blocks every retry until it is removed, so cleanup
-/// is retried with backoff and a final failure is logged loudly instead of
-/// being silently swallowed.
-async fn release_idempotency_key<I, V>(idempotency_store: &I, idempotency_key: &IdempotencyKey)
-where
-    I: AsyncIdempotencyStore<V>,
-    V: Clone + Send + Sync + 'static,
-{
-    use crate::repository_support::{RELEASE_MAX_ATTEMPTS, RELEASE_RETRY_DELAY};
-
-    for attempt in 1..=RELEASE_MAX_ATTEMPTS {
-        match idempotency_store.remove(idempotency_key).await {
-            Ok(()) => return,
-            Err(_) => {
-                #[cfg(feature = "tracing")]
-                if attempt == RELEASE_MAX_ATTEMPTS {
-                    tracing::warn!(
-                        key = %idempotency_key,
-                        "{}",
-                        crate::repository_support::RELEASE_FAILED_MESSAGE
-                    );
-                } else {
-                    tracing::debug!(
-                        key = %idempotency_key,
-                        attempt,
-                        "{}",
-                        crate::repository_support::RELEASE_RETRY_MESSAGE
-                    );
-                }
-                if attempt < RELEASE_MAX_ATTEMPTS {
-                    tokio::time::sleep(RELEASE_RETRY_DELAY).await;
-                }
-            }
-        }
-    }
-}
 
 /// Async event persistence abstraction for one aggregate type.
 #[async_trait]
@@ -496,12 +459,14 @@ where
                 Some(IdempotencyState::Complete(committed)) => {
                     return Ok(committed);
                 }
-                Some(IdempotencyState::Pending) => {
+                Some(IdempotencyState::Pending(lease))
+                    if !lease.is_expired(crate::idempotency::now_ms()) =>
+                {
                     let delay = pending_wait_delay(&wait_config, started, &idempotency_key)?;
                     tokio::time::sleep(delay).await;
                     continue;
                 }
-                None => {
+                None | Some(IdempotencyState::Pending(_)) => {
                     if idempotency_store
                         .reserve(idempotency_key.clone())
                         .await
@@ -537,15 +502,18 @@ where
         {
             Ok(committed) => committed,
             Err(err) => {
-                release_idempotency_key(idempotency_store, &idempotency_key).await;
+                async_release_idempotency_key_with_result(idempotency_store, &idempotency_key)
+                    .await?;
                 return Err(err);
             }
         };
 
-        idempotency_store
-            .save(idempotency_key, committed.clone())
-            .await
-            .map_err(IdempotentRepositoryError::Idempotency)?;
+        async_save_idempotency_result_with_retry(
+            idempotency_store,
+            idempotency_key,
+            committed.clone(),
+        )
+        .await?;
 
         Ok(committed)
     }
@@ -600,11 +568,13 @@ where
                 .map_err(IdempotentRepositoryError::from_store_error)?
             {
                 Some(IdempotencyState::Complete(committed)) => return Ok(committed),
-                Some(IdempotencyState::Pending) => {
+                Some(IdempotencyState::Pending(lease))
+                    if !lease.is_expired(crate::idempotency::now_ms()) =>
+                {
                     let delay = pending_wait_delay(&wait_config, started, &idempotency_key)?;
                     tokio::time::sleep(delay).await;
                 }
-                None => break,
+                None | Some(IdempotencyState::Pending(_)) => break,
             }
         }
 
@@ -672,7 +642,23 @@ where
 
     /// Reserves an idempotency key, marking it as pending/in-progress.
     /// Returns `true` if the key was successfully reserved, or `false` if it was already reserved/completed.
-    async fn reserve(&self, key: IdempotencyKey) -> Result<bool, Self::Error>;
+    async fn reserve(&self, key: IdempotencyKey) -> Result<bool, Self::Error> {
+        self.reserve_with_lease(key, &crate::idempotency::IdempotencyLeaseConfig::default())
+            .await
+    }
+
+    /// Reserves an idempotency key with an explicit lease.
+    async fn reserve_with_lease(
+        &self,
+        key: IdempotencyKey,
+        config: &crate::idempotency::IdempotencyLeaseConfig,
+    ) -> Result<bool, Self::Error>;
+
+    /// Extends a pending lease owned by `owner`.
+    async fn heartbeat(&self, key: &IdempotencyKey, owner: &str) -> Result<bool, Self::Error>;
+
+    /// Removes or reclaims stale pending rows whose leases have expired.
+    async fn expire_stale_pending(&self, now_ms: u64) -> Result<usize, Self::Error>;
 
     /// Saves a completed result for an idempotency key.
     async fn save(&self, key: IdempotencyKey, value: V) -> Result<(), Self::Error>;

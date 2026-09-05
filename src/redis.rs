@@ -128,6 +128,33 @@ end
 return 1
 "#;
 
+const IDEMPOTENCY_RESERVE_LUA: &str = r#"
+local existing = redis.call('HGET', KEYS[1], 'state')
+if existing == false then
+    redis.call('HSET', KEYS[1], 'state', 'pending', 'owner', ARGV[1], 'expires_at_ms', ARGV[2])
+    return 1
+end
+if existing == 'complete' then
+    return 0
+end
+local expires = tonumber(redis.call('HGET', KEYS[1], 'expires_at_ms') or '0')
+if expires <= tonumber(ARGV[3]) then
+    redis.call('HSET', KEYS[1], 'owner', ARGV[1], 'expires_at_ms', ARGV[2])
+    return 1
+end
+return 0
+"#;
+
+const IDEMPOTENCY_SAVE_LUA: &str = r#"
+redis.call('HSET', KEYS[1], 'state', 'complete', 'value', ARGV[1], 'owner', '', 'expires_at_ms', '0')
+return 1
+"#;
+
+const IDEMPOTENCY_REMOVE_LUA: &str = r#"
+return redis.call('DEL', KEYS[1])
+"#;
+
+
 /// Redis protocol value returned by [`RedisCommandExecutor`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RedisValue {
@@ -673,6 +700,222 @@ where
                     "1".into(),
                     self.checkpoint_key(projection_name).into_bytes(),
                     sequence.to_string().into_bytes(),
+                ],
+            )
+            .await
+            .map_err(map_executor_error)?;
+        Ok(())
+    }
+}
+
+
+
+/// Experimental Redis-backed async idempotency store.
+#[derive(Clone, Debug)]
+pub struct RedisIdempotencyStore<C, V>
+where
+    C: RedisCommandExecutor,
+{
+    client: C,
+    prefix: String,
+    _marker: PhantomData<fn() -> V>,
+}
+
+impl<C, V> RedisIdempotencyStore<C, V>
+where
+    C: RedisCommandExecutor,
+{
+    pub fn new(client: C) -> Self {
+        Self {
+            client,
+            prefix: DEFAULT_PREFIX.to_owned(),
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn with_prefix(client: C, prefix: impl Into<String>) -> Result<Self, EventStoreError> {
+        let prefix = prefix.into();
+        validate_redis_prefix(&prefix)?;
+        Ok(Self {
+            client,
+            prefix,
+            _marker: PhantomData,
+        })
+    }
+
+    fn key(&self, idempotency_key: &crate::idempotency::IdempotencyKey) -> String {
+        format!(
+            "{}:idempotency:{}",
+            self.prefix,
+            hex_encode(idempotency_key.as_str().as_bytes())
+        )
+    }
+
+    fn field_from_hash(value: &RedisValue, field: &str) -> Option<String> {
+        let RedisValue::Array(items) = value else {
+            return None;
+        };
+        for chunk in items.chunks(2) {
+            if let [RedisValue::Bytes(key), RedisValue::Bytes(val)] = chunk {
+                if key == field.as_bytes() {
+                    return String::from_utf8(val.clone()).ok();
+                }
+            }
+        }
+        None
+    }
+}
+
+#[async_trait]
+impl<C, V> crate::async_api::AsyncIdempotencyStore<V> for RedisIdempotencyStore<C, V>
+where
+    C: RedisCommandExecutor,
+    V: Clone + serde::Serialize + serde::de::DeserializeOwned + Send + Sync + 'static,
+{
+    type Error = EventStoreError;
+
+    async fn load(
+        &self,
+        key: &crate::idempotency::IdempotencyKey,
+    ) -> Result<Option<crate::idempotency::IdempotencyState<V>>, Self::Error> {
+        let value = self
+            .client
+            .execute("HGETALL", vec![self.key(key).into_bytes()])
+            .await
+            .map_err(map_executor_error)?;
+        let RedisValue::Array(items) = &value else {
+            return Ok(None);
+        };
+        if items.is_empty() {
+            return Ok(None);
+        }
+        let state = Self::field_from_hash(&value, "state").unwrap_or_default();
+        match state.as_str() {
+            "complete" => {
+                let raw = Self::field_from_hash(&value, "value").ok_or_else(|| {
+                    EventStoreError::deserialization(
+                        "completed redis idempotency row is missing value".to_owned(),
+                    )
+                })?;
+                let parsed = serde_json::from_str(&raw).map_err(|error| {
+                    EventStoreError::deserialization(format!("idempotency value JSON: {error}"))
+                })?;
+                Ok(Some(crate::idempotency::IdempotencyState::Complete(parsed)))
+            }
+            "pending" => {
+                let owner = Self::field_from_hash(&value, "owner");
+                let expires_at_ms = Self::field_from_hash(&value, "expires_at_ms")
+                    .and_then(|v| v.parse::<i64>().ok());
+                Ok(crate::idempotency::pending_state_from_row(owner, expires_at_ms, crate::idempotency::now_ms())
+                    .map(crate::idempotency::IdempotencyState::Pending))
+            }
+            other => Err(EventStoreError::deserialization(format!(
+                "unknown idempotency state: {other}"
+            ))),
+        }
+    }
+
+    async fn reserve_with_lease(
+        &self,
+        key: crate::idempotency::IdempotencyKey,
+        config: &crate::idempotency::IdempotencyLeaseConfig,
+    ) -> Result<bool, Self::Error> {
+        let lease = crate::idempotency::new_lease(config);
+        let result = self
+            .client
+            .execute(
+                "EVAL",
+                vec![
+                    IDEMPOTENCY_RESERVE_LUA.as_bytes().to_vec(),
+                    "1".into(),
+                    self.key(&key).into_bytes(),
+                    lease.owner.into_bytes(),
+                    lease.expires_at_ms.to_string().into_bytes(),
+                    crate::idempotency::now_ms().to_string().into_bytes(),
+                ],
+            )
+            .await
+            .map_err(map_executor_error)?;
+        match result {
+            RedisValue::Int(1) => Ok(true),
+            RedisValue::Int(0) => Ok(false),
+            other => Err(EventStoreError::deserialization(format!(
+                "unexpected redis idempotency reserve reply: {other:?}"
+            ))),
+        }
+    }
+
+    async fn heartbeat(
+        &self,
+        key: &crate::idempotency::IdempotencyKey,
+        owner: &str,
+    ) -> Result<bool, Self::Error> {
+        let new_expiry =
+            crate::idempotency::expires_at_ms(crate::idempotency::DEFAULT_IDEMPOTENCY_LEASE);
+        let result = self
+            .client
+            .execute(
+                "EVAL",
+                vec![
+                    br#"
+if redis.call('HGET', KEYS[1], 'owner') == ARGV[1] then
+  redis.call('HSET', KEYS[1], 'expires_at_ms', ARGV[2])
+  return 1
+end
+return 0
+"#
+                    .to_vec(),
+                    "1".into(),
+                    self.key(key).into_bytes(),
+                    owner.as_bytes().to_vec(),
+                    new_expiry.to_string().into_bytes(),
+                ],
+            )
+            .await
+            .map_err(map_executor_error)?;
+        Ok(matches!(result, RedisValue::Int(1)))
+    }
+
+    async fn expire_stale_pending(&self, _now_ms: u64) -> Result<usize, Self::Error> {
+        Ok(0)
+    }
+
+    async fn save(
+        &self,
+        key: crate::idempotency::IdempotencyKey,
+        value: V,
+    ) -> Result<(), Self::Error> {
+        let value_json = serde_json::to_string(&value).map_err(|error| {
+            EventStoreError::serialization(format!("idempotency value JSON: {error}"))
+        })?;
+        let _ = self
+            .client
+            .execute(
+                "EVAL",
+                vec![
+                    IDEMPOTENCY_SAVE_LUA.as_bytes().to_vec(),
+                    "1".into(),
+                    self.key(&key).into_bytes(),
+                    value_json.into_bytes(),
+                ],
+            )
+            .await
+            .map_err(map_executor_error)?;
+        Ok(())
+    }
+
+    async fn remove(
+        &self,
+        key: &crate::idempotency::IdempotencyKey,
+    ) -> Result<(), Self::Error> {
+        let _ = self
+            .client
+            .execute(
+                "EVAL",
+                vec![
+                    IDEMPOTENCY_REMOVE_LUA.as_bytes().to_vec(),
+                    "1".into(),
+                    self.key(key).into_bytes(),
                 ],
             )
             .await

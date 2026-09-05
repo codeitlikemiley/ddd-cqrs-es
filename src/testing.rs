@@ -395,7 +395,7 @@ where
 {
     assert_eq!(store.load(&key).unwrap(), None);
     assert!(store.reserve(key.clone()).unwrap());
-    assert_eq!(store.load(&key).unwrap(), Some(IdempotencyState::Pending));
+    assert!(matches!(store.load(&key).unwrap(), Some(IdempotencyState::Pending(_))));
     assert!(!store.reserve(key.clone()).unwrap());
     store.save(key.clone(), value.clone()).unwrap();
     assert_eq!(
@@ -417,10 +417,10 @@ where
 {
     assert_eq!(store.load(&key).await.unwrap(), None);
     assert!(store.reserve(key.clone()).await.unwrap());
-    assert_eq!(
+    assert!(matches!(
         store.load(&key).await.unwrap(),
-        Some(IdempotencyState::Pending)
-    );
+        Some(IdempotencyState::Pending(_))
+    ));
     assert!(!store.reserve(key.clone()).await.unwrap());
     store.save(key.clone(), value.clone()).await.unwrap();
     assert_eq!(

@@ -6,7 +6,10 @@ use crate::event::{EventEnvelope, EventId, ExpectedRevision, NewEvent};
 use crate::event_store::{
     AtomicIdempotentEventStore, EventStore, EventStream, IdempotentAppendError,
 };
-use crate::idempotency::{IdempotencyKey, IdempotencyState, IdempotencyStore};
+use crate::idempotency::{
+    expires_at_ms, new_lease, now_ms, pending_state_from_row, IdempotencyKey,
+    IdempotencyLeaseConfig, IdempotencyState, IdempotencyStore,
+};
 use crate::snapshot::{Snapshot, SnapshotStore};
 use crate::sql_common::{
     check_expected_revision, deserialize_id, deserialize_metadata, deserialize_payload,
@@ -135,12 +138,16 @@ where
     }
 
     /// Registers a sequential schema version upcaster for a specific event type.
-    pub fn register_upcaster<U>(&self, event_type: impl Into<String>, upcaster: U)
+    pub fn register_upcaster<U>(
+        &self,
+        event_type: impl Into<String>,
+        upcaster: U,
+    ) -> Result<(), crate::upcast::UpcasterRegistrationError>
     where
         U: crate::upcast::EventUpcaster + Send + Sync + 'static,
         U::Error: std::fmt::Debug + std::fmt::Display + Send + Sync + 'static,
     {
-        self.upcasters.register(event_type, upcaster);
+        self.upcasters.register(event_type, upcaster)
     }
 
     /// Migrates the SQLite schemas to the latest version.
@@ -472,8 +479,16 @@ where
             .optional()
             .map_err(map_sqlite_error)?;
 
+        let now = now_ms();
         row.map(|(state, value)| match (state.as_str(), value) {
-            ("pending", _) => Ok(IdempotencyState::Pending),
+            ("pending", _) => pending_state_from_row(None, None, now)
+                .map(IdempotencyState::Pending)
+                .ok_or_else(|| {
+                    EventStoreError::deserialization(
+                        "pending idempotency row has expired or is missing lease metadata"
+                            .to_owned(),
+                    )
+                }),
             ("complete", Some(value)) => serde_json::from_str(&value)
                 .map(IdempotencyState::Complete)
                 .map_err(|error| {
@@ -1221,48 +1236,130 @@ where
     fn load(&self, key: &IdempotencyKey) -> Result<Option<IdempotencyState<V>>, Self::Error> {
         let connection = lock_connection(&self.connection);
         let sql = format!(
-            "SELECT state, value FROM {} WHERE idempotency_key = ?1;",
+            "SELECT state, value, owner, expires_at_ms FROM {} WHERE idempotency_key = ?1;",
             self.table_name
         );
         let row = connection
             .query_row(&sql, params![key.as_str()], |row| {
                 let state: String = row.get(0)?;
                 let value: Option<String> = row.get(1)?;
-                Ok((state, value))
+                let owner: Option<String> = row.get(2)?;
+                let expires_at_ms: Option<i64> = row.get(3)?;
+                Ok((state, value, owner, expires_at_ms))
             })
             .optional()
             .map_err(map_sqlite_error)?;
 
+        let now = now_ms();
         match row {
             None => Ok(None),
-            Some((state, _)) if state == "pending" => Ok(Some(IdempotencyState::Pending)),
-            Some((state, Some(value))) if state == "complete" => {
+            Some((state, _, owner, expires_at_ms)) if state == "pending" => {
+                if let Some(lease) = pending_state_from_row(owner, expires_at_ms, now) {
+                    Ok(Some(IdempotencyState::Pending(lease)))
+                } else {
+                    Ok(None)
+                }
+            }
+            Some((state, Some(value), ..)) if state == "complete" => {
                 let value = serde_json::from_str(&value).map_err(|error| {
                     EventStoreError::deserialization(format!("idempotency value JSON: {error}"))
                 })?;
                 Ok(Some(IdempotencyState::Complete(value)))
             }
-            Some((state, None)) if state == "complete" => Err(EventStoreError::deserialization(
+            Some((state, None, ..)) if state == "complete" => Err(EventStoreError::deserialization(
                 "completed idempotency row is missing value".to_owned(),
             )),
-            Some((state, _)) => Err(EventStoreError::deserialization(format!(
+            Some((state, ..)) => Err(EventStoreError::deserialization(format!(
                 "unknown idempotency state: {state}"
             ))),
         }
     }
 
-    fn reserve(&self, key: IdempotencyKey) -> Result<bool, Self::Error> {
+    fn reserve_with_lease(
+        &self,
+        key: IdempotencyKey,
+        config: &IdempotencyLeaseConfig,
+    ) -> Result<bool, Self::Error> {
         let connection = lock_connection(&self.connection);
         let updated_at_ms = system_time_to_millis(SystemTime::now())?;
-        let sql = format!(
-            "INSERT OR IGNORE INTO {} (idempotency_key, state, value, updated_at_ms)
-             VALUES (?1, 'pending', NULL, ?2);",
+        let lease = new_lease(config);
+        let insert_sql = format!(
+            "INSERT OR IGNORE INTO {} (idempotency_key, state, value, updated_at_ms, owner, expires_at_ms)
+             VALUES (?1, 'pending', NULL, ?2, ?3, ?4);",
             self.table_name
         );
         let changed = connection
-            .execute(&sql, params![key.as_str(), updated_at_ms])
+            .execute(
+                &insert_sql,
+                params![
+                    key.as_str(),
+                    updated_at_ms,
+                    lease.owner.as_str(),
+                    i64::try_from(lease.expires_at_ms).unwrap_or(i64::MAX)
+                ],
+            )
+            .map_err(map_sqlite_error)?;
+        if changed == 1 {
+            return Ok(true);
+        }
+        let reclaim_sql = format!(
+            "UPDATE {} SET owner = ?2, expires_at_ms = ?3, updated_at_ms = ?4
+             WHERE idempotency_key = ?1 AND state = 'pending'
+               AND (expires_at_ms IS NULL OR expires_at_ms <= ?5);",
+            self.table_name
+        );
+        let reclaimed = connection
+            .execute(
+                &reclaim_sql,
+                params![
+                    key.as_str(),
+                    lease.owner.as_str(),
+                    i64::try_from(lease.expires_at_ms).unwrap_or(i64::MAX),
+                    updated_at_ms,
+                    i64::try_from(now_ms()).unwrap_or(0)
+                ],
+            )
+            .map_err(map_sqlite_error)?;
+        Ok(reclaimed == 1)
+    }
+
+    fn heartbeat(&self, key: &IdempotencyKey, owner: &str) -> Result<bool, Self::Error> {
+        let connection = lock_connection(&self.connection);
+        let updated_at_ms = system_time_to_millis(SystemTime::now())?;
+        let new_expiry = expires_at_ms(crate::idempotency::DEFAULT_IDEMPOTENCY_LEASE);
+        let sql = format!(
+            "UPDATE {} SET expires_at_ms = ?3, updated_at_ms = ?4
+             WHERE idempotency_key = ?1 AND state = 'pending' AND owner = ?2;",
+            self.table_name
+        );
+        let changed = connection
+            .execute(
+                &sql,
+                params![
+                    key.as_str(),
+                    owner,
+                    i64::try_from(new_expiry).unwrap_or(i64::MAX),
+                    updated_at_ms
+                ],
+            )
             .map_err(map_sqlite_error)?;
         Ok(changed == 1)
+    }
+
+    fn expire_stale_pending(&self, now_ms: u64) -> Result<usize, Self::Error> {
+        let connection = lock_connection(&self.connection);
+        let sql = format!(
+            "DELETE FROM {} WHERE state = 'pending'
+               AND expires_at_ms IS NOT NULL AND expires_at_ms <= ?1;",
+            self.table_name
+        );
+        let removed = connection
+            .execute(
+                &sql,
+                params![i64::try_from(now_ms).unwrap_or(i64::MAX)],
+            )
+            .map_err(map_sqlite_error)?;
+        Ok(removed)
     }
 
     fn save(&self, key: IdempotencyKey, value: V) -> Result<(), Self::Error> {
@@ -1555,6 +1652,36 @@ where
     async fn reserve(&self, key: IdempotencyKey) -> Result<bool, Self::Error> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || IdempotencyStore::reserve(&this, key))
+            .await
+            .map_err(|e| EventStoreError::backend(e.to_string()))?
+    }
+
+    async fn reserve_with_lease(
+        &self,
+        key: IdempotencyKey,
+        config: &crate::idempotency::IdempotencyLeaseConfig,
+    ) -> Result<bool, Self::Error> {
+        let this = self.clone();
+        let config = config.clone();
+        tokio::task::spawn_blocking(move || {
+            IdempotencyStore::reserve_with_lease(&this, key, &config)
+        })
+        .await
+        .map_err(|e| EventStoreError::backend(e.to_string()))?
+    }
+
+    async fn heartbeat(&self, key: &IdempotencyKey, owner: &str) -> Result<bool, Self::Error> {
+        let this = self.clone();
+        let key = key.clone();
+        let owner = owner.to_owned();
+        tokio::task::spawn_blocking(move || IdempotencyStore::heartbeat(&this, &key, &owner))
+            .await
+            .map_err(|e| EventStoreError::backend(e.to_string()))?
+    }
+
+    async fn expire_stale_pending(&self, now_ms: u64) -> Result<usize, Self::Error> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || IdempotencyStore::expire_stale_pending(&this, now_ms))
             .await
             .map_err(|e| EventStoreError::backend(e.to_string()))?
     }

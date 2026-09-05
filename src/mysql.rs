@@ -228,12 +228,16 @@ where
     }
 
     /// Registers a sequential schema version upcaster for a specific event type.
-    pub fn register_upcaster<U>(&self, event_type: impl Into<String>, upcaster: U)
+    pub fn register_upcaster<U>(
+        &self,
+        event_type: impl Into<String>,
+        upcaster: U,
+    ) -> Result<(), crate::upcast::UpcasterRegistrationError>
     where
         U: crate::upcast::EventUpcaster + Send + Sync + 'static,
         U::Error: std::fmt::Debug + std::fmt::Display + Send + Sync + 'static,
     {
-        self.upcasters.register(event_type, upcaster);
+        self.upcasters.register(event_type, upcaster)
     }
 
     /// Migrates the MySQL schemas to the latest version.
@@ -549,7 +553,13 @@ where
                 })?;
                 let value: Option<String> = row.get::<Option<String>, _>(1).flatten();
                 match (state.as_str(), value) {
-                    ("pending", _) => Ok(IdempotencyState::Pending),
+                    ("pending", _) => crate::idempotency::pending_state_from_row(None, None, crate::idempotency::now_ms())
+                        .map(IdempotencyState::Pending)
+                        .ok_or_else(|| {
+                            EventStoreError::deserialization(
+                                "pending idempotency row has expired or is missing lease metadata".to_owned(),
+                            )
+                        }),
                     ("complete", Some(value)) => serde_json::from_str(&value)
                         .map(IdempotencyState::Complete)
                         .map_err(|error| {
@@ -1424,7 +1434,8 @@ where
             let value_str: Option<String> = row.get::<Option<String>, _>(1).flatten();
 
             match (state.as_str(), value_str) {
-                ("pending", _) => Ok(Some(IdempotencyState::Pending)),
+                ("pending", _) => Ok(crate::idempotency::pending_state_from_row(None, None, crate::idempotency::now_ms())
+                    .map(IdempotencyState::Pending)),
                 ("complete", Some(value_str)) => {
                     let value = serde_json::from_str(&value_str).map_err(|error| {
                         EventStoreError::deserialization(format!("idempotency value JSON: {error}"))

@@ -3,13 +3,97 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Default time to wait for an idempotency key that is already pending.
 pub const DEFAULT_IDEMPOTENCY_PENDING_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Default polling interval while waiting for a pending idempotency key to complete.
 pub const DEFAULT_IDEMPOTENCY_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Default lease duration for a pending idempotency reservation.
+pub const DEFAULT_IDEMPOTENCY_LEASE: Duration = Duration::from_secs(60);
+
+/// Lease metadata attached to a pending idempotency key.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IdempotencyLease {
+    /// Owner token for the in-flight reservation.
+    pub owner: String,
+    /// Wall-clock expiry in milliseconds since the Unix epoch.
+    pub expires_at_ms: u64,
+}
+
+impl IdempotencyLease {
+    /// Returns `true` when the lease has expired at `now_ms`.
+    pub fn is_expired(&self, now_ms: u64) -> bool {
+        now_ms >= self.expires_at_ms
+    }
+}
+
+/// Configuration for reserving a pending idempotency key with a lease.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IdempotencyLeaseConfig {
+    /// Lease duration applied to the reservation.
+    pub lease_duration: Duration,
+    /// Optional explicit owner token; a unique token is generated when absent.
+    pub owner: Option<String>,
+}
+
+impl Default for IdempotencyLeaseConfig {
+    fn default() -> Self {
+        Self {
+            lease_duration: DEFAULT_IDEMPOTENCY_LEASE,
+            owner: None,
+        }
+    }
+}
+
+impl<V> IdempotencyState<V> {
+    /// Returns `true` when the state is an expired pending lease at `now_ms`.
+    pub fn is_expired_pending(&self, now_ms: u64) -> bool {
+        matches!(self, Self::Pending(lease) if lease.is_expired(now_ms))
+    }
+}
+
+pub(crate) fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+pub(crate) fn expires_at_ms(duration: Duration) -> u64 {
+    now_ms().saturating_add(duration.as_millis() as u64)
+}
+
+pub(crate) fn new_lease(config: &IdempotencyLeaseConfig) -> IdempotencyLease {
+    IdempotencyLease {
+        owner: config
+            .owner
+            .clone()
+            .unwrap_or_else(|| format!("owner-{}", now_ms())),
+        expires_at_ms: expires_at_ms(config.lease_duration),
+    }
+}
+
+pub(crate) fn pending_state_from_row(
+    owner: Option<String>,
+    expires_at_ms: Option<i64>,
+    now_ms: u64,
+) -> Option<IdempotencyLease> {
+    let owner = owner.filter(|value| !value.is_empty())?;
+    let expires_at_ms = expires_at_ms.and_then(|value| u64::try_from(value).ok())?;
+    let lease = IdempotencyLease {
+        owner,
+        expires_at_ms,
+    };
+    if lease.is_expired(now_ms) {
+        None
+    } else {
+        Some(lease)
+    }
+}
 
 /// Wait policy used when an idempotency key is already pending.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,7 +178,7 @@ impl Display for IdempotencyKey {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IdempotencyState<V> {
     /// Command is currently being processed.
-    Pending,
+    Pending(IdempotencyLease),
     /// Command has completed, containing the original result.
     Complete(V),
 }
@@ -112,7 +196,22 @@ where
 
     /// Reserves an idempotency key, marking it as pending/in-progress.
     /// Returns `true` if the key was successfully reserved, or `false` if it was already reserved/completed.
-    fn reserve(&self, key: IdempotencyKey) -> Result<bool, Self::Error>;
+    fn reserve(&self, key: IdempotencyKey) -> Result<bool, Self::Error> {
+        self.reserve_with_lease(key, &IdempotencyLeaseConfig::default())
+    }
+
+    /// Reserves an idempotency key with an explicit lease.
+    fn reserve_with_lease(
+        &self,
+        key: IdempotencyKey,
+        config: &IdempotencyLeaseConfig,
+    ) -> Result<bool, Self::Error>;
+
+    /// Extends a pending lease owned by `owner`.
+    fn heartbeat(&self, key: &IdempotencyKey, owner: &str) -> Result<bool, Self::Error>;
+
+    /// Removes or reclaims stale pending rows whose leases have expired.
+    fn expire_stale_pending(&self, now_ms: u64) -> Result<usize, Self::Error>;
 
     /// Saves a completed result for an idempotency key.
     fn save(&self, key: IdempotencyKey, value: V) -> Result<(), Self::Error>;
@@ -207,18 +306,56 @@ where
         Ok(entries.get(key).cloned())
     }
 
-    fn reserve(&self, key: IdempotencyKey) -> Result<bool, Self::Error> {
+    fn reserve_with_lease(
+        &self,
+        key: IdempotencyKey,
+        config: &IdempotencyLeaseConfig,
+    ) -> Result<bool, Self::Error> {
         let mut entries = self
             .entries
             .write()
             .map_err(|_| InMemoryIdempotencyError::Poisoned)?;
+        let now = now_ms();
         match entries.entry(key) {
-            std::collections::hash_map::Entry::Occupied(_) => Ok(false),
-            std::collections::hash_map::Entry::Vacant(e) => {
-                e.insert(IdempotencyState::Pending);
+            std::collections::hash_map::Entry::Occupied(mut occupied) => {
+                match occupied.get() {
+                    IdempotencyState::Pending(lease) if lease.is_expired(now) => {
+                        occupied.insert(IdempotencyState::Pending(new_lease(config)));
+                        Ok(true)
+                    }
+                    _ => Ok(false),
+                }
+            }
+            std::collections::hash_map::Entry::Vacant(vacant) => {
+                vacant.insert(IdempotencyState::Pending(new_lease(config)));
                 Ok(true)
             }
         }
+    }
+
+    fn heartbeat(&self, key: &IdempotencyKey, owner: &str) -> Result<bool, Self::Error> {
+        let mut entries = self
+            .entries
+            .write()
+            .map_err(|_| InMemoryIdempotencyError::Poisoned)?;
+        let Some(IdempotencyState::Pending(lease)) = entries.get_mut(key) else {
+            return Ok(false);
+        };
+        if lease.owner != owner {
+            return Ok(false);
+        }
+        lease.expires_at_ms = expires_at_ms(DEFAULT_IDEMPOTENCY_LEASE);
+        Ok(true)
+    }
+
+    fn expire_stale_pending(&self, now_ms: u64) -> Result<usize, Self::Error> {
+        let mut entries = self
+            .entries
+            .write()
+            .map_err(|_| InMemoryIdempotencyError::Poisoned)?;
+        let before = entries.len();
+        entries.retain(|_, state| !state.is_expired_pending(now_ms));
+        Ok(before.saturating_sub(entries.len()))
     }
 
     fn save(&self, key: IdempotencyKey, value: V) -> Result<(), Self::Error> {
@@ -257,6 +394,13 @@ pub enum IdempotentRepositoryError<DomainError, StoreError, IdempotencyError> {
         key: IdempotencyKey,
         /// Time spent waiting for the pending key.
         waited: Duration,
+    },
+    /// Failed to release a pending idempotency key after execution failure.
+    IdempotencyReleaseFailed {
+        /// Key that could not be released.
+        key: IdempotencyKey,
+        /// Number of release attempts performed.
+        attempts: usize,
     },
 }
 
@@ -327,6 +471,12 @@ where
                     waited.as_millis()
                 )
             }
+            IdempotentRepositoryError::IdempotencyReleaseFailed { key, attempts } => {
+                write!(
+                    f,
+                    "failed to release idempotency key `{key}` after {attempts} attempts"
+                )
+            }
         }
     }
 }
@@ -345,6 +495,7 @@ where
             IdempotentRepositoryError::Store(error) => Some(error),
             IdempotentRepositoryError::Idempotency(error) => Some(error),
             IdempotentRepositoryError::IdempotencyPendingTimeout { .. } => None,
+            IdempotentRepositoryError::IdempotencyReleaseFailed { .. } => None,
         }
     }
 }
@@ -365,6 +516,22 @@ where
         IdempotencyStore::reserve(self, key)
     }
 
+    async fn reserve_with_lease(
+        &self,
+        key: IdempotencyKey,
+        config: &IdempotencyLeaseConfig,
+    ) -> Result<bool, Self::Error> {
+        IdempotencyStore::reserve_with_lease(self, key, config)
+    }
+
+    async fn heartbeat(&self, key: &IdempotencyKey, owner: &str) -> Result<bool, Self::Error> {
+        IdempotencyStore::heartbeat(self, key, owner)
+    }
+
+    async fn expire_stale_pending(&self, now_ms: u64) -> Result<usize, Self::Error> {
+        IdempotencyStore::expire_stale_pending(self, now_ms)
+    }
+
     async fn save(&self, key: IdempotencyKey, value: V) -> Result<(), Self::Error> {
         IdempotencyStore::save(self, key, value)
     }
@@ -376,7 +543,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{pending_wait_delay, IdempotencyKey, IdempotencyWaitConfig};
+    use super::{
+        pending_wait_delay, IdempotencyKey, IdempotencyLeaseConfig, IdempotencyState,
+        IdempotencyStore, IdempotencyWaitConfig, InMemoryIdempotencyStore,
+    };
     use std::time::{Duration, Instant};
 
     type TestError = super::IdempotentRepositoryError<(), crate::EventStoreError, ()>;
@@ -409,5 +579,20 @@ mod tests {
             } => assert_eq!(timed_out_key, key),
             other => panic!("expected pending timeout, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn expired_pending_lease_can_be_reclaimed() {
+        let store = InMemoryIdempotencyStore::<String>::new();
+        let key = IdempotencyKey::new("lease-key");
+        let mut config = IdempotencyLeaseConfig::default();
+        config.lease_duration = Duration::ZERO;
+
+        assert!(store.reserve_with_lease(key.clone(), &config).unwrap());
+        assert!(matches!(
+            store.load(&key).unwrap(),
+            Some(IdempotencyState::Pending(_))
+        ));
+        assert!(store.reserve_with_lease(key.clone(), &config).unwrap());
     }
 }

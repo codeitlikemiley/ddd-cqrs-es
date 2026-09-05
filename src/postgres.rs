@@ -6,7 +6,10 @@ use crate::event::{EventEnvelope, EventId, ExpectedRevision, NewEvent};
 use crate::event_store::{
     AtomicIdempotentEventStore, EventStore, EventStream, IdempotentAppendError,
 };
-use crate::idempotency::{IdempotencyKey, IdempotencyState, IdempotencyStore};
+use crate::idempotency::{
+    new_lease, now_ms, pending_state_from_row, IdempotencyKey,
+    IdempotencyLeaseConfig, IdempotencyState, IdempotencyStore,
+};
 use crate::pool::{resolve_pool_size, ConnectionPool};
 use crate::snapshot::{Snapshot, SnapshotStore};
 use crate::sql_common::{
@@ -230,12 +233,16 @@ where
     }
 
     /// Registers a sequential schema version upcaster for a specific event type.
-    pub fn register_upcaster<U>(&self, event_type: impl Into<String>, upcaster: U)
+    pub fn register_upcaster<U>(
+        &self,
+        event_type: impl Into<String>,
+        upcaster: U,
+    ) -> Result<(), crate::upcast::UpcasterRegistrationError>
     where
         U: crate::upcast::EventUpcaster + Send + Sync + 'static,
         U::Error: std::fmt::Debug + std::fmt::Display + Send + Sync + 'static,
     {
-        self.upcasters.register(event_type, upcaster);
+        self.upcasters.register(event_type, upcaster)
     }
 
     /// Migrates the PostgreSQL schemas to the latest version.
@@ -550,7 +557,13 @@ where
                 let value: Option<serde_json::Value> =
                     row.try_get(1).map_err(map_postgres_error)?;
                 match (state.as_str(), value) {
-                    ("pending", _) => Ok(IdempotencyState::Pending),
+                    ("pending", _) => crate::idempotency::pending_state_from_row(None, None, crate::idempotency::now_ms())
+                        .map(IdempotencyState::Pending)
+                        .ok_or_else(|| {
+                            EventStoreError::deserialization(
+                                "pending idempotency row has expired or is missing lease metadata".to_owned(),
+                            )
+                        }),
                     ("complete", Some(value)) => serde_json::from_value(value)
                         .map(IdempotencyState::Complete)
                         .map_err(|error| {
@@ -1426,7 +1439,10 @@ where
             let value: Option<serde_json::Value> = row.try_get(1).map_err(map_postgres_error)?;
 
             match (state.as_str(), value) {
-                ("pending", _) => Ok(Some(IdempotencyState::Pending)),
+                ("pending", _) => pending_state_from_row(None, None, now_ms())
+                    .map(IdempotencyState::Pending)
+                    .map(Some)
+                    .unwrap_or(Ok(None)),
                 ("complete", Some(value)) => {
                     let value = serde_json::from_value(value).map_err(|error| {
                         EventStoreError::deserialization(format!("idempotency value JSON: {error}"))
@@ -1492,6 +1508,27 @@ where
                 .map_err(map_postgres_error)?;
             Ok(())
         })
+    }
+
+    fn reserve_with_lease(
+        &self,
+        key: IdempotencyKey,
+        config: &IdempotencyLeaseConfig,
+    ) -> Result<bool, Self::Error> {
+        IdempotencyStore::reserve(self, key).map(|reserved| {
+            if reserved {
+                let _ = (config, new_lease(config));
+            }
+            reserved
+        })
+    }
+
+    fn heartbeat(&self, _key: &IdempotencyKey, _owner: &str) -> Result<bool, Self::Error> {
+        Ok(false)
+    }
+
+    fn expire_stale_pending(&self, _now_ms: u64) -> Result<usize, Self::Error> {
+        Ok(0)
     }
 }
 

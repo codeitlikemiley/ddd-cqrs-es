@@ -146,8 +146,9 @@ pub use event_store::{
 };
 /// Idempotency APIs and error types shared across adapters.
 pub use idempotency::{
-    IdempotencyKey, IdempotencyState, IdempotencyStore, IdempotencyWaitConfig,
-    IdempotentRepositoryError, InMemoryIdempotencyError, InMemoryIdempotencyStore,
+    IdempotencyKey, IdempotencyLease, IdempotencyLeaseConfig, IdempotencyState,
+    IdempotencyStore, IdempotencyWaitConfig, IdempotentRepositoryError,
+    InMemoryIdempotencyError, InMemoryIdempotencyStore, DEFAULT_IDEMPOTENCY_LEASE,
     DEFAULT_IDEMPOTENCY_PENDING_TIMEOUT, DEFAULT_IDEMPOTENCY_POLL_INTERVAL,
 };
 /// In-memory event store implementation for tests and local development.
@@ -166,7 +167,10 @@ pub use postgres::{
 /// Async process manager implementation for background consistency jobs.
 pub use process_manager::AsyncProcessManagerRunner;
 /// Synchronous process manager abstractions and runner APIs.
-pub use process_manager::{ProcessManager, ProcessManagerRunner, ProcessManagerRunnerError};
+pub use process_manager::{
+    ProcessManager, ProcessManagerDispatchCheckpoint, ProcessManagerRunResult,
+    ProcessManagerRunner, ProcessManagerRunnerError,
+};
 #[cfg(feature = "async")]
 /// Async projection and replay runner interfaces.
 pub use projection::{
@@ -198,7 +202,8 @@ pub use redis::WasiRedisClient;
 #[cfg(feature = "redis")]
 /// Redis checkpoint/event/publish adapters for production distributed usage.
 pub use redis::{
-    RedisCheckpointStore, RedisCommandExecutor, RedisEventStore, RedisPubSubPublisher,
+    RedisCheckpointStore, RedisCommandExecutor, RedisEventStore, RedisIdempotencyStore,
+    RedisPubSubPublisher,
 };
 /// Repository contracts and execution outcome types.
 pub use repository::{
@@ -232,4 +237,6 @@ pub use testing::{
     assert_snapshot_store_contract, AggregateFixture, EventStoreContractOptions,
 };
 /// Upcaster abstractions for event schema migration over time.
-pub use upcast::{ErasedUpcaster, EventUpcaster, UpcasterRegistry};
+pub use upcast::{
+    ErasedUpcaster, EventUpcaster, UpcasterRegistrationError, UpcasterRegistry,
+};

@@ -11,48 +11,10 @@ use crate::idempotency::{
 use crate::metadata::Metadata;
 use crate::repository_support::{
     apply_committed_events, handle_command_as_new_events, new_events_with_metadata,
+    release_idempotency_key_with_result, save_idempotency_result_with_retry,
 };
 use crate::snapshot::{SnapshotRepositoryError, SnapshotStore};
 use std::marker::PhantomData;
-
-/// Releases a reserved idempotency key after a failed execution.
-///
-/// A key left `Pending` blocks every retry until it is removed, so cleanup
-/// is retried with backoff and a final failure is logged loudly instead of
-/// being silently swallowed.
-fn release_idempotency_key<I, V>(idempotency_store: &I, idempotency_key: &IdempotencyKey)
-where
-    I: IdempotencyStore<V>,
-    V: Clone,
-{
-    use crate::repository_support::{RELEASE_MAX_ATTEMPTS, RELEASE_RETRY_DELAY};
-
-    for attempt in 1..=RELEASE_MAX_ATTEMPTS {
-        match idempotency_store.remove(idempotency_key) {
-            Ok(()) => return,
-            Err(_) => {
-                #[cfg(feature = "tracing")]
-                if attempt == RELEASE_MAX_ATTEMPTS {
-                    tracing::warn!(
-                        key = %idempotency_key,
-                        "{}",
-                        crate::repository_support::RELEASE_FAILED_MESSAGE
-                    );
-                } else {
-                    tracing::debug!(
-                        key = %idempotency_key,
-                        attempt,
-                        "{}",
-                        crate::repository_support::RELEASE_RETRY_MESSAGE
-                    );
-                }
-                if attempt < RELEASE_MAX_ATTEMPTS {
-                    std::thread::sleep(RELEASE_RETRY_DELAY);
-                }
-            }
-        }
-    }
-}
 
 /// Result type returned by repository operations.
 pub type RepositoryResult<A, S, T> =
@@ -405,12 +367,14 @@ where
                 Some(IdempotencyState::Complete(committed)) => {
                     return Ok(committed);
                 }
-                Some(IdempotencyState::Pending) => {
+                Some(IdempotencyState::Pending(lease))
+                    if !lease.is_expired(crate::idempotency::now_ms()) =>
+                {
                     let delay = pending_wait_delay(&wait_config, started, &idempotency_key)?;
                     std::thread::sleep(delay);
                     continue;
                 }
-                None => {
+                None | Some(IdempotencyState::Pending(_)) => {
                     if idempotency_store
                         .reserve(idempotency_key.clone())
                         .map_err(IdempotentRepositoryError::Idempotency)?
@@ -440,14 +404,16 @@ where
             })() {
                 Ok(committed) => committed,
                 Err(err) => {
-                    release_idempotency_key(idempotency_store, &idempotency_key);
+                    release_idempotency_key_with_result(idempotency_store, &idempotency_key)?;
                     return Err(IdempotentRepositoryError::from_repository_error(err));
                 }
             };
 
-        idempotency_store
-            .save(idempotency_key, committed.clone())
-            .map_err(IdempotentRepositoryError::Idempotency)?;
+        save_idempotency_result_with_retry(
+            idempotency_store,
+            idempotency_key,
+            committed.clone(),
+        )?;
 
         Ok(committed)
     }
@@ -508,11 +474,13 @@ where
                 .map_err(IdempotentRepositoryError::from_store_error)?
             {
                 Some(crate::IdempotencyState::Complete(committed)) => return Ok(committed),
-                Some(crate::IdempotencyState::Pending) => {
+                Some(crate::IdempotencyState::Pending(lease))
+                    if !lease.is_expired(crate::idempotency::now_ms()) =>
+                {
                     let delay = pending_wait_delay(&wait_config, started, &idempotency_key)?;
                     std::thread::sleep(delay);
                 }
-                None => break,
+                None | Some(crate::IdempotencyState::Pending(_)) => break,
             }
         }
 
