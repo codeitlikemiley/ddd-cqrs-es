@@ -38,6 +38,39 @@ bearer tokens. No request accepts `admin_token` or raw authorization tuples.
 
 ## Development and production profiles
 
+### Outbound hosts and dashboard connectors
+
+Local `spin.toml` may keep broad outbound host entries (for example
+`https://*:*`) so dashboard HTTP/gRPC connectors can reach private RFC1918
+targets when `AUTH_DASHBOARD_HTTP_ALLOW_PRIVATE=true`. That permissive dev
+manifest is intentional.
+
+Production deployments must **not** ship those wildcards. Copy
+`spin.production.toml.example` and replace every outbound host with exact OAuth,
+database, and connector endpoints before deploy. The example manifest and CLI
+regression tests reject wildcard and loopback patterns in production templates.
+
+Dashboard HTTP and gRPC connectors default **off** (`auth_dashboard_http_enabled`
+and `auth_dashboard_grpc_enabled` default to `false` in Spin). Enable them only
+when the egress allowlist and connector validation policy match your threat
+model. Postgres connector URLs get defense-in-depth
+(`default_transaction_read_only=on`, `statement_timeout=30s`); prefer a dedicated
+read-only database role for Resources.
+
+See also the fullstack README production checklist:
+[examples/fullstack-app/README.md](../../examples/fullstack-app/README.md#production-checklist).
+
+### Known upstream auth limitations
+
+Rate limits and password policy for TOTP enrollment, step-up, recovery codes, and
+password change are enforced in `wasi-auth` (not reimplemented in the template).
+
+One remaining gap is **TOTP replay within the standard time skew**: `wasi-auth`
+0.1.0-rc.4 verifies codes across the skew window but does not yet persist
+consumed codes for that window, so replaying the same code before the window
+advances is possible until upstream adds replay tracking. Document this for
+operators; do not treat it as an in-repo open item.
+
 ### Spin is not the mail sender
 
 `spin.toml` defines the **request-facing** product only (Leptos UI, REST, gRPC).

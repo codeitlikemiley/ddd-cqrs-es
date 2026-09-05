@@ -2,6 +2,12 @@
 
 ## 0.3.0-rc.8
 
+- **Deferred to 0.4:** `EventEnvelope::aggregate_type` remains an owned
+  `String` in 0.3. A `Cow<'static, str>` newtype (matching [`EventType`]) is
+  planned for 0.4 so typed feeds can borrow
+  [`Aggregate::aggregate_type`](https://docs.rs/ddd_cqrs_es/latest/ddd_cqrs_es/aggregate/trait.Aggregate.html#tymethod.aggregate_type)
+  without allocating per envelope. The field documents this deferral; no API
+  change in 0.3.
 - **Breaking:** `Aggregate::Command` and `Aggregate::Error` now require `Send`,
   matching the async repository and command-bus APIs that hold commands and
   domain errors across `.await`. Aggregates that used non-`Send` command or
