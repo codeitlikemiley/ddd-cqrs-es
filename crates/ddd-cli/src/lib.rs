@@ -208,8 +208,20 @@ pub fn run_from_env() -> Result<()> {
     let cli = Cli::parse();
     let force_json = matches!(&cli.command, Commands::Capabilities(args) if args.json);
     let format = cli.format;
-    let report = execute(cli)?;
-    print_report(format, force_json, &report)
+    match execute(cli) {
+        Ok(report) => print_report(format, force_json, &report),
+        Err(error) => {
+            if format == OutputFormat::Json || force_json {
+                let envelope = json!({
+                    "status": "error",
+                    "message": error.to_string(),
+                });
+                println!("{}", serde_json::to_string_pretty(&envelope)?);
+                std::process::exit(1);
+            }
+            Err(error)
+        }
+    }
 }
 
 pub fn execute(cli: Cli) -> Result<CommandReport> {
@@ -803,7 +815,7 @@ fn add_to_project(ctx: &ExecutionContext, command: AddCommand) -> Result<Command
 
     operations.push(write_operation(
         MANIFEST_FILE,
-        manifest.to_toml(),
+        manifest_write_content(&ctx.cwd, &manifest)?,
         true,
         "update project manifest",
     ));
@@ -887,7 +899,7 @@ fn enable_capability(ctx: &ExecutionContext, command: EnableCommand) -> Result<C
     manifest.selection().validate()?;
     let mut operations = vec![write_operation(
         MANIFEST_FILE,
-        manifest.to_toml(),
+        manifest_write_content(&ctx.cwd, &manifest)?,
         true,
         "update project manifest",
     )];
@@ -1239,6 +1251,16 @@ fn print_report(format: OutputFormat, force_json: bool, report: &CommandReport) 
         println!("{}", serde_json::to_string_pretty(data)?);
     }
     Ok(())
+}
+
+fn manifest_write_content(cwd: &Path, manifest: &ProjectManifest) -> Result<String> {
+    let path = ProjectManifest::manifest_path(cwd);
+    let existing = path
+        .exists()
+        .then(|| std::fs::read_to_string(&path))
+        .transpose()
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    manifest.to_toml_preserving(existing.as_deref())
 }
 
 fn resolve_path(cwd: &Path, path: &Path) -> PathBuf {

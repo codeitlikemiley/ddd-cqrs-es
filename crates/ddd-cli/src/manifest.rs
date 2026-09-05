@@ -135,6 +135,22 @@ impl ProjectManifest {
 
     pub fn to_toml(&self) -> String {
         let mut doc = DocumentMut::new();
+        self.apply_to_document(&mut doc);
+        doc.to_string()
+    }
+
+    /// Merge manifest fields into an existing TOML document so comments and
+    /// unknown keys outside managed sections are preserved.
+    pub fn to_toml_preserving(&self, existing: Option<&str>) -> Result<String> {
+        let mut doc = match existing.filter(|text| !text.trim().is_empty()) {
+            Some(text) => text.parse::<DocumentMut>()?,
+            None => DocumentMut::new(),
+        };
+        self.apply_to_document(&mut doc);
+        Ok(doc.to_string())
+    }
+
+    fn apply_to_document(&self, doc: &mut DocumentMut) {
         doc["project"]["name"] = value(self.name.as_str());
         doc["project"]["preset"] = value(self.preset.as_str());
         doc["project"]["runtime"] = value(self.runtime.as_str());
@@ -150,14 +166,20 @@ impl ProjectManifest {
         doc["capabilities"]["enabled"] = value(enabled);
 
         if let Some(auth) = &self.auth {
-            doc["auth"] = Item::Table(Table::new());
+            if doc.get("auth").is_none() {
+                doc["auth"] = Item::Table(Table::new());
+            }
             doc["auth"]["issuer"] = value(auth.issuer.as_str());
             doc["auth"]["audience"] = value(auth.audience.as_str());
             doc["auth"]["access_token_ttl_seconds"] = value(auth.access_token_ttl_seconds as i64);
             doc["auth"]["refresh_token_ttl_seconds"] = value(auth.refresh_token_ttl_seconds as i64);
             doc["auth"]["cookie_mode"] = value(auth.cookie_mode.as_str());
 
-            if !auth.providers.is_empty() {
+            if auth.providers.is_empty() {
+                if let Some(table) = doc["auth"].as_table_mut() {
+                    table.remove("providers");
+                }
+            } else {
                 let mut providers = ArrayOfTables::new();
                 for provider in &auth.providers {
                     let mut table = Table::new();
@@ -176,17 +198,25 @@ impl ProjectManifest {
                 }
                 doc["auth"]["providers"] = Item::ArrayOfTables(providers);
             }
+        } else {
+            doc.as_table_mut().remove("auth");
         }
 
         if let Some(authorization) = &self.authorization {
-            doc["authorization"] = Item::Table(Table::new());
+            if doc.get("authorization").is_none() {
+                doc["authorization"] = Item::Table(Table::new());
+            }
             doc["authorization"]["provider"] = value(authorization.provider.as_str());
             doc["authorization"]["policy_revision"] = value(authorization.policy_revision.as_str());
             doc["authorization"]["default_decision"] =
                 value(authorization.default_decision.as_str());
+        } else {
+            doc.as_table_mut().remove("authorization");
         }
 
-        doc["domains"] = Item::Table(Table::new());
+        if doc.get("domains").is_none() {
+            doc["domains"] = Item::Table(Table::new());
+        }
         for domain in &self.domains {
             doc["domains"][domain.module.as_str()]["aggregate"] = value(domain.aggregate.as_str());
             doc["domains"][domain.module.as_str()]["module"] = value(domain.module.as_str());
@@ -203,8 +233,6 @@ impl ProjectManifest {
             }
             doc["domains"][domain.module.as_str()]["events"] = value(events);
         }
-
-        doc.to_string()
     }
 
     pub fn from_toml(text: &str) -> Result<Self> {
@@ -542,5 +570,57 @@ fn push_unique(items: &mut Vec<String>, value: &str) {
     if !items.iter().any(|item| item == value) {
         items.push(value.to_string());
         items.sort();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{DbBackend, Preset, Realtime, Runtime, Transport, Ui};
+
+    #[test]
+    fn to_toml_preserving_keeps_comments_and_unknown_keys() {
+        let manifest = ProjectManifest::new(
+            "demo",
+            AppSelection {
+                preset: Preset::Basic,
+                runtime: Runtime::Spin,
+                db: DbBackend::Sqlite,
+                realtime: Realtime::Off,
+                transport: Transport::Http,
+                ui: Ui::None,
+            },
+            DomainRecord {
+                module: "counter".to_string(),
+                aggregate: "Counter".to_string(),
+                commands: vec!["CreateCounter".to_string()],
+                events: vec!["CounterCreated".to_string()],
+            },
+        );
+        let existing = r#"# reviewer note
+custom = true
+
+[project]
+name = "demo"
+preset = "basic"
+runtime = "spin"
+db = "sqlite"
+realtime = "off"
+transport = "http"
+ui = "none"
+
+[capabilities]
+enabled = ["rest"]
+
+[domains.counter]
+aggregate = "Counter"
+module = "counter"
+commands = ["CreateCounter"]
+events = ["CounterCreated"]
+"#;
+        let updated = manifest.to_toml_preserving(Some(existing)).unwrap();
+        assert!(updated.contains("# reviewer note"));
+        assert!(updated.contains("custom = true"));
+        assert!(updated.contains(r#"name = "demo""#));
     }
 }

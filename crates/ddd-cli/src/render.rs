@@ -508,6 +508,27 @@ fn render_fullstack_template_content(
             r#"name = "fullstack-app""#,
             &format!(r#"name = "{}""#, input.package_name),
         );
+        content = content.replace(
+            "auth_trusted_ingress_audience = { default = \"fullstack-app\" }",
+            &format!(
+                "auth_trusted_ingress_audience = {{ default = \"{}\" }}",
+                input.package_name
+            ),
+        );
+        content = content.replace(
+            "auth_jwt_audience = { default = \"fullstack-app\" }",
+            &format!(
+                "auth_jwt_audience = {{ default = \"{}\" }}",
+                input.package_name
+            ),
+        );
+        content = content.replace(
+            "auth_jwt_kid = { default = \"fullstack-app-dev-hs256\" }",
+            &format!(
+                "auth_jwt_kid = {{ default = \"{}-dev-hs256\" }}",
+                input.package_name
+            ),
+        );
     }
 
     content

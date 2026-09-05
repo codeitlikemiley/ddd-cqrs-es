@@ -213,30 +213,35 @@ pub async fn get_session(session_id: Option<&str>) -> AuthStackResult<SessionVie
         AuthenticationAssurance::Aal2 => "aal2",
         _ => "aal1",
     };
-    Ok(SessionView {
-        authenticated: true,
-        session_id: Some(context.auth().session_id().as_str().to_owned()),
-        tenant_id: context
-            .auth()
-            .organization_id()
-            .map(|organization| organization.as_str().to_owned()),
-        user_id: Some(context.auth().principal().user_id().as_str().to_owned()),
-        primary_email: Some(session.primary_email().to_owned()),
-        expires_at: Some(
-            context
+    Ok({
+        let mut view = SessionView {
+            authenticated: true,
+            session_id: Some(context.auth().session_id().as_str().to_owned()),
+            public_session_id: None,
+            tenant_id: context
                 .auth()
-                .expires_at_unix_seconds()
-                .saturating_mul(1_000)
-                .to_string(),
-        ),
-        permissions: context
-            .authorization()
-            .permissions()
-            .map(ToOwned::to_owned)
-            .collect(),
-        assurance: assurance.to_owned(),
-        system_administrator: context.auth().principal().is_system_administrator(),
-        issued_at_unix_seconds: Some(context.auth().issued_at_unix_seconds()),
-        expires_at_unix_seconds: Some(context.auth().expires_at_unix_seconds()),
+                .organization_id()
+                .map(|organization| organization.as_str().to_owned()),
+            user_id: Some(context.auth().principal().user_id().as_str().to_owned()),
+            primary_email: Some(session.primary_email().to_owned()),
+            expires_at: Some(
+                context
+                    .auth()
+                    .expires_at_unix_seconds()
+                    .saturating_mul(1_000)
+                    .to_string(),
+            ),
+            permissions: context
+                .authorization()
+                .permissions()
+                .map(ToOwned::to_owned)
+                .collect(),
+            assurance: assurance.to_owned(),
+            system_administrator: context.auth().principal().is_system_administrator(),
+            issued_at_unix_seconds: Some(context.auth().issued_at_unix_seconds()),
+            expires_at_unix_seconds: Some(context.auth().expires_at_unix_seconds()),
+        };
+        attach_public_session_id(&mut view);
+        view
     })
 }

@@ -270,7 +270,26 @@ pub(crate) fn secret_to_summary(secret: &StoredSecret) -> crate::contracts::Secr
 ///
 /// `org_id` is the workspace vault owner (organization UUID).
 pub(crate) async fn load_secrets_resolved(org_id: &str) -> AuthStackResult<Vec<StoredSecret>> {
-    let mut secrets = load_secrets_raw(org_id).await?;
+    let secrets = load_secrets_raw(org_id).await?;
+    resolve_loaded_secrets(org_id, secrets).await
+}
+
+/// Decrypt only the secrets referenced by dashboard query execution (avoids re-decrypting the full vault per widget).
+pub(crate) async fn load_secrets_resolved_for_ids(
+    org_id: &str,
+    secret_ids: &std::collections::HashSet<String>,
+) -> AuthStackResult<Vec<StoredSecret>> {
+    if secret_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let secrets = load_secrets_raw_for_ids(org_id, secret_ids).await?;
+    resolve_loaded_secrets(org_id, secrets).await
+}
+
+async fn resolve_loaded_secrets(
+    org_id: &str,
+    mut secrets: Vec<StoredSecret>,
+) -> AuthStackResult<Vec<StoredSecret>> {
     if secrets.is_empty() {
         return Ok(secrets);
     }
@@ -364,19 +383,63 @@ pub(crate) async fn load_secrets_resolved(org_id: &str) -> AuthStackResult<Vec<S
     Ok(secrets)
 }
 
-/// Decrypt only the secrets referenced by dashboard query execution (avoids re-decrypting the full vault per widget).
-pub(crate) async fn load_secrets_resolved_for_ids(
+pub(crate) async fn load_secrets_raw_for_ids(
     org_id: &str,
     secret_ids: &std::collections::HashSet<String>,
 ) -> AuthStackResult<Vec<StoredSecret>> {
     if secret_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let all = load_secrets_resolved(org_id).await?;
-    Ok(all
-        .into_iter()
-        .filter(|secret| secret_ids.contains(&secret.id))
-        .collect())
+    #[cfg(all(feature = "postgres", runtime_spin))]
+    {
+        let ids_json = serde_json::to_string(
+            &secret_ids
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|error| AuthStackError::serialization(error.to_string()))?;
+        let rows = execute_postgres(
+            "SELECT secret_id, secret_key, label, description, scope, \
+                    encode(ciphertext, 'base64') AS ciphertext_b64, \
+                    encode(nonce, 'base64') AS nonce_b64, key_version, \
+                    (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_at_ms, \
+                    (EXTRACT(EPOCH FROM updated_at) * 1000)::bigint AS updated_at_ms \
+             FROM fullstack_app.vault_secrets \
+             WHERE organization_id = ?1::text::uuid \
+               AND secret_id IN (SELECT jsonb_array_elements_text(?2::jsonb)) \
+             ORDER BY secret_key, secret_id",
+            vec![
+                Value::String(org_id.to_owned()),
+                Value::String(ids_json),
+            ],
+        )
+        .await?;
+        rows.iter().map(stored_secret_from_row).collect()
+    }
+    #[cfg(not(all(feature = "postgres", runtime_spin)))]
+    {
+        let _ = (org_id, secret_ids);
+        Ok(Vec::new())
+    }
+}
+
+fn stored_secret_from_row(row: &Value) -> AuthStackResult<StoredSecret> {
+    Ok(StoredSecret {
+        id: required_string(row, "secret_id")?,
+        key: required_string(row, "secret_key")?,
+        label: required_string(row, "label")?,
+        name: String::new(),
+        description: required_string(row, "description")?,
+        scope: required_string(row, "scope")?,
+        value: String::new(),
+        ciphertext_b64: required_string(row, "ciphertext_b64")?.replace('\n', ""),
+        nonce_b64: required_string(row, "nonce_b64")?.replace('\n', ""),
+        mac_b64: String::new(),
+        key_version: required_string(row, "key_version")?,
+        created_at_ms: row_i64(row, "created_at_ms").unwrap_or_default().max(0) as u64,
+        updated_at_ms: row_i64(row, "updated_at_ms").unwrap_or_default().max(0) as u64,
+    })
 }
 
 pub async fn load_data_sources(
@@ -443,25 +506,7 @@ pub(crate) async fn load_secrets_raw(org_id: &str) -> AuthStackResult<Vec<Stored
             vec![Value::String(org_id.to_owned())],
         )
         .await?;
-        rows.iter()
-            .map(|row| {
-                Ok(StoredSecret {
-                    id: required_string(row, "secret_id")?,
-                    key: required_string(row, "secret_key")?,
-                    label: required_string(row, "label")?,
-                    name: String::new(),
-                    description: required_string(row, "description")?,
-                    scope: required_string(row, "scope")?,
-                    value: String::new(),
-                    ciphertext_b64: required_string(row, "ciphertext_b64")?.replace('\n', ""),
-                    nonce_b64: required_string(row, "nonce_b64")?.replace('\n', ""),
-                    mac_b64: String::new(),
-                    key_version: required_string(row, "key_version")?,
-                    created_at_ms: row_i64(row, "created_at_ms").unwrap_or_default().max(0) as u64,
-                    updated_at_ms: row_i64(row, "updated_at_ms").unwrap_or_default().max(0) as u64,
-                })
-            })
-            .collect()
+        rows.iter().map(stored_secret_from_row).collect()
     }
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {

@@ -35,7 +35,12 @@ pub struct AuthCapabilities {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionView {
     pub authenticated: bool,
+    /// Raw session identifier for server-side cookie and auth wiring only.
+    #[serde(default, skip_serializing)]
     pub session_id: Option<String>,
+    /// Opaque, stable handle safe to expose to browser clients.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_session_id: Option<String>,
     pub tenant_id: Option<String>,
     pub user_id: Option<String>,
     pub primary_email: Option<String>,

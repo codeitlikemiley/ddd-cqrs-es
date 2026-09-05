@@ -15,6 +15,75 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  msrv:
+    name: MSRV (rust-version)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup MSRV toolchain
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
+        with:
+          toolchain: 1.93.0
+
+      - name: Cache cargo artifacts
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-msrv-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-msrv-
+
+      - name: Verify library and CLI compile on MSRV
+        run: |
+          cargo check --locked --all-targets -p ddd_cqrs_es
+          cargo check --locked --all-targets -p ddd-cqrs-es-cli
+
+  wasm-feature-matrix:
+    name: wasm32 feature matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
+        with:
+          toolchain: stable
+          targets: wasm32-wasip2
+
+      - name: Cache cargo artifacts
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-wasm-matrix-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-wasm-matrix-
+
+      - name: Compile wasm32-wasip2 feature matrix
+        run: |
+          set -euo pipefail
+          features=(
+            "wasm,uuid"
+            "wasm,json,uuid"
+            "wasi-http,json,uuid,wasm"
+            "wasi-supabase-rpc,wasi-http,json,uuid,wasm"
+            "async,json,redis,wasm"
+          )
+          for feature_set in "${features[@]}"; do
+            echo "==> checking ${feature_set}"
+            cargo check --locked --target wasm32-wasip2 -p ddd_cqrs_es --no-default-features --features "${feature_set}"
+          done
+
   quality:
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -59,21 +128,21 @@ jobs:
           --health-retries 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@v1
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
         with:
           toolchain: stable
           components: rustfmt, clippy
 
       - name: Install release policy tools
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@d6d752794628f1e1fffa3c4d3c8874e06f043d50 # v2.62.15
         with:
           tool: cargo-audit,cargo-deny,cargo-hack
 
       - name: Cache cargo artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
         with:
           path: |
             ~/.cargo/registry
@@ -99,16 +168,16 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@v1
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
         with:
           toolchain: stable
           targets: wasm32-wasip2, wasm32-unknown-unknown
 
       - name: Cache cargo artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
         with:
           path: |
             ~/.cargo/registry

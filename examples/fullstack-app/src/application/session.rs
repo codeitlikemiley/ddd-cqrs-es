@@ -193,18 +193,23 @@ pub async fn require_permission_for(
                 && step_up_satisfied(&verified.assurance).await
                 && is_system_administration_permission(permission))
         {
-            return Ok(SessionView {
-                authenticated: true,
-                session_id: verified.session_id.clone(),
-                tenant_id: verified.tenant_id,
-                user_id: Some(verified.subject),
-                primary_email: None,
-                expires_at: None,
-                permissions: verified.scopes,
-                assurance: verified.assurance,
-                system_administrator: verified.system_administrator,
-                issued_at_unix_seconds: Some(verified.issued_at_unix_seconds),
-                expires_at_unix_seconds: Some(verified.expires_at),
+            return Ok({
+                let mut view = SessionView {
+                    authenticated: true,
+                    session_id: verified.session_id.clone(),
+                    public_session_id: None,
+                    tenant_id: verified.tenant_id,
+                    user_id: Some(verified.subject),
+                    primary_email: None,
+                    expires_at: None,
+                    permissions: verified.scopes,
+                    assurance: verified.assurance,
+                    system_administrator: verified.system_administrator,
+                    issued_at_unix_seconds: Some(verified.issued_at_unix_seconds),
+                    expires_at_unix_seconds: Some(verified.expires_at),
+                };
+                crate::auth_product::attach_public_session_id(&mut view);
+                view
             });
         }
         return Err(AuthStackError::Forbidden);

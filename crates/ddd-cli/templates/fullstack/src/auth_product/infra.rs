@@ -201,10 +201,23 @@ pub(crate) async fn load_session(
         .map_err(map_session_store_error)
 }
 
+pub(crate) fn public_session_id(raw: &str) -> String {
+    let digest = Sha256::digest(raw.as_bytes());
+    URL_SAFE_NO_PAD.encode(&digest[..9])
+}
+
+pub(crate) fn attach_public_session_id(view: &mut SessionView) {
+    view.public_session_id = view
+        .session_id
+        .as_deref()
+        .map(public_session_id);
+}
+
 pub(crate) fn unauthenticated_session() -> SessionView {
     SessionView {
         authenticated: false,
         session_id: None,
+        public_session_id: None,
         tenant_id: None,
         user_id: None,
         primary_email: None,
