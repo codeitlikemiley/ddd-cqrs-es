@@ -82,18 +82,23 @@ pub(crate) async fn authenticated_session_view(auth: RequestAuth) -> AuthStackRe
                 return Ok(session);
             }
         }
-        return Ok(SessionView {
-            authenticated: true,
-            session_id: verified.session_id,
-            tenant_id: verified.tenant_id,
-            user_id: Some(verified.subject),
-            primary_email: None,
-            expires_at: None,
-            permissions: verified.scopes,
-            assurance: verified.assurance,
-            system_administrator: verified.system_administrator,
-            issued_at_unix_seconds: Some(verified.issued_at_unix_seconds),
-            expires_at_unix_seconds: Some(verified.expires_at),
+        return Ok({
+            let mut view = SessionView {
+                authenticated: true,
+                session_id: verified.session_id,
+                public_session_id: None,
+                tenant_id: verified.tenant_id,
+                user_id: Some(verified.subject),
+                primary_email: None,
+                expires_at: None,
+                permissions: verified.scopes,
+                assurance: verified.assurance,
+                system_administrator: verified.system_administrator,
+                issued_at_unix_seconds: Some(verified.issued_at_unix_seconds),
+                expires_at_unix_seconds: Some(verified.expires_at),
+            };
+            crate::auth_product::attach_public_session_id(&mut view);
+            view
         });
     }
     crate::application::session::require_authenticated_route_for(auth.session_id).await

@@ -116,6 +116,7 @@ pub async fn get_dashboard_snapshot(auth: RequestAuth) -> AuthStackResult<Dashbo
     let can_view_queries = access.has(crate::access::PermissionId::QUERY_VIEW);
     let can_execute_queries = access.has(crate::access::PermissionId::QUERY_EXECUTE);
     let can_view_vault = access.has(crate::access::PermissionId::VAULT_VIEW);
+    let can_reveal_vault = access.has(crate::access::PermissionId::VAULT_REVEAL);
     // Workspace-scoped board: layout/resources/queries/secrets require selected tenant.
     let layout = match vault_org_id.as_deref() {
         Some(org) => crate::store::load_dashboard_layout(org).await?,
@@ -221,14 +222,32 @@ pub async fn get_dashboard_snapshot(auth: RequestAuth) -> AuthStackResult<Dashbo
     let mut query_results = Vec::new();
     if http_enabled {
         if let (Some(org), true) = (vault_org_id.as_deref(), can_execute_queries) {
-            let batch = crate::store::execute_dashboard_queries_batch(
-                org,
+            let secret_ids = crate::store::vault_secret_ids_for_queries(
                 &http_source_ids,
-                allow_private,
                 &queries,
                 &resources,
-            )
-            .await;
+            );
+            let batch = if !secret_ids.is_empty() && !can_reveal_vault {
+                http_source_ids
+                    .iter()
+                    .map(|query_id| {
+                        crate::contracts::QueryResult::err(
+                            query_id,
+                            crate::contracts::ResourceKind::Rest,
+                            "vault.reveal permission is required for connector secrets",
+                        )
+                    })
+                    .collect()
+            } else {
+                crate::store::execute_dashboard_queries_batch(
+                    org,
+                    &http_source_ids,
+                    allow_private,
+                    &queries,
+                    &resources,
+                )
+                .await
+            };
             for result in batch {
                 let display_mode = crate::contracts::HttpDisplayMode::List;
                 http_results.push(HttpQueryResult {
@@ -554,6 +573,22 @@ pub async fn run_dashboard_query(
         }
     };
     require_organization_permission(&authorization.context, &org_id, permission, assurance).await?;
+    let resources = crate::store::load_resources(&org_id).await?;
+    let resource = resources
+        .iter()
+        .find(|resource| resource.id == query.resource_id)
+        .ok_or_else(|| AuthStackError::not_found("resource not found for query"))?;
+    let secret_ids =
+        crate::store::vault_secret_ids_for_connector(resource, Some(query));
+    if !secret_ids.is_empty() {
+        require_organization_permission(
+            &authorization.context,
+            &org_id,
+            "vault.reveal",
+            AssuranceRequirement::Aal1,
+        )
+        .await?;
+    }
     crate::store::execute_dashboard_query(
         &org_id,
         query_id.trim(),

@@ -1333,6 +1333,58 @@ fn fullstack_init_renames_leptos_targets_and_stylesheet() {
     let router = std::fs::read_to_string(app_root.join("src/app/router.rs")).unwrap();
     assert!(router.contains("/pkg/my_saas.css"));
     assert!(!router.contains("fullstack_app.css"));
+
+    let spin = std::fs::read_to_string(app_root.join("spin.toml")).unwrap();
+    assert!(spin.contains("name = \"my-saas\""));
+    assert!(spin.contains("auth_jwt_audience = { default = \"my-saas\" }"));
+    assert!(!spin.contains("default = \"fullstack-app\""));
+}
+
+#[test]
+fn enable_preserves_manifest_comments_and_unknown_keys() {
+    let temp = tempfile::tempdir().unwrap();
+    init_basic_project(&temp, "commented");
+
+    let manifest_path = temp.path().join("commented/ddd.toml");
+    let mut manifest = std::fs::read_to_string(&manifest_path).unwrap();
+    manifest.push_str("\n# keep this note\n[notes]\nreviewer = \"human\"\n");
+    std::fs::write(&manifest_path, manifest).unwrap();
+
+    let mut command = Command::cargo_bin("ddd").unwrap();
+    command
+        .arg("--cwd")
+        .arg(temp.path().join("commented"))
+        .arg("enable")
+        .arg("tracing");
+    command.assert().success();
+
+    let updated = std::fs::read_to_string(&manifest_path).unwrap();
+    assert!(updated.contains("# keep this note"));
+    assert!(updated.contains("reviewer = \"human\""));
+    assert!(updated.contains("tracing"));
+}
+
+#[test]
+fn json_format_emits_error_envelope_on_failure() {
+    let temp = tempfile::tempdir().unwrap();
+    let target = temp.path().join("occupied");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(target.join("README.md"), "existing\n").unwrap();
+
+    let mut command = Command::cargo_bin("ddd").unwrap();
+    command
+        .arg("--cwd")
+        .arg(temp.path())
+        .arg("--format")
+        .arg("json")
+        .arg("init")
+        .arg("occupied")
+        .arg("--preset")
+        .arg("basic");
+    command
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""status": "error""#));
 }
 
 fn init_basic_project(temp: &tempfile::TempDir, name: &str) {

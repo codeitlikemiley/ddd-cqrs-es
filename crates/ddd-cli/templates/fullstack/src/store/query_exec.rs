@@ -233,6 +233,13 @@ fn collect_connector_secret_ids(
     resource: &crate::contracts::DashboardResource,
     query: Option<&crate::contracts::DashboardQuery>,
 ) -> HashSet<String> {
+    vault_secret_ids_for_connector(resource, query)
+}
+
+pub(crate) fn vault_secret_ids_for_connector(
+    resource: &crate::contracts::DashboardResource,
+    query: Option<&crate::contracts::DashboardQuery>,
+) -> HashSet<String> {
     use crate::contracts::{HeaderValue, QueryConfig, ResourceAuth, ResourceConfig};
     let mut ids = HashSet::new();
     for header in &resource.default_headers {
@@ -278,6 +285,29 @@ fn collect_connector_secret_ids(
                 }
             }
         }
+    }
+    ids
+}
+
+pub(crate) fn vault_secret_ids_for_queries(
+    query_ids: &[String],
+    queries: &[crate::contracts::DashboardQuery],
+    resources: &[crate::contracts::DashboardResource],
+) -> HashSet<String> {
+    use crate::contracts::QueryExecutionClass;
+    let mut ids = HashSet::new();
+    for query_id in query_ids {
+        let Some(query) = queries.iter().find(|query| query.id == *query_id) else {
+            continue;
+        };
+        let Some(resource) = resources.iter().find(|resource| resource.id == query.resource_id)
+        else {
+            continue;
+        };
+        if query.config.execution_class() != QueryExecutionClass::Read {
+            continue;
+        }
+        ids.extend(vault_secret_ids_for_connector(resource, Some(query)));
     }
     ids
 }
@@ -1122,8 +1152,15 @@ pub(crate) async fn execute_legacy_http_source(
         return Err(AuthStackError::validation("source is not HTTP"));
     }
     validate_http_url(&source.url, allow_private)?;
+    let mut secret_ids = HashSet::new();
+    for header in &source.headers {
+        if let Some(secret_id) = header.secret_id.as_ref() {
+            secret_ids.insert(secret_id.clone());
+        }
+    }
     let secrets = match vault_org_id.filter(|s| !s.trim().is_empty()) {
-        Some(org) => load_secrets_resolved(org).await?,
+        Some(org) if secret_ids.is_empty() => Vec::new(),
+        Some(org) => load_secrets_resolved_for_ids(org, &secret_ids).await?,
         None => Vec::new(),
     };
     let mut headers: Vec<(String, String)> = Vec::new();
