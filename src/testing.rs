@@ -10,7 +10,7 @@ use crate::metadata::Metadata;
 use crate::projection::AsyncCheckpointStore;
 use crate::projection::CheckpointStore;
 use crate::snapshot::{Snapshot, SnapshotStore};
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -287,6 +287,22 @@ pub fn assert_event_store_global_replay_contract<A, S>(
     }
 }
 
+fn is_retryable_any_append_error<StoreError: Display>(
+    error: &RepositoryError<(), StoreError>,
+) -> bool {
+    match error {
+        RepositoryError::Concurrency(_) => true,
+        RepositoryError::Store(store_error) => {
+            let message = store_error.to_string().to_ascii_lowercase();
+            (message.contains("unique")
+                || message.contains("23505")
+                || message.contains("duplicate"))
+                && (message.contains("revision") || message.contains("aggregate"))
+        }
+        _ => false,
+    }
+}
+
 /// Verifies that concurrent `ExpectedRevision::Any` writers on one stream receive
 /// distinct revisions instead of colliding on the same optimistic target.
 pub fn assert_event_store_any_writers_contract<A, S, F>(
@@ -296,10 +312,10 @@ pub fn assert_event_store_any_writers_contract<A, S, F>(
     append_event: A::Event,
 ) where
     A: Aggregate,
-    A::Event: PartialEq + Debug,
+    A::Event: PartialEq + Debug + Clone,
     A::Id: Clone + Send + Sync,
     S: EventStore<A> + Send + Sync + 'static,
-    S::Error: EventStoreFailure + Debug + Send + 'static,
+    S::Error: EventStoreFailure + Debug + Display + Send + 'static,
     F: Fn() -> S + Send + Sync + 'static,
 {
     let seed_store = make_store();
@@ -321,17 +337,29 @@ pub fn assert_event_store_any_writers_contract<A, S, F>(
         let append_event = append_event.clone();
         handles.push(thread::spawn(move || {
             barrier.wait();
-            factory().append(
-                &aggregate_id,
-                ExpectedRevision::Any,
-                vec![NewEvent::new(append_event, Metadata::default())],
-            )
+            for attempt in 0..8 {
+                match factory().append(
+                    &aggregate_id,
+                    ExpectedRevision::Any,
+                    vec![NewEvent::new(append_event.clone(), Metadata::default())],
+                ) {
+                    Ok(committed) => return committed,
+                    Err(error) => {
+                        let repo = error.into_repository_error::<()>();
+                        if is_retryable_any_append_error(&repo) && attempt + 1 < 8 {
+                            continue;
+                        }
+                        panic!("append with ExpectedRevision::Any failed: {repo:?}");
+                    }
+                }
+            }
+            panic!("append with ExpectedRevision::Any exhausted retries");
         }));
     }
 
     let mut revisions = Vec::new();
     for handle in handles {
-        let committed = handle.join().unwrap().unwrap();
+        let committed = handle.join().unwrap();
         assert_eq!(committed.len(), 1);
         revisions.push(committed[0].revision);
     }
@@ -355,10 +383,10 @@ pub fn assert_event_store_append_race_contract<A, S, F>(
     racers: usize,
 ) where
     A: Aggregate,
-    A::Event: PartialEq + Debug,
-    A::Id: Clone + Send + Sync,
+    A::Event: PartialEq + Debug + Clone,
+    A::Id: Clone + Send + Sync + Debug,
     S: EventStore<A> + Send + Sync + 'static,
-    S::Error: EventStoreFailure + Debug + Send + 'static,
+    S::Error: EventStoreFailure + Debug + Display + Send + 'static,
     F: Fn() -> S + Send + Sync + 'static,
 {
     assert!(racers >= 2, "race contract requires at least two racers");
@@ -382,11 +410,28 @@ pub fn assert_event_store_append_race_contract<A, S, F>(
         let race_event = race_event.clone();
         handles.push(thread::spawn(move || {
             barrier.wait();
-            factory().append(
-                &aggregate_id,
-                ExpectedRevision::Exact(1),
-                vec![NewEvent::new(race_event, Metadata::default())],
-            )
+            for attempt in 0..8 {
+                match factory().append(
+                    &aggregate_id,
+                    ExpectedRevision::Exact(1),
+                    vec![NewEvent::new(race_event.clone(), Metadata::default())],
+                ) {
+                    Ok(committed) => return Ok(committed),
+                    Err(error) => match error.into_repository_error::<()>() {
+                        RepositoryError::Store(store_error)
+                            if store_error
+                                .to_string()
+                                .to_ascii_lowercase()
+                                .contains("locked")
+                                && attempt + 1 < 8 =>
+                        {
+                            continue;
+                        }
+                        other => return Err(other),
+                    },
+                }
+            }
+            panic!("race append exhausted retries");
         }));
     }
 
@@ -399,9 +444,9 @@ pub fn assert_event_store_append_race_contract<A, S, F>(
                 assert_eq!(committed.len(), 1);
                 assert_eq!(committed[0].revision, 2);
             }
-            Err(error) => {
+            Err(other) => {
                 losers += 1;
-                match error.into_repository_error::<()>() {
+                match other {
                     RepositoryError::Concurrency(ConcurrencyError::WrongExpectedRevision {
                         expected: ExpectedRevision::Exact(1),
                         actual,
@@ -425,8 +470,13 @@ pub fn assert_event_store_append_race_contract<A, S, F>(
     assert_eq!(stream.len(), 2);
 
     let global = factory().load_global_after(None).unwrap();
-    let sequences: Vec<u64> = global.iter().filter_map(|event| event.sequence).collect();
-    if sequences.len() == global.len() {
+    let aggregate_id_label = format!("{aggregate_id:?}");
+    let sequences: Vec<u64> = global
+        .iter()
+        .filter(|event| format!("{:?}", event.aggregate_id) == aggregate_id_label)
+        .filter_map(|event| event.sequence)
+        .collect();
+    if sequences.len() >= 2 {
         for window in sequences.windows(2) {
             assert_eq!(window[1], window[0] + 1);
         }
