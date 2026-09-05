@@ -294,6 +294,9 @@ fn is_retryable_any_append_error<StoreError: Display>(
         RepositoryError::Concurrency(_) => true,
         RepositoryError::Store(store_error) => {
             let message = store_error.to_string().to_ascii_lowercase();
+            if message.contains("locked") {
+                return true;
+            }
             (message.contains("unique")
                 || message.contains("23505")
                 || message.contains("duplicate"))

@@ -44,6 +44,28 @@ pub(crate) fn validate_table_name(table_name: &str) -> Result<(), EventStoreErro
     }
 }
 
+#[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
+/// Returns true when a database unique-violation message refers to the stream
+/// revision constraint, not the global `event_id` uniqueness guard.
+pub(crate) fn is_stream_revision_unique_violation_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("event_id") {
+        return false;
+    }
+    lower.contains("revision")
+        && (lower.contains("aggregate_id") || lower.contains("aggregate_type"))
+}
+
+/// MySQL duplicate-key messages often omit `revision` and name composite uniques
+/// after the first column only; keep this broader than [`is_stream_revision_unique_violation_message`].
+pub(crate) fn is_mysql_stream_revision_unique_violation_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("event_id") {
+        return false;
+    }
+    lower.contains("revision") || lower.contains("aggregate_type") || lower.contains("aggregate_id")
+}
+
 #[cfg(any(
     feature = "sqlite",
     feature = "postgres",
@@ -286,6 +308,22 @@ mod tests {
                     actual: 4,
                 }
             ))
+        ));
+    }
+
+    #[test]
+    fn stream_revision_unique_violation_message_excludes_event_id_collisions() {
+        assert!(is_stream_revision_unique_violation_message(
+            "duplicate key value violates unique constraint \"events_aggregate_type_aggregate_id_revision_key\""
+        ));
+        assert!(!is_stream_revision_unique_violation_message(
+            "duplicate key value violates unique constraint \"events_event_id_key\""
+        ));
+        assert!(is_mysql_stream_revision_unique_violation_message(
+            "Duplicate entry 'acct-1-2' for key 'events.aggregate_type'"
+        ));
+        assert!(!is_mysql_stream_revision_unique_violation_message(
+            "Duplicate entry 'evt-1' for key 'events.event_id'"
         ));
     }
 

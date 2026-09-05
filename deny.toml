@@ -20,3 +20,7 @@ allow = [
 [sources]
 unknown-git = "deny"
 unknown-registry = "deny"
+
+# spin-sdk is pinned to a maintained fork until upstream merges WASI P3 HTTP fixes.
+[sources.allow-org]
+github = ["codeitlikemiley"]

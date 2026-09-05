@@ -1205,7 +1205,7 @@ fn current_revision_mysql(
 fn is_mysql_stream_revision_unique_violation(error: &MySqlError) -> bool {
     match error {
         MySqlError::MySqlError(server) => {
-            server.message.contains("aggregate_type") || server.message.contains("revision")
+            crate::sql_common::is_mysql_stream_revision_unique_violation_message(&server.message)
         }
         _ => false,
     }

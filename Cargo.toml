@@ -11,7 +11,13 @@ documentation = "https://docs.rs/ddd_cqrs_es"
 homepage = "https://github.com/codeitlikemiley/ddd-cqrs-es"
 keywords = ["ddd", "cqrs", "event-sourcing", "events"]
 categories = ["development-tools", "rust-patterns"]
-exclude = [".agents/**"]
+exclude = [
+    ".agents/**",
+    ".github/**",
+    "docs/**",
+    "examples/**",
+    "scripts/**",
+]
 
 [workspace]
 members = [".", "crates/ddd-cli"]
@@ -56,7 +62,7 @@ wasi-supabase-rpc = ["wasi-http"]
 async-trait = { version = "0.1", optional = true }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"], optional = true }
 postgres = { version = "0.19", features = ["with-serde_json-1"], optional = true }
-rusqlite = { version = "=0.39.0", optional = true }
+rusqlite = { version = "0.39", optional = true }
 mysql = { version = "28.0.2", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
@@ -64,7 +70,7 @@ tokio = { version = "1", features = ["time", "sync", "rt"], optional = true }
 tracing = { version = "0.1", optional = true }
 uuid = { version = "1", features = ["serde", "v4"], optional = true }
 # Final WASI HTTP bindings shared with leptos-wasi-runtime 0.4.2-rc.1 and the maintained Spin fork.
-wasip3 = { version = "=0.7.0", features = ["http-compat"], optional = true }
+wasip3 = { version = "0.7", features = ["http-compat"], optional = true }
 http = { version = "1.1.0", optional = true }
 http-body-util = { version = "0.1.2", optional = true }
 bytes = { version = "1.6", optional = true }
