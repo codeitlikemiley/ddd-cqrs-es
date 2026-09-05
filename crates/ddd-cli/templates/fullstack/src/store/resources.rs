@@ -387,6 +387,17 @@ pub fn merge_headers(
     map.into_values().collect()
 }
 
+fn validate_resource_auth_endpoints(
+    auth: &crate::contracts::ResourceAuth,
+    allow_private: bool,
+) -> AuthStackResult<()> {
+    use crate::contracts::ResourceAuth;
+    if let ResourceAuth::OAuth2ClientCredentials { token_url, .. } = auth {
+        validate_http_url(token_url, allow_private)?;
+    }
+    Ok(())
+}
+
 /// Apply ResourceAuth injectors into resolved header list (name, value).
 pub fn apply_resource_auth(
     auth: &crate::contracts::ResourceAuth,
@@ -632,6 +643,7 @@ pub async fn upsert_resource(
                     "postgres password secret is required",
                 ));
             }
+            validate_postgres_host(host, allow_private)?;
         }
         ResourceConfig::Grpc {
             host,
@@ -652,6 +664,8 @@ pub async fn upsert_resource(
                 if let Some(url) = gateway_base_url {
                     validate_http_url(url, allow_private)?;
                 }
+            } else {
+                validate_grpc_host(host, allow_private)?;
             }
         }
         ResourceConfig::Builtin => {}
@@ -681,6 +695,7 @@ pub async fn upsert_resource(
             "resource kind does not match config",
         ));
     }
+    validate_resource_auth_endpoints(&resource.auth, allow_private)?;
     let existing = load_resources(org_id).await?;
     if !existing.iter().any(|r| r.id == id) && existing.len() >= MAX_RESOURCES {
         return Err(AuthStackError::validation("too many resources"));

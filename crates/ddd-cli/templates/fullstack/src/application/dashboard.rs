@@ -220,44 +220,25 @@ pub async fn get_dashboard_snapshot(auth: RequestAuth) -> AuthStackResult<Dashbo
     let mut http_results = Vec::new();
     let mut query_results = Vec::new();
     if http_enabled {
-        for source_id in http_source_ids {
-            // Prefer QueryResult path (also feeds legacy HttpQueryResult for HttpPanel).
-            let Some(org) = vault_org_id.as_deref() else {
-                continue;
-            };
-            let Some(query) = queries.iter().find(|query| query.id == source_id) else {
-                continue;
-            };
-            if !can_execute_queries
-                || query.config.execution_class() != crate::contracts::QueryExecutionClass::Read
-            {
-                continue;
-            }
-            match crate::store::execute_dashboard_query(org, &source_id, allow_private).await {
-                Ok(result) => {
-                    http_results.push(HttpQueryResult {
-                        source_id: result.query_id.clone(),
-                        ok: result.ok,
-                        error: result.error.clone(),
-                        data_json: result.data_json.clone(),
-                        display_mode: crate::contracts::HttpDisplayMode::List,
-                    });
-                    query_results.push(result);
-                }
-                Err(error) => {
-                    http_results.push(HttpQueryResult {
-                        source_id: source_id.clone(),
-                        ok: false,
-                        error: Some(error.public_message()),
-                        data_json: "null".to_owned(),
-                        display_mode: crate::contracts::HttpDisplayMode::List,
-                    });
-                    query_results.push(crate::contracts::QueryResult::err(
-                        source_id,
-                        crate::contracts::ResourceKind::Rest,
-                        error.public_message(),
-                    ));
-                }
+        if let (Some(org), true) = (vault_org_id.as_deref(), can_execute_queries) {
+            let batch = crate::store::execute_dashboard_queries_batch(
+                org,
+                &http_source_ids,
+                allow_private,
+                &queries,
+                &resources,
+            )
+            .await;
+            for result in batch {
+                let display_mode = crate::contracts::HttpDisplayMode::List;
+                http_results.push(HttpQueryResult {
+                    source_id: result.query_id.clone(),
+                    ok: result.ok,
+                    error: result.error.clone(),
+                    data_json: result.data_json.clone(),
+                    display_mode,
+                });
+                query_results.push(result);
             }
         }
     }
@@ -308,14 +289,14 @@ pub(crate) async fn dashboard_grpc_enabled() -> bool {
 }
 
 pub(crate) async fn dashboard_http_enabled() -> bool {
-    !matches!(
+    matches!(
         config_value("AUTH_DASHBOARD_HTTP_ENABLED")
             .await
             .as_deref()
             .map(str::trim)
             .map(str::to_ascii_lowercase)
             .as_deref(),
-        Some("0" | "false" | "no" | "off")
+        Some("1" | "true" | "yes" | "on")
     )
 }
 

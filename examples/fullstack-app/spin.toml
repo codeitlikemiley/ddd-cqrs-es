@@ -119,6 +119,7 @@ executor = { type = "http" }
 
 [component.auth-api]
 source = "target/wasm32-wasip2/release/fullstack_app.wasm"
+# Production: replace wildcards with spin.production.toml.example hosts before deploy.
 allowed_outbound_hosts = [
   "https://accounts.google.com:443",
   "https://oauth2.googleapis.com:443",

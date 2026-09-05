@@ -364,6 +364,21 @@ pub(crate) async fn load_secrets_resolved(org_id: &str) -> AuthStackResult<Vec<S
     Ok(secrets)
 }
 
+/// Decrypt only the secrets referenced by dashboard query execution (avoids re-decrypting the full vault per widget).
+pub(crate) async fn load_secrets_resolved_for_ids(
+    org_id: &str,
+    secret_ids: &std::collections::HashSet<String>,
+) -> AuthStackResult<Vec<StoredSecret>> {
+    if secret_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let all = load_secrets_resolved(org_id).await?;
+    Ok(all
+        .into_iter()
+        .filter(|secret| secret_ids.contains(&secret.id))
+        .collect())
+}
+
 pub async fn load_data_sources(
     user_id: &str,
 ) -> AuthStackResult<Vec<crate::contracts::DataSource>> {
