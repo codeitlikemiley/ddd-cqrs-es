@@ -204,7 +204,7 @@ pub use redis::WasiRedisClient;
 /// Redis checkpoint/event/publish adapters for production distributed usage.
 pub use redis::{
     RedisCheckpointStore, RedisCommandExecutor, RedisEventStore, RedisIdempotencyStore,
-    RedisPubSubPublisher,
+    RedisPubSubPublisher, RedisSnapshotStore,
 };
 /// Repository contracts and execution outcome types.
 pub use repository::{
@@ -229,15 +229,17 @@ pub use sqlite::{
 /// Async contract tests for async adapters.
 pub use testing::{
     assert_async_checkpoint_store_contract, assert_async_event_store_contract,
-    assert_async_idempotency_store_contract,
+    assert_async_idempotency_store_contract, assert_async_snapshot_store_contract,
 };
 /// Contract tests for adapters and supporting test utilities.
 pub use testing::{
     assert_atomic_idempotent_store_contract, assert_checkpoint_store_contract,
     assert_event_store_any_writers_contract, assert_event_store_append_race_contract,
     assert_event_store_contract, assert_event_store_global_replay_contract,
-    assert_idempotency_store_contract, assert_snapshot_store_contract, AggregateFixture,
-    EventStoreContractOptions,
+    assert_idempotency_store_contract, assert_snapshot_store_contract,
+    assert_upcaster_registry_contract, AggregateFixture, EventStoreContractOptions,
 };
+#[cfg(feature = "serde")]
+pub use testing::{assert_upcaster_contract, UpcasterContractStore};
 /// Upcaster abstractions for event schema migration over time.
 pub use upcast::{ErasedUpcaster, EventUpcaster, UpcasterRegistrationError, UpcasterRegistry};

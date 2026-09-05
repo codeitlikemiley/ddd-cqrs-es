@@ -57,6 +57,18 @@ pub trait ProcessManager<E, C> {
 
     /// Handles one event and returns commands to dispatch.
     fn handle(&mut self, event: &E) -> Result<Vec<C>, Self::Error>;
+
+    /// Handles one committed envelope and returns commands to dispatch.
+    ///
+    /// The default implementation forwards to [`Self::handle`] with the
+    /// envelope payload. Override when the saga needs stable
+    /// [`EventEnvelope::event_id`] or global [`EventEnvelope::sequence`].
+    fn handle_envelope<Id>(
+        &mut self,
+        envelope: &EventEnvelope<E, Id>,
+    ) -> Result<Vec<C>, Self::Error> {
+        self.handle(&envelope.payload)
+    }
 }
 
 /// Builds the idempotency key for one command emitted by a process manager.
@@ -337,7 +349,7 @@ impl<P, B> ProcessManagerRunner<P, B> {
             .load_dispatch_index(manager_name, event_id)
             .unwrap_or(0);
 
-        let commands = match self.process_manager.handle(&envelope.payload) {
+        let commands = match self.process_manager.handle_envelope(envelope) {
             Ok(commands) => commands,
             Err(error) => {
                 return ProcessManagerRunResult {
@@ -439,7 +451,7 @@ impl<P, B> AsyncProcessManagerRunner<P, B> {
             .load_dispatch_index(manager_name, event_id)
             .unwrap_or(0);
 
-        let commands = match self.process_manager.handle(&envelope.payload) {
+        let commands = match self.process_manager.handle_envelope(envelope) {
             Ok(commands) => commands,
             Err(error) => {
                 return ProcessManagerRunResult {

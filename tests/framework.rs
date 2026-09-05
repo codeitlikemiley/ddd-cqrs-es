@@ -879,6 +879,75 @@ fn process_manager_runner_dispatches_emitted_commands() {
 }
 
 #[test]
+fn envelope_process_manager_can_read_event_id_from_envelope() {
+    use ddd_cqrs_es::{EventEnvelope, EventId, EventType};
+    use std::time::SystemTime;
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum Event {
+        Started { correlation: String },
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum Command {
+        Notify { correlation: String },
+    }
+
+    #[derive(Clone, Debug)]
+    struct CorrelationSaga;
+
+    impl ddd_cqrs_es::ProcessManager<Event, Command> for CorrelationSaga {
+        type Error = std::convert::Infallible;
+
+        fn name(&self) -> &'static str {
+            "correlation_saga"
+        }
+
+        fn handle(&mut self, event: &Event) -> Result<Vec<Command>, Self::Error> {
+            match event {
+                Event::Started { correlation } => Ok(vec![Command::Notify {
+                    correlation: correlation.clone(),
+                }]),
+            }
+        }
+
+        fn handle_envelope<Id>(
+            &mut self,
+            envelope: &EventEnvelope<Event, Id>,
+        ) -> Result<Vec<Command>, Self::Error> {
+            Ok(vec![Command::Notify {
+                correlation: format!("{}:{}", envelope.event_id, envelope.sequence.unwrap_or(0)),
+            }])
+        }
+    }
+
+    let mut saga = CorrelationSaga;
+    let envelope = EventEnvelope::new(
+        EventId::new(),
+        "stream-1".to_owned(),
+        "demo",
+        1,
+        Some(42),
+        EventType::from("started"),
+        1,
+        Event::Started {
+            correlation: "ignored".to_owned(),
+        },
+        Metadata::default(),
+        SystemTime::now(),
+    );
+    let event_id = envelope.event_id.clone();
+
+    let commands = ddd_cqrs_es::ProcessManager::handle_envelope(&mut saga, &envelope).unwrap();
+    assert_eq!(
+        commands,
+        vec![Command::Notify {
+            correlation: format!("{}:42", event_id),
+        }]
+    );
+}
+
+#[test]
 fn process_manager_runner_resumes_partial_dispatch_from_checkpoint() {
     use ddd_cqrs_es::{
         EventEnvelope, EventId, EventType, ProcessManagerDispatchCheckpoint,
@@ -2697,7 +2766,10 @@ mod async_tests {
         assert_eq!(applied, 1);
 
         let cp = checkpoint_store
-            .load_checkpoint("counter_projection")
+            .load_checkpoint(&ddd_cqrs_es::aggregate_scoped_checkpoint_key(
+                "counter_projection",
+                "counter",
+            ))
             .await
             .unwrap();
         assert_eq!(cp, Some(1));
@@ -2741,7 +2813,7 @@ mod async_tests {
 #[cfg(feature = "sqlite")]
 #[test]
 fn sqlite_store_upcasts_chained_event_versions_on_load() {
-    use ddd_cqrs_es::EventUpcaster;
+    use ddd_cqrs_es::{assert_upcaster_contract, EventUpcaster};
 
     struct Upcaster1To2;
     impl EventUpcaster for Upcaster1To2 {
@@ -2819,10 +2891,7 @@ fn sqlite_store_upcasts_chained_event_versions_on_load() {
         .register_upcaster("counter_created", Upcaster2To3)
         .unwrap();
 
-    let events = ddd_cqrs_es::EventStore::load(&store, &"counter-123".to_owned()).unwrap();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].payload, CounterEvent::Created);
-    assert_eq!(events[0].event_version, 3);
+    assert_upcaster_contract(&store, &"counter-123".to_owned(), CounterEvent::Created, 3);
 }
 
 #[cfg(feature = "sqlite")]
@@ -2859,7 +2928,10 @@ fn test_sync_persisted_projection_runner() {
 
     use ddd_cqrs_es::projection::CheckpointStore;
     let cp = checkpoint_store
-        .load_checkpoint("counter_projection")
+        .load_checkpoint(&ddd_cqrs_es::aggregate_scoped_checkpoint_key(
+            "counter_projection",
+            "counter",
+        ))
         .unwrap();
     assert_eq!(cp, Some(1));
 }
@@ -3013,6 +3085,7 @@ impl ddd_cqrs_es::projection::CheckpointStore for KeyedCheckpointStore {
 /// other's events forever.
 #[cfg(feature = "sqlite")]
 #[test]
+#[allow(deprecated)]
 fn persisted_runner_needs_aggregate_scoped_checkpoints_across_aggregate_types() {
     use ddd_cqrs_es::projection::PersistedProjectionRunner;
 
@@ -3141,13 +3214,19 @@ fn persisted_runner_needs_aggregate_scoped_checkpoints_across_aggregate_types() 
         (counters, ledgers, anchor)
     }
 
-    // Name-only keying (the 0.3 default): replaying the counter feed advances
+    // Name-only keying (the 0.3 layout): replaying the counter feed advances
     // the shared row to sequence 3, which is past the ledger event at
     // sequence 2, so the ledger feed reports nothing to do.
     let (counters, ledgers, _anchor) = seed_interleaved_stores("shared");
     let shared = KeyedCheckpointStore::default();
-    let mut counter_runner = PersistedProjectionRunner::new(EventTally::default(), shared.clone());
-    let mut ledger_runner = PersistedProjectionRunner::new(EventTally::default(), shared.clone());
+    let mut counter_runner = PersistedProjectionRunner::with_projection_name_checkpoints(
+        EventTally::default(),
+        shared.clone(),
+    );
+    let mut ledger_runner = PersistedProjectionRunner::with_projection_name_checkpoints(
+        EventTally::default(),
+        shared.clone(),
+    );
 
     assert_eq!(counter_runner.run::<Counter, _>(&counters).unwrap(), 2);
     assert_eq!(
@@ -3157,18 +3236,12 @@ fn persisted_runner_needs_aggregate_scoped_checkpoints_across_aggregate_types() 
     );
     assert_eq!(shared.keys(), vec!["event_tally".to_owned()]);
 
-    // Aggregate-scoped keying: one row per feed, so both events land and the
-    // skip does not come back on a later pass either.
+    // Aggregate-scoped keying (the default since 0.4): one row per feed, so
+    // both events land and the skip does not come back on a later pass either.
     let (counters, ledgers, _anchor) = seed_interleaved_stores("scoped");
     let scoped = KeyedCheckpointStore::default();
-    let mut counter_runner = PersistedProjectionRunner::with_aggregate_scoped_checkpoints(
-        EventTally::default(),
-        scoped.clone(),
-    );
-    let mut ledger_runner = PersistedProjectionRunner::with_aggregate_scoped_checkpoints(
-        EventTally::default(),
-        scoped.clone(),
-    );
+    let mut counter_runner = PersistedProjectionRunner::new(EventTally::default(), scoped.clone());
+    let mut ledger_runner = PersistedProjectionRunner::new(EventTally::default(), scoped.clone());
 
     assert_eq!(counter_runner.run::<Counter, _>(&counters).unwrap(), 2);
     assert_eq!(ledger_runner.run::<Ledger, _>(&ledgers).unwrap(), 1);
@@ -3851,19 +3924,14 @@ fn sqlite_raw_feed_interleaves_aggregate_types_and_drives_raw_projections() {
     assert_eq!(checkpoint_store.saves(), 1);
 
     // Cross-aggregate replay is a different position from any typed feed, so
-    // under aggregate-scoped keying it gets its own checkpoint row.
+    // aggregate-scoped keying gives raw replay its own checkpoint row.
     let keyed = KeyedCheckpointStore::default();
-    let mut scoped_runner = PersistedProjectionRunner::with_aggregate_scoped_checkpoints(
-        TypeTally::default(),
-        keyed.clone(),
-    );
+    let mut scoped_runner = PersistedProjectionRunner::new(TypeTally::default(), keyed.clone());
     scoped_runner
         .run_raw_batch(&counters, ddd_cqrs_es::ProjectionBatchConfig::default())
         .unwrap();
-    let mut typed_runner = PersistedProjectionRunner::with_aggregate_scoped_checkpoints(
-        CounterProjection::default(),
-        keyed.clone(),
-    );
+    let mut typed_runner =
+        PersistedProjectionRunner::new(CounterProjection::default(), keyed.clone());
     typed_runner.run::<Counter, _>(&counters).unwrap();
 
     assert!(keyed
