@@ -163,10 +163,10 @@ where
         .count();
 
     assert_eq!(winners, 1);
-    assert_eq!(
+    assert!(matches!(
         store.load(&concurrent_key).unwrap(),
-        Some(IdempotencyState::Pending)
-    );
+        Some(IdempotencyState::Pending(_))
+    ));
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -2360,8 +2360,12 @@ fn sqlite_store_upcasts_chained_event_versions_on_load() {
     ).unwrap();
 
     let store = ddd_cqrs_es::SqliteEventStore::<Counter>::new(conn).unwrap();
-    store.register_upcaster("counter_created", Upcaster1To2).unwrap();
-    store.register_upcaster("counter_created", Upcaster2To3).unwrap();
+    store
+        .register_upcaster("counter_created", Upcaster1To2)
+        .unwrap();
+    store
+        .register_upcaster("counter_created", Upcaster2To3)
+        .unwrap();
 
     let events = ddd_cqrs_es::EventStore::load(&store, &"counter-123".to_owned()).unwrap();
     assert_eq!(events.len(), 1);
@@ -2848,8 +2852,12 @@ fn postgres_store_upcasts_chained_event_versions_on_load() {
         ]
     ).unwrap();
 
-    store.register_upcaster("counter_created", Upcaster1To2).unwrap();
-    store.register_upcaster("counter_created", Upcaster2To3).unwrap();
+    store
+        .register_upcaster("counter_created", Upcaster1To2)
+        .unwrap();
+    store
+        .register_upcaster("counter_created", Upcaster2To3)
+        .unwrap();
 
     let events = ddd_cqrs_es::EventStore::load(&store, &"counter-123".to_owned()).unwrap();
     assert_eq!(events.len(), 1);
