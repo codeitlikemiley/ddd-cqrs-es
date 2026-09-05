@@ -1155,7 +1155,7 @@ pub struct WasiRedisClient {
 enum RedisStream {
     Plain(TcpStream),
     #[cfg(feature = "wasi-redis-tls")]
-    Tls(rustls::StreamOwned<rustls::ClientConnection, TcpStream>),
+    Tls(Box<rustls::StreamOwned<rustls::ClientConnection, TcpStream>>),
 }
 
 #[cfg(feature = "wasi-redis")]
@@ -1456,9 +1456,7 @@ impl WasiRedisSubscription {
             let value = match read_resp_value(&mut self.reader) {
                 Ok(value) => value,
                 Err(error @ RedisClientError::Timeout) => {
-                    if !self.reader.buffer().is_empty() {
-                        self.desynced = true;
-                    }
+                    self.desynced = true;
                     return Err(error);
                 }
                 Err(error) => {
@@ -1513,7 +1511,10 @@ impl WasiRedisSubscription {
                 }
                 Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(None),
                 Err(error) if error.kind() == ErrorKind::TimedOut => return Ok(None),
-                Err(error) => return Err(RedisClientError::from(error)),
+                Err(error) => {
+                    self.desynced = true;
+                    return Err(RedisClientError::from(error));
+                }
                 Ok(_) => {}
             }
         }
@@ -2234,7 +2235,7 @@ fn upgrade_tls_stream(tcp: TcpStream, host: &str) -> Result<RedisStream, RedisCl
     let mut tls = rustls::StreamOwned::new(connection, tcp);
     tls.flush()
         .map_err(|error| RedisClientError::Io(format!("TLS handshake: {error}")))?;
-    Ok(RedisStream::Tls(tls))
+    Ok(RedisStream::Tls(Box::new(tls)))
 }
 
 #[cfg(all(feature = "wasi-redis", not(feature = "wasi-redis-tls")))]
@@ -3114,12 +3115,11 @@ mod tests {
         partial_rx
             .recv_timeout(Duration::from_secs(2))
             .expect("server should send partial frame");
-        let error = subscription.try_next_message().unwrap_err();
+        std::thread::sleep(Duration::from_millis(50));
+        let error = subscription.next_message().unwrap_err();
         assert!(matches!(
             error,
-            RedisClientError::ConnectionDesynced(_)
-                | RedisClientError::Timeout
-                | RedisClientError::Io(_)
+            RedisClientError::Timeout | RedisClientError::Io(_)
         ));
         assert!(matches!(
             subscription.try_next_message().unwrap_err(),
@@ -3127,17 +3127,14 @@ mod tests {
         ));
     }
 
-    #[cfg(feature = "wasi-redis")]
+    #[cfg(all(feature = "wasi-redis", not(feature = "wasi-redis-tls")))]
     #[test]
     fn rediss_url_without_tls_feature_is_rejected() {
         let client = WasiRedisClient::new("rediss://127.0.0.1:6379")
             .with_connect_timeout(Some(Duration::from_millis(100)));
         let error = client.execute_blocking("PING", Vec::new()).unwrap_err();
 
-        #[cfg(not(feature = "wasi-redis-tls"))]
         assert!(matches!(error, RedisClientError::InvalidUrl(_)));
-        #[cfg(feature = "wasi-redis-tls")]
-        let _ = error;
     }
 
     #[cfg(feature = "wasi-redis")]
