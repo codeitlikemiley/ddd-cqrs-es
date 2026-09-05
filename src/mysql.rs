@@ -912,7 +912,53 @@ where
     }
 }
 
-/// Inserts all prepared events with one multi-row `INSERT`, then reads the
+/// MySQL allows at most 65_535 placeholders per prepared statement; nine bind
+/// parameters per event caps a single append at 7_281 events.
+const MAX_MYSQL_APPEND_EVENTS: usize = 65_535 / 9;
+
+fn insert_mysql_event_chunk<E>(
+    transaction: &mut mysql::Transaction<'_>,
+    table_name: &str,
+    aggregate_id_key: &str,
+    aggregate_type: &str,
+    base_revision: u64,
+    chunk: &[PreparedMySqlEvent<E>],
+) -> Result<(), MySqlError> {
+    let count = chunk.len();
+    if count == 0 {
+        return Ok(());
+    }
+
+    let mut params: Vec<mysql::Value> = Vec::with_capacity(count * 9);
+    for (index, event) in chunk.iter().enumerate() {
+        let revision = base_revision + index as u64 + 1;
+        let revision_i64 = i64::try_from(revision).expect("stream revision must fit in BIGINT");
+        let event_version_i32 =
+            i32::try_from(event.event_version).expect("event_version must fit in i32");
+        params.push(event.event_id.as_str().into());
+        params.push(aggregate_id_key.into());
+        params.push(aggregate_type.into());
+        params.push(revision_i64.into());
+        params.push(event.event_type.as_str().into());
+        params.push(event_version_i32.into());
+        params.push(event.payload_json.as_str().into());
+        params.push(event.metadata_json.as_str().into());
+        params.push(event.recorded_at_ms.into());
+    }
+
+    let placeholders = vec!["(?, ?, ?, ?, ?, ?, ?, ?, ?)"; count].join(", ");
+    let insert = format!(
+        "INSERT INTO {table} \
+         (event_id, aggregate_id, aggregate_type, revision, event_type, event_version, \
+          payload, metadata, recorded_at_ms) \
+         VALUES {placeholders}",
+        table = table_name
+    );
+    transaction.exec_drop(&insert, params)?;
+    Ok(())
+}
+
+/// Inserts all prepared events with chunked multi-row `INSERT`s, then reads the
 /// assigned sequences back in a second query, returning the committed
 /// envelopes. Two round trips regardless of event count.
 ///
@@ -934,42 +980,28 @@ where
     let count = prepared.len();
     let actual_revision_i64 = i64::try_from(actual_revision)
         .map_err(|_| EventStoreError::serialization("revision exceeds BIGINT".to_owned()))?;
-    let mut params: Vec<mysql::Value> = Vec::with_capacity(count * 9);
-    for (index, event) in prepared.iter().enumerate() {
-        let revision = actual_revision + index as u64 + 1;
-        let revision_i64 = i64::try_from(revision)
-            .map_err(|_| EventStoreError::serialization("revision exceeds BIGINT".to_owned()))?;
-        let event_version_i32 = i32::try_from(event.event_version)
-            .map_err(|_| EventStoreError::serialization("event_version exceeds i32".to_owned()))?;
-        params.push(event.event_id.as_str().into());
-        params.push(aggregate_id_key.into());
-        params.push(A::aggregate_type().into());
-        params.push(revision_i64.into());
-        params.push(event.event_type.as_str().into());
-        params.push(event_version_i32.into());
-        params.push(event.payload_json.as_str().into());
-        params.push(event.metadata_json.as_str().into());
-        params.push(event.recorded_at_ms.into());
-    }
 
-    let placeholders = vec!["(?, ?, ?, ?, ?, ?, ?, ?, ?)"; count].join(", ");
-    let insert = format!(
-        "INSERT INTO {table} \
-         (event_id, aggregate_id, aggregate_type, revision, event_type, event_version, \
-          payload, metadata, recorded_at_ms) \
-         VALUES {placeholders}",
-        table = table_name
-    );
-    transaction.exec_drop(&insert, params).map_err(|error| {
-        map_mysql_insert_error(error, expected_revision, actual_revision, || {
-            current_revision_mysql(
-                transaction,
-                table_name,
-                A::aggregate_type(),
-                aggregate_id_key,
-            )
-        })
-    })?;
+    for (chunk_offset, chunk) in prepared.chunks(MAX_MYSQL_APPEND_EVENTS).enumerate() {
+        let base_revision = actual_revision + chunk_offset as u64 * MAX_MYSQL_APPEND_EVENTS as u64;
+        insert_mysql_event_chunk(
+            transaction,
+            table_name,
+            aggregate_id_key,
+            A::aggregate_type(),
+            base_revision,
+            chunk,
+        )
+        .map_err(|error| {
+            map_mysql_insert_error(error, expected_revision, actual_revision, || {
+                current_revision_mysql(
+                    transaction,
+                    table_name,
+                    A::aggregate_type(),
+                    aggregate_id_key,
+                )
+            })
+        })?;
+    }
 
     let select = format!(
         "SELECT revision, sequence FROM {table} \

@@ -169,25 +169,8 @@ pub async fn execute_spin_sqlite(
     let mut rows = Vec::new();
     for r in rows_list {
         let mut row_obj = serde_json::Map::new();
-        for (i, col_name) in columns.iter().enumerate() {
-            let val = match &r.values[i] {
-                spin_sdk::sqlite::Value::Null => serde_json::Value::Null,
-                spin_sdk::sqlite::Value::Integer(i) => {
-                    serde_json::Value::Number(serde_json::Number::from(*i))
-                }
-                spin_sdk::sqlite::Value::Real(f) => {
-                    if let Some(num) = serde_json::Number::from_f64(*f) {
-                        serde_json::Value::Number(num)
-                    } else {
-                        serde_json::Value::Null
-                    }
-                }
-                spin_sdk::sqlite::Value::Text(s) => serde_json::Value::String(s.clone()),
-                spin_sdk::sqlite::Value::Blob(b) => {
-                    serde_json::Value::String(String::from_utf8_lossy(b).into_owned())
-                }
-            };
-            row_obj.insert(col_name.clone(), val);
+        for (col_name, value) in columns.iter().zip(r.values) {
+            row_obj.insert(col_name.clone(), sqlite_value_json(value));
         }
         rows.push(serde_json::Value::Object(row_obj));
     }
@@ -940,12 +923,8 @@ async fn spin_mysql_query_rows(
 
     while let Some(row) = rowset.rows().next().await {
         let mut row_obj = serde_json::Map::new();
-        for (index, value) in row.iter().enumerate() {
-            let col_name = col_names
-                .get(index)
-                .cloned()
-                .unwrap_or_else(|| format!("col_{index}"));
-            row_obj.insert(col_name, spin_mysql_value_to_json(value));
+        for (col_name, value) in col_names.iter().zip(row.iter()) {
+            row_obj.insert(col_name.clone(), spin_mysql_value_to_json(value));
         }
         rows.push(serde_json::Value::Object(row_obj));
     }

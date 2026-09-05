@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! # ddd_cqrs_es
 //!
 //! A lightweight framework for building Domain-Driven Design, CQRS, and Event

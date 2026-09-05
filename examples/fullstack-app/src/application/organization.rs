@@ -34,18 +34,17 @@ pub async fn create_organization(
     auth: RequestAuth,
 ) -> AuthStackResult<OrganizationSummary> {
     validate_display_name("organization name", &request.name, 120)?;
+    let (context, _) = verified_context_and_permissions(auth, false).await?;
     let mut slug = request.slug.trim().to_ascii_lowercase();
     if slug.is_empty() {
         slug = crate::store::suggest_org_slug(request.name.trim());
     }
     crate::store::validate_org_slug(&slug)?;
-    // Fail fast if taken.
     if crate::store::resolve_org_id_for_slug(&slug).await.is_ok() {
         return Err(AuthStackError::validation(format!(
             "workspace URL “{slug}” is already taken"
         )));
     }
-    let (context, _) = verified_context_and_permissions(auth, false).await?;
     let summary = crate::auth_product::create_organization(
         request.name.trim(),
         &slug,

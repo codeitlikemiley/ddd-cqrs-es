@@ -3,7 +3,20 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+macro_rules! redacted_debug {
+    ($type:ident, visible [$($visible:ident),* $(,)?], secret [$($secret:ident),* $(,)?]) => {
+        impl std::fmt::Debug for $type {
+            fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                let mut debug = formatter.debug_struct(stringify!($type));
+                $(debug.field(stringify!($visible), &self.$visible);)*
+                $(debug.field(stringify!($secret), &"[REDACTED]");)*
+                debug.finish()
+            }
+        }
+    };
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SecretCreateRequest {
     /// Env-like key: `^[A-Z][A-Z0-9_]{1,63}$` (preferred).
     #[serde(default)]
@@ -21,12 +34,18 @@ pub struct SecretCreateRequest {
     pub scope: String,
 }
 
+redacted_debug!(
+    SecretCreateRequest,
+    visible [key, name, label, description, scope],
+    secret [value]
+);
+
 fn default_vault_scope_user() -> String {
     "user".to_owned()
 }
 
 /// Client-safe vault entry — **never** includes the secret value.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SecretSummary {
     pub id: String,
     /// Env-like key for connectors (`STRIPE_SECRET_KEY`).
@@ -54,7 +73,7 @@ fn default_masked_secret() -> String {
     "••••••••".to_owned()
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SecretRevealResponse {
     pub id: String,
     pub key: String,
@@ -63,3 +82,9 @@ pub struct SecretRevealResponse {
     /// UI should remask after this many seconds.
     pub reveal_ttl_seconds: u32,
 }
+
+redacted_debug!(
+    SecretRevealResponse,
+    visible [id, key, reveal_ttl_seconds],
+    secret [value]
+);

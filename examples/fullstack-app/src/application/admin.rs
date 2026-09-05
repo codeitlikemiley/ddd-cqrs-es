@@ -127,6 +127,7 @@ pub async fn publish_policy(
     if request.policy_text.len() > 1024 * 1024 || request.schema_text.len() > 1024 * 1024 {
         return Err(AuthStackError::validation("policy bundle is too large"));
     }
+    let actor = require_step_up_permission_for("system.policy.manage", auth).await?;
     CedarProvider::new_validated(
         &request.policy_text,
         &request.schema_text,
@@ -134,7 +135,6 @@ pub async fn publish_policy(
         "candidate",
     )
     .map_err(map_cedar_error)?;
-    let actor = require_step_up_permission_for("system.policy.manage", auth).await?;
     let version = crate::auth_product::publish_policy_version(
         actor
             .session_id

@@ -681,6 +681,7 @@ async fn validate_csrf_if_cookie_authenticated(
     if cookie_session_id.is_none() {
         return Ok(());
     }
+    crate::application::validate_browser_origin(req.headers()).await?;
     crate::application::validate_csrf_token_for_session(
         cookie_session_id,
         header_value(req, "x-csrf-token"),

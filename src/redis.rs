@@ -198,6 +198,60 @@ redis.call('HSET', KEYS[1],
 return 'OK'
 "#;
 
+struct CachedLuaScript {
+    source: &'static str,
+    sha1: &'static str,
+}
+
+const APPEND_SCRIPT: CachedLuaScript = CachedLuaScript {
+    source: APPEND_LUA,
+    sha1: "1b83ba4c63387d736795494b4c0f2fac1576de61",
+};
+const FETCH_HASHES_SCRIPT: CachedLuaScript = CachedLuaScript {
+    source: FETCH_HASHES_LUA,
+    sha1: "b1ed689566ff9ce3edb56bbd9f90d15b0a738d22",
+};
+const CHECKPOINT_SAVE_SCRIPT: CachedLuaScript = CachedLuaScript {
+    source: CHECKPOINT_SAVE_LUA,
+    sha1: "21e8df8dffb121e6a79228e01590ece79fb26cd3",
+};
+const IDEMPOTENCY_RESERVE_SCRIPT: CachedLuaScript = CachedLuaScript {
+    source: IDEMPOTENCY_RESERVE_LUA,
+    sha1: "b7eaa5f0204212ebf01af5af266f4b17032ea9d3",
+};
+const IDEMPOTENCY_SAVE_SCRIPT: CachedLuaScript = CachedLuaScript {
+    source: IDEMPOTENCY_SAVE_LUA,
+    sha1: "2bb511d81c4929f792cd2694d616e8dd60dd4465",
+};
+const IDEMPOTENCY_REMOVE_SCRIPT: CachedLuaScript = CachedLuaScript {
+    source: IDEMPOTENCY_REMOVE_LUA,
+    sha1: "18ba044b3a2665fe469765ce629c7e014686e9b2",
+};
+const SNAPSHOT_SAVE_SCRIPT: CachedLuaScript = CachedLuaScript {
+    source: SNAPSHOT_SAVE_LUA,
+    sha1: "fe94bb436a0f8608953957a38283c9469eeae207",
+};
+
+fn is_noscript_error<E: Display>(error: &E) -> bool {
+    error.to_string().to_ascii_uppercase().contains("NOSCRIPT")
+}
+
+async fn execute_lua_script<C: RedisCommandExecutor>(
+    client: &C,
+    script: &CachedLuaScript,
+    mut args: Vec<Vec<u8>>,
+) -> Result<RedisValue, C::Error> {
+    args[0] = script.sha1.as_bytes().to_vec();
+    match client.execute("EVALSHA", args.clone()).await {
+        Ok(value) => Ok(value),
+        Err(error) if is_noscript_error(&error) => {
+            args[0] = script.source.as_bytes().to_vec();
+            client.execute("EVAL", args).await
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Redis protocol value returned by [`RedisCommandExecutor`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RedisValue {
@@ -427,9 +481,7 @@ where
             for sequence in chunk {
                 args.push(self.event_key(*sequence).into_bytes());
             }
-            let value = self
-                .client
-                .execute("EVAL", args)
+            let value = execute_lua_script(&self.client, &FETCH_HASHES_SCRIPT, args)
                 .await
                 .map_err(map_executor_error)?;
 
@@ -523,8 +575,8 @@ where
                 .load_indexed_sequences(&keys.stream_key, 0, None)
                 .await?;
             let hashes = self.load_sequence_hashes(&sequences).await?;
-            for hash in hashes {
-                if hash_field_string(&hash, "aggregate_type")? == aggregate_type {
+            for mut hash in hashes {
+                if hash_field_string(&mut hash, "aggregate_type")? == aggregate_type {
                     events.push(hash_to_envelope::<A>(&self.upcasters, hash)?);
                 }
             }
@@ -550,8 +602,8 @@ where
                 .load_indexed_sequences(&keys.stream_key, revision, None)
                 .await?;
             let hashes = self.load_sequence_hashes(&sequences).await?;
-            for hash in hashes {
-                if hash_field_string(&hash, "aggregate_type")? == aggregate_type {
+            for mut hash in hashes {
+                if hash_field_string(&mut hash, "aggregate_type")? == aggregate_type {
                     events.push(hash_to_envelope::<A>(&self.upcasters, hash)?);
                 }
             }
@@ -596,9 +648,7 @@ where
             expected_revision,
             events: &prepared,
         });
-        let value = self
-            .client
-            .execute("EVAL", args)
+        let value = execute_lua_script(&self.client, &APPEND_SCRIPT, args)
             .await
             .map_err(map_executor_error)?;
         let AppendEvalResult {
@@ -772,19 +822,18 @@ where
         projection_name: &str,
         sequence: u64,
     ) -> Result<(), Self::Error> {
-        let _ = self
-            .client
-            .execute(
-                "EVAL",
-                vec![
-                    CHECKPOINT_SAVE_LUA.as_bytes().to_vec(),
-                    "1".into(),
-                    self.checkpoint_key(projection_name).into_bytes(),
-                    sequence.to_string().into_bytes(),
-                ],
-            )
-            .await
-            .map_err(map_executor_error)?;
+        let _ = execute_lua_script(
+            &self.client,
+            &CHECKPOINT_SAVE_SCRIPT,
+            vec![
+                CHECKPOINT_SAVE_LUA.as_bytes().to_vec(),
+                "1".into(),
+                self.checkpoint_key(projection_name).into_bytes(),
+                sequence.to_string().into_bytes(),
+            ],
+        )
+        .await
+        .map_err(map_executor_error)?;
         Ok(())
     }
 
@@ -916,21 +965,20 @@ where
         config: &crate::idempotency::IdempotencyLeaseConfig,
     ) -> Result<bool, Self::Error> {
         let lease = crate::idempotency::new_lease(config);
-        let result = self
-            .client
-            .execute(
-                "EVAL",
-                vec![
-                    IDEMPOTENCY_RESERVE_LUA.as_bytes().to_vec(),
-                    "1".into(),
-                    self.key(&key).into_bytes(),
-                    lease.owner.into_bytes(),
-                    lease.expires_at_ms.to_string().into_bytes(),
-                    crate::idempotency::now_ms().to_string().into_bytes(),
-                ],
-            )
-            .await
-            .map_err(map_executor_error)?;
+        let result = execute_lua_script(
+            &self.client,
+            &IDEMPOTENCY_RESERVE_SCRIPT,
+            vec![
+                IDEMPOTENCY_RESERVE_LUA.as_bytes().to_vec(),
+                "1".into(),
+                self.key(&key).into_bytes(),
+                lease.owner.into_bytes(),
+                lease.expires_at_ms.to_string().into_bytes(),
+                crate::idempotency::now_ms().to_string().into_bytes(),
+            ],
+        )
+        .await
+        .map_err(map_executor_error)?;
         match result {
             RedisValue::Int(1) => Ok(true),
             RedisValue::Int(0) => Ok(false),
@@ -983,35 +1031,33 @@ return 0
         let value_json = serde_json::to_string(&value).map_err(|error| {
             EventStoreError::serialization(format!("idempotency value JSON: {error}"))
         })?;
-        let _ = self
-            .client
-            .execute(
-                "EVAL",
-                vec![
-                    IDEMPOTENCY_SAVE_LUA.as_bytes().to_vec(),
-                    "1".into(),
-                    self.key(&key).into_bytes(),
-                    value_json.into_bytes(),
-                ],
-            )
-            .await
-            .map_err(map_executor_error)?;
+        let _ = execute_lua_script(
+            &self.client,
+            &IDEMPOTENCY_SAVE_SCRIPT,
+            vec![
+                IDEMPOTENCY_SAVE_LUA.as_bytes().to_vec(),
+                "1".into(),
+                self.key(&key).into_bytes(),
+                value_json.into_bytes(),
+            ],
+        )
+        .await
+        .map_err(map_executor_error)?;
         Ok(())
     }
 
     async fn remove(&self, key: &crate::idempotency::IdempotencyKey) -> Result<(), Self::Error> {
-        let _ = self
-            .client
-            .execute(
-                "EVAL",
-                vec![
-                    IDEMPOTENCY_REMOVE_LUA.as_bytes().to_vec(),
-                    "1".into(),
-                    self.key(key).into_bytes(),
-                ],
-            )
-            .await
-            .map_err(map_executor_error)?;
+        let _ = execute_lua_script(
+            &self.client,
+            &IDEMPOTENCY_REMOVE_SCRIPT,
+            vec![
+                IDEMPOTENCY_REMOVE_LUA.as_bytes().to_vec(),
+                "1".into(),
+                self.key(key).into_bytes(),
+            ],
+        )
+        .await
+        .map_err(map_executor_error)?;
         Ok(())
     }
 }
@@ -1160,23 +1206,22 @@ where
         })?;
         let recorded_at_ms = system_time_to_millis(snapshot.recorded_at)?;
 
-        let result = self
-            .client
-            .execute(
-                "EVAL",
-                vec![
-                    SNAPSHOT_SAVE_LUA.as_bytes().to_vec(),
-                    "1".into(),
-                    key.into_bytes(),
-                    snapshot.revision.to_string().into_bytes(),
-                    state_json.into_bytes(),
-                    metadata_json.into_bytes(),
-                    recorded_at_ms.to_string().into_bytes(),
-                    snapshot.aggregate_type.as_bytes().to_vec(),
-                ],
-            )
-            .await
-            .map_err(map_executor_error)?;
+        let result = execute_lua_script(
+            &self.client,
+            &SNAPSHOT_SAVE_SCRIPT,
+            vec![
+                SNAPSHOT_SAVE_LUA.as_bytes().to_vec(),
+                "1".into(),
+                key.into_bytes(),
+                snapshot.revision.to_string().into_bytes(),
+                state_json.into_bytes(),
+                metadata_json.into_bytes(),
+                recorded_at_ms.to_string().into_bytes(),
+                snapshot.aggregate_type.as_bytes().to_vec(),
+            ],
+        )
+        .await
+        .map_err(map_executor_error)?;
 
         match result {
             RedisValue::Status(status) if status.eq_ignore_ascii_case("OK") => Ok(()),
@@ -2023,23 +2068,23 @@ fn parse_append_eval_result(
 
 fn hash_to_envelope<A>(
     upcasters: &UpcasterRegistry,
-    hash: BTreeMap<String, Vec<u8>>,
+    mut hash: BTreeMap<String, Vec<u8>>,
 ) -> Result<EventEnvelope<A::Event, A::Id>, EventStoreError>
 where
     A: Aggregate,
     A::Event: serde::de::DeserializeOwned,
     A::Id: serde::de::DeserializeOwned,
 {
-    let event_id = hash_field_string(&hash, "event_id")?;
-    let aggregate_id_json = hash_field_string(&hash, "aggregate_id")?;
-    let aggregate_type = hash_field_string(&hash, "aggregate_type")?;
-    let revision = hash_field_u64(&hash, "revision")?;
-    let sequence = hash_field_u64(&hash, "sequence")?;
-    let event_type = hash_field_string(&hash, "event_type")?;
-    let event_version = hash_field_u32(&hash, "event_version")?;
-    let payload_bytes = hash_field_bytes(&hash, "payload")?;
-    let metadata_bytes = hash_field_bytes(&hash, "metadata")?;
-    let recorded_at_ms = hash_field_i64(&hash, "recorded_at_ms")?;
+    let event_id = hash_field_string(&mut hash, "event_id")?;
+    let aggregate_id_json = hash_field_string(&mut hash, "aggregate_id")?;
+    let aggregate_type = hash_field_string(&mut hash, "aggregate_type")?;
+    let revision = hash_field_u64(&mut hash, "revision")?;
+    let sequence = hash_field_u64(&mut hash, "sequence")?;
+    let event_type = hash_field_string(&mut hash, "event_type")?;
+    let event_version = hash_field_u32(&mut hash, "event_version")?;
+    let payload_bytes = take_hash_field(&mut hash, "payload")?;
+    let metadata_bytes = take_hash_field(&mut hash, "metadata")?;
+    let recorded_at_ms = hash_field_i64(&mut hash, "recorded_at_ms")?;
 
     let aggregate_id = deserialize_id(&aggregate_id_json)?;
     let (event_version, upcasted_bytes) = upcasters
@@ -2071,18 +2116,18 @@ where
 /// keeping the payload as raw JSON and the aggregate id as its stored string.
 fn hash_to_raw_envelope(
     upcasters: &UpcasterRegistry,
-    hash: BTreeMap<String, Vec<u8>>,
+    mut hash: BTreeMap<String, Vec<u8>>,
 ) -> Result<crate::raw_feed::RawEventEnvelope, EventStoreError> {
-    let event_id = hash_field_string(&hash, "event_id")?;
-    let aggregate_id_json = hash_field_string(&hash, "aggregate_id")?;
-    let aggregate_type = hash_field_string(&hash, "aggregate_type")?;
-    let revision = hash_field_u64(&hash, "revision")?;
-    let sequence = hash_field_u64(&hash, "sequence")?;
-    let event_type = hash_field_string(&hash, "event_type")?;
-    let event_version = hash_field_u32(&hash, "event_version")?;
-    let payload_bytes = hash_field_bytes(&hash, "payload")?;
-    let metadata_bytes = hash_field_bytes(&hash, "metadata")?;
-    let recorded_at_ms = hash_field_i64(&hash, "recorded_at_ms")?;
+    let event_id = hash_field_string(&mut hash, "event_id")?;
+    let aggregate_id_json = hash_field_string(&mut hash, "aggregate_id")?;
+    let aggregate_type = hash_field_string(&mut hash, "aggregate_type")?;
+    let revision = hash_field_u64(&mut hash, "revision")?;
+    let sequence = hash_field_u64(&mut hash, "sequence")?;
+    let event_type = hash_field_string(&mut hash, "event_type")?;
+    let event_version = hash_field_u32(&mut hash, "event_version")?;
+    let payload_bytes = take_hash_field(&mut hash, "payload")?;
+    let metadata_bytes = take_hash_field(&mut hash, "metadata")?;
+    let recorded_at_ms = hash_field_i64(&mut hash, "recorded_at_ms")?;
 
     let (event_version, upcasted_bytes) = upcasters
         .prepare_payload(&event_type, event_version, payload_bytes)
@@ -2310,40 +2355,49 @@ fn redis_value_u64(value: &RedisValue, label: &str) -> Result<u64, EventStoreErr
     }
 }
 
-fn hash_field_bytes(
-    hash: &BTreeMap<String, Vec<u8>>,
+fn take_hash_field(
+    hash: &mut BTreeMap<String, Vec<u8>>,
     field: &str,
 ) -> Result<Vec<u8>, EventStoreError> {
-    hash.get(field).cloned().ok_or_else(|| {
+    hash.remove(field).ok_or_else(|| {
         EventStoreError::deserialization(format!("Redis event hash missing `{field}`"))
     })
 }
 
 fn hash_field_string(
-    hash: &BTreeMap<String, Vec<u8>>,
+    hash: &mut BTreeMap<String, Vec<u8>>,
     field: &str,
 ) -> Result<String, EventStoreError> {
-    let value = hash_field_bytes(hash, field)?;
+    let value = take_hash_field(hash, field)?;
     String::from_utf8(value).map_err(|error| {
         EventStoreError::deserialization(format!("Redis event hash `{field}` UTF-8: {error}"))
     })
 }
 
-fn hash_field_u64(hash: &BTreeMap<String, Vec<u8>>, field: &str) -> Result<u64, EventStoreError> {
+fn hash_field_u64(
+    hash: &mut BTreeMap<String, Vec<u8>>,
+    field: &str,
+) -> Result<u64, EventStoreError> {
     let value = hash_field_string(hash, field)?;
     value.parse::<u64>().map_err(|error| {
         EventStoreError::deserialization(format!("Redis event hash `{field}` u64: {error}"))
     })
 }
 
-fn hash_field_i64(hash: &BTreeMap<String, Vec<u8>>, field: &str) -> Result<i64, EventStoreError> {
+fn hash_field_i64(
+    hash: &mut BTreeMap<String, Vec<u8>>,
+    field: &str,
+) -> Result<i64, EventStoreError> {
     let value = hash_field_string(hash, field)?;
     value.parse::<i64>().map_err(|error| {
         EventStoreError::deserialization(format!("Redis event hash `{field}` i64: {error}"))
     })
 }
 
-fn hash_field_u32(hash: &BTreeMap<String, Vec<u8>>, field: &str) -> Result<u32, EventStoreError> {
+fn hash_field_u32(
+    hash: &mut BTreeMap<String, Vec<u8>>,
+    field: &str,
+) -> Result<u32, EventStoreError> {
     let value = hash_field_u64(hash, field)?;
     u32::try_from(value).map_err(|_| {
         EventStoreError::deserialization(format!("Redis event hash `{field}` exceeds u32"))
@@ -2896,7 +2950,7 @@ mod tests {
                     self.record(FakeRedisCommand::RangeByScore, requested, items.len());
                     Ok(RedisValue::Array(items))
                 }
-                "EVAL" => {
+                "EVAL" | "EVALSHA" => {
                     let key_count: usize = arg(1).parse().unwrap();
                     let mut items = Vec::new();
                     for index in 0..key_count {
