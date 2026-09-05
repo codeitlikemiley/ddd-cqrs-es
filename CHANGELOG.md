@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0-alpha.1
+
+- **Breaking:** `EventEnvelope::aggregate_type` is now [`AggregateType`], a
+  serde-transparent `Cow<'static, str>` newtype matching [`EventType`]. Typed
+  feeds can borrow [`Aggregate::aggregate_type`] without allocating per
+  envelope. Convert with `as_str()` or `into_string()` at store and protocol
+  boundaries.
+
 ## 0.3.0-rc.8
 
 - **Deferred to 0.4:** `EventEnvelope::aggregate_type` remains an owned

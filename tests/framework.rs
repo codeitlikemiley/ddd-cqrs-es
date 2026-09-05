@@ -1,11 +1,12 @@
 use ddd_cqrs_es::{
     assert_atomic_idempotent_store_contract, assert_event_store_any_writers_contract,
     assert_event_store_append_race_contract, assert_event_store_contract, Aggregate,
-    AggregateFixture, ConcurrencyError, DomainEvent, EventStore, EventStoreContractOptions,
-    EventStoreError, EventStream, EventType, ExpectedRevision, IdempotencyKey, IdempotencyStore,
-    IdempotencyWaitConfig, InMemoryEventStore, InMemoryIdempotencyStore, InMemoryProjectionRunner,
-    InMemorySnapshotStore, Metadata, NewEvent, Projection, ProjectionBatchConfig, Repository,
-    RepositoryError, Snapshot, SnapshotStore, DEFAULT_PROJECTION_BATCH_SIZE,
+    AggregateFixture, AggregateType, ConcurrencyError, DomainEvent, EventStore,
+    EventStoreContractOptions, EventStoreError, EventStream, EventType, ExpectedRevision,
+    IdempotencyKey, IdempotencyStore, IdempotencyWaitConfig, InMemoryEventStore,
+    InMemoryIdempotencyStore, InMemoryProjectionRunner, InMemorySnapshotStore, Metadata, NewEvent,
+    Projection, ProjectionBatchConfig, Repository, RepositoryError, Snapshot, SnapshotStore,
+    DEFAULT_PROJECTION_BATCH_SIZE,
 };
 #[cfg(any(
     feature = "sqlite",
@@ -479,6 +480,34 @@ fn event_type_is_a_string_newtype() {
     assert_eq!(event_type.as_str(), "counter_created");
     assert_eq!(event_type.to_string(), "counter_created");
     assert_eq!(event_type.clone().into_string(), "counter_created");
+}
+
+#[test]
+fn aggregate_type_is_a_string_newtype() {
+    let aggregate_type = AggregateType::from("counter");
+
+    assert_eq!(aggregate_type.as_str(), "counter");
+    assert_eq!(aggregate_type.to_string(), "counter");
+    assert_eq!(aggregate_type.clone().into_string(), "counter");
+    assert_eq!(aggregate_type, "counter");
+}
+
+#[test]
+fn aggregate_type_from_static_borrows_without_allocating() {
+    let borrowed = AggregateType::from_static("counter");
+    let owned = AggregateType::from("counter");
+    assert_eq!(borrowed, owned);
+    assert_eq!(borrowed.as_str(), "counter");
+}
+
+#[cfg(feature = "json")]
+#[test]
+fn aggregate_type_round_trips_through_serde() {
+    let aggregate_type = AggregateType::from("counter");
+    let json = serde_json::to_string(&aggregate_type).unwrap();
+    let restored: AggregateType = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(restored, aggregate_type);
 }
 
 #[cfg(feature = "json")]
