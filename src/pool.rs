@@ -533,7 +533,6 @@ mod tests {
 
     #[test]
     fn connect_factory_panic_does_not_leak_slot() {
-        use std::panic::{catch_unwind, AssertUnwindSafe};
         use std::sync::{
             atomic::{AtomicUsize, Ordering},
             Arc,
@@ -542,26 +541,26 @@ mod tests {
         let attempts = Arc::new(AtomicUsize::new(0));
         let counter = Arc::clone(&attempts);
         let pool = ConnectionPool::<()>::pooled(1, move || {
-            counter.fetch_add(1, Ordering::SeqCst);
-            panic!("connect factory blew up");
+            let attempt = counter.fetch_add(1, Ordering::SeqCst);
+            if attempt == 1 {
+                panic!("connect factory blew up");
+            }
+            Ok(())
         })
         .with_acquire_timeout(Duration::from_millis(50));
 
-        let held = pool.acquire().unwrap();
-        let Err(error) = pool.acquire() else {
-            panic!("expected exhausted pool while holding the only lease");
-        };
-        assert!(matches!(error, EventStoreError::Connection { .. }));
+        let mut held = pool.acquire().unwrap();
+        assert!(pool.acquire().is_err());
 
+        held.mark_broken();
         drop(held);
 
-        catch_unwind(AssertUnwindSafe(|| {
-            let _ = pool.acquire();
-        }))
-        .expect_err("factory panic should propagate");
-
+        assert!(matches!(
+            pool.acquire(),
+            Err(EventStoreError::Connection { .. })
+        ));
         pool.acquire().unwrap();
-        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
     }
 
     #[test]

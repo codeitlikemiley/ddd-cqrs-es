@@ -1144,7 +1144,7 @@ fn process_manager_runner_uses_stable_idempotency_keys() {
 #[cfg(feature = "sqlite")]
 #[test]
 fn sqlite_append_contention_surfaces_concurrency_not_backend_lock() {
-    use ddd_cqrs_es::{ConcurrencyError, EventStoreError, ExpectedRevision, NewEvent};
+    use ddd_cqrs_es::{EventStoreError, ExpectedRevision, NewEvent};
     use std::sync::{Arc, Barrier};
     use std::thread;
 
