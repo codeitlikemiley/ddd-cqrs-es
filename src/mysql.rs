@@ -6,7 +6,9 @@ use crate::event::{EventEnvelope, EventId, ExpectedRevision, NewEvent};
 use crate::event_store::{
     AtomicIdempotentEventStore, EventStore, EventStream, IdempotentAppendError,
 };
-use crate::idempotency::{IdempotencyKey, IdempotencyState, IdempotencyStore};
+use crate::idempotency::{
+    new_lease, IdempotencyKey, IdempotencyLeaseConfig, IdempotencyState, IdempotencyStore,
+};
 use crate::pool::{resolve_pool_size, ConnectionPool};
 use crate::projection::CheckpointStore;
 use crate::snapshot::{Snapshot, SnapshotStore};
@@ -553,13 +555,18 @@ where
                 })?;
                 let value: Option<String> = row.get::<Option<String>, _>(1).flatten();
                 match (state.as_str(), value) {
-                    ("pending", _) => crate::idempotency::pending_state_from_row(None, None, crate::idempotency::now_ms())
-                        .map(IdempotencyState::Pending)
-                        .ok_or_else(|| {
-                            EventStoreError::deserialization(
-                                "pending idempotency row has expired or is missing lease metadata".to_owned(),
-                            )
-                        }),
+                    ("pending", _) => crate::idempotency::pending_state_from_row(
+                        None,
+                        None,
+                        crate::idempotency::now_ms(),
+                    )
+                    .map(IdempotencyState::Pending)
+                    .ok_or_else(|| {
+                        EventStoreError::deserialization(
+                            "pending idempotency row has expired or is missing lease metadata"
+                                .to_owned(),
+                        )
+                    }),
                     ("complete", Some(value)) => serde_json::from_str(&value)
                         .map(IdempotencyState::Complete)
                         .map_err(|error| {
@@ -1434,8 +1441,12 @@ where
             let value_str: Option<String> = row.get::<Option<String>, _>(1).flatten();
 
             match (state.as_str(), value_str) {
-                ("pending", _) => Ok(crate::idempotency::pending_state_from_row(None, None, crate::idempotency::now_ms())
-                    .map(IdempotencyState::Pending)),
+                ("pending", _) => Ok(crate::idempotency::pending_state_from_row(
+                    None,
+                    None,
+                    crate::idempotency::now_ms(),
+                )
+                .map(IdempotencyState::Pending)),
                 ("complete", Some(value_str)) => {
                     let value = serde_json::from_str(&value_str).map_err(|error| {
                         EventStoreError::deserialization(format!("idempotency value JSON: {error}"))
@@ -1501,6 +1512,27 @@ where
                 .map_err(map_mysql_error)?;
             Ok(())
         })
+    }
+
+    fn reserve_with_lease(
+        &self,
+        key: IdempotencyKey,
+        config: &IdempotencyLeaseConfig,
+    ) -> Result<bool, Self::Error> {
+        IdempotencyStore::reserve(self, key).map(|reserved| {
+            if reserved {
+                let _ = (config, new_lease(config));
+            }
+            reserved
+        })
+    }
+
+    fn heartbeat(&self, _key: &IdempotencyKey, _owner: &str) -> Result<bool, Self::Error> {
+        Ok(false)
+    }
+
+    fn expire_stale_pending(&self, _now_ms: u64) -> Result<usize, Self::Error> {
+        Ok(0)
     }
 }
 
@@ -1784,6 +1816,36 @@ where
         let this = self.clone();
         let key = key.clone();
         tokio::task::spawn_blocking(move || IdempotencyStore::remove(&this, &key))
+            .await
+            .map_err(|e| EventStoreError::backend(e.to_string()))?
+    }
+
+    async fn reserve_with_lease(
+        &self,
+        key: IdempotencyKey,
+        config: &crate::idempotency::IdempotencyLeaseConfig,
+    ) -> Result<bool, Self::Error> {
+        let this = self.clone();
+        let config = config.clone();
+        tokio::task::spawn_blocking(move || {
+            IdempotencyStore::reserve_with_lease(&this, key, &config)
+        })
+        .await
+        .map_err(|e| EventStoreError::backend(e.to_string()))?
+    }
+
+    async fn heartbeat(&self, key: &IdempotencyKey, owner: &str) -> Result<bool, Self::Error> {
+        let this = self.clone();
+        let key = key.clone();
+        let owner = owner.to_owned();
+        tokio::task::spawn_blocking(move || IdempotencyStore::heartbeat(&this, &key, &owner))
+            .await
+            .map_err(|e| EventStoreError::backend(e.to_string()))?
+    }
+
+    async fn expire_stale_pending(&self, now_ms: u64) -> Result<usize, Self::Error> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || IdempotencyStore::expire_stale_pending(&this, now_ms))
             .await
             .map_err(|e| EventStoreError::backend(e.to_string()))?
     }

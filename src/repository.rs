@@ -409,11 +409,7 @@ where
                 }
             };
 
-        save_idempotency_result_with_retry(
-            idempotency_store,
-            idempotency_key,
-            committed.clone(),
-        )?;
+        save_idempotency_result_with_retry(idempotency_store, idempotency_key, committed.clone())?;
 
         Ok(committed)
     }

@@ -278,7 +278,9 @@ mod tests {
     fn register_rejects_duplicate_source_version() {
         let registry = UpcasterRegistry::new();
         registry.register("evt", Step { from: 1, to: 2 }).unwrap();
-        let error = registry.register("evt", Step { from: 1, to: 3 }).unwrap_err();
+        let error = registry
+            .register("evt", Step { from: 1, to: 3 })
+            .unwrap_err();
         assert_eq!(error.source_version, 1);
         assert_eq!(error.event_type, "evt");
     }

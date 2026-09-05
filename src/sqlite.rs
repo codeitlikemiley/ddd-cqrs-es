@@ -485,29 +485,31 @@ where
             .map_err(map_sqlite_error)?;
 
         let now = now_ms();
-        row.map(|(state, value, owner, expires_at_ms)| match (state.as_str(), value) {
-            ("pending", _) => pending_state_from_row(owner, expires_at_ms, now)
-                .map(IdempotencyState::Pending)
-                .ok_or_else(|| {
-                    EventStoreError::deserialization(
-                        "pending idempotency row has expired or is missing lease metadata"
-                            .to_owned(),
-                    )
-                }),
-            ("complete", Some(value)) => serde_json::from_str(&value)
-                .map(IdempotencyState::Complete)
-                .map_err(|error| {
-                    EventStoreError::deserialization(format!(
-                        "idempotent committed events JSON: {error}"
-                    ))
-                }),
-            ("complete", None) => Err(EventStoreError::deserialization(
-                "completed idempotency row is missing value".to_owned(),
-            )),
-            (state, _) => Err(EventStoreError::deserialization(format!(
-                "unknown idempotency state: {state}"
-            ))),
-        })
+        row.map(
+            |(state, value, owner, expires_at_ms)| match (state.as_str(), value) {
+                ("pending", _) => pending_state_from_row(owner, expires_at_ms, now)
+                    .map(IdempotencyState::Pending)
+                    .ok_or_else(|| {
+                        EventStoreError::deserialization(
+                            "pending idempotency row has expired or is missing lease metadata"
+                                .to_owned(),
+                        )
+                    }),
+                ("complete", Some(value)) => serde_json::from_str(&value)
+                    .map(IdempotencyState::Complete)
+                    .map_err(|error| {
+                        EventStoreError::deserialization(format!(
+                            "idempotent committed events JSON: {error}"
+                        ))
+                    }),
+                ("complete", None) => Err(EventStoreError::deserialization(
+                    "completed idempotency row is missing value".to_owned(),
+                )),
+                (state, _) => Err(EventStoreError::deserialization(format!(
+                    "unknown idempotency state: {state}"
+                ))),
+            },
+        )
         .transpose()
     }
 
@@ -557,7 +559,7 @@ where
             .map_err(|error| IdempotentAppendError::Store(map_sqlite_error(error)))?;
 
         match row {
-            Some((state, Some(value), owner, expires_at_ms)) if state == "complete" => {
+            Some((state, Some(value), _, _)) if state == "complete" => {
                 let committed = serde_json::from_str(&value).map_err(|error| {
                     IdempotentAppendError::Store(EventStoreError::deserialization(format!(
                         "idempotent committed events JSON: {error}"

@@ -317,15 +317,13 @@ where
             .map_err(|_| InMemoryIdempotencyError::Poisoned)?;
         let now = now_ms();
         match entries.entry(key) {
-            std::collections::hash_map::Entry::Occupied(mut occupied) => {
-                match occupied.get() {
-                    IdempotencyState::Pending(lease) if lease.is_expired(now) => {
-                        occupied.insert(IdempotencyState::Pending(new_lease(config)));
-                        Ok(true)
-                    }
-                    _ => Ok(false),
+            std::collections::hash_map::Entry::Occupied(mut occupied) => match occupied.get() {
+                IdempotencyState::Pending(lease) if lease.is_expired(now) => {
+                    occupied.insert(IdempotencyState::Pending(new_lease(config)));
+                    Ok(true)
                 }
-            }
+                _ => Ok(false),
+            },
             std::collections::hash_map::Entry::Vacant(vacant) => {
                 vacant.insert(IdempotencyState::Pending(new_lease(config)));
                 Ok(true)

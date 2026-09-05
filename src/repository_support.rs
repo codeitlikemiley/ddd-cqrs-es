@@ -139,12 +139,7 @@ where
 }
 
 #[cfg(feature = "async")]
-pub(crate) async fn async_save_idempotency_result_with_retry<
-    I,
-    V,
-    DomainError,
-    StoreError,
->(
+pub(crate) async fn async_save_idempotency_result_with_retry<I, V, DomainError, StoreError>(
     idempotency_store: &I,
     idempotency_key: IdempotencyKey,
     value: V,
@@ -169,12 +164,7 @@ where
 }
 
 #[cfg(feature = "async")]
-pub(crate) async fn async_release_idempotency_key_with_result<
-    I,
-    V,
-    DomainError,
-    StoreError,
->(
+pub(crate) async fn async_release_idempotency_key_with_result<I, V, DomainError, StoreError>(
     idempotency_store: &I,
     idempotency_key: &IdempotencyKey,
 ) -> Result<(), IdempotentRepositoryError<DomainError, StoreError, I::Error>>
@@ -216,4 +206,3 @@ where
         attempts: RELEASE_MAX_ATTEMPTS,
     })
 }
-

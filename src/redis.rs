@@ -154,7 +154,6 @@ const IDEMPOTENCY_REMOVE_LUA: &str = r#"
 return redis.call('DEL', KEYS[1])
 "#;
 
-
 /// Redis protocol value returned by [`RedisCommandExecutor`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RedisValue {
@@ -708,8 +707,6 @@ where
     }
 }
 
-
-
 /// Experimental Redis-backed async idempotency store.
 #[derive(Clone, Debug)]
 pub struct RedisIdempotencyStore<C, V>
@@ -806,8 +803,12 @@ where
                 let owner = Self::field_from_hash(&value, "owner");
                 let expires_at_ms = Self::field_from_hash(&value, "expires_at_ms")
                     .and_then(|v| v.parse::<i64>().ok());
-                Ok(crate::idempotency::pending_state_from_row(owner, expires_at_ms, crate::idempotency::now_ms())
-                    .map(crate::idempotency::IdempotencyState::Pending))
+                Ok(crate::idempotency::pending_state_from_row(
+                    owner,
+                    expires_at_ms,
+                    crate::idempotency::now_ms(),
+                )
+                .map(crate::idempotency::IdempotencyState::Pending))
             }
             other => Err(EventStoreError::deserialization(format!(
                 "unknown idempotency state: {other}"
@@ -904,10 +905,7 @@ return 0
         Ok(())
     }
 
-    async fn remove(
-        &self,
-        key: &crate::idempotency::IdempotencyKey,
-    ) -> Result<(), Self::Error> {
+    async fn remove(&self, key: &crate::idempotency::IdempotencyKey) -> Result<(), Self::Error> {
         let _ = self
             .client
             .execute(

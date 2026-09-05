@@ -7,8 +7,8 @@ use crate::event_store::{
     AtomicIdempotentEventStore, EventStore, EventStream, IdempotentAppendError,
 };
 use crate::idempotency::{
-    new_lease, now_ms, pending_state_from_row, IdempotencyKey,
-    IdempotencyLeaseConfig, IdempotencyState, IdempotencyStore,
+    new_lease, now_ms, pending_state_from_row, IdempotencyKey, IdempotencyLeaseConfig,
+    IdempotencyState, IdempotencyStore,
 };
 use crate::pool::{resolve_pool_size, ConnectionPool};
 use crate::snapshot::{Snapshot, SnapshotStore};
@@ -557,13 +557,18 @@ where
                 let value: Option<serde_json::Value> =
                     row.try_get(1).map_err(map_postgres_error)?;
                 match (state.as_str(), value) {
-                    ("pending", _) => crate::idempotency::pending_state_from_row(None, None, crate::idempotency::now_ms())
-                        .map(IdempotencyState::Pending)
-                        .ok_or_else(|| {
-                            EventStoreError::deserialization(
-                                "pending idempotency row has expired or is missing lease metadata".to_owned(),
-                            )
-                        }),
+                    ("pending", _) => crate::idempotency::pending_state_from_row(
+                        None,
+                        None,
+                        crate::idempotency::now_ms(),
+                    )
+                    .map(IdempotencyState::Pending)
+                    .ok_or_else(|| {
+                        EventStoreError::deserialization(
+                            "pending idempotency row has expired or is missing lease metadata"
+                                .to_owned(),
+                        )
+                    }),
                     ("complete", Some(value)) => serde_json::from_value(value)
                         .map(IdempotencyState::Complete)
                         .map_err(|error| {
@@ -1439,10 +1444,9 @@ where
             let value: Option<serde_json::Value> = row.try_get(1).map_err(map_postgres_error)?;
 
             match (state.as_str(), value) {
-                ("pending", _) => pending_state_from_row(None, None, now_ms())
-                    .map(IdempotencyState::Pending)
-                    .map(Some)
-                    .unwrap_or(Ok(None)),
+                ("pending", _) => {
+                    Ok(pending_state_from_row(None, None, now_ms()).map(IdempotencyState::Pending))
+                }
                 ("complete", Some(value)) => {
                     let value = serde_json::from_value(value).map_err(|error| {
                         EventStoreError::deserialization(format!("idempotency value JSON: {error}"))
@@ -1805,6 +1809,36 @@ where
         let this = self.clone();
         let key = key.clone();
         tokio::task::spawn_blocking(move || IdempotencyStore::remove(&this, &key))
+            .await
+            .map_err(|e| EventStoreError::backend(e.to_string()))?
+    }
+
+    async fn reserve_with_lease(
+        &self,
+        key: IdempotencyKey,
+        config: &crate::idempotency::IdempotencyLeaseConfig,
+    ) -> Result<bool, Self::Error> {
+        let this = self.clone();
+        let config = config.clone();
+        tokio::task::spawn_blocking(move || {
+            IdempotencyStore::reserve_with_lease(&this, key, &config)
+        })
+        .await
+        .map_err(|e| EventStoreError::backend(e.to_string()))?
+    }
+
+    async fn heartbeat(&self, key: &IdempotencyKey, owner: &str) -> Result<bool, Self::Error> {
+        let this = self.clone();
+        let key = key.clone();
+        let owner = owner.to_owned();
+        tokio::task::spawn_blocking(move || IdempotencyStore::heartbeat(&this, &key, &owner))
+            .await
+            .map_err(|e| EventStoreError::backend(e.to_string()))?
+    }
+
+    async fn expire_stale_pending(&self, now_ms: u64) -> Result<usize, Self::Error> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || IdempotencyStore::expire_stale_pending(&this, now_ms))
             .await
             .map_err(|e| EventStoreError::backend(e.to_string()))?
     }

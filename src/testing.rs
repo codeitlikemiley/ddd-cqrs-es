@@ -395,7 +395,10 @@ where
 {
     assert_eq!(store.load(&key).unwrap(), None);
     assert!(store.reserve(key.clone()).unwrap());
-    assert!(matches!(store.load(&key).unwrap(), Some(IdempotencyState::Pending(_))));
+    assert!(matches!(
+        store.load(&key).unwrap(),
+        Some(IdempotencyState::Pending(_))
+    ));
     assert!(!store.reserve(key.clone()).unwrap());
     store.save(key.clone(), value.clone()).unwrap();
     assert_eq!(

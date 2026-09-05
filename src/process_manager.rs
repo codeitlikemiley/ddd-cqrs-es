@@ -240,7 +240,6 @@ impl<P, B> AsyncProcessManagerRunner<P, B> {
     }
 }
 
-
 use crate::event::EventEnvelope;
 use std::error::Error;
 
@@ -424,7 +423,9 @@ impl<P, B> AsyncProcessManagerRunner<P, B> {
         CP: ProcessManagerDispatchCheckpoint,
         Id: AsRef<str>,
     {
-        let result = self.run_envelope_with_checkpoint(envelope, checkpoint).await;
+        let result = self
+            .run_envelope_with_checkpoint(envelope, checkpoint)
+            .await;
         match result.error {
             None => Ok(result.dispatched),
             Some(error) => Err(error),
