@@ -3,7 +3,9 @@ fn env_non_empty(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|s| !s.is_empty())
 }
 
-use super::http::{redact_url_userinfo, truncate_body_for_error, validate_https_url, wasi_http_post};
+use super::http::{
+    redact_url_userinfo, truncate_body_for_error, validate_https_url, wasi_http_post,
+};
 
 // -------------------------------------------------------------------------
 // Neon / Serverless Postgres HTTP adapter
@@ -44,9 +46,7 @@ pub async fn execute_neon_query(
 
     if let Some(conn_str) = env_non_empty("DATABASE_URL")
         .or_else(|| env_non_empty("NEON_DB_URL"))
-        .filter(|value| {
-            value.starts_with("postgres://") || value.starts_with("postgresql://")
-        })
+        .filter(|value| value.starts_with("postgres://") || value.starts_with("postgresql://"))
     {
         if let (Some(conn_host), Some(endpoint_host)) = (
             postgres_connection_host(&conn_str),
@@ -110,11 +110,10 @@ fn postgres_connection_host(connection_string: &str) -> Option<String> {
     let stripped = connection_string
         .strip_prefix("postgres://")
         .or_else(|| connection_string.strip_prefix("postgresql://"))?;
-    let host_part = stripped.rfind('@').map_or(stripped, |idx| &stripped[idx + 1..]);
-    let host = host_part
-        .split(['/', '?'])
-        .next()
-        .unwrap_or(host_part);
+    let host_part = stripped
+        .rfind('@')
+        .map_or(stripped, |idx| &stripped[idx + 1..]);
+    let host = host_part.split(['/', '?']).next().unwrap_or(host_part);
     host.split(':').next().map(str::to_owned)
 }
 

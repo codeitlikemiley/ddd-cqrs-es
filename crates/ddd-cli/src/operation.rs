@@ -100,9 +100,8 @@ pub fn apply_operations(
                 Ok(content) => Some(content),
                 Err(error) => {
                     rollback_applied(&applied);
-                    return Err(error).with_context(|| {
-                        format!("failed to read {}", absolute_path.display())
-                    });
+                    return Err(error)
+                        .with_context(|| format!("failed to read {}", absolute_path.display()));
                 }
             }
         } else {
@@ -115,13 +114,11 @@ pub fn apply_operations(
             } else {
                 (|| -> Result<()> {
                     if let Some(parent) = absolute_path.parent() {
-                        std::fs::create_dir_all(parent).with_context(|| {
-                            format!("failed to create {}", parent.display())
-                        })?;
+                        std::fs::create_dir_all(parent)
+                            .with_context(|| format!("failed to create {}", parent.display()))?;
                     }
-                    std::fs::write(&absolute_path, &operation.content).with_context(|| {
-                        format!("failed to write {}", absolute_path.display())
-                    })
+                    std::fs::write(&absolute_path, &operation.content)
+                        .with_context(|| format!("failed to write {}", absolute_path.display()))
                 })()
             };
             if let Err(error) = write_result {

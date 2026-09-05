@@ -6,6 +6,8 @@
 //! durability; Redis messages are notifications and must not be treated as the
 //! source of truth.
 
+#[cfg(feature = "spin-redis")]
+use crate::adapters::http::redact_url_userinfo;
 use crate::aggregate::Aggregate;
 use crate::async_api::AsyncEventStore;
 use crate::error::EventStoreError;
@@ -21,8 +23,6 @@ use crate::upcast::UpcasterRegistry;
 use async_trait::async_trait;
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
-#[cfg(feature = "spin-redis")]
-use crate::adapters::http::redact_url_userinfo;
 use std::marker::PhantomData;
 #[cfg(feature = "wasi-redis")]
 use std::net::TcpStream;

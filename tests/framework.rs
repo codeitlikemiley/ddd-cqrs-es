@@ -983,9 +983,7 @@ fn process_manager_runner_resumes_partial_dispatch_from_checkpoint() {
     );
 
     let mut runner = ddd_cqrs_es::ProcessManagerRunner::new(TwoStepProcess, RecordingOkBus);
-    let resumed = runner
-        .run_envelope_strict(&envelope, &checkpoint)
-        .unwrap();
+    let resumed = runner.run_envelope_strict(&envelope, &checkpoint).unwrap();
     assert_eq!(resumed, vec!["ok"]);
 }
 
