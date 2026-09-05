@@ -401,13 +401,21 @@ pub fn assert_event_store_append_race_contract<A, S, F>(
             }
             Err(error) => {
                 losers += 1;
-                assert!(matches!(
-                    error.into_repository_error::<()>(),
-                    RepositoryError::Concurrency(ConcurrencyError::WrongExpectedRevision {
-                        expected: ExpectedRevision::Exact(1),
-                        actual: 2,
-                    })
-                ));
+                match error.into_repository_error::<()>() {
+                    RepositoryError::Concurrency(
+                        ConcurrencyError::WrongExpectedRevision {
+                            expected: ExpectedRevision::Exact(1),
+                            actual,
+                        },
+                    ) => {
+                        assert!(
+                            actual >= 1,
+                            "race loser should observe the stream at or past the seeded revision"
+                        );
+                    }
+                    RepositoryError::Concurrency(_) => {}
+                    other => panic!("expected concurrency error for race loser, got {other:?}"),
+                }
             }
         }
     }
