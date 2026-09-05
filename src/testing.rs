@@ -451,8 +451,17 @@ pub fn assert_event_store_append_race_contract<A, S, F>(
     assert_eq!(stream.len(), 2);
 
     let global = factory().load_global_after(None).unwrap();
-    let sequences: Vec<u64> = global.iter().filter_map(|event| event.sequence).collect();
-    if sequences.len() == global.len() {
+    let aggregate_id_key = serde_json::to_string(&aggregate_id).expect("aggregate_id serializes");
+    let sequences: Vec<u64> = global
+        .iter()
+        .filter(|event| {
+            serde_json::to_string(&event.aggregate_id)
+                .map(|id| id == aggregate_id_key)
+                .unwrap_or(false)
+        })
+        .filter_map(|event| event.sequence)
+        .collect();
+    if sequences.len() >= 2 {
         for window in sequences.windows(2) {
             assert_eq!(window[1], window[0] + 1);
         }
