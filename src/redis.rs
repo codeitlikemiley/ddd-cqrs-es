@@ -1141,6 +1141,7 @@ where
 
         match result {
             RedisValue::Status(status) if status.eq_ignore_ascii_case("OK") => Ok(()),
+            RedisValue::Bytes(bytes) if bytes.eq_ignore_ascii_case(b"OK") => Ok(()),
             RedisValue::Array(ref items) if items.len() >= 3 => {
                 let RedisValue::Bytes(kind) = &items[0] else {
                     return Err(EventStoreError::deserialization(format!(
