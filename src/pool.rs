@@ -437,7 +437,7 @@ mod tests {
     use crate::error::EventStoreError;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Barrier};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn resolve_prefers_explicit_then_env_then_default() {
