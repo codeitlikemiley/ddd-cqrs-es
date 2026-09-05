@@ -40,6 +40,10 @@ use crate::error::{AuthStackError, AuthStackResult};
 use super::*;
 
 pub(crate) fn new_id(prefix: &str) -> String {
+    let mut bytes = [0u8; 8];
+    if getrandom::getrandom(&mut bytes).is_ok() {
+        return format!("{prefix}{}", URL_SAFE_NO_PAD.encode(bytes));
+    }
     use std::time::{SystemTime, UNIX_EPOCH};
     let ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -160,6 +164,13 @@ pub(crate) fn validate_board_nodes(
     Ok(())
 }
 
+/// Persist the default board when a workspace has no stored layout yet.
+pub async fn bootstrap_dashboard_layout(org_id: &str) -> AuthStackResult<i64> {
+    let mut layout = default_dashboard_layout();
+    layout.revision = save_dashboard_layout(org_id, &layout, None).await?;
+    Ok(layout.revision)
+}
+
 pub async fn load_dashboard_layout(
     org_id: &str,
 ) -> AuthStackResult<crate::contracts::DashboardLayout> {
@@ -173,41 +184,25 @@ pub async fn load_dashboard_layout(
         .await?;
         let Some(row) = rows.first() else {
             let mut layout = default_dashboard_layout();
-            layout.revision = save_dashboard_layout(org_id, &layout, None).await?;
+            layout.revision = 0;
             return Ok(layout);
         };
         let stored_revision = row_i64(row, "revision").unwrap_or(0);
-        match serde_json::from_str::<crate::contracts::DashboardLayout>(&required_string(
-            row, "payload",
-        )?) {
-            Ok(mut layout) => {
-                layout.revision = stored_revision;
-                layout.migrate_if_needed();
-                if layout.nodes.is_empty() {
-                    let mut layout = default_dashboard_layout();
-                    layout.revision = save_dashboard_layout(org_id, &layout, None).await?;
-                    return Ok(layout);
-                }
-                // Persist migration so clients always see v2. A losing race here
-                // means another writer already stored v2; the caller keeps the
-                // stale revision and gets a conflict on its next save.
-                if layout.version < 2 || !layout.widgets.is_empty() {
-                    layout.widgets.clear();
-                    layout.version = 2;
-                    if let Ok(revision) =
-                        save_dashboard_layout(org_id, &layout, Some(stored_revision)).await
-                    {
-                        layout.revision = revision;
-                    }
-                }
-                Ok(layout)
-            }
-            _ => {
-                let mut layout = default_dashboard_layout();
-                layout.revision = save_dashboard_layout(org_id, &layout, None).await?;
-                Ok(layout)
-            }
+        let payload = required_string(row, "payload")?;
+        let mut layout = serde_json::from_str::<crate::contracts::DashboardLayout>(&payload)
+            .map_err(|error| {
+                AuthStackError::store(format!("dashboard layout payload is corrupt: {error}"))
+            })?;
+        layout.revision = stored_revision;
+        layout.migrate_if_needed();
+        if layout.nodes.is_empty() {
+            return Err(AuthStackError::store(
+                "dashboard layout payload has no nodes",
+            ));
         }
+        layout.widgets.clear();
+        layout.version = 2;
+        Ok(layout)
     }
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {

@@ -574,6 +574,9 @@ pub struct DashboardSnapshot {
     pub postgres_resources_enabled: bool,
     #[serde(default)]
     pub grpc_resources_enabled: bool,
+    /// Non-fatal section load failures (section still returns empty data).
+    #[serde(default)]
+    pub load_warnings: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

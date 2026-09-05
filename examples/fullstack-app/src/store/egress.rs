@@ -95,6 +95,14 @@ pub(crate) fn validate_host(host: &str, allow_private: bool) -> AuthStackResult<
         }
         return Ok(());
     }
+    if let Some(ip) = normalize_ip_literal(host) {
+        if is_blocked_ip(ip) && !allow_private {
+            return Err(AuthStackError::validation(
+                "private or link-local IP targets are blocked",
+            ));
+        }
+        return Ok(());
+    }
     if let Ok(ip) = host.parse::<IpAddr>() {
         if is_blocked_ip(ip) && !allow_private {
             return Err(AuthStackError::validation(
@@ -103,6 +111,27 @@ pub(crate) fn validate_host(host: &str, allow_private: bool) -> AuthStackResult<
         }
     }
     Ok(())
+}
+
+/// Normalize decimal/hex IPv4 literals (e.g. `2130706433` → 127.0.0.1) for SSRF checks.
+pub(crate) fn normalize_ip_literal(host: &str) -> Option<IpAddr> {
+    let host = host.trim();
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return Some(ip);
+    }
+    if host.starts_with("0x") || host.starts_with("0X") {
+        if let Ok(n) = u32::from_str_radix(&host[2..], 16) {
+            return Some(IpAddr::V4(std::net::Ipv4Addr::from(n)));
+        }
+    }
+    if host.chars().all(|c| c.is_ascii_digit()) && !host.is_empty() {
+        host.parse::<u32>()
+            .ok()
+            .map(std::net::Ipv4Addr::from)
+            .map(IpAddr::V4)
+    } else {
+        None
+    }
 }
 
 fn is_blocked_ip(ip: IpAddr) -> bool {

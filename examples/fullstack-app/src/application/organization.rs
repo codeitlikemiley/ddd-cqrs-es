@@ -52,12 +52,11 @@ pub async fn create_organization(
         context.session_id().as_str(),
     )
     .await?;
-    // Auto-select the new workspace on the session.
-    let _ = crate::auth_product::select_organization(
+    crate::auth_product::select_organization(
         context.session_id().as_str(),
         &summary.organization_id,
     )
-    .await;
+    .await?;
     Ok(summary)
 }
 
@@ -301,17 +300,11 @@ pub(crate) async fn resolve_workspace_by_slug_with_context(
     let slug = slug.trim().to_ascii_lowercase();
     crate::store::validate_org_slug(&slug)?;
     let organization_id = crate::store::resolve_org_id_for_slug(&slug).await?;
-    let mut organization = crate::auth_product::organization_for_session(
+    let organization = crate::auth_product::organization_for_session(
         context.session_id().as_str(),
         &organization_id,
     )
     .await?;
-    if organization.slug.trim().is_empty() {
-        organization.slug = slug;
-        let _ = crate::store::register_org_slug(&organization_id, &organization.slug).await;
-    } else {
-        let _ = crate::store::register_org_slug(&organization_id, &organization.slug).await;
-    }
     Ok(ResolvedWorkspace {
         organization_id,
         organization,

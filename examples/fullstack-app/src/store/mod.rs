@@ -179,6 +179,28 @@ mod tests {
     }
 
     #[test]
+    fn validate_http_url_blocks_decimal_private_ipv4() {
+        assert!(validate_http_url("http://2130706433/", false).is_err());
+        assert!(validate_http_url("http://0x7f000001/", false).is_err());
+    }
+
+    #[test]
+    fn new_id_uses_random_suffix_not_timestamp_only() {
+        let a = super::new_id("t");
+        let b = super::new_id("t");
+        assert_ne!(a, b);
+        assert!(a.starts_with('t'));
+    }
+
+    #[test]
+    fn normalize_ip_literal_maps_decimal_loopback() {
+        assert_eq!(
+            super::normalize_ip_literal("2130706433"),
+            Some(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST))
+        );
+    }
+
+    #[test]
     fn build_postgres_connection_url_sets_readonly_options() {
         let url = super::build_postgres_connection_url(
             "db.example.com",

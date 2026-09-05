@@ -2,6 +2,8 @@
 
 #![allow(unused_imports)]
 
+use std::sync::Arc;
+
 use super::layout::{collect_placed_kinds, commit_layout, next_node_id, place_new_node};
 use super::render::render_node_list;
 use crate::access::{filter_board_nodes, filter_widget_catalog, AccessContext};
@@ -50,7 +52,7 @@ pub fn DashboardHome() -> impl IntoView {
         widgets: Vec::new(),
     });
     let (notifications, set_notifications) = signal(Vec::<DashboardNotification>::new());
-    let (snapshot, set_snapshot) = signal(None::<DashboardSnapshot>);
+    let (snapshot, set_snapshot) = signal(None::<Arc<DashboardSnapshot>>);
     let (editing, set_editing) = signal(false);
     let (picker_open, set_picker_open) = signal(false);
     let (sources_open, set_sources_open) = signal(false);
@@ -77,7 +79,7 @@ pub fn DashboardHome() -> impl IntoView {
                 set_notifications.set(data.notifications.clone());
                 set_seeded.set(true);
             }
-            set_snapshot.set(Some(data));
+            set_snapshot.set(Some(Arc::new(data)));
         }
     });
 
@@ -95,7 +97,7 @@ pub fn DashboardHome() -> impl IntoView {
             spawn_local(async move {
                 if let Ok(current) = get_dashboard_snapshot().await {
                     layout.set(current.layout.clone());
-                    set_snapshot.set(Some(current));
+                    set_snapshot.set(Some(Arc::new(current)));
                 }
             });
         }
@@ -153,7 +155,9 @@ pub fn DashboardHome() -> impl IntoView {
                     </section>
                 }.into_any(),
                 Some(Ok(_)) => {
-                    let data = snapshot.get().or_else(|| board.get().and_then(Result::ok));
+                    let data = snapshot
+                        .get()
+                        .or_else(|| board.get().and_then(|r| r.ok()).map(Arc::new));
                     let Some(data) = data else {
                         return view! { <div class=BOARD_SKELETON aria-busy="true"></div> }.into_any();
                     };
@@ -280,7 +284,7 @@ pub fn DashboardHome() -> impl IntoView {
                                                 let mut next = layout.get_untracked();
                                                 let parent = placement_target.get_untracked();
                                                 let child = BoardNode::Container {
-                                                    id: format!("c-row-{}", next.total_nodes() + 1),
+                                                    id: next_node_id("c-row", &next),
                                                     kind: BoardContainerKind::Row,
                                                     col_span: 12,
                                                     children: Vec::new(),
@@ -301,7 +305,7 @@ pub fn DashboardHome() -> impl IntoView {
                                                 let mut next = layout.get_untracked();
                                                 let parent = placement_target.get_untracked();
                                                 let child = BoardNode::Container {
-                                                    id: format!("c-stack-{}", next.total_nodes() + 1),
+                                                    id: next_node_id("c-stack", &next),
                                                     kind: BoardContainerKind::Stack,
                                                     col_span: 6,
                                                     children: Vec::new(),
@@ -402,7 +406,9 @@ pub fn DashboardHome() -> impl IntoView {
                                 } else {
                                     layout.get().nodes
                                 };
-                                let snap = snapshot.get().or_else(|| board.get().and_then(Result::ok));
+                                let snap = snapshot
+                                    .get()
+                                    .or_else(|| board.get().and_then(|r| r.ok()).map(Arc::new));
                                 let notifs = notifications.get();
                                 let results = http_results.clone();
                                 let q_results = query_results.clone();
