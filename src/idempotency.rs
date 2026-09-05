@@ -583,8 +583,10 @@ mod tests {
     fn expired_pending_lease_can_be_reclaimed() {
         let store = InMemoryIdempotencyStore::<String>::new();
         let key = IdempotencyKey::new("lease-key");
-        let mut config = IdempotencyLeaseConfig::default();
-        config.lease_duration = Duration::ZERO;
+        let config = IdempotencyLeaseConfig {
+            lease_duration: Duration::ZERO,
+            ..Default::default()
+        };
 
         assert!(store.reserve_with_lease(key.clone(), &config).unwrap());
         assert!(matches!(

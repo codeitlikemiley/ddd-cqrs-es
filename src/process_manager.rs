@@ -339,6 +339,7 @@ impl<P, B> ProcessManagerRunner<P, B> {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn run_envelope_strict<E, C, Id, CP>(
         &mut self,
         envelope: &EventEnvelope<E, Id>,

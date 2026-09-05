@@ -7,8 +7,8 @@ use crate::event_store::{
     AtomicIdempotentEventStore, EventStore, EventStream, IdempotentAppendError,
 };
 use crate::idempotency::{
-    new_lease, now_ms, pending_state_from_row, IdempotencyKey, IdempotencyLeaseConfig,
-    IdempotencyState, IdempotencyStore,
+    now_ms, pending_state_from_row, IdempotencyKey, IdempotencyLeaseConfig, IdempotencyState,
+    IdempotencyStore,
 };
 use crate::pool::{resolve_pool_size, ConnectionPool};
 use crate::snapshot::{Snapshot, SnapshotStore};
@@ -1517,14 +1517,9 @@ where
     fn reserve_with_lease(
         &self,
         key: IdempotencyKey,
-        config: &IdempotencyLeaseConfig,
+        _config: &IdempotencyLeaseConfig,
     ) -> Result<bool, Self::Error> {
-        IdempotencyStore::reserve(self, key).map(|reserved| {
-            if reserved {
-                let _ = (config, new_lease(config));
-            }
-            reserved
-        })
+        IdempotencyStore::reserve(self, key)
     }
 
     fn heartbeat(&self, _key: &IdempotencyKey, _owner: &str) -> Result<bool, Self::Error> {

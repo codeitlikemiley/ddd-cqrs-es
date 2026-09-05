@@ -210,10 +210,7 @@ impl UpcasterRegistry {
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(versions) = map.get(event_type) {
-            loop {
-                let Some(upcaster) = versions.get(&current_version) else {
-                    break;
-                };
+            while let Some(upcaster) = versions.get(&current_version) {
                 let target_version = upcaster.target_version();
                 if target_version <= current_version {
                     return Err(Box::new(UpcastError(format!(
@@ -299,7 +296,7 @@ mod tests {
     fn upcast_rejects_version_cycle_instead_of_looping() {
         let registry = UpcasterRegistry::new();
         registry.register("evt", Step { from: 1, to: 2 }).unwrap();
-        registry.register("evt", Step { from: 2, to: 1 });
+        registry.register("evt", Step { from: 2, to: 1 }).unwrap();
 
         let error = registry.upcast("evt", 1, Vec::new()).unwrap_err();
 

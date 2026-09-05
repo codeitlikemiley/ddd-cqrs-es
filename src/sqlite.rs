@@ -487,7 +487,7 @@ where
         let now = now_ms();
         row.map(
             |(state, value, owner, expires_at_ms)| match (state.as_str(), value) {
-                ("pending", _) => pending_state_from_row(owner, expires_at_ms, now)
+                ("pending", _) => pending_state_from_row(owner.clone(), expires_at_ms, now)
                     .map(IdempotencyState::Pending)
                     .ok_or_else(|| {
                         EventStoreError::deserialization(
@@ -577,12 +577,13 @@ where
                     ),
                 ));
             }
-            Some((state, _, owner, expires_at_ms)) if state == "pending" => {
-                if pending_state_from_row(owner, expires_at_ms, now_ms()).is_some() {
-                    return Err(IdempotentAppendError::Pending {
-                        key: idempotency_key,
-                    });
-                }
+            Some((state, _, owner, expires_at_ms))
+                if state == "pending"
+                    && pending_state_from_row(owner.clone(), expires_at_ms, now_ms()).is_some() =>
+            {
+                return Err(IdempotentAppendError::Pending {
+                    key: idempotency_key,
+                });
             }
             Some((state, ..)) => {
                 return Err(IdempotentAppendError::Store(
@@ -1271,7 +1272,7 @@ where
         match row {
             None => Ok(None),
             Some((state, _, owner, expires_at_ms)) if state == "pending" => {
-                if let Some(lease) = pending_state_from_row(owner, expires_at_ms, now) {
+                if let Some(lease) = pending_state_from_row(owner.clone(), expires_at_ms, now) {
                     Ok(Some(IdempotencyState::Pending(lease)))
                 } else {
                     Ok(None)
