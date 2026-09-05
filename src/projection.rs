@@ -357,13 +357,14 @@ impl<P> InMemoryProjectionRunner<P> {
             .map_err(ProjectionRunnerError::Store)?;
         let mut applied = 0;
         let mut last_sequence = None;
+        let mut failure = None;
 
         for event in events {
-            self.projection
-                .apply(&event)
-                .map_err(ProjectionRunnerError::Projection)?;
+            if let Err(error) = self.projection.apply(&event) {
+                failure = Some(ProjectionRunnerError::Projection(error));
+                break;
+            }
             if let Some(sequence) = event.sequence {
-                self.checkpoint = Some(sequence);
                 last_sequence = Some(sequence);
             }
             applied += 1;
@@ -372,6 +373,12 @@ impl<P> InMemoryProjectionRunner<P> {
         self.projection
             .flush()
             .map_err(ProjectionRunnerError::Projection)?;
+        if let Some(sequence) = last_sequence {
+            self.checkpoint = Some(sequence);
+        }
+        if let Some(error) = failure {
+            return Err(error);
+        }
 
         Ok(projection_batch_outcome(applied, last_sequence, config))
     }
