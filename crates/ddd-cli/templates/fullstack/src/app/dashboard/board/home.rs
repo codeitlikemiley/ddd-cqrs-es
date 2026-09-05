@@ -97,7 +97,7 @@ pub fn DashboardHome() -> impl IntoView {
             spawn_local(async move {
                 if let Ok(current) = get_dashboard_snapshot().await {
                     layout.set(current.layout.clone());
-                    set_snapshot.set(Some(current));
+                    set_snapshot.set(Some(Arc::new(current)));
                 }
             });
         }
