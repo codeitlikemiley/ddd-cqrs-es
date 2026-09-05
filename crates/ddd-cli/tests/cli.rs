@@ -1381,9 +1381,10 @@ fn json_format_emits_error_envelope_on_failure() {
         .arg("occupied")
         .arg("--preset")
         .arg("basic");
-    command.assert().failure().stdout(predicate::str::contains(
-        r#""status": "error""#,
-    ));
+    command
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""status": "error""#));
 }
 
 fn init_basic_project(temp: &tempfile::TempDir, name: &str) {
