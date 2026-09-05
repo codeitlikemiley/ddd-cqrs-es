@@ -157,7 +157,7 @@ where
             Err(error) if attempt == SAVE_MAX_ATTEMPTS => {
                 return Err(IdempotentRepositoryError::Idempotency(error));
             }
-            Err(_) => tokio::time::sleep(SAVE_RETRY_DELAY).await,
+            Err(_) => crate::async_api::async_retry_delay(SAVE_RETRY_DELAY).await,
         }
     }
     unreachable!("async save retry loop must return")
@@ -197,7 +197,7 @@ where
                         attempts: RELEASE_MAX_ATTEMPTS,
                     });
                 }
-                tokio::time::sleep(RELEASE_RETRY_DELAY).await;
+                crate::async_api::async_retry_delay(RELEASE_RETRY_DELAY).await;
             }
         }
     }

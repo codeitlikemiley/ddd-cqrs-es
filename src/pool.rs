@@ -23,6 +23,9 @@ const OVERRIDE_MAX_SIZE: usize = 128;
 /// connection error instead of blocking indefinitely.
 const DEFAULT_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Upper bound for opening a new pooled connection through the factory.
+const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Idle connections older than this are discarded on checkout so the pool can
 /// open a fresh one when a reconnect factory is configured.
 const DEFAULT_MAX_IDLE_AGE: Duration = Duration::from_secs(30 * 60);
@@ -44,7 +47,7 @@ pub(crate) fn resolve_pool_size(explicit: Option<usize>) -> usize {
     }
 }
 
-type Connect<C> = Box<dyn Fn() -> Result<C, EventStoreError> + Send + Sync>;
+type Connect<C> = Arc<dyn Fn() -> Result<C, EventStoreError> + Send + Sync>;
 type ValidateFn<C> = Box<dyn Fn(&mut C) -> bool + Send + Sync>;
 
 /// Transport-level failures justify discarding a pooled connection; domain
@@ -90,11 +93,34 @@ struct PoolState<C> {
 struct PoolShared<C> {
     max_size: usize,
     acquire_timeout: Duration,
+    connect_timeout: Duration,
     max_idle_age: Option<Duration>,
     state: Mutex<PoolState<C>>,
     available: Condvar,
     connect: Option<Connect<C>>,
     validate: Option<ValidateFn<C>>,
+}
+
+fn connect_with_timeout<C: Send + 'static>(
+    connect: &Connect<C>,
+    timeout: Duration,
+) -> Result<C, EventStoreError> {
+    use std::sync::mpsc::{sync_channel, RecvTimeoutError};
+
+    let connect = Arc::clone(connect);
+    let (tx, rx) = sync_channel(1);
+    std::thread::spawn(move || {
+        let _ = tx.send(connect());
+    });
+    match rx.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(RecvTimeoutError::Timeout) => Err(EventStoreError::connection(format!(
+            "pool connect factory did not return within {timeout:?}"
+        ))),
+        Err(RecvTimeoutError::Disconnected) => Err(EventStoreError::connection(
+            "pool connect factory thread exited before returning a connection".to_owned(),
+        )),
+    }
 }
 
 impl<C> PoolShared<C> {
@@ -190,7 +216,7 @@ impl<C> std::fmt::Debug for ConnectionPool<C> {
     }
 }
 
-impl<C> ConnectionPool<C> {
+impl<C: Send + 'static> ConnectionPool<C> {
     /// Creates a pool that wraps a single pre-established connection.
     ///
     /// **Test-only.** Without a connect factory the pool cannot replace broken
@@ -209,7 +235,7 @@ impl<C> ConnectionPool<C> {
         Self::build(
             None,
             max_size,
-            Some(Box::new(connect)),
+            Some(Arc::new(connect)),
             None,
             Some(DEFAULT_MAX_IDLE_AGE),
         )
@@ -225,7 +251,7 @@ impl<C> ConnectionPool<C> {
         Self::build(
             seed,
             max_size,
-            Some(Box::new(connect)),
+            Some(Arc::new(connect)),
             Some(Box::new(validate)),
             Some(DEFAULT_MAX_IDLE_AGE),
         )
@@ -249,6 +275,7 @@ impl<C> ConnectionPool<C> {
             shared: Arc::new(PoolShared {
                 max_size,
                 acquire_timeout: DEFAULT_ACQUIRE_TIMEOUT,
+                connect_timeout: DEFAULT_CONNECT_TIMEOUT,
                 max_idle_age,
                 state: Mutex::new(PoolState { idle, leased: 0 }),
                 available: Condvar::new(),
@@ -296,8 +323,10 @@ impl<C> ConnectionPool<C> {
                     ));
                 };
                 state.leased += 1;
+                let connect = Arc::clone(connect);
+                let connect_timeout = self.shared.connect_timeout;
                 drop(state);
-                let connected = connect();
+                let connected = connect_with_timeout(&connect, connect_timeout);
                 let mut state = self
                     .shared
                     .state
@@ -408,7 +437,7 @@ mod tests {
     use crate::error::EventStoreError;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Barrier};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn resolve_prefers_explicit_then_env_then_default() {
@@ -594,6 +623,29 @@ mod tests {
             Err(error) => assert!(matches!(error, EventStoreError::Backend { .. })),
         }
         assert!(pool.acquire().is_err());
+    }
+
+    #[test]
+    fn connect_factory_timeout_surfaces_connection_error() {
+        let pool: ConnectionPool<u32> = ConnectionPool::pooled(1, || {
+            std::thread::sleep(Duration::from_secs(15));
+            Ok(99_u32)
+        });
+
+        let start = Instant::now();
+        let Err(error) = pool.acquire() else {
+            panic!("expected connect timeout");
+        };
+        assert!(matches!(error, EventStoreError::Connection { .. }));
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed >= Duration::from_secs(9),
+            "expected connect timeout near 10s, got {elapsed:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(14),
+            "acquire should fail before the slow factory completes, got {elapsed:?}"
+        );
     }
 
     #[test]

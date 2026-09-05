@@ -188,6 +188,28 @@ where
     Ok(())
 }
 
+fn finish_projection_batch<ProjectionError, StoreError, CheckpointError>(
+    failure: Option<ProjectionRunnerError<ProjectionError, StoreError, CheckpointError>>,
+    flushed: Result<(), ProjectionRunnerError<ProjectionError, StoreError, CheckpointError>>,
+) -> Result<(), ProjectionRunnerError<ProjectionError, StoreError, CheckpointError>> {
+    match failure {
+        Some(ProjectionRunnerError::Projection(projection_err)) => match flushed {
+            Err(ProjectionRunnerError::Checkpoint(checkpoint_err)) => {
+                Err(ProjectionRunnerError::PartialBatchFailure {
+                    projection: projection_err,
+                    checkpoint: checkpoint_err,
+                })
+            }
+            other => {
+                other?;
+                Err(ProjectionRunnerError::Projection(projection_err))
+            }
+        },
+        Some(other) => Err(other),
+        None => flushed,
+    }
+}
+
 #[cfg(feature = "async")]
 async fn persist_projection_checkpoint_async<P, E, Id, C, StoreError>(
     projection: &mut P,
@@ -397,6 +419,13 @@ pub enum ProjectionRunnerError<
     Store(StoreError),
     /// Checkpoint storage failed.
     Checkpoint(CheckpointError),
+    /// Projection failed mid-batch and persisting partial progress also failed.
+    PartialBatchFailure {
+        /// The projection error that stopped the batch.
+        projection: ProjectionError,
+        /// Checkpoint persistence failure while saving partial progress.
+        checkpoint: CheckpointError,
+    },
 }
 
 impl<ProjectionError, StoreError, CheckpointError> Display
@@ -411,6 +440,13 @@ where
             ProjectionRunnerError::Projection(error) => Display::fmt(error, f),
             ProjectionRunnerError::Store(error) => Display::fmt(error, f),
             ProjectionRunnerError::Checkpoint(error) => Display::fmt(error, f),
+            ProjectionRunnerError::PartialBatchFailure {
+                projection,
+                checkpoint,
+            } => write!(
+                f,
+                "projection failed ({projection}) and checkpoint save also failed ({checkpoint})"
+            ),
         }
     }
 }
@@ -427,6 +463,7 @@ where
             ProjectionRunnerError::Projection(error) => Some(error),
             ProjectionRunnerError::Store(error) => Some(error),
             ProjectionRunnerError::Checkpoint(error) => Some(error),
+            ProjectionRunnerError::PartialBatchFailure { projection, .. } => Some(projection),
         }
     }
 }
@@ -699,12 +736,7 @@ where
             &key,
             last_sequence,
         );
-        if let Some(error) = failure {
-            flushed?;
-            return Err(error);
-        }
-        flushed?;
-
+        finish_projection_batch(failure, flushed)?;
         Ok(projection_batch_outcome(applied, last_sequence, config))
     }
 
@@ -767,12 +799,7 @@ where
             &key,
             last_sequence,
         );
-        if let Some(error) = failure {
-            flushed?;
-            return Err(error);
-        }
-        flushed?;
-
+        finish_projection_batch(failure, flushed)?;
         Ok(projection_batch_outcome(applied, last_sequence, config))
     }
 }
@@ -935,12 +962,7 @@ where
             last_sequence,
         )
         .await;
-        if let Some(error) = failure {
-            flushed?;
-            return Err(error);
-        }
-        flushed?;
-
+        finish_projection_batch(failure, flushed)?;
         Ok(projection_batch_outcome(applied, last_sequence, config))
     }
 
@@ -997,12 +1019,7 @@ where
             last_sequence,
         )
         .await;
-        if let Some(error) = failure {
-            flushed?;
-            return Err(error);
-        }
-        flushed?;
-
+        finish_projection_batch(failure, flushed)?;
         Ok(projection_batch_outcome(applied, last_sequence, config))
     }
 }
