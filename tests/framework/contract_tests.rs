@@ -326,16 +326,23 @@ fn postgres_live_backends_pass_race_and_atomic_contracts_when_url_is_provided() 
         6,
     );
 
-    let atomic_store = ddd_cqrs_es::PostgresEventStore::<Counter>::connect_with_table_name(
-        &database_url,
-        format!("{table_name}_atomic"),
+    let atomic_table = format!("{table_name}_atomic");
+    let idempotency_table = format!("{table_name}_idem");
+    let atomic_client = postgres::Client::connect(&database_url, postgres::NoTls).unwrap();
+    let atomic_store = ddd_cqrs_es::PostgresEventStore::<Counter>::with_table_names(
+        atomic_client,
+        atomic_table,
+        idempotency_table,
     )
     .unwrap();
     atomic_store.initialize_schema().unwrap();
     assert_atomic_idempotent_store_contract::<Counter, _>(
         atomic_store,
         "postgres-atomic-contract-counter".to_owned(),
-        IdempotencyKey::new("postgres-atomic-contract-key"),
+        IdempotencyKey::new(format!(
+            "postgres-atomic-contract-key-{}",
+            std::process::id()
+        )),
         CounterEvent::Created,
     );
 
@@ -499,16 +506,20 @@ fn mysql_live_backends_pass_race_and_atomic_contracts() {
         6,
     );
 
-    let atomic_store = ddd_cqrs_es::MySqlEventStore::<Counter>::connect_with_table_name(
-        &test_url,
-        unique_mysql_table("events_live_atomic"),
+    let atomic_table = unique_mysql_table("events_live_atomic");
+    let idempotency_table = unique_mysql_table("idempotency_atomic");
+    let atomic_conn = mysql::Conn::new(test_url.as_str()).unwrap();
+    let atomic_store = ddd_cqrs_es::MySqlEventStore::<Counter>::with_table_names(
+        atomic_conn,
+        atomic_table,
+        idempotency_table,
     )
     .unwrap();
     atomic_store.initialize_schema().unwrap();
     assert_atomic_idempotent_store_contract::<Counter, _>(
         atomic_store,
         "mysql-atomic-contract-counter".to_owned(),
-        IdempotencyKey::new("mysql-atomic-contract-key"),
+        IdempotencyKey::new(format!("mysql-atomic-contract-key-{}", std::process::id())),
         CounterEvent::Created,
     );
 
