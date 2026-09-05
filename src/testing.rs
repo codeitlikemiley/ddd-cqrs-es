@@ -287,7 +287,9 @@ pub fn assert_event_store_global_replay_contract<A, S>(
     }
 }
 
-fn is_retryable_any_append_error(error: &RepositoryError<()>) -> bool {
+fn is_retryable_any_append_error<StoreError: Display>(
+    error: &RepositoryError<(), StoreError>,
+) -> bool {
     match error {
         RepositoryError::Concurrency(_) => true,
         RepositoryError::Store(store_error) => {
