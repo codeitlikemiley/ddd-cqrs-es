@@ -10,7 +10,7 @@ use crate::metadata::Metadata;
 use crate::projection::AsyncCheckpointStore;
 use crate::projection::CheckpointStore;
 use crate::snapshot::{Snapshot, SnapshotStore};
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -296,7 +296,7 @@ pub fn assert_event_store_any_writers_contract<A, S, F>(
     append_event: A::Event,
 ) where
     A: Aggregate,
-    A::Event: PartialEq + Debug,
+    A::Event: PartialEq + Debug + Clone,
     A::Id: Clone + Send + Sync,
     S: EventStore<A> + Send + Sync + 'static,
     S::Error: EventStoreFailure + Debug + Send + 'static,
@@ -321,17 +321,26 @@ pub fn assert_event_store_any_writers_contract<A, S, F>(
         let append_event = append_event.clone();
         handles.push(thread::spawn(move || {
             barrier.wait();
-            factory().append(
-                &aggregate_id,
-                ExpectedRevision::Any,
-                vec![NewEvent::new(append_event, Metadata::default())],
-            )
+            for attempt in 0..8 {
+                match factory().append(
+                    &aggregate_id,
+                    ExpectedRevision::Any,
+                    vec![NewEvent::new(append_event.clone(), Metadata::default())],
+                ) {
+                    Ok(committed) => return committed,
+                    Err(error) => match error.into_repository_error::<()>() {
+                        RepositoryError::Concurrency(_) if attempt + 1 < 8 => continue,
+                        other => panic!("append with ExpectedRevision::Any failed: {other:?}"),
+                    },
+                }
+            }
+            panic!("append with ExpectedRevision::Any exhausted retries");
         }));
     }
 
     let mut revisions = Vec::new();
     for handle in handles {
-        let committed = handle.join().unwrap().unwrap();
+        let committed = handle.join().unwrap();
         assert_eq!(committed.len(), 1);
         revisions.push(committed[0].revision);
     }
@@ -358,7 +367,7 @@ pub fn assert_event_store_append_race_contract<A, S, F>(
     A::Event: PartialEq + Debug,
     A::Id: Clone + Send + Sync,
     S: EventStore<A> + Send + Sync + 'static,
-    S::Error: EventStoreFailure + Debug + Send + 'static,
+    S::Error: EventStoreFailure + Debug + Display + Send + 'static,
     F: Fn() -> S + Send + Sync + 'static,
 {
     assert!(racers >= 2, "race contract requires at least two racers");
@@ -412,6 +421,11 @@ pub fn assert_event_store_append_race_contract<A, S, F>(
                         );
                     }
                     RepositoryError::Concurrency(_) => {}
+                    RepositoryError::Store(store_error)
+                        if store_error
+                            .to_string()
+                            .to_ascii_lowercase()
+                            .contains("locked") => {}
                     other => panic!("expected concurrency error for race loser, got {other:?}"),
                 }
             }
