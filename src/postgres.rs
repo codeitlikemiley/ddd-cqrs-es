@@ -1181,26 +1181,33 @@ fn current_revision_postgres(
     })
 }
 
-fn is_postgres_stream_revision_unique_violation(error: &::postgres::Error) -> bool {
-    if !error
-        .code()
-        .is_some_and(|code| *code == ::postgres::error::SqlState::UNIQUE_VIOLATION)
-    {
+fn postgres_stream_revision_unique_violation(
+    unique_violation: bool,
+    constraint: Option<&str>,
+    message: &str,
+) -> bool {
+    if !unique_violation {
         return false;
     }
-    if let Some(constraint) = error
-        .as_db_error()
-        .and_then(|db| db.constraint())
-        .map(str::to_ascii_lowercase)
-    {
+    if let Some(constraint) = constraint.map(str::to_ascii_lowercase) {
         return !constraint.contains("event_id");
     }
-    if crate::sql_common::is_stream_revision_unique_violation_message(&error.to_string()) {
+    if crate::sql_common::is_stream_revision_unique_violation_message(message) {
         return true;
     }
     // Some drivers surface 23505 with a generic message during append; event_id
     // is the only other UNIQUE guard on the events table.
-    !error.to_string().to_ascii_lowercase().contains("event_id")
+    !message.to_ascii_lowercase().contains("event_id")
+}
+
+fn is_postgres_stream_revision_unique_violation(error: &::postgres::Error) -> bool {
+    postgres_stream_revision_unique_violation(
+        error
+            .code()
+            .is_some_and(|code| *code == ::postgres::error::SqlState::UNIQUE_VIOLATION),
+        error.as_db_error().and_then(|db| db.constraint()),
+        &error.to_string(),
+    )
 }
 
 fn map_postgres_insert_error(
@@ -1904,7 +1911,86 @@ where
 mod tests {
     use super::*;
     use crate::event::EventType;
-    use crate::Metadata;
+    use crate::{ConcurrencyError, ExpectedRevision, Metadata};
+
+    #[test]
+    fn postgres_stream_revision_unique_violation_detects_aggregate_constraints() {
+        assert!(postgres_stream_revision_unique_violation(
+            true,
+            Some("events_aggregate_type_aggregate_id_revision_key"),
+            "duplicate key value violates unique constraint \
+             \"events_aggregate_type_aggregate_id_revision_key\"",
+        ));
+    }
+
+    #[test]
+    fn postgres_stream_revision_unique_violation_rejects_event_id_collisions() {
+        assert!(!postgres_stream_revision_unique_violation(
+            true,
+            Some("events_event_id_key"),
+            "duplicate key value violates unique constraint \"events_event_id_key\"",
+        ));
+    }
+
+    #[test]
+    fn postgres_stream_revision_unique_violation_falls_back_to_message() {
+        assert!(postgres_stream_revision_unique_violation(
+            true,
+            None,
+            "duplicate key value violates unique constraint \
+             \"events_aggregate_type_aggregate_id_revision_key\"",
+        ));
+        assert!(!postgres_stream_revision_unique_violation(
+            true,
+            None,
+            "duplicate key value violates unique constraint \"events_event_id_key\"",
+        ));
+    }
+
+    fn connect_error() -> ::postgres::Error {
+        match ::postgres::Client::connect("host=127.0.0.1 port=1 user=x db=x", ::postgres::NoTls) {
+            Ok(_) => panic!("expected connection failure"),
+            Err(error) => error,
+        }
+    }
+
+    #[test]
+    fn map_postgres_insert_error_maps_revision_conflict() {
+        assert!(postgres_stream_revision_unique_violation(
+            true,
+            Some("events_aggregate_type_aggregate_id_revision_key"),
+            "duplicate key value violates unique constraint \
+             \"events_aggregate_type_aggregate_id_revision_key\"",
+        ));
+        let mapped = crate::sql_common::map_stream_unique_violation(
+            ExpectedRevision::Exact(1),
+            3,
+        );
+        assert!(matches!(
+            mapped,
+            EventStoreError::Concurrency(ConcurrencyError::WrongExpectedRevision {
+                expected: ExpectedRevision::Exact(1),
+                actual: 3,
+            })
+        ));
+    }
+
+    #[test]
+    fn map_postgres_insert_error_leaves_non_revision_errors_unmapped() {
+        let mapped = map_postgres_insert_error(
+            connect_error(),
+            ExpectedRevision::Exact(1),
+            1,
+            || Ok(3),
+        );
+        assert!(matches!(mapped, EventStoreError::Backend { code: None, .. }));
+    }
+
+    #[test]
+    fn map_postgres_error_maps_backend_without_sqlstate() {
+        let mapped = map_postgres_error(connect_error());
+        assert!(matches!(mapped, EventStoreError::Backend { code: None, .. }));
+    }
 
     #[test]
     fn prepared_postgres_event_serializes_payload_and_metadata() {
