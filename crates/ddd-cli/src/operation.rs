@@ -96,10 +96,15 @@ pub fn apply_operations(
         let absolute_path = contained_join(root, &operation.path)?;
         let exists = absolute_path.exists();
         let previous = if exists {
-            Some(
-                std::fs::read(&absolute_path)
-                    .with_context(|| format!("failed to read {}", absolute_path.display()))?,
-            )
+            match std::fs::read(&absolute_path) {
+                Ok(content) => Some(content),
+                Err(error) => {
+                    rollback_applied(&applied);
+                    return Err(error).with_context(|| {
+                        format!("failed to read {}", absolute_path.display())
+                    });
+                }
+            }
         } else {
             None
         };
@@ -108,12 +113,16 @@ pub fn apply_operations(
             let write_result = if is_manifest_path(&operation.path) {
                 write_manifest_atomically(&absolute_path, &operation.content)
             } else {
-                if let Some(parent) = absolute_path.parent() {
-                    std::fs::create_dir_all(parent)
-                        .with_context(|| format!("failed to create {}", parent.display()))?;
-                }
-                std::fs::write(&absolute_path, &operation.content)
-                    .with_context(|| format!("failed to write {}", absolute_path.display()))
+                (|| -> Result<()> {
+                    if let Some(parent) = absolute_path.parent() {
+                        std::fs::create_dir_all(parent).with_context(|| {
+                            format!("failed to create {}", parent.display())
+                        })?;
+                    }
+                    std::fs::write(&absolute_path, &operation.content).with_context(|| {
+                        format!("failed to write {}", absolute_path.display())
+                    })
+                })()
             };
             if let Err(error) = write_result {
                 rollback_applied(&applied);
