@@ -380,23 +380,27 @@ pub async fn save_dashboard_layout(
     let org_id = authorization.organization_id.clone();
     let mut layout = request.layout;
     layout.migrate_if_needed();
-    let expected_revision = layout.revision;
-    if expected_revision <= 0 {
-        return Err(AuthStackError::conflict(
-            "the board revision is missing; reload the board and reapply your edit",
-        ));
-    }
+    let client_revision = layout.revision;
 
     // The caller only ever saw the widgets their permissions allow, so the tree
     // they posted is missing everyone else's. Put those back before writing.
     let stored = crate::store::load_dashboard_layout(&org_id).await?;
+    let expected_revision = match (client_revision, stored.revision) {
+        (0, 0) => None,
+        (revision, _) if revision <= 0 => {
+            return Err(AuthStackError::conflict(
+                "the board revision is missing; reload the board and reapply your edit",
+            ));
+        }
+        (revision, _) => Some(revision),
+    };
     let access = workspace_access_context(&authorization).await?;
     layout.nodes = crate::access::merge_hidden_board_nodes(stored.nodes, layout.nodes, &access);
 
     layout.widgets.clear();
     layout.version = 2;
     layout.revision =
-        crate::store::save_dashboard_layout(&org_id, &layout, Some(expected_revision)).await?;
+        crate::store::save_dashboard_layout(&org_id, &layout, expected_revision).await?;
     Ok(layout)
 }
 
@@ -431,7 +435,11 @@ pub async fn update_dashboard_note(
     // Read-modify-write on the full stored tree: no client-supplied nodes are
     // involved, so only the revision read here has to still hold at write time.
     let mut layout = crate::store::load_dashboard_layout(&org_id).await?;
-    let expected_revision = layout.revision;
+    let expected_revision = if layout.revision <= 0 {
+        None
+    } else {
+        Some(layout.revision)
+    };
     let Some(node) = layout.find_widget_mut(request.widget_id.trim()) else {
         return Err(AuthStackError::not_found("widget not found"));
     };
@@ -446,7 +454,7 @@ pub async fn update_dashboard_note(
         _ => return Err(AuthStackError::validation("widget is not a notes tile")),
     }
     layout.revision =
-        crate::store::save_dashboard_layout(&org_id, &layout, Some(expected_revision)).await?;
+        crate::store::save_dashboard_layout(&org_id, &layout, expected_revision).await?;
     Ok(layout)
 }
 

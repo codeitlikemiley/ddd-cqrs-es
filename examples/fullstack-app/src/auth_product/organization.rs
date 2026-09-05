@@ -123,9 +123,9 @@ pub async fn create_organization(
         .await
         .map_err(map_organization_error)?;
     let summary = organization_summary(organization);
-    let _ = crate::store::register_org_slug(&summary.organization_id, &summary.slug).await;
-    let _ = crate::store::bootstrap_dashboard_layout(&summary.organization_id).await;
-    let _ = crate::store::bootstrap_dashboard_notifications(&summary.organization_id).await;
+    crate::store::register_org_slug(&summary.organization_id, &summary.slug).await?;
+    crate::store::bootstrap_dashboard_layout(&summary.organization_id).await?;
+    crate::store::bootstrap_dashboard_notifications(&summary.organization_id).await?;
     Ok(summary)
 }
 
