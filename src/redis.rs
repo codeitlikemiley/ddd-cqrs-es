@@ -33,8 +33,8 @@ use crate::event_store::EventStream;
 use crate::projection::AsyncCheckpointStore;
 use crate::sql_common::{
     aggregate_id_lookup_keys, check_expected_revision, deserialize_id, deserialize_metadata,
-    deserialize_payload, millis_to_system_time, serialize_id, serialize_metadata, serialize_payload,
-    system_time_to_millis,
+    deserialize_payload, millis_to_system_time, serialize_id, serialize_metadata,
+    serialize_payload, system_time_to_millis,
 };
 use crate::upcast::UpcasterRegistry;
 use async_trait::async_trait;

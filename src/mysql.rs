@@ -395,12 +395,7 @@ where
                 .map_err(map_mysql_error)?;
 
             let actual_revision = max_revision_for_lookup_keys(&keys, |key| {
-                current_revision_mysql(
-                    &mut transaction,
-                    &table_name,
-                    A::aggregate_type(),
-                    key,
-                )
+                current_revision_mysql(&mut transaction, &table_name, A::aggregate_type(), key)
             })?;
             check_expected_revision(expected_revision, actual_revision)?;
 
