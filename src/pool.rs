@@ -363,13 +363,9 @@ impl<C: Send + 'static> ConnectionPool<C> {
                 let pending_slot = PendingLeaseSlot::new(&self.shared);
                 drop(state);
                 let connected = connect_with_timeout(&connect, connect_timeout);
-                match connected {
-                    Ok(connection) => {
-                        pending_slot.commit();
-                        return Ok(self.lease(connection));
-                    }
-                    Err(error) => return Err(error),
-                }
+                let connection = connected?;
+                pending_slot.commit();
+                return Ok(self.lease(connection));
             }
             let now = Instant::now();
             let Some(remaining) = deadline
