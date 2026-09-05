@@ -14,6 +14,15 @@ use async_trait::async_trait;
 /// state. Implementations should be idempotent because projection runners may
 /// retry after failures.
 ///
+/// ## Deployment: one runner per projection scope
+///
+/// Built-in projection runners do not acquire a distributed lease or fencing
+/// token before applying events. Run **at most one active runner** for each
+/// `(projection name, aggregate type)` pair (or each raw-feed scope) so two
+/// replicas cannot double-apply the same batch undetected. Checkpoint saves are
+/// monotonic but not mutually exclusive; duplicate runners can corrupt
+/// non-idempotent read models even when checkpoints look healthy.
+///
 /// Runners call [`Self::flush`] immediately before advancing a durable
 /// checkpoint. Projections that buffer events in [`Self::apply`] and write the
 /// read model later must persist those buffers in `flush`.

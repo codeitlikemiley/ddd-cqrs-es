@@ -5,6 +5,12 @@
 //! append script. Pub/sub publishing is intentionally separate from event
 //! durability; Redis messages are notifications and must not be treated as the
 //! source of truth.
+//!
+//! **Operational requirement:** configure the Redis instance with
+//! `maxmemory-policy noeviction`. The append script cross-checks each stream's
+//! revision counter against its sorted-set cardinality; evicting revision or
+//! index keys under an LRU policy can leave counters and indexes inconsistent
+//! and cause appends to fail until the stream is repaired.
 
 #[cfg(feature = "spin-redis")]
 fn redact_redis_url(url: &str) -> String {
@@ -67,10 +73,14 @@ const HASH_FETCH_CHUNK_SIZE: usize = 256;
 
 const APPEND_LUA: &str = r#"
 local current = tonumber(redis.call('GET', KEYS[1]) or '0')
+local stream_card = redis.call('ZCARD', KEYS[3])
+if stream_card ~= current then
+    return {'ERR', 'inconsistent_state', current, stream_card}
+end
+
 local expected_kind = ARGV[1]
 local expected_revision = tonumber(ARGV[2])
 local count = tonumber(ARGV[3])
-local event_key_prefix = ARGV[4]
 
 if expected_kind == 'no_stream' and current ~= 0 then
     return {'ERR', 'stream_exists', current}
@@ -84,14 +94,16 @@ if count == 0 then
     return {'OK', 0, 0, current}
 end
 
-local last_sequence = redis.call('INCRBY', KEYS[2], count)
-local first_sequence = last_sequence - count + 1
+local seq_current = tonumber(redis.call('GET', KEYS[2]) or '0')
+local first_sequence = seq_current + 1
+local last_sequence = seq_current + count
+local event_prefix = KEYS[5]
 
 for i = 0, count - 1 do
-    local base = 5 + (i * 8)
+    local base = 4 + (i * 8)
     local revision = current + i + 1
     local sequence = first_sequence + i
-    local event_key = event_key_prefix .. tostring(sequence)
+    local event_key = event_prefix .. tostring(sequence)
 
     redis.call(
         'HSET',
@@ -112,6 +124,7 @@ for i = 0, count - 1 do
 end
 
 redis.call('SET', KEYS[1], current + count)
+redis.call('SET', KEYS[2], last_sequence)
 return {'OK', first_sequence, last_sequence, current + count}
 "#;
 
@@ -304,19 +317,19 @@ where
     }
 
     fn event_key_prefix(&self) -> String {
-        format!("{}:event:", self.prefix)
+        format!("{}:event:", redis_hash_tagged_prefix(&self.prefix))
     }
 
     fn sequence_key(&self) -> String {
-        format!("{}:seq", self.prefix)
+        format!("{}:seq", redis_hash_tagged_prefix(&self.prefix))
     }
 
     fn global_key(&self) -> String {
-        format!("{}:global", self.prefix)
+        format!("{}:global", redis_hash_tagged_prefix(&self.prefix))
     }
 
     fn event_key(&self, sequence: u64) -> String {
-        format!("{}{}", self.event_key_prefix(), sequence)
+        format!("{}{sequence}", self.event_key_prefix())
     }
 
     fn stream_keys(&self, aggregate_id: &A::Id) -> Result<RedisStreamKeys, EventStoreError>
@@ -327,16 +340,11 @@ where
         let aggregate_type_key = hex_encode(A::aggregate_type().as_bytes());
         let aggregate_id_key = hex_encode(aggregate_id_json.as_bytes());
 
+        let tagged = redis_hash_tagged_prefix(&self.prefix);
         Ok(RedisStreamKeys {
             aggregate_id_json,
-            revision_key: format!(
-                "{}:revision:{}:{}",
-                self.prefix, aggregate_type_key, aggregate_id_key
-            ),
-            stream_key: format!(
-                "{}:stream:{}:{}",
-                self.prefix, aggregate_type_key, aggregate_id_key
-            ),
+            revision_key: format!("{tagged}:revision:{aggregate_type_key}:{aggregate_id_key}"),
+            stream_key: format!("{tagged}:stream:{aggregate_type_key}:{aggregate_id_key}"),
         })
     }
 
@@ -676,7 +684,7 @@ where
     fn checkpoint_key(&self, projection_name: &str) -> String {
         format!(
             "{}:checkpoint:{}",
-            self.prefix,
+            redis_hash_tagged_prefix(&self.prefix),
             hex_encode(projection_name.as_bytes())
         )
     }
@@ -772,7 +780,7 @@ where
     fn key(&self, idempotency_key: &crate::idempotency::IdempotencyKey) -> String {
         format!(
             "{}:idempotency:{}",
-            self.prefix,
+            redis_hash_tagged_prefix(&self.prefix),
             hex_encode(idempotency_key.as_str().as_bytes())
         )
     }
@@ -1461,15 +1469,15 @@ fn build_append_eval_args<E>(input: AppendEvalArgs<'_, E>) -> Vec<Vec<u8>> {
     let (expected_kind, expected_value) = expected_revision_arg(input.expected_revision);
     let mut args = vec![
         input.script.as_bytes().to_vec(),
-        b"4".to_vec(),
+        b"5".to_vec(),
         input.keys.revision_key.as_bytes().to_vec(),
         input.sequence_key.as_bytes().to_vec(),
         input.keys.stream_key.as_bytes().to_vec(),
         input.global_key.as_bytes().to_vec(),
+        input.event_key_prefix.as_bytes().to_vec(),
         expected_kind.as_bytes().to_vec(),
         expected_value.to_string().into_bytes(),
         input.events.len().to_string().into_bytes(),
-        input.event_key_prefix.as_bytes().to_vec(),
     ];
 
     for event in input.events {
@@ -1529,6 +1537,14 @@ fn parse_append_eval_result(
                 "wrong_revision" => Err(EventStoreError::Concurrency(
                     crate::ConcurrencyError::WrongExpectedRevision { expected, actual },
                 )),
+                "inconsistent_state" => {
+                    let stream_card = redis_value_u64(&items[3], "append stream cardinality")?;
+                    Err(EventStoreError::backend(format!(
+                        "Redis stream revision counter ({actual}) does not match stream index \
+                         cardinality ({stream_card}); configure maxmemory-policy noeviction and \
+                         avoid partial key eviction or restore"
+                    )))
+                }
                 _ => Err(EventStoreError::backend(format!(
                     "Redis append script failed: {reason}"
                 ))),
@@ -1634,6 +1650,12 @@ fn validate_redis_prefix(prefix: &str) -> Result<(), EventStoreError> {
         ));
     }
 
+    if prefix.contains('{') || prefix.contains('}') {
+        return Err(EventStoreError::backend(format!(
+            "Redis key prefix `{prefix}` must not contain Redis Cluster hash-tag braces"
+        )));
+    }
+
     if prefix
         .chars()
         .all(|ch| ch == ':' || ch == '_' || ch == '-' || ch.is_ascii_alphanumeric())
@@ -1644,6 +1666,11 @@ fn validate_redis_prefix(prefix: &str) -> Result<(), EventStoreError> {
             "invalid Redis key prefix `{prefix}`"
         )))
     }
+}
+
+/// Wraps a store prefix in Redis Cluster hash tags so every derived key shares one slot.
+fn redis_hash_tagged_prefix(prefix: &str) -> String {
+    format!("{{{prefix}}}")
 }
 
 fn map_executor_error<E>(error: E) -> EventStoreError
@@ -2305,7 +2332,10 @@ mod tests {
 
             match command {
                 "ZRANGEBYSCORE" => {
-                    assert_eq!(arg(0), format!("{}:global", self.prefix));
+                    assert_eq!(
+                        arg(0),
+                        format!("{}:global", redis_hash_tagged_prefix(&self.prefix))
+                    );
                     assert_eq!(arg(2), "+inf");
                     assert_eq!(arg(3), "WITHSCORES");
                     assert_eq!(arg(4), "LIMIT");
@@ -2548,9 +2578,9 @@ mod tests {
 
         let keys = store.stream_keys(&"counter:1".to_owned()).unwrap();
 
-        assert!(keys.revision_key.starts_with("ddd:test:revision:"));
+        assert!(keys.revision_key.starts_with("{ddd:test}:revision:"));
         assert!(!keys.revision_key.contains("\"counter:1\""));
-        assert!(keys.stream_key.starts_with("ddd:test:stream:"));
+        assert!(keys.stream_key.starts_with("{ddd:test}:stream:"));
     }
 
     #[test]
@@ -2570,19 +2600,21 @@ mod tests {
             script: "return 1",
             aggregate_type: TestAggregate::aggregate_type(),
             keys: &keys,
-            sequence_key: "ddd:seq",
-            global_key: "ddd:global",
-            event_key_prefix: "ddd:event:",
+            sequence_key: "{ddd}:seq",
+            global_key: "{ddd}:global",
+            event_key_prefix: "{ddd}:event:",
             expected_revision: ExpectedRevision::NoStream,
             events: &[event],
         });
 
         assert_eq!(args[0], b"return 1");
-        assert_eq!(args[1], b"4");
+        assert_eq!(args[1], b"5");
         assert_eq!(args[2], b"ddd:revision");
-        assert_eq!(args[6], b"no_stream");
-        assert_eq!(args[8], b"1");
+        assert_eq!(args[6], b"{ddd}:event:");
+        assert_eq!(args[7], b"no_stream");
+        assert_eq!(args[9], b"1");
         assert_eq!(args[12], b"test_aggregate");
+        assert_eq!(args[13], b"created");
     }
 
     /// Fake single-threaded RESP server: serves `replies_per_connection`

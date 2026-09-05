@@ -8,6 +8,7 @@
 //! `DDD_CQRS_ES_POOL_SIZE`, then the CPU count clamped to `[2, 8]`.
 
 use crate::error::EventStoreError;
+use std::collections::VecDeque;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -123,6 +124,10 @@ impl<C> Drop for PendingLeaseSlot<C> {
 struct PoolState<C> {
     idle: Vec<IdleEntry<C>>,
     leased: usize,
+    /// Connections returned while threads are blocked waiting for capacity.
+    handoffs: VecDeque<C>,
+    /// Number of threads blocked in `acquire` waiting for a handoff or release.
+    waiters: usize,
 }
 
 struct PoolShared<C> {
@@ -164,12 +169,19 @@ impl<C> PoolShared<C> {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        state.leased -= 1;
         if let Some(connection) = connection {
+            if state.waiters > 0 {
+                state.handoffs.push_back(connection);
+                self.available.notify_one();
+                return;
+            }
+            state.leased -= 1;
             state.idle.push(IdleEntry {
                 connection,
                 idle_since: Instant::now(),
             });
+        } else {
+            state.leased -= 1;
         }
         self.available.notify_one();
     }
@@ -312,7 +324,12 @@ impl<C: Send + 'static> ConnectionPool<C> {
                 acquire_timeout: DEFAULT_ACQUIRE_TIMEOUT,
                 connect_timeout: DEFAULT_CONNECT_TIMEOUT,
                 max_idle_age,
-                state: Mutex::new(PoolState { idle, leased: 0 }),
+                state: Mutex::new(PoolState {
+                    idle,
+                    leased: 0,
+                    handoffs: VecDeque::new(),
+                    waiters: 0,
+                }),
                 available: Condvar::new(),
                 connect,
                 validate,
@@ -378,12 +395,17 @@ impl<C: Send + 'static> ConnectionPool<C> {
                     self.shared.acquire_timeout, state.leased, self.shared.max_size
                 )));
             };
+            state.waiters += 1;
             state = self
                 .shared
                 .available
                 .wait_timeout(state, remaining)
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .0;
+            state.waiters -= 1;
+            if let Some(connection) = state.handoffs.pop_front() {
+                return Ok(self.lease(connection));
+            }
         }
     }
 
@@ -801,6 +823,24 @@ mod tests {
         assert!(result.is_err());
         pool.write(|_| Ok(())).unwrap();
         assert_eq!(connects.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn returning_connection_hands_off_to_a_registered_waiter() {
+        let pool = Arc::new(
+            ConnectionPool::<u32>::pooled(1, || Ok(0))
+                .with_acquire_timeout(Duration::from_millis(500)),
+        );
+        let held = pool.acquire().unwrap();
+        let pool_for_waiter = Arc::clone(&pool);
+
+        let waiter = std::thread::spawn(move || pool_for_waiter.acquire().unwrap());
+
+        std::thread::sleep(Duration::from_millis(20));
+        drop(held);
+
+        let lease = waiter.join().unwrap();
+        assert_eq!(*lease, 0);
     }
 
     #[test]
