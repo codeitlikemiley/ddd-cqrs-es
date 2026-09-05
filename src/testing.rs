@@ -287,8 +287,8 @@ pub fn assert_event_store_global_replay_contract<A, S>(
     }
 }
 
-fn is_retryable_any_append_error<E: EventStoreFailure + Display>(error: E) -> bool {
-    match error.into_repository_error::<()>() {
+fn is_retryable_any_append_error(error: &RepositoryError<()>) -> bool {
+    match error {
         RepositoryError::Concurrency(_) => true,
         RepositoryError::Store(store_error) => {
             let message = store_error.to_string().to_ascii_lowercase();
