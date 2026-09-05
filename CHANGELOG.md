@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.0-alpha.2
+
+- **Additive:** [`EventStoreErrorKind`], [`EventStoreError::kind`],
+  [`EventStoreError::is_retryable`], and [`RepositoryError::is_retryable`] provide
+  a public retryability taxonomy for command and append retry loops.
+- **Additive:** [`EventStoreErrorSource::from_error`] and
+  [`EventStoreErrorSource::downcast_ref`] preserve typed adapter sources instead
+  of stringifying them.
+- **Additive:** [`EventStoreError::public_message`] and
+  [`EventStoreError::store_source`] document the scrubbed transport surface vs.
+  preserved adapter detail. See [error handling](docs/production/error-handling.md).
+
 ## 0.4.0-alpha.1
 
 - **Breaking:** `EventEnvelope::aggregate_type` is now [`AggregateType`], a

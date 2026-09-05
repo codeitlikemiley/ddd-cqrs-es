@@ -287,23 +287,10 @@ pub fn assert_event_store_global_replay_contract<A, S>(
     }
 }
 
-fn is_retryable_any_append_error<StoreError: Display>(
+fn is_retryable_any_append_error<StoreError: EventStoreFailure>(
     error: &RepositoryError<(), StoreError>,
 ) -> bool {
-    match error {
-        RepositoryError::Concurrency(_) => true,
-        RepositoryError::Store(store_error) => {
-            let message = store_error.to_string().to_ascii_lowercase();
-            if message.contains("locked") {
-                return true;
-            }
-            (message.contains("unique")
-                || message.contains("23505")
-                || message.contains("duplicate"))
-                && (message.contains("revision") || message.contains("aggregate"))
-        }
-        _ => false,
-    }
+    error.is_retryable()
 }
 
 /// Verifies that concurrent `ExpectedRevision::Any` writers on one stream receive

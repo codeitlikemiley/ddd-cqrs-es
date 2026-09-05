@@ -2,8 +2,8 @@ use ddd_cqrs_es::{
     assert_atomic_idempotent_store_contract, assert_event_store_any_writers_contract,
     assert_event_store_append_race_contract, assert_event_store_contract, Aggregate,
     AggregateFixture, AggregateType, ConcurrencyError, DomainEvent, EventStore,
-    EventStoreContractOptions, EventStoreError, EventStream, EventType, ExpectedRevision,
-    IdempotencyKey, IdempotencyStore, IdempotencyWaitConfig, InMemoryEventStore,
+    EventStoreContractOptions, EventStoreError, EventStoreErrorKind, EventStream, EventType,
+    ExpectedRevision, IdempotencyKey, IdempotencyStore, IdempotencyWaitConfig, InMemoryEventStore,
     InMemoryIdempotencyStore, InMemoryProjectionRunner, InMemorySnapshotStore, Metadata, NewEvent,
     Projection, ProjectionBatchConfig, Repository, RepositoryError, Snapshot, SnapshotStore,
     DEFAULT_PROJECTION_BATCH_SIZE,
@@ -818,16 +818,18 @@ fn projection_runner_error_formats_and_exposes_source() {
 
 #[test]
 fn event_store_error_preserves_sources_without_changing_display() {
-    let error = EventStoreError::backend_with_source(
-        "database unavailable",
-        std::io::Error::other("socket refused"),
-    );
+    let io_error = std::io::Error::other("socket refused");
+    let error = EventStoreError::backend_with_source("database unavailable", io_error);
 
     assert_eq!(
         error.to_string(),
         "event store backend error: database unavailable"
     );
     assert!(error.source().is_some());
+    assert!(error
+        .store_source()
+        .and_then(|source| source.downcast_ref::<std::io::Error>())
+        .is_some());
     assert_eq!(error.code(), None);
 
     let coded = EventStoreError::backend("duplicate key").with_code("23505");
@@ -839,7 +841,7 @@ fn event_store_error_preserves_sources_without_changing_display() {
     // Codes participate in equality; sources do not.
     assert_ne!(coded, EventStoreError::backend("duplicate key"));
     assert_eq!(
-        EventStoreError::backend_with_source("same", "src"),
+        EventStoreError::backend_with_source("same", std::io::Error::other("src")),
         EventStoreError::backend("same")
     );
 
@@ -854,6 +856,21 @@ fn event_store_error_preserves_sources_without_changing_display() {
         assert!(error.to_string().starts_with("deserialization error:"));
         assert!(error.source().is_some());
     }
+}
+
+#[test]
+fn event_store_error_retryability_and_public_message() {
+    let retryable = EventStoreError::backend("duplicate revision for aggregate").with_code("23505");
+    assert!(retryable.is_retryable());
+    assert_eq!(retryable.kind(), EventStoreErrorKind::Backend);
+    assert_eq!(
+        retryable.public_message(),
+        "duplicate revision for aggregate"
+    );
+
+    let not_retryable = EventStoreError::serialization("invalid payload");
+    assert!(!not_retryable.is_retryable());
+    assert_eq!(not_retryable.kind(), EventStoreErrorKind::Serialization);
 }
 
 #[test]

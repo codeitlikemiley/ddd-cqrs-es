@@ -41,17 +41,25 @@ The standard `EventStoreError` preserves broad infrastructure categories:
 ```rust
 pub enum EventStoreError {
     Concurrency(ConcurrencyError),
-    Serialization(String),
-    Deserialization(String),
-    Connection(String),
+    Serialization { message, code, source, .. },
+    Deserialization { message, code, source, .. },
+    Connection { message, code, source, .. },
     Poisoned,
-    Backend(String),
-    Unknown(String),
-    // variants with preserved source context omitted
+    Backend { message, code, source, .. },
+    Unknown { message, code, source, .. },
 }
 ```
 
-Use these variants directly when deciding status codes. Avoid parsing display strings such as `"connection error: ..."` or `"event store backend error: ..."`.
+Classify failures with [`EventStoreError::kind`] and [`EventStoreError::is_retryable`]
+instead of parsing display strings. Repository callers can use
+[`RepositoryError::is_retryable`] for the same taxonomy at the command boundary.
+
+Use [`EventStoreError::public_message`] (or [`ConcurrencyError`] display for domain
+mappings) when building client-facing responses. Keep adapter-specific detail in the
+attached [`EventStoreErrorSource`] via [`EventStoreError::with_source`]; that source
+is preserved for logs and supports [`EventStoreErrorSource::downcast_ref`] when the
+original adapter error type is needed. Do not copy raw SQL, connection URLs, or driver
+text into the serialisable `message` field.
 
 ## Application Boundary Error
 
