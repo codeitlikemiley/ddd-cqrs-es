@@ -27,7 +27,8 @@ Enable the base async Redis API with `redis`, then choose the runtime client:
 | Feature | Runtime | Purpose |
 | :--- | :--- | :--- |
 | `redis` | Any async Rust target | Enables `RedisEventStore`, `RedisCheckpointStore`, `RedisPubSubPublisher`, and the `RedisCommandExecutor` trait. |
-| `wasi-redis` | Generic Wasmtime/WASI | Enables `WasiRedisClient`, a small raw RESP client for plain `redis://` TCP URLs. |
+| `wasi-redis` | Generic Wasmtime/WASI | Enables `WasiRedisClient`, a small raw RESP client for `redis://` and `rediss://` URLs. |
+| `wasi-redis-tls` | Generic Wasmtime/WASI (native tests) | Adds TLS for `rediss://` via rustls. Enable alongside `wasi-redis`. |
 | `spin-redis` | Fermyon Spin | Enables `SpinRedisClient`, backed by `spin_sdk::redis::Connection`. |
 
 `RedisEventStore` is async-only. It intentionally does not implement the sync
@@ -373,7 +374,7 @@ ordering, recovery, and operational behavior under production traffic.
 
 Known boundaries:
 
-* `WasiRedisClient` supports plain `redis://` TCP URLs. It does not implement TLS, Sentinel, Cluster, or RESP3-specific behavior.
+* `WasiRedisClient` supports `redis://` on loopback hosts and `rediss://` when `wasi-redis-tls` is enabled. Plain `redis://` to remote hosts requires `with_allow_insecure_remote(true)`. Blocking TCP I/O uses `execute_blocking`; async `execute` offloads to `spawn_blocking` when a Tokio runtime is installed. Subscriptions treat mid-frame timeouts as fatal desync (call `resubscribe()`). It does not implement Sentinel, Cluster, or RESP3-specific behavior.
 * `RedisEventStore` has async append/load/global replay coverage, and `RedisCheckpointStore` has async checkpoint coverage, but Redis does not implement `AsyncAtomicIdempotentEventStore`.
 * Redis pub/sub is lossy notification, not durable delivery.
 * Counter SSE wake queues are best-effort notification. Durable events remain the source of truth, and clients recover through `last_sequence` replay.
