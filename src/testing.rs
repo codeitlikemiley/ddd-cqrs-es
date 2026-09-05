@@ -365,7 +365,7 @@ pub fn assert_event_store_append_race_contract<A, S, F>(
 ) where
     A: Aggregate,
     A::Event: PartialEq + Debug + Clone,
-    A::Id: Clone + Send + Sync,
+    A::Id: Clone + Send + Sync + serde::Serialize,
     S: EventStore<A> + Send + Sync + 'static,
     S::Error: EventStoreFailure + Debug + Display + Send + 'static,
     F: Fn() -> S + Send + Sync + 'static,
