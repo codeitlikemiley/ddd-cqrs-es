@@ -1179,10 +1179,25 @@ fn current_revision_postgres(
 }
 
 fn is_postgres_stream_revision_unique_violation(error: &::postgres::Error) -> bool {
-    error
+    if !error
         .code()
         .is_some_and(|code| *code == ::postgres::error::SqlState::UNIQUE_VIOLATION)
-        && crate::sql_common::is_stream_revision_unique_violation_message(&error.to_string())
+    {
+        return false;
+    }
+    if let Some(constraint) = error
+        .as_db_error()
+        .and_then(|db| db.constraint())
+        .map(str::to_ascii_lowercase)
+    {
+        return !constraint.contains("event_id");
+    }
+    if crate::sql_common::is_stream_revision_unique_violation_message(&error.to_string()) {
+        return true;
+    }
+    // Some drivers surface 23505 with a generic message during append; event_id
+    // is the only other UNIQUE guard on the events table.
+    !error.to_string().to_ascii_lowercase().contains("event_id")
 }
 
 fn map_postgres_insert_error(
