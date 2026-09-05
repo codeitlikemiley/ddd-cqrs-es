@@ -374,7 +374,7 @@ ordering, recovery, and operational behavior under production traffic.
 
 Known boundaries:
 
-* `WasiRedisClient` supports `redis://` on loopback hosts and `rediss://` when `wasi-redis-tls` is enabled. Plain `redis://` to remote hosts requires `with_allow_insecure_remote(true)`. Blocking TCP I/O runs on worker threads via `spawn_blocking`; subscriptions treat mid-frame timeouts as fatal desync (call `resubscribe()`). It does not implement Sentinel, Cluster, or RESP3-specific behavior.
+* `WasiRedisClient` supports `redis://` on loopback hosts and `rediss://` when `wasi-redis-tls` is enabled. Plain `redis://` to remote hosts requires `with_allow_insecure_remote(true)`. Blocking TCP I/O uses `execute_blocking`; async `execute` offloads to `spawn_blocking` when a Tokio runtime is installed. Subscriptions treat mid-frame timeouts as fatal desync (call `resubscribe()`). It does not implement Sentinel, Cluster, or RESP3-specific behavior.
 * `RedisEventStore` has async append/load/global replay coverage, and `RedisCheckpointStore` has async checkpoint coverage, but Redis does not implement `AsyncAtomicIdempotentEventStore`.
 * Redis pub/sub is lossy notification, not durable delivery.
 * Counter SSE wake queues are best-effort notification. Durable events remain the source of truth, and clients recover through `last_sequence` replay.

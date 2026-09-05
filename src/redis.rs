@@ -48,8 +48,6 @@ use std::net::TcpStream;
 #[cfg(feature = "wasi-redis")]
 use std::net::ToSocketAddrs;
 use std::num::NonZeroUsize;
-#[cfg(all(feature = "wasi-redis", feature = "wasi-redis-tls"))]
-use std::sync::Arc;
 #[cfg(any(feature = "wasi-redis", feature = "spin-redis"))]
 use std::sync::{Arc, Mutex as StdMutex};
 #[cfg(feature = "wasi-redis")]
@@ -1414,9 +1412,15 @@ impl RedisCommandExecutor for WasiRedisClient {
     async fn execute(&self, command: &str, args: Vec<Vec<u8>>) -> Result<RedisValue, Self::Error> {
         let this = self.clone();
         let command = command.to_owned();
-        tokio::task::spawn_blocking(move || this.execute_blocking(&command, args))
-            .await
-            .map_err(|error| RedisClientError::Io(error.to_string()))?
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::spawn_blocking(move || this.execute_blocking(&command, args))
+                .await
+                .map_err(|error| RedisClientError::Io(error.to_string()))?
+        } else {
+            // WASI/Leptos executors do not install a Tokio runtime; run inline so
+            // Redis commands keep working without panicking on missing Handle.
+            this.execute_blocking(&command, args)
+        }
     }
 }
 
@@ -1514,8 +1518,8 @@ impl WasiRedisSubscription {
             }
         }
         self.next_message().map(Some).map_err(|error| {
+            self.desynced = true;
             if matches!(error, RedisClientError::Timeout) {
-                self.desynced = true;
                 RedisClientError::ConnectionDesynced(
                     "subscription read timed out mid-frame; call resubscribe()".to_owned(),
                 )
@@ -2206,9 +2210,14 @@ fn connect_redis_stream(
 #[cfg(all(feature = "wasi-redis", feature = "wasi-redis-tls"))]
 fn upgrade_tls_stream(tcp: TcpStream, host: &str) -> Result<RedisStream, RedisClientError> {
     let mut root_store = rustls::RootCertStore::empty();
-    for cert in rustls_native_certs::load_native_certs().map_err(|error| {
-        RedisClientError::Io(format!("failed to load native TLS certificates: {error}"))
-    })? {
+    let cert_result = rustls_native_certs::load_native_certs();
+    if cert_result.certs.is_empty() && !cert_result.errors.is_empty() {
+        return Err(RedisClientError::Io(format!(
+            "failed to load native TLS certificates: {:?}",
+            cert_result.errors
+        )));
+    }
+    for cert in cert_result.certs {
         root_store.add(cert).map_err(|error| {
             RedisClientError::Io(format!("invalid native certificate: {error}"))
         })?;
@@ -3071,9 +3080,11 @@ mod tests {
     fn subscription_mid_frame_timeout_is_fatal() {
         use std::io::{Read, Write};
         use std::net::TcpListener;
+        use std::sync::mpsc;
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("redis://{}", listener.local_addr().unwrap());
+        let (partial_tx, partial_rx) = mpsc::channel();
         std::thread::spawn(move || {
             let Ok((mut server, _)) = listener.accept() else {
                 return;
@@ -3091,25 +3102,29 @@ mod tests {
                 return;
             }
             // Begin a bulk-string reply but stop before the payload completes.
-            let _ = server.write_all(b"$8\r\npart");
+            if server.write_all(b"$8\r\npart").is_err() {
+                return;
+            }
+            let _ = partial_tx.send(());
             std::thread::sleep(Duration::from_secs(2));
         });
 
         let client = WasiRedisClient::new(url).with_read_timeout(Some(Duration::from_millis(200)));
         let mut subscription = client.subscribe("events").unwrap();
+        partial_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("server should send partial frame");
         let error = subscription.try_next_message().unwrap_err();
-
         assert!(matches!(
             error,
-            RedisClientError::Timeout
-                | RedisClientError::ConnectionDesynced(_)
+            RedisClientError::ConnectionDesynced(_)
+                | RedisClientError::Timeout
                 | RedisClientError::Io(_)
         ));
-        assert!(subscription
-            .try_next_message()
-            .unwrap_err()
-            .to_string()
-            .contains("desynced"));
+        assert!(matches!(
+            subscription.try_next_message().unwrap_err(),
+            RedisClientError::ConnectionDesynced(_)
+        ));
     }
 
     #[cfg(feature = "wasi-redis")]
