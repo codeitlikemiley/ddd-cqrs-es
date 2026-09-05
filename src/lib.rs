@@ -139,8 +139,7 @@ pub use error::{ConcurrencyError, EventStoreError, EventStoreFailure, Repository
 /// Shared event envelope and stream metadata types.
 pub use event::{
     AggregateType, DomainEvent, EventEnvelope, EventEnvelopeBuilder, EventId, EventType,
-    ExpectedRevision,
-    NewEvent, Revision, INITIAL_REVISION,
+    ExpectedRevision, NewEvent, Revision, INITIAL_REVISION,
 };
 /// Primary event store contracts and append semantics.
 pub use event_store::{

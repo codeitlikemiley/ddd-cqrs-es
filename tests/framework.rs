@@ -1,11 +1,12 @@
 use ddd_cqrs_es::{
     assert_atomic_idempotent_store_contract, assert_event_store_any_writers_contract,
     assert_event_store_append_race_contract, assert_event_store_contract, Aggregate,
-    AggregateFixture, AggregateType, ConcurrencyError, DomainEvent, EventStore, EventStoreContractOptions,
-    EventStoreError, EventStream, EventType, ExpectedRevision, IdempotencyKey, IdempotencyStore,
-    IdempotencyWaitConfig, InMemoryEventStore, InMemoryIdempotencyStore, InMemoryProjectionRunner,
-    InMemorySnapshotStore, Metadata, NewEvent, Projection, ProjectionBatchConfig, Repository,
-    RepositoryError, Snapshot, SnapshotStore, DEFAULT_PROJECTION_BATCH_SIZE,
+    AggregateFixture, AggregateType, ConcurrencyError, DomainEvent, EventStore,
+    EventStoreContractOptions, EventStoreError, EventStream, EventType, ExpectedRevision,
+    IdempotencyKey, IdempotencyStore, IdempotencyWaitConfig, InMemoryEventStore,
+    InMemoryIdempotencyStore, InMemoryProjectionRunner, InMemorySnapshotStore, Metadata, NewEvent,
+    Projection, ProjectionBatchConfig, Repository, RepositoryError, Snapshot, SnapshotStore,
+    DEFAULT_PROJECTION_BATCH_SIZE,
 };
 #[cfg(any(
     feature = "sqlite",
