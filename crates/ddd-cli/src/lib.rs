@@ -1291,7 +1291,8 @@ fn block_contains_trimmed_line(block: &str, insertion: &str) -> bool {
 }
 
 fn insert_before_marker(content: &str, marker: &str, insertion: &str) -> Result<String> {
-    if marker_block(content, marker).is_some_and(|block| block_contains_trimmed_line(block, insertion))
+    if marker_block(content, marker)
+        .is_some_and(|block| block_contains_trimmed_line(block, insertion))
     {
         return Ok(content.to_string());
     }

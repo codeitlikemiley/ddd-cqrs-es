@@ -1311,10 +1311,7 @@ impl CheckpointStore for MySqlCheckpointStore {
     }
 
     fn reset_checkpoint(&self, projection_name: &str) -> Result<(), Self::Error> {
-        let sql = format!(
-            "DELETE FROM {} WHERE projection_name = ?;",
-            self.table_name
-        );
+        let sql = format!("DELETE FROM {} WHERE projection_name = ?;", self.table_name);
         self.pool.write(|connection| {
             connection
                 .exec_drop(&sql, (projection_name,))
@@ -1485,9 +1482,8 @@ where
     }
 
     fn reserve(&self, key: IdempotencyKey) -> Result<bool, Self::Error> {
-        key.validate_storage_length().map_err(|error| {
-            EventStoreError::backend(error.to_string())
-        })?;
+        key.validate_storage_length()
+            .map_err(|error| EventStoreError::backend(error.to_string()))?;
         let updated_at_ms = system_time_to_millis(SystemTime::now())?;
 
         // MySQL INSERT IGNORE behaves like INSERT OR IGNORE / ON CONFLICT DO NOTHING

@@ -1322,7 +1322,10 @@ impl crate::projection::CheckpointStore for PostgresCheckpointStore {
     }
 
     fn reset_checkpoint(&self, projection_name: &str) -> Result<(), Self::Error> {
-        let sql = format!("DELETE FROM {} WHERE projection_name = $1;", self.table_name);
+        let sql = format!(
+            "DELETE FROM {} WHERE projection_name = $1;",
+            self.table_name
+        );
         self.pool.write(|client| {
             client
                 .execute(&sql, &[&projection_name])
