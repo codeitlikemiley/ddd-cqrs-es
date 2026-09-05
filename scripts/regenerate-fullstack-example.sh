@@ -70,8 +70,22 @@ if [[ "$MODE" == "--check" ]]; then
   exit 1
 fi
 
+RSYNC_EXCLUDES=(
+  --exclude=.DS_Store
+  --exclude=.env
+  --exclude=.spin
+  --exclude=Cargo.lock
+  --exclude=node_modules
+  --exclude=target
+  --exclude=.audit-shots
+  --exclude=HANDOVER.md
+  --exclude=REFACTOR_GOAL.md
+  --exclude=TAILWIND_MIGRATION.md
+  --exclude=public/favicon.svg
+)
+
 rsync -a --delete \
-  "${DIFF_EXCLUDES[@]}" \
+  "${RSYNC_EXCLUDES[@]}" \
   "$GENERATED_DIR/" "$EXAMPLE_DIR/"
 
 # Restore monorepo-only artifacts the template does not generate.
