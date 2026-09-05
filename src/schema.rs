@@ -500,7 +500,7 @@ pub fn get_migrations(dialect: SqlDialect) -> Vec<SchemaMigration> {
                 version: 8,
                 description: "idempotency_completed_purge_index",
                 up_sql: r#"
-                    CREATE INDEX {idempotency_table}_completed_updated_idx
+                    CREATE INDEX {idempotency_table}_completed_idx
                         ON {idempotency_table} (updated_at_ms, state);
                 "#,
             },
