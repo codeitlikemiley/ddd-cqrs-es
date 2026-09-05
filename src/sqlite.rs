@@ -12,9 +12,9 @@ use crate::idempotency::{
 };
 use crate::snapshot::{Snapshot, SnapshotStore};
 use crate::sql_common::{
-    check_expected_revision, aggregate_id_lookup_keys, deserialize_id, deserialize_metadata,
-    deserialize_payload, millis_to_system_time, serialize_id, serialize_metadata, serialize_payload,
-    system_time_to_millis, validate_table_name,
+    aggregate_id_lookup_keys, check_expected_revision, deserialize_id, deserialize_metadata,
+    deserialize_payload, millis_to_system_time, serialize_id, serialize_metadata,
+    serialize_payload, system_time_to_millis, validate_table_name,
 };
 use crate::upcast::UpcasterRegistry;
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension, TransactionBehavior};
@@ -288,11 +288,7 @@ where
         for key in keys {
             stored_rows = {
                 let connection = lock_connection(&self.connection);
-                query_stored_event_rows(
-                    &connection,
-                    &query,
-                    params![A::aggregate_type(), key],
-                )?
+                query_stored_event_rows(&connection, &query, params![A::aggregate_type(), key])?
             };
             if !stored_rows.is_empty() {
                 break;

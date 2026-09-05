@@ -13,10 +13,9 @@ use crate::operation::{
 };
 use crate::render::{
     available_template_names, ensure_event_type_name, ensure_package_name, ensure_rust_identifier,
-    ensure_snake_identifier,
-    parse_field_specs, render_aggregate, render_command_handle_arm, render_command_variant,
-    render_domain_mod, render_domain_test, render_event_type_arm, render_event_variant,
-    render_fullstack_domain_app_mod, render_fullstack_domain_app_module,
+    ensure_snake_identifier, parse_field_specs, render_aggregate, render_command_handle_arm,
+    render_command_variant, render_domain_mod, render_domain_test, render_event_type_arm,
+    render_event_variant, render_fullstack_domain_app_mod, render_fullstack_domain_app_module,
     render_fullstack_domain_rest_arm, render_fullstack_domain_rest_bootstrap, render_init,
     sanitize_package_name, InitRenderInput, NameParts,
 };
@@ -783,16 +782,16 @@ fn add_to_project(ctx: &ExecutionContext, command: AddCommand) -> Result<Command
             "snapshot policy",
         )),
         AddCommand::Upcaster(args) => operations.push(write_operation(
-                format!(
-                    "src/upcasters/{}_v{}_to_v{}.rs",
-                    args.event.to_snake_case(),
-                    args.from,
-                    args.to
-                ),
-                render_upcaster_stub(&args.event, args.from, args.to),
-                false,
-                "event upcaster",
-            )),
+            format!(
+                "src/upcasters/{}_v{}_to_v{}.rs",
+                args.event.to_snake_case(),
+                args.from,
+                args.to
+            ),
+            render_upcaster_stub(&args.event, args.from, args.to),
+            false,
+            "event upcaster",
+        )),
         AddCommand::Route(args) | AddCommand::RestEndpoint(args) => {
             operations.push(write_operation(
                 format!("src/routes/{}.rs", args.name.to_snake_case()),
@@ -1391,7 +1390,8 @@ fn find_last_unique_marker_line(content: &str, marker: &str) -> Result<usize> {
 }
 
 fn insert_before_marker(content: &str, marker: &str, insertion: &str) -> Result<String> {
-    if marker_block(content, marker).is_some_and(|block| block_contains_trimmed_lines(block, insertion))
+    if marker_block(content, marker)
+        .is_some_and(|block| block_contains_trimmed_lines(block, insertion))
     {
         return Ok(content.to_string());
     }

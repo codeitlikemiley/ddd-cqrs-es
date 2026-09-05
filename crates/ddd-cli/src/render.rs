@@ -200,15 +200,13 @@ pub fn ensure_event_type_name(value: &str, label: &str) -> anyhow::Result<()> {
     if value.is_empty() {
         anyhow::bail!("{label} must not be empty");
     }
-    let valid = value.chars().all(|ch| {
-        ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '.'
-    });
+    let valid = value
+        .chars()
+        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '.');
     if valid {
         Ok(())
     } else {
-        anyhow::bail!(
-            "{label} `{value}` must use lowercase letters, digits, `_`, or `.`"
-        )
+        anyhow::bail!("{label} `{value}` must use lowercase letters, digits, `_`, or `.`")
     }
 }
 

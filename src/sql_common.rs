@@ -178,6 +178,15 @@ where
     }
 }
 
+#[cfg(all(
+    feature = "json",
+    any(
+        feature = "sqlite",
+        feature = "postgres",
+        feature = "mysql",
+        feature = "redis"
+    )
+))]
 /// Returns the storage keys that may identify one aggregate stream.
 ///
 /// New rows store plain string ids; legacy rows used `serde_json::to_string`
