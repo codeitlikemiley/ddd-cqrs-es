@@ -30,6 +30,8 @@ pub struct AppendEventRow {
 /// One committed row returned from an atomic append.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AppendCommittedRow {
+    /// Event identifier echoed from the inserted row.
+    pub event_id: String,
     /// Stream revision assigned by the store.
     pub revision: u64,
     /// Global sequence assigned by the store.
@@ -138,7 +140,7 @@ pub fn build_postgres_append_statement(
          ) AS u( \
             event_id, row_offset, event_type, event_version, payload, metadata, recorded_at_ms \
          ) \
-         RETURNING revision, sequence"
+         RETURNING event_id, revision, sequence"
     );
 
     let params = vec![
@@ -234,7 +236,7 @@ pub fn build_sqlite_append_statement(
          CROSS JOIN (VALUES {values_sql}) AS u( \
             event_id, event_type, event_version, payload, metadata, recorded_at_ms, row_offset \
          ) \
-         RETURNING sequence, revision"
+         RETURNING event_id, sequence, revision"
     );
 
     Ok((sql, params))
@@ -267,9 +269,18 @@ fn parse_committed_row(row: &Value) -> Result<AppendCommittedRow, String> {
     let obj = row
         .as_object()
         .ok_or_else(|| "append row is not a JSON object".to_owned())?;
+    let event_id = obj
+        .get("event_id")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "missing `event_id` in append row".to_owned())?
+        .to_owned();
     let revision = parse_u64_field(obj, "revision")?;
     let sequence = parse_u64_field(obj, "sequence")?;
-    Ok(AppendCommittedRow { revision, sequence })
+    Ok(AppendCommittedRow {
+        event_id,
+        revision,
+        sequence,
+    })
 }
 
 fn parse_u64_field(obj: &serde_json::Map<String, Value>, key: &str) -> Result<u64, String> {
@@ -563,7 +574,7 @@ mod tests {
         assert!(sql.contains("WITH stream AS"));
         assert!(sql.contains("guard AS"));
         assert!(sql.contains("UNNEST"));
-        assert!(sql.contains("RETURNING revision, sequence"));
+        assert!(sql.contains("RETURNING event_id, revision, sequence"));
         assert_eq!(params.len(), 11);
         assert_eq!(params[2], json!(GUARD_EXACT));
         assert_eq!(params[3], json!(2));
@@ -582,7 +593,7 @@ mod tests {
 
         assert!(sql.contains("WITH stream AS"));
         assert!(sql.contains("VALUES"));
-        assert!(sql.contains("RETURNING sequence, revision"));
+        assert!(sql.contains("RETURNING event_id, sequence, revision"));
         assert_eq!(params[2], json!(GUARD_NOSTREAM));
         assert_eq!(params.len(), 8 + sample_rows().len() * 7);
     }
@@ -605,6 +616,7 @@ mod tests {
     #[test]
     fn parse_committed_and_revision_rows() {
         let committed = parse_committed_rows(&[json!({
+            "event_id": "evt-1",
             "revision": "3",
             "sequence": 42
         })])
@@ -612,6 +624,7 @@ mod tests {
         assert_eq!(
             committed,
             vec![AppendCommittedRow {
+                event_id: "evt-1".to_owned(),
                 revision: 3,
                 sequence: 42
             }]
@@ -624,7 +637,7 @@ mod tests {
     fn resolve_append_outcome_commits_and_conflicts() {
         let committed = resolve_append_outcome(
             ExpectedRevision::Exact(1),
-            &[json!({"revision": 2, "sequence": 9})],
+            &[json!({"event_id": "evt-1", "revision": 2, "sequence": 9})],
             1,
             None,
         )
