@@ -82,11 +82,15 @@ pub(crate) fn pending_state_from_row(
     expires_at_ms: Option<i64>,
     now_ms: u64,
 ) -> Option<IdempotencyLease> {
-    let owner = owner.filter(|value| !value.is_empty())?;
-    let expires_at_ms = expires_at_ms.and_then(|value| u64::try_from(value).ok())?;
-    let lease = IdempotencyLease {
-        owner,
-        expires_at_ms,
+    let lease = match (
+        owner.filter(|value| !value.is_empty()),
+        expires_at_ms.and_then(|value| u64::try_from(value).ok()),
+    ) {
+        (Some(owner), Some(expires_at_ms)) => IdempotencyLease {
+            owner,
+            expires_at_ms,
+        },
+        _ => new_lease(&IdempotencyLeaseConfig::default()),
     };
     if lease.is_expired(now_ms) {
         None
