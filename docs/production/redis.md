@@ -51,8 +51,13 @@ prefix. The default prefix is `ddd_cqrs_es`.
 | `{prefix}:checkpoint:{projection_name_hex}` | Last processed global sequence for one projection. |
 
 Append is performed by one Lua `EVAL` script. The script validates the expected
-revision, allocates global sequence numbers, updates the stream revision, stores
-event hashes, and updates stream/global indexes atomically.
+revision, cross-checks the stream revision counter against its sorted-set
+cardinality, allocates global sequence numbers, updates the stream revision,
+stores event hashes, and updates stream/global indexes atomically. Every key
+under a store prefix is wrapped in a Redis Cluster hash tag (`{prefix}:…`) so
+the script can run on a cluster deployment. Configure Redis with
+`maxmemory-policy noeviction`; evicting revision or index keys breaks the
+counter/index invariant and causes appends to fail until the stream is repaired.
 
 This append atomicity is scoped to event writes. Redis currently does not
 implement `AsyncAtomicIdempotentEventStore`, so

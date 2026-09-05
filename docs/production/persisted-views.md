@@ -49,6 +49,11 @@ Events must be processed in the exact order they were committed. Processing even
 
 Our Projection Runner guarantees sequential processing by executing in a single thread per projection pipeline, reading events ordered strictly by their global database `sequence`.
 
+### Rule 3: Run One Active Runner Per Projection Scope
+The built-in runners (`PersistedProjectionRunner`, `AsyncPersistedProjectionRunner`, checkpointed variants, and in-memory helpers) load a checkpoint, apply a batch, and save the advanced sequence without acquiring an exclusive lease. If two processes run the same `(projection name, aggregate type)` pair concurrently—during a rolling restart, `replicas: 2`, or a duplicated cron job—both can apply the same events. Idempotent projections survive the overlap; accumulators and counters may not.
+
+Operate exactly one active worker per projection scope in production. Use aggregate-scoped checkpoint keys (`aggregate_scoped_checkpoint_key`) when one projection serves multiple aggregate types so each type keeps its own single-runner contract.
+
 ---
 
 ## Building a Persisted Projection Runner

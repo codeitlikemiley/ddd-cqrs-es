@@ -362,66 +362,16 @@ where
             return Ok(Vec::new());
         }
 
-        let insert = format!(
-            "INSERT INTO {table} \
-             (event_id, aggregate_id, aggregate_type, revision, event_type, event_version, \
-              payload, metadata, recorded_at_ms) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            table = self.table_name
-        );
-        let mut committed = Vec::with_capacity(prepared.len());
-        let mut insert_statement = transaction
-            .prepare_cached(&insert)
-            .map_err(map_sqlite_error)?;
+        let committed = insert_prepared_sqlite_events::<A>(
+            &transaction,
+            &self.table_name,
+            aggregate_id,
+            &aggregate_id_key,
+            actual_revision,
+            expected_revision,
+            prepared,
+        )?;
 
-        for (index, event) in prepared.into_iter().enumerate() {
-            let revision = actual_revision + index as u64 + 1;
-            let revision_i64 = i64::try_from(revision).map_err(|_| {
-                EventStoreError::serialization("revision exceeds SQLite INTEGER".to_owned())
-            })?;
-            let event_version_i64 = i64::from(event.event_version);
-
-            insert_statement
-                .execute(params![
-                    event.event_id.as_str(),
-                    aggregate_id_key,
-                    A::aggregate_type(),
-                    revision_i64,
-                    event.event_type,
-                    event_version_i64,
-                    event.payload_json,
-                    event.metadata_json,
-                    event.recorded_at_ms,
-                ])
-                .map_err(|error| {
-                    map_sqlite_insert_error(error, expected_revision, actual_revision, || {
-                        Self::current_revision_locked(
-                            &self.table_name,
-                            &transaction,
-                            &aggregate_id_key,
-                        )
-                    })
-                })?;
-            let sequence = transaction.last_insert_rowid();
-            let sequence = u64::try_from(sequence).map_err(|_| {
-                EventStoreError::deserialization("SQLite sequence cannot be negative".to_owned())
-            })?;
-
-            committed.push(EventEnvelope::new(
-                event.event_id,
-                aggregate_id.clone(),
-                A::aggregate_type(),
-                revision,
-                Some(sequence),
-                event.event_type,
-                event.event_version,
-                event.payload,
-                event.metadata,
-                event.recorded_at,
-            ));
-        }
-
-        drop(insert_statement);
         transaction.commit().map_err(|error| {
             map_sqlite_contention_error(error, Some(expected_revision), || {
                 Self::current_revision_locked(&self.table_name, &connection, &aggregate_id_key)
@@ -956,6 +906,107 @@ where
             recorded_at_ms,
         })
     }
+}
+
+/// Inserts all prepared events with one multi-row `INSERT` round trip and
+/// derives each assigned sequence from `last_insert_rowid()` and its offset.
+fn insert_prepared_sqlite_events<A>(
+    transaction: &rusqlite::Transaction<'_>,
+    table_name: &str,
+    aggregate_id: &A::Id,
+    aggregate_id_key: &str,
+    actual_revision: u64,
+    expected_revision: ExpectedRevision,
+    prepared: Vec<PreparedSqliteEvent<A::Event>>,
+) -> Result<EventStream<A>, EventStoreError>
+where
+    A: Aggregate,
+{
+    let count = prepared.len();
+    let mut placeholders = Vec::with_capacity(count);
+    let mut bind_values: Vec<rusqlite::types::Value> = Vec::with_capacity(count * 9);
+
+    for (index, event) in prepared.iter().enumerate() {
+        let revision = actual_revision + index as u64 + 1;
+        let revision_i64 = i64::try_from(revision).map_err(|_| {
+            EventStoreError::serialization("revision exceeds SQLite INTEGER".to_owned())
+        })?;
+        let event_version_i64 = i64::from(event.event_version);
+        let base = bind_values.len() + 1;
+        placeholders.push(format!(
+            "(?{a}, ?{b}, ?{c}, ?{d}, ?{e}, ?{f}, ?{g}, ?{h}, ?{i})",
+            a = base,
+            b = base + 1,
+            c = base + 2,
+            d = base + 3,
+            e = base + 4,
+            f = base + 5,
+            g = base + 6,
+            h = base + 7,
+            i = base + 8,
+        ));
+        bind_values.push(event.event_id.to_string().into());
+        bind_values.push(aggregate_id_key.to_owned().into());
+        bind_values.push(A::aggregate_type().to_owned().into());
+        bind_values.push(revision_i64.into());
+        bind_values.push(event.event_type.clone().into());
+        bind_values.push(event_version_i64.into());
+        bind_values.push(event.payload_json.clone().into());
+        bind_values.push(event.metadata_json.clone().into());
+        bind_values.push(event.recorded_at_ms.into());
+    }
+
+    let insert = format!(
+        "INSERT INTO {table} \
+         (event_id, aggregate_id, aggregate_type, revision, event_type, event_version, \
+          payload, metadata, recorded_at_ms) \
+         VALUES {placeholders}",
+        table = table_name,
+        placeholders = placeholders.join(", ")
+    );
+    transaction
+        .execute(&insert, rusqlite::params_from_iter(bind_values))
+        .map_err(|error| {
+            map_sqlite_insert_error(error, expected_revision, actual_revision, || {
+                SqliteEventStore::<A>::current_revision_locked(
+                    table_name,
+                    transaction,
+                    aggregate_id_key,
+                )
+            })
+        })?;
+
+    let last_rowid = transaction.last_insert_rowid();
+    let first_sequence = last_rowid - count as i64 + 1;
+    if first_sequence <= 0 {
+        return Err(EventStoreError::backend(
+            "SQLite multi-row insert returned an invalid first sequence".to_owned(),
+        ));
+    }
+
+    let mut committed = Vec::with_capacity(count);
+    for (index, event) in prepared.into_iter().enumerate() {
+        let revision = actual_revision + index as u64 + 1;
+        let sequence = first_sequence + index as i64;
+        let sequence = u64::try_from(sequence).map_err(|_| {
+            EventStoreError::deserialization("SQLite sequence cannot be negative".to_owned())
+        })?;
+
+        committed.push(EventEnvelope::new(
+            event.event_id,
+            aggregate_id.clone(),
+            A::aggregate_type(),
+            revision,
+            Some(sequence),
+            event.event_type,
+            event.event_version,
+            event.payload,
+            event.metadata,
+            event.recorded_at,
+        ));
+    }
+
+    Ok(committed)
 }
 
 /// Maps a full event row into an untyped envelope, applying upcasters but
