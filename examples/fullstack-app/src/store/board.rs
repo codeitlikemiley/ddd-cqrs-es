@@ -207,7 +207,7 @@ pub async fn load_dashboard_layout(
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
         let _ = org_id;
-        Ok(default_dashboard_layout())
+        Err(dashboard_storage_requires_postgres())
     }
 }
 
@@ -292,9 +292,7 @@ pub async fn save_dashboard_layout(
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
         let _ = (org_id, layout, expected_revision);
-        Err(AuthStackError::configuration(
-            "dashboard storage requires Spin key-value",
-        ))
+        Err(dashboard_storage_requires_postgres())
     }
 }
 
@@ -373,6 +371,6 @@ pub async fn migrate_legacy_user_board_to_org(
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
         let _ = (user_id, org_id);
-        Ok(false)
+        Err(dashboard_storage_requires_postgres())
     }
 }

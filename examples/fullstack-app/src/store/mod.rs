@@ -1,5 +1,10 @@
 //! Product storage adapters (KV, SQL, vault, dashboard data).
 //! Domain modules re-exported so existing `crate::store::*` call sites keep working.
+//!
+//! Dashboard board/resources/queries/notifications/vault SQL adapters are
+//! **Postgres-on-Spin only**. Unsupported build targets return
+//! [`dashboard_storage_requires_postgres`] instead of empty stubs that look
+//! like success.
 
 mod board;
 mod egress;
@@ -27,6 +32,13 @@ pub(crate) use seed::*;
 pub(crate) use sql::*;
 pub(crate) use vault::*;
 
+pub(crate) const DASHBOARD_STORAGE_REQUIRES_POSTGRES: &str =
+    "dashboard storage requires Spin PostgreSQL (build with --features postgres and deploy on Spin)";
+
+pub(crate) fn dashboard_storage_requires_postgres() -> crate::error::AuthStackError {
+    crate::error::AuthStackError::configuration(DASHBOARD_STORAGE_REQUIRES_POSTGRES)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -35,6 +47,12 @@ mod tests {
         WidgetBind,
     };
     use serde_json::json;
+
+    #[test]
+    fn dashboard_storage_requires_postgres_is_configuration_error() {
+        let error = dashboard_storage_requires_postgres();
+        assert_eq!(error.to_string(), DASHBOARD_STORAGE_REQUIRES_POSTGRES);
+    }
 
     #[test]
     fn postgres_sql_rewrites_indexed_placeholders() {

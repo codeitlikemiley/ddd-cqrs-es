@@ -57,7 +57,7 @@ pub async fn bootstrap_dashboard_notifications(org_id: &str) -> AuthStackResult<
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
         let _ = org_id;
-        Ok(())
+        Err(dashboard_storage_requires_postgres())
     }
 }
 
@@ -82,7 +82,7 @@ pub async fn load_dashboard_notifications(
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
         let _ = org_id;
-        Ok(default_notifications())
+        Err(dashboard_storage_requires_postgres())
     }
 }
 
@@ -115,9 +115,7 @@ pub async fn save_dashboard_notifications(
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
         let _ = (org_id, notifications);
-        Err(AuthStackError::configuration(
-            "dashboard storage requires Spin key-value",
-        ))
+        Err(dashboard_storage_requires_postgres())
     }
 }
 

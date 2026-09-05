@@ -60,7 +60,7 @@ pub async fn load_resources(
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
         let _ = org_id;
-        Ok(Vec::new())
+        Err(dashboard_storage_requires_postgres())
     }
 }
 
@@ -95,9 +95,7 @@ pub async fn upsert_resource_row(
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
         let _ = (org_id, resource);
-        Err(AuthStackError::configuration(
-            "dashboard storage requires Spin key-value",
-        ))
+        Err(dashboard_storage_requires_postgres())
     }
 }
 
@@ -120,7 +118,7 @@ pub async fn delete_resource_row(org_id: &str, resource_id: &str) -> AuthStackRe
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
         let _ = (org_id, resource_id);
-        Ok(false)
+        Err(dashboard_storage_requires_postgres())
     }
 }
 
@@ -143,7 +141,7 @@ pub async fn load_queries(org_id: &str) -> AuthStackResult<Vec<crate::contracts:
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
         let _ = org_id;
-        Ok(Vec::new())
+        Err(dashboard_storage_requires_postgres())
     }
 }
 
@@ -178,9 +176,7 @@ pub async fn upsert_query_row(
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
         let _ = (org_id, query);
-        Err(AuthStackError::configuration(
-            "dashboard storage requires Spin key-value",
-        ))
+        Err(dashboard_storage_requires_postgres())
     }
 }
 
@@ -203,7 +199,7 @@ pub async fn delete_query_row(org_id: &str, query_id: &str) -> AuthStackResult<b
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
         let _ = (org_id, query_id);
-        Ok(false)
+        Err(dashboard_storage_requires_postgres())
     }
 }
 
@@ -225,7 +221,7 @@ pub async fn delete_queries_for_resource(org_id: &str, resource_id: &str) -> Aut
     #[cfg(not(all(feature = "postgres", runtime_spin)))]
     {
         let _ = (org_id, resource_id);
-        Ok(())
+        Err(dashboard_storage_requires_postgres())
     }
 }
 
