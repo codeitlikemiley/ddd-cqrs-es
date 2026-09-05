@@ -132,7 +132,7 @@ scaffold-fullstack:
 	@echo "  open http://localhost:3008"
 
 fullstack-sync:
-	@bash scripts/regenerate-fullstack-example.sh
+	@bash scripts/regenerate-fullstack-example.sh --write
 
 fullstack-check:
 	@bash scripts/regenerate-fullstack-example.sh --check

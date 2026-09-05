@@ -671,6 +671,32 @@ impl crate::projection::CheckpointStore for JsonFileCheckpointStore {
 
         Ok(())
     }
+
+    fn reset_checkpoint(&self, projection_name: &str) -> Result<(), Self::Error> {
+        let lock = get_file_lock(&self.checkpoints_path)?;
+        let _guard = lock
+            .lock()
+            .map_err(|_| crate::error::EventStoreError::Poisoned)?;
+
+        if !self.checkpoints_path.exists() {
+            return Ok(());
+        }
+
+        let content = std::fs::read_to_string(&self.checkpoints_path)
+            .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?;
+
+        let mut map: std::collections::HashMap<String, u64> = serde_json::from_str(&content)
+            .map_err(|e| crate::error::EventStoreError::deserialization(e.to_string()))?;
+
+        map.remove(projection_name);
+
+        let new_content = serde_json::to_string(&map)
+            .map_err(|e| crate::error::EventStoreError::serialization(e.to_string()))?;
+        write_atomic(&self.checkpoints_path, &new_content)
+            .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?;
+
+        Ok(())
+    }
 }
 
 #[cfg(all(feature = "json-file", feature = "async"))]
@@ -697,6 +723,16 @@ impl crate::projection::AsyncCheckpointStore for JsonFileCheckpointStore {
         let name = projection_name.to_owned();
         tokio::task::spawn_blocking(move || {
             crate::projection::CheckpointStore::save_checkpoint(&this, &name, sequence)
+        })
+        .await
+        .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?
+    }
+
+    async fn reset_checkpoint(&self, projection_name: &str) -> Result<(), Self::Error> {
+        let this = self.clone();
+        let name = projection_name.to_owned();
+        tokio::task::spawn_blocking(move || {
+            crate::projection::CheckpointStore::reset_checkpoint(&this, &name)
         })
         .await
         .map_err(|e| crate::error::EventStoreError::backend(e.to_string()))?

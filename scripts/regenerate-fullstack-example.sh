@@ -5,8 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EXAMPLE_DIR="$ROOT_DIR/examples/fullstack-app"
 MODE="${1:---check}"
 
-if [[ "$MODE" != "--check" ]]; then
-  echo "Usage: $0 [--check]" >&2
+if [[ "$MODE" != "--check" && "$MODE" != "--write" ]]; then
+  echo "Usage: $0 [--check|--write]" >&2
   exit 2
 fi
 
@@ -59,5 +59,24 @@ DIFF_EXCLUDES=(
   --exclude=target
 )
 
-diff -ru "${DIFF_EXCLUDES[@]}" "$GENERATED_DIR" "$COMPARE_DIR"
-echo "fullstack example matches the embedded CLI template"
+if diff -ru "${DIFF_EXCLUDES[@]}" "$GENERATED_DIR" "$COMPARE_DIR"; then
+  echo "fullstack example matches the embedded CLI template"
+  exit 0
+fi
+
+if [[ "$MODE" == "--check" ]]; then
+  echo "Error: examples/fullstack-app drifted from the CLI template." >&2
+  echo "Run: make fullstack-sync" >&2
+  exit 1
+fi
+
+rsync -a --delete \
+  "${DIFF_EXCLUDES[@]}" \
+  "$GENERATED_DIR/" "$EXAMPLE_DIR/"
+
+# Restore monorepo-only artifacts the template does not generate.
+if [[ -f "$COMPARE_DIR/.cargo/config.toml" ]]; then
+  cp "$COMPARE_DIR/.cargo/config.toml" "$EXAMPLE_DIR/.cargo/config.toml"
+fi
+
+echo "regenerated examples/fullstack-app from the CLI template"

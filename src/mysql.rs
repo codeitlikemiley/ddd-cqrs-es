@@ -1309,6 +1309,19 @@ impl CheckpointStore for MySqlCheckpointStore {
             Ok(())
         })
     }
+
+    fn reset_checkpoint(&self, projection_name: &str) -> Result<(), Self::Error> {
+        let sql = format!(
+            "DELETE FROM {} WHERE projection_name = ?;",
+            self.table_name
+        );
+        self.pool.write(|connection| {
+            connection
+                .exec_drop(&sql, (projection_name,))
+                .map_err(map_mysql_error)?;
+            Ok(())
+        })
+    }
 }
 
 #[cfg(feature = "async")]
@@ -1336,6 +1349,14 @@ impl crate::projection::AsyncCheckpointStore for MySqlCheckpointStore {
         })
         .await
         .map_err(|e| EventStoreError::backend(e.to_string()))?
+    }
+
+    async fn reset_checkpoint(&self, projection_name: &str) -> Result<(), Self::Error> {
+        let this = self.clone();
+        let name = projection_name.to_owned();
+        tokio::task::spawn_blocking(move || CheckpointStore::reset_checkpoint(&this, &name))
+            .await
+            .map_err(|e| EventStoreError::backend(e.to_string()))?
     }
 }
 
@@ -1464,6 +1485,9 @@ where
     }
 
     fn reserve(&self, key: IdempotencyKey) -> Result<bool, Self::Error> {
+        key.validate_storage_length().map_err(|error| {
+            EventStoreError::backend(error.to_string())
+        })?;
         let updated_at_ms = system_time_to_millis(SystemTime::now())?;
 
         // MySQL INSERT IGNORE behaves like INSERT OR IGNORE / ON CONFLICT DO NOTHING
@@ -1528,6 +1552,19 @@ where
 
     fn expire_stale_pending(&self, _now_ms: u64) -> Result<usize, Self::Error> {
         Ok(0)
+    }
+
+    fn expire_completed_before(&self, cutoff_ms: u64) -> Result<usize, Self::Error> {
+        let sql = format!(
+            "DELETE FROM {} WHERE state = 'complete' AND updated_at_ms < ?;",
+            self.table_name
+        );
+        self.pool.write(|connection| {
+            connection
+                .exec_drop(&sql, (cutoff_ms,))
+                .map_err(map_mysql_error)?;
+            Ok(connection.affected_rows() as usize)
+        })
     }
 }
 

@@ -143,6 +143,33 @@ impl Default for IdempotencyWaitConfig {
     }
 }
 
+/// Maximum idempotency key length supported by MySQL `VARCHAR(255)` columns.
+///
+/// Keys longer than this are rejected by SQL stores that persist the raw key
+/// string so `INSERT IGNORE` cannot silently truncate two distinct keys into one.
+pub const IDEMPOTENCY_KEY_MAX_LEN: usize = 255;
+
+/// Error returned when an idempotency key exceeds a store's supported length.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IdempotencyKeyTooLong {
+    /// Actual key length in bytes.
+    pub len: usize,
+    /// Maximum supported length.
+    pub max_len: usize,
+}
+
+impl Display for IdempotencyKeyTooLong {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "idempotency key length {} exceeds the supported maximum of {}",
+            self.len, self.max_len
+        )
+    }
+}
+
+impl Error for IdempotencyKeyTooLong {}
+
 /// Stable idempotency key used to deduplicate command retries.
 ///
 /// # Example
@@ -168,6 +195,18 @@ impl IdempotencyKey {
     /// Returns the key as a string slice.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// Returns an error when the key exceeds [`IDEMPOTENCY_KEY_MAX_LEN`].
+    pub fn validate_storage_length(&self) -> Result<(), IdempotencyKeyTooLong> {
+        if self.0.len() > IDEMPOTENCY_KEY_MAX_LEN {
+            Err(IdempotencyKeyTooLong {
+                len: self.0.len(),
+                max_len: IDEMPOTENCY_KEY_MAX_LEN,
+            })
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -216,6 +255,15 @@ where
 
     /// Removes or reclaims stale pending rows whose leases have expired.
     fn expire_stale_pending(&self, now_ms: u64) -> Result<usize, Self::Error>;
+
+    /// Deletes completed rows whose `updated_at_ms` is strictly before `cutoff_ms`.
+    ///
+    /// Returns the number of rows removed. The default implementation is a no-op
+    /// for stores that do not persist completion timestamps.
+    fn expire_completed_before(&self, cutoff_ms: u64) -> Result<usize, Self::Error> {
+        let _ = cutoff_ms;
+        Ok(0)
+    }
 
     /// Saves a completed result for an idempotency key.
     fn save(&self, key: IdempotencyKey, value: V) -> Result<(), Self::Error>;

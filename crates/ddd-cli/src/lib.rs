@@ -1274,8 +1274,25 @@ fn read_project_file(root: &Path, path: &Path) -> Result<String> {
         .with_context(|| format!("failed to read {}", full_path.display()))
 }
 
+fn marker_block<'a>(content: &'a str, end_marker: &str) -> Option<&'a str> {
+    let end = content.find(end_marker)?;
+    let start_marker = end_marker.strip_suffix(":end")?;
+    let start = content[..end].rfind(start_marker)?;
+    Some(&content[start..end])
+}
+
+fn block_contains_trimmed_line(block: &str, insertion: &str) -> bool {
+    let needle = insertion
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or_else(|| insertion.trim());
+    block.lines().any(|line| line.trim() == needle)
+}
+
 fn insert_before_marker(content: &str, marker: &str, insertion: &str) -> Result<String> {
-    if content.contains(insertion.trim()) {
+    if marker_block(content, marker).is_some_and(|block| block_contains_trimmed_line(block, insertion))
+    {
         return Ok(content.to_string());
     }
     let Some(index) = content.find(marker) else {

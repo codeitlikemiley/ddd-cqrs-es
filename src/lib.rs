@@ -146,10 +146,11 @@ pub use event_store::{
 };
 /// Idempotency APIs and error types shared across adapters.
 pub use idempotency::{
-    IdempotencyKey, IdempotencyLease, IdempotencyLeaseConfig, IdempotencyState, IdempotencyStore,
-    IdempotencyWaitConfig, IdempotentRepositoryError, InMemoryIdempotencyError,
-    InMemoryIdempotencyStore, DEFAULT_IDEMPOTENCY_LEASE, DEFAULT_IDEMPOTENCY_PENDING_TIMEOUT,
-    DEFAULT_IDEMPOTENCY_POLL_INTERVAL,
+    IdempotencyKey, IdempotencyKeyTooLong, IdempotencyLease, IdempotencyLeaseConfig,
+    IdempotencyState, IdempotencyStore, IdempotencyWaitConfig, IdempotentRepositoryError,
+    InMemoryIdempotencyError, InMemoryIdempotencyStore, DEFAULT_IDEMPOTENCY_LEASE,
+    DEFAULT_IDEMPOTENCY_PENDING_TIMEOUT, DEFAULT_IDEMPOTENCY_POLL_INTERVAL,
+    IDEMPOTENCY_KEY_MAX_LEN,
 };
 /// In-memory event store implementation for tests and local development.
 pub use memory::InMemoryEventStore;

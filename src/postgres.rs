@@ -1320,6 +1320,16 @@ impl crate::projection::CheckpointStore for PostgresCheckpointStore {
             Ok(())
         })
     }
+
+    fn reset_checkpoint(&self, projection_name: &str) -> Result<(), Self::Error> {
+        let sql = format!("DELETE FROM {} WHERE projection_name = $1;", self.table_name);
+        self.pool.write(|client| {
+            client
+                .execute(&sql, &[&projection_name])
+                .map_err(map_postgres_error)?;
+            Ok(())
+        })
+    }
 }
 
 #[cfg(feature = "async")]
@@ -1346,6 +1356,16 @@ impl crate::projection::AsyncCheckpointStore for PostgresCheckpointStore {
         let name = projection_name.to_owned();
         tokio::task::spawn_blocking(move || {
             crate::projection::CheckpointStore::save_checkpoint(&this, &name, sequence)
+        })
+        .await
+        .map_err(|e| EventStoreError::backend(e.to_string()))?
+    }
+
+    async fn reset_checkpoint(&self, projection_name: &str) -> Result<(), Self::Error> {
+        let this = self.clone();
+        let name = projection_name.to_owned();
+        tokio::task::spawn_blocking(move || {
+            crate::projection::CheckpointStore::reset_checkpoint(&this, &name)
         })
         .await
         .map_err(|e| EventStoreError::backend(e.to_string()))?
@@ -1475,6 +1495,8 @@ where
     }
 
     fn reserve(&self, key: IdempotencyKey) -> Result<bool, Self::Error> {
+        key.validate_storage_length()
+            .map_err(|error| EventStoreError::backend(error.to_string()))?;
         let updated_at_ms = system_time_to_millis(SystemTime::now())?;
         let sql = format!(
             "INSERT INTO {} (idempotency_key, state, value, updated_at_ms)
@@ -1539,6 +1561,19 @@ where
 
     fn expire_stale_pending(&self, _now_ms: u64) -> Result<usize, Self::Error> {
         Ok(0)
+    }
+
+    fn expire_completed_before(&self, cutoff_ms: u64) -> Result<usize, Self::Error> {
+        let sql = format!(
+            "DELETE FROM {} WHERE state = 'complete' AND updated_at_ms < $1;",
+            self.table_name
+        );
+        self.pool.write(|client| {
+            let removed = client
+                .execute(&sql, &[&(i64::try_from(cutoff_ms).unwrap_or(i64::MAX))])
+                .map_err(map_postgres_error)?;
+            Ok(removed as usize)
+        })
     }
 }
 

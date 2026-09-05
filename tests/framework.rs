@@ -2448,6 +2448,12 @@ impl ddd_cqrs_es::projection::CheckpointStore for CountingCheckpointStore {
         state.1 += 1;
         Ok(())
     }
+
+    fn reset_checkpoint(&self, _projection_name: &str) -> Result<(), Self::Error> {
+        let mut state = self.state.lock().unwrap();
+        state.0 = None;
+        Ok(())
+    }
 }
 
 #[cfg(feature = "async")]
@@ -2465,6 +2471,10 @@ impl ddd_cqrs_es::projection::AsyncCheckpointStore for CountingCheckpointStore {
         sequence: u64,
     ) -> Result<(), Self::Error> {
         ddd_cqrs_es::projection::CheckpointStore::save_checkpoint(self, projection_name, sequence)
+    }
+
+    async fn reset_checkpoint(&self, projection_name: &str) -> Result<(), Self::Error> {
+        ddd_cqrs_es::projection::CheckpointStore::reset_checkpoint(self, projection_name)
     }
 }
 
@@ -2541,6 +2551,11 @@ impl ddd_cqrs_es::projection::CheckpointStore for KeyedCheckpointStore {
             .lock()
             .unwrap()
             .insert(projection_name.to_owned(), sequence);
+        Ok(())
+    }
+
+    fn reset_checkpoint(&self, projection_name: &str) -> Result<(), Self::Error> {
+        self.checkpoints.lock().unwrap().remove(projection_name);
         Ok(())
     }
 }
