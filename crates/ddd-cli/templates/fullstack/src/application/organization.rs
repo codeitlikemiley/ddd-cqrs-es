@@ -175,7 +175,7 @@ pub async fn assign_role(
     require_organization_permission(
         &context,
         &request.organization_id,
-        "member.role.assign",
+        "member.manage",
         AssuranceRequirement::Aal2,
     )
     .await?;
@@ -200,7 +200,7 @@ pub async fn remove_member(
     require_organization_permission(
         &context,
         &request.organization_id,
-        "member.remove",
+        "member.manage",
         AssuranceRequirement::Aal2,
     )
     .await?;
@@ -537,7 +537,7 @@ pub async fn assign_workspace_member_role(
     require_organization_permission(
         &context,
         &resolved.organization_id,
-        "member.role.assign",
+        "member.manage",
         AssuranceRequirement::Aal2,
     )
     .await?;
@@ -561,7 +561,7 @@ pub async fn remove_workspace_member(
     require_organization_permission(
         &context,
         &resolved.organization_id,
-        "member.remove",
+        "member.manage",
         AssuranceRequirement::Aal2,
     )
     .await?;
@@ -611,7 +611,7 @@ pub async fn revoke_workspace_invitation(
     require_organization_permission(
         &context,
         &resolved.organization_id,
-        "member.invite.revoke",
+        "member.invite",
         AssuranceRequirement::Aal2,
     )
     .await?;
@@ -634,7 +634,7 @@ pub async fn resend_workspace_invitation(
     require_organization_permission(
         &context,
         &resolved.organization_id,
-        "member.invite.resend",
+        "member.invite",
         AssuranceRequirement::Aal2,
     )
     .await?;
@@ -727,13 +727,6 @@ pub async fn transfer_workspace_ownership(
 pub async fn leave_workspace(slug: String, auth: RequestAuth) -> AuthStackResult<AcceptedResponse> {
     let (context, _) = verified_context_and_permissions(auth, false).await?;
     let resolved = resolve_workspace_by_slug_with_context(&context, &slug).await?;
-    require_organization_permission(
-        &context,
-        &resolved.organization_id,
-        "member.leave",
-        AssuranceRequirement::Aal1,
-    )
-    .await?;
     crate::auth_product::leave_organization(
         context.session_id().as_str(),
         &resolved.organization_id,
@@ -752,7 +745,7 @@ pub async fn deactivate_workspace(
     require_organization_permission(
         &context,
         &resolved.organization_id,
-        "organization.archive",
+        "ownership.transfer",
         AssuranceRequirement::Aal2,
     )
     .await?;
