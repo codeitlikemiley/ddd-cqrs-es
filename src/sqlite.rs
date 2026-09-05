@@ -1203,7 +1203,7 @@ impl SqliteCheckpointStore {
     pub fn initialize_schema(&self) -> Result<(), EventStoreError> {
         let config = crate::schema::SqlSchemaConfig::new(crate::schema::SqlDialect::Sqlite)
             .with_checkpoints_table(&self.table_name)?;
-        let migrator = crate::schema::SchemaMigrator::new(config);
+        let migrator = crate::schema::SchemaMigrator::for_checkpoints(config);
         let connection = lock_connection(&self.connection);
         migrator.run_sqlite(&connection)
     }
@@ -1375,7 +1375,7 @@ where
     pub fn initialize_schema(&self) -> Result<(), EventStoreError> {
         let config = crate::schema::SqlSchemaConfig::new(crate::schema::SqlDialect::Sqlite)
             .with_idempotency_table(&self.table_name)?;
-        let migrator = crate::schema::SchemaMigrator::new(config);
+        let migrator = crate::schema::SchemaMigrator::for_idempotency(config);
         let connection = lock_connection(&self.connection);
         migrator.run_sqlite(&connection)
     }
@@ -1627,7 +1627,7 @@ where
     pub fn initialize_schema(&self) -> Result<(), EventStoreError> {
         let config = crate::schema::SqlSchemaConfig::new(crate::schema::SqlDialect::Sqlite)
             .with_snapshots_table(&self.table_name)?;
-        let migrator = crate::schema::SchemaMigrator::new(config);
+        let migrator = crate::schema::SchemaMigrator::for_snapshots(config);
         let connection = lock_connection(&self.connection);
         migrator.run_sqlite(&connection)
     }

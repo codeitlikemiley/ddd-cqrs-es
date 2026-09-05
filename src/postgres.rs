@@ -1272,7 +1272,7 @@ impl PostgresCheckpointStore {
     pub fn initialize_schema(&self) -> Result<(), EventStoreError> {
         let config = crate::schema::SqlSchemaConfig::new(crate::schema::SqlDialect::Postgres)
             .with_checkpoints_table(&self.table_name)?;
-        let migrator = crate::schema::SchemaMigrator::new(config);
+        let migrator = crate::schema::SchemaMigrator::for_checkpoints(config);
         self.pool.write(|client| migrator.run_postgres(client))
     }
 }
@@ -1449,7 +1449,7 @@ where
     pub fn initialize_schema(&self) -> Result<(), EventStoreError> {
         let config = crate::schema::SqlSchemaConfig::new(crate::schema::SqlDialect::Postgres)
             .with_idempotency_table(&self.table_name)?;
-        let migrator = crate::schema::SchemaMigrator::new(config);
+        let migrator = crate::schema::SchemaMigrator::for_idempotency(config);
         self.pool.write(|client| migrator.run_postgres(client))
     }
 }
@@ -1651,7 +1651,7 @@ where
     pub fn initialize_schema(&self) -> Result<(), EventStoreError> {
         let config = crate::schema::SqlSchemaConfig::new(crate::schema::SqlDialect::Postgres)
             .with_snapshots_table(&self.table_name)?;
-        let migrator = crate::schema::SchemaMigrator::new(config);
+        let migrator = crate::schema::SchemaMigrator::for_snapshots(config);
         self.pool.write(|client| migrator.run_postgres(client))
     }
 }

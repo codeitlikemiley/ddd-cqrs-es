@@ -1983,6 +1983,35 @@ fn sql_schema_config_rejects_invalid_table_names_eagerly() {
 
 #[cfg(feature = "sqlite")]
 #[test]
+fn sqlite_checkpoint_migrator_does_not_create_default_events_table() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    let config = ddd_cqrs_es::SqlSchemaConfig::new(ddd_cqrs_es::SqlDialect::Sqlite)
+        .with_checkpoints_table("my_checkpoints")
+        .unwrap();
+    let migrator = ddd_cqrs_es::SchemaMigrator::for_checkpoints(config);
+    migrator.run_sqlite(&conn).unwrap();
+
+    let events_exists: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'events';",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let checkpoints_exists: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'my_checkpoints';",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    assert_eq!(events_exists, 0);
+    assert_eq!(checkpoints_exists, 1);
+}
+
+#[cfg(feature = "sqlite")]
+#[test]
 fn sqlite_schema_creates_replay_index_without_duplicate_stream_index() {
     let conn = rusqlite::Connection::open_in_memory().unwrap();
     let config = ddd_cqrs_es::SqlSchemaConfig::new(ddd_cqrs_es::SqlDialect::Sqlite)
