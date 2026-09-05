@@ -1,8 +1,11 @@
-use crate::command::CommandBus;
+use crate::command::{CommandBus, IdempotentCommandBus};
+use crate::event::EventEnvelope;
+use crate::idempotency::IdempotencyKey;
+use std::error::Error;
 use std::fmt::{Display, Formatter};
 
 #[cfg(feature = "async")]
-use crate::async_api::AsyncCommandBus;
+use crate::async_api::{AsyncCommandBus, AsyncIdempotentCommandBus};
 
 /// Event-driven policy that emits commands in response to events.
 ///
@@ -56,6 +59,18 @@ pub trait ProcessManager<E, C> {
     fn handle(&mut self, event: &E) -> Result<Vec<C>, Self::Error>;
 }
 
+/// Builds the idempotency key for one command emitted by a process manager.
+///
+/// Keys are stable across checkpoint resumes and event re-deliveries:
+/// `{manager_name}:{event_id}:{command_index}`.
+pub fn process_manager_command_idempotency_key(
+    manager_name: &str,
+    event_id: &str,
+    index: usize,
+) -> IdempotencyKey {
+    IdempotencyKey::new(format!("{manager_name}:{event_id}:{index}"))
+}
+
 /// Error returned by process-manager runners.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProcessManagerRunnerError<ProcessError, CommandError> {
@@ -63,6 +78,13 @@ pub enum ProcessManagerRunnerError<ProcessError, CommandError> {
     ProcessManager(ProcessError),
     /// Command dispatch failed.
     CommandBus(CommandError),
+    /// Checkpoint persistence failed after one or more commands were dispatched.
+    Checkpoint {
+        /// Index of the command whose checkpoint could not be persisted.
+        index: usize,
+        /// Checkpoint store error message.
+        message: String,
+    },
 }
 
 impl<ProcessError, CommandError> Display for ProcessManagerRunnerError<ProcessError, CommandError>
@@ -74,6 +96,9 @@ where
         match self {
             ProcessManagerRunnerError::ProcessManager(error) => Display::fmt(error, f),
             ProcessManagerRunnerError::CommandBus(error) => Display::fmt(error, f),
+            ProcessManagerRunnerError::Checkpoint { index, message } => {
+                write!(f, "checkpoint save failed after command {index}: {message}")
+            }
         }
     }
 }
@@ -88,6 +113,7 @@ where
         match self {
             ProcessManagerRunnerError::ProcessManager(error) => Some(error),
             ProcessManagerRunnerError::CommandBus(error) => Some(error),
+            ProcessManagerRunnerError::Checkpoint { .. } => None,
         }
     }
 }
@@ -240,9 +266,6 @@ impl<P, B> AsyncProcessManagerRunner<P, B> {
     }
 }
 
-use crate::event::EventEnvelope;
-use std::error::Error;
-
 /// Checkpoint for partially dispatched process-manager command batches.
 pub trait ProcessManagerDispatchCheckpoint: Send + Sync {
     fn load_dispatch_index(
@@ -257,6 +280,16 @@ pub trait ProcessManagerDispatchCheckpoint: Send + Sync {
         event_id: &str,
         index: usize,
     ) -> Result<(), Box<dyn Error + Send + Sync>>;
+
+    /// Clears the checkpoint after every command in a batch succeeds.
+    fn clear_dispatch_index(
+        &self,
+        manager_name: &str,
+        event_id: &str,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let _ = (manager_name, event_id);
+        Ok(())
+    }
 }
 
 impl ProcessManagerDispatchCheckpoint for () {
@@ -294,7 +327,7 @@ impl<P, B> ProcessManagerRunner<P, B> {
     ) -> ProcessManagerRunResult<B::Output, ProcessManagerRunnerError<P::Error, B::Error>>
     where
         P: ProcessManager<E, C>,
-        B: CommandBus<C>,
+        B: IdempotentCommandBus<C>,
         CP: ProcessManagerDispatchCheckpoint,
         Id: AsRef<str>,
     {
@@ -317,10 +350,23 @@ impl<P, B> ProcessManagerRunner<P, B> {
 
         let mut dispatched = Vec::with_capacity(commands.len().saturating_sub(start_index));
         for (index, command) in commands.into_iter().enumerate().skip(start_index) {
-            match self.command_bus.dispatch(command) {
+            let idempotency_key =
+                process_manager_command_idempotency_key(manager_name, event_id, index);
+            match self.command_bus.dispatch_idempotent(idempotency_key, command) {
                 Ok(output) => {
                     dispatched.push(output);
-                    let _ = checkpoint.save_dispatch_index(manager_name, event_id, index + 1);
+                    if let Err(error) =
+                        checkpoint.save_dispatch_index(manager_name, event_id, index + 1)
+                    {
+                        return ProcessManagerRunResult {
+                            dispatched,
+                            failed_index: None,
+                            error: Some(ProcessManagerRunnerError::Checkpoint {
+                                index,
+                                message: error.to_string(),
+                            }),
+                        };
+                    }
                 }
                 Err(error) => {
                     return ProcessManagerRunResult {
@@ -330,6 +376,17 @@ impl<P, B> ProcessManagerRunner<P, B> {
                     };
                 }
             }
+        }
+
+        if let Err(error) = checkpoint.clear_dispatch_index(manager_name, event_id) {
+            return ProcessManagerRunResult {
+                dispatched,
+                failed_index: None,
+                error: Some(ProcessManagerRunnerError::Checkpoint {
+                    index: start_index.saturating_sub(1),
+                    message: error.to_string(),
+                }),
+            };
         }
 
         ProcessManagerRunResult {
@@ -347,7 +404,7 @@ impl<P, B> ProcessManagerRunner<P, B> {
     ) -> Result<Vec<B::Output>, ProcessManagerRunnerError<P::Error, B::Error>>
     where
         P: ProcessManager<E, C>,
-        B: CommandBus<C>,
+        B: IdempotentCommandBus<C>,
         CP: ProcessManagerDispatchCheckpoint,
         Id: AsRef<str>,
     {
@@ -368,7 +425,8 @@ impl<P, B> AsyncProcessManagerRunner<P, B> {
     ) -> ProcessManagerRunResult<B::Output, ProcessManagerRunnerError<P::Error, B::Error>>
     where
         P: ProcessManager<E, C>,
-        B: AsyncCommandBus<C>,
+        C: Send + Sync + 'static,
+        B: AsyncCommandBus<C> + AsyncIdempotentCommandBus<C>,
         CP: ProcessManagerDispatchCheckpoint,
         Id: AsRef<str>,
     {
@@ -391,10 +449,27 @@ impl<P, B> AsyncProcessManagerRunner<P, B> {
 
         let mut dispatched = Vec::with_capacity(commands.len().saturating_sub(start_index));
         for (index, command) in commands.into_iter().enumerate().skip(start_index) {
-            match self.command_bus.dispatch(command).await {
+            let idempotency_key =
+                process_manager_command_idempotency_key(manager_name, event_id, index);
+            match self
+                .command_bus
+                .dispatch_idempotent(idempotency_key, command)
+                .await
+            {
                 Ok(output) => {
                     dispatched.push(output);
-                    let _ = checkpoint.save_dispatch_index(manager_name, event_id, index + 1);
+                    if let Err(error) =
+                        checkpoint.save_dispatch_index(manager_name, event_id, index + 1)
+                    {
+                        return ProcessManagerRunResult {
+                            dispatched,
+                            failed_index: None,
+                            error: Some(ProcessManagerRunnerError::Checkpoint {
+                                index,
+                                message: error.to_string(),
+                            }),
+                        };
+                    }
                 }
                 Err(error) => {
                     return ProcessManagerRunResult {
@@ -404,6 +479,17 @@ impl<P, B> AsyncProcessManagerRunner<P, B> {
                     };
                 }
             }
+        }
+
+        if let Err(error) = checkpoint.clear_dispatch_index(manager_name, event_id) {
+            return ProcessManagerRunResult {
+                dispatched,
+                failed_index: None,
+                error: Some(ProcessManagerRunnerError::Checkpoint {
+                    index: start_index.saturating_sub(1),
+                    message: error.to_string(),
+                }),
+            };
         }
 
         ProcessManagerRunResult {
@@ -420,7 +506,8 @@ impl<P, B> AsyncProcessManagerRunner<P, B> {
     ) -> Result<Vec<B::Output>, ProcessManagerRunnerError<P::Error, B::Error>>
     where
         P: ProcessManager<E, C>,
-        B: AsyncCommandBus<C>,
+        C: Send + Sync + 'static,
+        B: AsyncCommandBus<C> + AsyncIdempotentCommandBus<C>,
         CP: ProcessManagerDispatchCheckpoint,
         Id: AsRef<str>,
     {

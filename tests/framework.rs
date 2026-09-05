@@ -848,6 +848,8 @@ fn process_manager_runner_dispatches_emitted_commands() {
         }
     }
 
+    impl ddd_cqrs_es::IdempotentCommandBus<Command> for RecordingBus {}
+
     let mut runner = ddd_cqrs_es::ProcessManagerRunner::new(WelcomeProcess, RecordingBus);
     let outputs = runner.run(&Event::Created).unwrap();
 
@@ -921,6 +923,18 @@ fn process_manager_runner_resumes_partial_dispatch_from_checkpoint() {
                 .insert((manager_name.to_owned(), event_id.to_owned()), index);
             Ok(())
         }
+
+        fn clear_dispatch_index(
+            &self,
+            manager_name: &str,
+            event_id: &str,
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            self.0
+                .lock()
+                .unwrap()
+                .remove(&(manager_name.to_owned(), event_id.to_owned()));
+            Ok(())
+        }
     }
 
     #[derive(Clone, Debug)]
@@ -941,6 +955,8 @@ fn process_manager_runner_resumes_partial_dispatch_from_checkpoint() {
         }
     }
 
+    impl ddd_cqrs_es::IdempotentCommandBus<Command> for FailSecondBus {}
+
     #[derive(Clone, Debug)]
     struct RecordingOkBus;
 
@@ -952,6 +968,8 @@ fn process_manager_runner_resumes_partial_dispatch_from_checkpoint() {
             Ok("ok")
         }
     }
+
+    impl ddd_cqrs_es::IdempotentCommandBus<Command> for RecordingOkBus {}
 
     let envelope = EventEnvelope::builder(
         EventId::from_string("evt-1"),
@@ -985,6 +1003,255 @@ fn process_manager_runner_resumes_partial_dispatch_from_checkpoint() {
     let mut runner = ddd_cqrs_es::ProcessManagerRunner::new(TwoStepProcess, RecordingOkBus);
     let resumed = runner.run_envelope_strict(&envelope, &checkpoint).unwrap();
     assert_eq!(resumed, vec!["ok"]);
+}
+
+#[test]
+fn process_manager_runner_uses_stable_idempotency_keys() {
+    use ddd_cqrs_es::{
+        process_manager_command_idempotency_key, EventEnvelope, EventId, EventType,
+        IdempotencyKey, ProcessManagerDispatchCheckpoint,
+    };
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum Event {
+        Started,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum Command {
+        First,
+        Second,
+    }
+
+    #[derive(Clone, Debug)]
+    struct TwoStepProcess;
+
+    impl ddd_cqrs_es::ProcessManager<Event, Command> for TwoStepProcess {
+        type Error = std::convert::Infallible;
+
+        fn name(&self) -> &'static str {
+            "two_step"
+        }
+
+        fn handle(&mut self, event: &Event) -> Result<Vec<Command>, Self::Error> {
+            match event {
+                Event::Started => Ok(vec![Command::First, Command::Second]),
+            }
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct MemoryCheckpoint(Arc<Mutex<HashMap<(String, String), usize>>>);
+
+    impl ProcessManagerDispatchCheckpoint for MemoryCheckpoint {
+        fn load_dispatch_index(
+            &self,
+            manager_name: &str,
+            event_id: &str,
+        ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+            Ok(self
+                .0
+                .lock()
+                .unwrap()
+                .get(&(manager_name.to_owned(), event_id.to_owned()))
+                .copied()
+                .unwrap_or(0))
+        }
+
+        fn save_dispatch_index(
+            &self,
+            manager_name: &str,
+            event_id: &str,
+            index: usize,
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            self.0
+                .lock()
+                .unwrap()
+                .insert((manager_name.to_owned(), event_id.to_owned()), index);
+            Ok(())
+        }
+
+        fn clear_dispatch_index(
+            &self,
+            manager_name: &str,
+            event_id: &str,
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            self.0
+                .lock()
+                .unwrap()
+                .remove(&(manager_name.to_owned(), event_id.to_owned()));
+            Ok(())
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct IdempotentRecordingBus {
+        seen: Arc<Mutex<HashMap<IdempotencyKey, usize>>>,
+    }
+
+    impl ddd_cqrs_es::CommandBus<Command> for IdempotentRecordingBus {
+        type Output = usize;
+        type Error = std::convert::Infallible;
+
+        fn dispatch(&self, _command: Command) -> Result<Self::Output, Self::Error> {
+            Ok(0)
+        }
+    }
+
+    impl ddd_cqrs_es::IdempotentCommandBus<Command> for IdempotentRecordingBus {
+        fn dispatch_idempotent(
+            &self,
+            idempotency_key: IdempotencyKey,
+            command: Command,
+        ) -> Result<Self::Output, Self::Error> {
+            let _ = command;
+            let mut seen = self.seen.lock().unwrap();
+            let count = seen.entry(idempotency_key).or_insert(0);
+            *count += 1;
+            Ok(*count)
+        }
+    }
+
+    let envelope = EventEnvelope::builder(
+        EventId::from_string("evt-1"),
+        "agg-1".to_owned(),
+        "demo",
+        1,
+        EventType::from_static("started"),
+        Event::Started,
+    )
+    .build();
+    let checkpoint = MemoryCheckpoint::default();
+    let bus = IdempotentRecordingBus::default();
+
+    let expected_first = process_manager_command_idempotency_key("two_step", "evt-1", 0);
+    let expected_second = process_manager_command_idempotency_key("two_step", "evt-1", 1);
+
+    let mut runner = ddd_cqrs_es::ProcessManagerRunner::new(TwoStepProcess, bus.clone());
+    let first = runner
+        .run_envelope_strict(&envelope, &checkpoint)
+        .unwrap();
+    assert_eq!(first, vec![1, 1]);
+
+    let mut runner = ddd_cqrs_es::ProcessManagerRunner::new(TwoStepProcess, bus.clone());
+    let redelivered = runner
+        .run_envelope_strict(&envelope, &checkpoint)
+        .unwrap();
+    assert_eq!(redelivered, vec![2, 2]);
+
+    assert_eq!(bus.seen.lock().unwrap().get(&expected_first), Some(&2));
+    assert_eq!(bus.seen.lock().unwrap().get(&expected_second), Some(&2));
+}
+
+#[cfg(feature = "sqlite")]
+#[test]
+fn sqlite_append_contention_surfaces_concurrency_not_backend_lock() {
+    use ddd_cqrs_es::{ConcurrencyError, EventStoreError, ExpectedRevision, NewEvent};
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+
+    let database_name = format!(
+        "file:sqlite_contention_{}_{}?mode=memory&cache=shared",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let seed_connection = rusqlite::Connection::open(&database_name).unwrap();
+    let seed_store =
+        ddd_cqrs_es::SqliteEventStore::<Counter>::new(seed_connection).unwrap();
+    seed_store.initialize_schema().unwrap();
+    seed_store
+        .append(
+            &"counter-1".to_owned(),
+            ExpectedRevision::NoStream,
+            vec![NewEvent::new(CounterEvent::Created, Metadata::default())],
+        )
+        .unwrap();
+
+    let store = Arc::new({
+        let connection = rusqlite::Connection::open(&database_name).unwrap();
+        ddd_cqrs_es::SqliteEventStore::<Counter>::new(connection).unwrap()
+    });
+    let barrier = Arc::new(Barrier::new(2));
+    let counter_id = "counter-1".to_owned();
+
+    let handles = (0..2)
+        .map(|_| {
+            let store = Arc::clone(&store);
+            let barrier = Arc::clone(&barrier);
+            let counter_id = counter_id.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                store.append(
+                    &counter_id,
+                    ExpectedRevision::Exact(1),
+                    vec![NewEvent::new(
+                        CounterEvent::Incremented { by: 1 },
+                        Metadata::default(),
+                    )],
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let mut saw_concurrency = false;
+    for handle in handles {
+        match handle.join().unwrap() {
+            Ok(_) => {}
+            Err(EventStoreError::Concurrency(_)) => saw_concurrency = true,
+            Err(other) => panic!("expected concurrency error, got {other:?}"),
+        }
+    }
+
+    assert!(saw_concurrency);
+    assert!(matches!(
+        store.load(&counter_id).unwrap().last().unwrap().payload,
+        CounterEvent::Incremented { by: 1 }
+    ));
+}
+
+#[cfg(feature = "sqlite")]
+#[test]
+fn sqlite_invalid_payload_surfaces_deserialization_error() {
+    use ddd_cqrs_es::EventStoreError;
+
+    let database_name = format!(
+        "file:sqlite_bad_payload_{}_{}?mode=memory&cache=shared",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let seed_connection = rusqlite::Connection::open(&database_name).unwrap();
+    let store = ddd_cqrs_es::SqliteEventStore::<Counter>::new(seed_connection).unwrap();
+    store.initialize_schema().unwrap();
+
+    let writer = rusqlite::Connection::open(&database_name).unwrap();
+    writer
+        .execute(
+            "INSERT INTO events (event_id, aggregate_id, aggregate_type, revision, event_type, event_version, payload, metadata, recorded_at_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            rusqlite::params![
+                "evt-bad",
+                "\"counter-1\"",
+                "counter",
+                1_i64,
+                "counter_created",
+                1_i64,
+                "{not-json",
+                "{}",
+                0_i64,
+            ],
+        )
+        .unwrap();
+
+    let error = store.load(&"counter-1".to_owned()).unwrap_err();
+    assert!(matches!(error, EventStoreError::Deserialization { .. }));
 }
 
 #[cfg(feature = "uuid")]

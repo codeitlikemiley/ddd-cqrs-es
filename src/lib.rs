@@ -123,6 +123,7 @@ pub use aggregate::{Aggregate, LoadedAggregate};
 /// Async service traits and result types for asynchronous command execution.
 pub use async_api::{
     AsyncAtomicIdempotentEventStore, AsyncAtomicIdempotentRepositoryResult, AsyncCommandBus,
+    AsyncIdempotentCommandBus,
     AsyncCommandHandler, AsyncEventStore, AsyncIdempotencyStore, AsyncQueryHandler,
     AsyncRepository, AsyncRepositoryResult, AsyncSnapshotStore,
 };
@@ -131,7 +132,7 @@ pub use async_api::{
 /// JSON-backed adapters for local persistence and replay workflows.
 pub use adapters::{JsonFileCheckpointStore, JsonFileEventStore};
 /// Command and query dispatch interfaces.
-pub use command::{CommandBus, CommandHandler, QueryHandler};
+pub use command::{CommandBus, CommandHandler, IdempotentCommandBus, QueryHandler};
 /// Top-level repository and event-store error types.
 pub use error::{ConcurrencyError, EventStoreError, EventStoreFailure, RepositoryError};
 /// Shared event envelope and stream metadata types.
@@ -169,8 +170,8 @@ pub use postgres::{
 pub use process_manager::AsyncProcessManagerRunner;
 /// Synchronous process manager abstractions and runner APIs.
 pub use process_manager::{
-    ProcessManager, ProcessManagerDispatchCheckpoint, ProcessManagerRunResult,
-    ProcessManagerRunner, ProcessManagerRunnerError,
+    process_manager_command_idempotency_key, ProcessManager, ProcessManagerDispatchCheckpoint,
+    ProcessManagerRunResult, ProcessManagerRunner, ProcessManagerRunnerError,
 };
 #[cfg(feature = "async")]
 /// Async projection and replay runner interfaces.

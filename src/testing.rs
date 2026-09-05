@@ -308,6 +308,11 @@ fn is_retryable_any_append_error<StoreError: Display>(
 
 /// Verifies that concurrent `ExpectedRevision::Any` writers on one stream receive
 /// distinct revisions instead of colliding on the same optimistic target.
+///
+/// Review ledger **#5**: `ExpectedRevision::Any` must not spuriously fail when
+/// writers race; adapters should surface retryable concurrency (or succeed with
+/// distinct revisions), never opaque backend lock errors. SQLite, Postgres,
+/// MySQL, and Redis contract tests call this harness.
 pub fn assert_event_store_any_writers_contract<A, S, F>(
     make_store: F,
     aggregate_id: A::Id,

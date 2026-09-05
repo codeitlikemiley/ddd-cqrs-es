@@ -85,6 +85,41 @@ struct IdleEntry<C> {
     idle_since: Instant,
 }
 
+/// Returns a leased slot when a connect attempt fails or panics before handing
+/// out a [`PoolLease`].
+struct PendingLeaseSlot<C> {
+    shared: Arc<PoolShared<C>>,
+    active: bool,
+}
+
+impl<C> PendingLeaseSlot<C> {
+    fn new(shared: &Arc<PoolShared<C>>) -> Self {
+        Self {
+            shared: Arc::clone(shared),
+            active: true,
+        }
+    }
+
+    fn commit(mut self) {
+        self.active = false;
+    }
+}
+
+impl<C> Drop for PendingLeaseSlot<C> {
+    fn drop(&mut self) {
+        if !self.active {
+            return;
+        }
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.leased = state.leased.saturating_sub(1);
+        self.shared.available.notify_one();
+    }
+}
+
 struct PoolState<C> {
     idle: Vec<IdleEntry<C>>,
     leased: usize,
@@ -325,20 +360,15 @@ impl<C: Send + 'static> ConnectionPool<C> {
                 state.leased += 1;
                 let connect = Arc::clone(connect);
                 let connect_timeout = self.shared.connect_timeout;
+                let pending_slot = PendingLeaseSlot::new(&self.shared);
                 drop(state);
                 let connected = connect_with_timeout(&connect, connect_timeout);
-                let mut state = self
-                    .shared
-                    .state
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 match connected {
-                    Ok(connection) => return Ok(self.lease(connection)),
-                    Err(error) => {
-                        state.leased -= 1;
-                        self.shared.available.notify_one();
-                        return Err(error);
+                    Ok(connection) => {
+                        pending_slot.commit();
+                        return Ok(self.lease(connection));
                     }
+                    Err(error) => return Err(error),
                 }
             }
             let now = Instant::now();
@@ -503,6 +533,39 @@ mod tests {
 
         assert!(connects.load(Ordering::SeqCst) <= 3);
         assert!(peak.load(Ordering::SeqCst) <= 3);
+    }
+
+    #[test]
+    fn connect_factory_panic_does_not_leak_slot() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&attempts);
+        let pool = ConnectionPool::<()>::pooled(1, move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+            panic!("connect factory blew up");
+        })
+        .with_acquire_timeout(Duration::from_millis(50));
+
+        let held = pool.acquire().unwrap();
+        let Err(error) = pool.acquire() else {
+            panic!("expected exhausted pool while holding the only lease");
+        };
+        assert!(matches!(error, EventStoreError::Connection { .. }));
+
+        drop(held);
+
+        catch_unwind(AssertUnwindSafe(|| {
+            let _ = pool.acquire();
+        }))
+        .expect_err("factory panic should propagate");
+
+        pool.acquire().unwrap();
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
     }
 
     #[test]

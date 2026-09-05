@@ -696,6 +696,36 @@ pub trait AsyncCommandBus<C>: Send + Sync {
     async fn dispatch(&self, command: C) -> Result<Self::Output, Self::Error>;
 }
 
+/// Dispatches commands asynchronously with an explicit idempotency key.
+#[async_trait]
+pub trait AsyncIdempotentCommandBus<C>: AsyncCommandBus<C>
+where
+    C: Send + Sync + 'static,
+{
+    /// Dispatches a command under an idempotency key.
+    async fn dispatch_idempotent(
+        &self,
+        idempotency_key: crate::idempotency::IdempotencyKey,
+        command: C,
+    ) -> Result<Self::Output, Self::Error>;
+}
+
+#[async_trait]
+impl<B, C> AsyncIdempotentCommandBus<C> for B
+where
+    B: AsyncCommandBus<C> + Send + Sync,
+    C: Send + Sync + 'static,
+{
+    async fn dispatch_idempotent(
+        &self,
+        idempotency_key: crate::idempotency::IdempotencyKey,
+        command: C,
+    ) -> Result<Self::Output, Self::Error> {
+        let _ = idempotency_key;
+        self.dispatch(command).await
+    }
+}
+
 /// Handles a command asynchronously in application code.
 #[async_trait]
 pub trait AsyncCommandHandler<C>: Send + Sync {
