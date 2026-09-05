@@ -1,3 +1,5 @@
+use crate::idempotency::IdempotencyKey;
+
 /// Dispatches commands without requiring a specific application framework.
 ///
 /// # Example
@@ -27,6 +29,24 @@ pub trait CommandBus<C> {
 
     /// Dispatches a command to its handler.
     fn dispatch(&self, command: C) -> Result<Self::Output, Self::Error>;
+}
+
+/// Dispatches commands with an explicit idempotency key.
+///
+/// The default implementation ignores the key and forwards to
+/// [`CommandBus::dispatch`]. Idempotency-aware buses should deduplicate on
+/// `idempotency_key` so process-manager replays and checkpoint resumes do not
+/// double-apply side effects.
+pub trait IdempotentCommandBus<C>: CommandBus<C> {
+    /// Dispatches a command under an idempotency key.
+    fn dispatch_idempotent(
+        &self,
+        idempotency_key: IdempotencyKey,
+        command: C,
+    ) -> Result<Self::Output, Self::Error> {
+        let _ = idempotency_key;
+        self.dispatch(command)
+    }
 }
 
 /// Handles a command in application or domain code.

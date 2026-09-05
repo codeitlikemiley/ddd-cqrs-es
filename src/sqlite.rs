@@ -17,7 +17,7 @@ use crate::sql_common::{
     system_time_to_millis, validate_table_name,
 };
 use crate::upcast::UpcasterRegistry;
-use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
+use rusqlite::{params, Connection, ErrorCode, OptionalExtension, TransactionBehavior};
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -27,6 +27,87 @@ fn lock_connection(mutex: &Mutex<Connection>) -> MutexGuard<'_, Connection> {
     mutex
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+#[derive(Clone, Debug)]
+struct StoredSqliteEventRow {
+    event_id: String,
+    aggregate_id: String,
+    aggregate_type: String,
+    revision: i64,
+    sequence: i64,
+    event_type: String,
+    event_version: i64,
+    payload: String,
+    metadata: String,
+    recorded_at_ms: i64,
+}
+
+fn stored_row_from_sqlite(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredSqliteEventRow> {
+    Ok(StoredSqliteEventRow {
+        event_id: row.get(0)?,
+        aggregate_id: row.get(1)?,
+        aggregate_type: row.get(2)?,
+        revision: row.get(3)?,
+        sequence: row.get(4)?,
+        event_type: row.get(5)?,
+        event_version: row.get(6)?,
+        payload: row.get(7)?,
+        metadata: row.get(8)?,
+        recorded_at_ms: row.get(9)?,
+    })
+}
+
+fn query_stored_event_rows(
+    connection: &Connection,
+    query: &str,
+    params: impl rusqlite::Params,
+) -> Result<Vec<StoredSqliteEventRow>, EventStoreError> {
+    let mut statement = connection.prepare_cached(query).map_err(map_sqlite_error)?;
+    let rows = statement
+        .query_map(params, stored_row_from_sqlite)
+        .map_err(map_sqlite_error)?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(map_sqlite_row_collect_error)
+}
+
+fn is_sqlite_contention(error: &rusqlite::Error) -> bool {
+    match error {
+        rusqlite::Error::SqliteFailure(failure, message) => {
+            if failure.code == ErrorCode::DatabaseBusy || failure.code == ErrorCode::DatabaseLocked
+            {
+                return true;
+            }
+            message.as_deref().is_some_and(|msg| {
+                let lower = msg.to_ascii_lowercase();
+                lower.contains("database is locked") || lower.contains("database table is locked")
+            })
+        }
+        _ => false,
+    }
+}
+
+fn map_sqlite_contention_error(
+    error: rusqlite::Error,
+    expected: Option<ExpectedRevision>,
+    reread_revision: impl FnOnce() -> Result<u64, EventStoreError>,
+) -> EventStoreError {
+    if is_sqlite_contention(&error) {
+        if let Some(expected) = expected {
+            let actual = reread_revision().unwrap_or(0);
+            return crate::sql_common::map_stream_unique_violation(expected, actual);
+        }
+    }
+    map_sqlite_error(error)
+}
+
+fn map_sqlite_row_collect_error(error: rusqlite::Error) -> EventStoreError {
+    if let rusqlite::Error::FromSqlConversionFailure(_, _, source) = &error {
+        if let Some(store_error) = source.downcast_ref::<EventStoreError>() {
+            return store_error.clone();
+        }
+    }
+    map_sqlite_error(error)
 }
 
 /// Applies production-oriented pragmas for file-backed and in-memory SQLite
@@ -197,25 +278,25 @@ where
 
     fn load(&self, aggregate_id: &A::Id) -> Result<EventStream<A>, Self::Error> {
         let aggregate_id = serialize_id(aggregate_id)?;
-        let connection = lock_connection(&self.connection);
         let query = format!(
             "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
              event_version, payload, metadata, recorded_at_ms FROM {table} \
              WHERE aggregate_type = ?1 AND aggregate_id = ?2 ORDER BY revision ASC",
             table = self.table_name
         );
-        let mut statement = connection
-            .prepare_cached(&query)
-            .map_err(map_sqlite_error)?;
+        let stored_rows = {
+            let connection = lock_connection(&self.connection);
+            query_stored_event_rows(
+                &connection,
+                &query,
+                params![A::aggregate_type(), aggregate_id],
+            )?
+        };
         let upcasters = self.upcasters.clone();
-        let rows = statement
-            .query_map(params![A::aggregate_type(), aggregate_id], move |row| {
-                row_to_envelope::<A>(&upcasters, row)
-            })
-            .map_err(map_sqlite_error)?;
-
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(map_sqlite_error)
+        stored_rows
+            .into_iter()
+            .map(|row| envelope_from_stored_row::<A>(&upcasters, row))
+            .collect()
     }
 
     fn load_after_revision(
@@ -227,7 +308,6 @@ where
             EventStoreError::serialization("revision exceeds SQLite INTEGER".to_owned())
         })?;
         let aggregate_id = serialize_id(aggregate_id)?;
-        let connection = lock_connection(&self.connection);
         let query = format!(
             "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
              event_version, payload, metadata, recorded_at_ms FROM {table} \
@@ -235,19 +315,19 @@ where
              ORDER BY revision ASC",
             table = self.table_name
         );
-        let mut statement = connection
-            .prepare_cached(&query)
-            .map_err(map_sqlite_error)?;
-        let upcasters = self.upcasters.clone();
-        let rows = statement
-            .query_map(
+        let stored_rows = {
+            let connection = lock_connection(&self.connection);
+            query_stored_event_rows(
+                &connection,
+                &query,
                 params![A::aggregate_type(), aggregate_id, revision_i64],
-                move |row| row_to_envelope::<A>(&upcasters, row),
-            )
-            .map_err(map_sqlite_error)?;
-
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(map_sqlite_error)
+            )?
+        };
+        let upcasters = self.upcasters.clone();
+        stored_rows
+            .into_iter()
+            .map(|row| envelope_from_stored_row::<A>(&upcasters, row))
+            .collect()
     }
 
     fn append(
@@ -262,13 +342,23 @@ where
             .map(PreparedSqliteEvent::new)
             .collect::<Result<Vec<_>, _>>()?;
         let mut connection = lock_connection(&self.connection);
-        let transaction = connection.transaction().map_err(map_sqlite_error)?;
+        let stale_revision =
+            Self::current_revision_locked(&self.table_name, &connection, &aggregate_id_key)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| {
+                map_sqlite_contention_error(error, Some(expected_revision), || Ok(stale_revision))
+            })?;
         let actual_revision =
             Self::current_revision_locked(&self.table_name, &transaction, &aggregate_id_key)?;
         check_expected_revision(expected_revision, actual_revision)?;
 
         if prepared.is_empty() {
-            transaction.commit().map_err(map_sqlite_error)?;
+            transaction.commit().map_err(|error| {
+                map_sqlite_contention_error(error, Some(expected_revision), || {
+                    Self::current_revision_locked(&self.table_name, &connection, &aggregate_id_key)
+                })
+            })?;
             return Ok(Vec::new());
         }
 
@@ -332,7 +422,11 @@ where
         }
 
         drop(insert_statement);
-        transaction.commit().map_err(map_sqlite_error)?;
+        transaction.commit().map_err(|error| {
+            map_sqlite_contention_error(error, Some(expected_revision), || {
+                Self::current_revision_locked(&self.table_name, &connection, &aggregate_id_key)
+            })
+        })?;
         Ok(committed)
     }
 
@@ -341,25 +435,21 @@ where
         let sequence = i64::try_from(sequence).map_err(|_| {
             EventStoreError::deserialization("global sequence exceeds SQLite INTEGER".to_owned())
         })?;
-        let connection = lock_connection(&self.connection);
         let query = format!(
             "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
              event_version, payload, metadata, recorded_at_ms FROM {table} \
              WHERE aggregate_type = ?1 AND sequence > ?2 ORDER BY sequence ASC",
             table = self.table_name
         );
-        let mut statement = connection
-            .prepare_cached(&query)
-            .map_err(map_sqlite_error)?;
+        let stored_rows = {
+            let connection = lock_connection(&self.connection);
+            query_stored_event_rows(&connection, &query, params![A::aggregate_type(), sequence])?
+        };
         let upcasters = self.upcasters.clone();
-        let rows = statement
-            .query_map(params![A::aggregate_type(), sequence], move |row| {
-                row_to_envelope::<A>(&upcasters, row)
-            })
-            .map_err(map_sqlite_error)?;
-
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(map_sqlite_error)
+        stored_rows
+            .into_iter()
+            .map(|row| envelope_from_stored_row::<A>(&upcasters, row))
+            .collect()
     }
 
     fn load_global_after_limited(
@@ -374,25 +464,25 @@ where
         let limit = i64::try_from(limit.get()).map_err(|_| {
             EventStoreError::deserialization("event replay limit exceeds SQLite INTEGER".to_owned())
         })?;
-        let connection = lock_connection(&self.connection);
         let query = format!(
             "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
              event_version, payload, metadata, recorded_at_ms FROM {table} \
              WHERE aggregate_type = ?1 AND sequence > ?2 ORDER BY sequence ASC LIMIT ?3",
             table = self.table_name
         );
-        let mut statement = connection
-            .prepare_cached(&query)
-            .map_err(map_sqlite_error)?;
+        let stored_rows = {
+            let connection = lock_connection(&self.connection);
+            query_stored_event_rows(
+                &connection,
+                &query,
+                params![A::aggregate_type(), sequence, limit],
+            )?
+        };
         let upcasters = self.upcasters.clone();
-        let rows = statement
-            .query_map(params![A::aggregate_type(), sequence, limit], move |row| {
-                row_to_envelope::<A>(&upcasters, row)
-            })
-            .map_err(map_sqlite_error)?;
-
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(map_sqlite_error)
+        stored_rows
+            .into_iter()
+            .map(|row| envelope_from_stored_row::<A>(&upcasters, row))
+            .collect()
     }
 }
 
@@ -413,25 +503,21 @@ where
         let limit_i64 = i64::try_from(limit.get()).map_err(|_| {
             EventStoreError::deserialization("event replay limit exceeds SQLite INTEGER".to_owned())
         })?;
-        let connection = lock_connection(&self.connection);
         let query = format!(
             "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
              event_version, payload, metadata, recorded_at_ms FROM {table} \
              WHERE sequence > ?1 ORDER BY sequence ASC LIMIT ?2",
             table = self.table_name
         );
-        let mut statement = connection
-            .prepare_cached(&query)
-            .map_err(map_sqlite_error)?;
+        let stored_rows = {
+            let connection = lock_connection(&self.connection);
+            query_stored_event_rows(&connection, &query, params![sequence_i64, limit_i64])?
+        };
         let upcasters = self.upcasters.clone();
-        let rows = statement
-            .query_map(params![sequence_i64, limit_i64], move |row| {
-                row_to_raw_envelope(&upcasters, row)
-            })
-            .map_err(map_sqlite_error)?;
-
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(map_sqlite_error)
+        stored_rows
+            .into_iter()
+            .map(|row| raw_envelope_from_stored_row(&upcasters, row))
+            .collect()
     }
 }
 
@@ -537,9 +623,18 @@ where
             .collect::<Result<Vec<_>, _>>()
             .map_err(IdempotentAppendError::Store)?;
         let mut connection = lock_connection(&self.connection);
+        let stale_revision =
+            Self::current_revision_locked(&self.table_name, &connection, &aggregate_id_key)
+                .map_err(IdempotentAppendError::Store)?;
         let transaction = connection
-            .transaction()
-            .map_err(|error| IdempotentAppendError::Store(map_sqlite_error(error)))?;
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| {
+                IdempotentAppendError::Store(map_sqlite_contention_error(
+                    error,
+                    Some(expected_revision),
+                    || Ok(stale_revision),
+                ))
+            })?;
 
         let load_idempotency = format!(
             "SELECT state, value, owner, expires_at_ms FROM {} WHERE idempotency_key = ?1;",
@@ -865,54 +960,42 @@ where
 
 /// Maps a full event row into an untyped envelope, applying upcasters but
 /// keeping the payload as raw JSON and the aggregate id as its stored string.
-fn row_to_raw_envelope(
+fn raw_envelope_from_stored_row(
     upcasters: &UpcasterRegistry,
-    row: &rusqlite::Row<'_>,
-) -> rusqlite::Result<crate::raw_feed::RawEventEnvelope> {
-    let event_id: String = row.get(0)?;
-    let aggregate_id: String = row.get(1)?;
-    let aggregate_type: String = row.get(2)?;
-    let revision: i64 = row.get(3)?;
-    let sequence: i64 = row.get(4)?;
-    let event_type: String = row.get(5)?;
-    let event_version: i64 = row.get(6)?;
-    let payload: String = row.get(7)?;
-    let metadata: String = row.get(8)?;
-    let recorded_at_ms: i64 = row.get(9)?;
+    row: StoredSqliteEventRow,
+) -> Result<crate::raw_feed::RawEventEnvelope, EventStoreError> {
+    let StoredSqliteEventRow {
+        event_id,
+        aggregate_id,
+        aggregate_type,
+        revision,
+        sequence,
+        event_type,
+        event_version,
+        payload,
+        metadata,
+        recorded_at_ms,
+    } = row;
 
     let revision = u64::try_from(revision).map_err(|_| {
-        from_event_store_error(EventStoreError::deserialization(
-            "stored revision cannot be negative".to_owned(),
-        ))
+        EventStoreError::deserialization("stored revision cannot be negative".to_owned())
     })?;
     let sequence = u64::try_from(sequence).map_err(|_| {
-        from_event_store_error(EventStoreError::deserialization(
-            "SQLite sequence cannot be negative".to_owned(),
-        ))
+        EventStoreError::deserialization("SQLite sequence cannot be negative".to_owned())
     })?;
-    let event_version = u32::try_from(event_version).map_err(|_| {
-        from_event_store_error(EventStoreError::deserialization(
-            "event_version exceeds u32".to_owned(),
-        ))
-    })?;
+    let event_version = u32::try_from(event_version)
+        .map_err(|_| EventStoreError::deserialization("event_version exceeds u32".to_owned()))?;
 
     let (event_version, upcasted_bytes) = upcasters
         .prepare_payload(&event_type, event_version, payload.into_bytes())
-        .map_err(|err| from_event_store_error(EventStoreError::deserialization(err.to_string())))?;
-    let payload: serde_json::Value = serde_json::from_slice(&upcasted_bytes).map_err(|error| {
-        from_event_store_error(EventStoreError::deserialization(format!(
-            "payload JSON: {error}"
-        )))
-    })?;
+        .map_err(|err| EventStoreError::deserialization(err.to_string()))?;
+    let payload: serde_json::Value = serde_json::from_slice(&upcasted_bytes)
+        .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
 
-    let metadata_value = serde_json::from_str(&metadata).map_err(|error| {
-        from_event_store_error(EventStoreError::deserialization(format!(
-            "metadata JSON: {error}"
-        )))
-    })?;
-    let metadata =
-        deserialize_metadata(&event_id, metadata_value).map_err(from_event_store_error)?;
-    let recorded_at = millis_to_system_time(recorded_at_ms).map_err(from_event_store_error)?;
+    let metadata_value = serde_json::from_str(&metadata)
+        .map_err(|error| EventStoreError::deserialization(format!("metadata JSON: {error}")))?;
+    let metadata = deserialize_metadata(&event_id, metadata_value)?;
+    let recorded_at = millis_to_system_time(recorded_at_ms)?;
 
     Ok(EventEnvelope::new(
         EventId::from_string(event_id),
@@ -928,70 +1011,49 @@ fn row_to_raw_envelope(
     ))
 }
 
-fn row_to_envelope<A>(
+fn envelope_from_stored_row<A>(
     upcasters: &UpcasterRegistry,
-    row: &rusqlite::Row<'_>,
-) -> rusqlite::Result<EventEnvelope<A::Event, A::Id>>
+    row: StoredSqliteEventRow,
+) -> Result<EventEnvelope<A::Event, A::Id>, EventStoreError>
 where
     A: Aggregate,
     A::Event: serde::de::DeserializeOwned,
     A::Id: serde::de::DeserializeOwned,
 {
-    let event_id: String = row.get(0)?;
-    let aggregate_id: String = row.get(1)?;
-    let aggregate_type: String = row.get(2)?;
-    let revision: i64 = row.get(3)?;
-    let sequence: i64 = row.get(4)?;
-    let event_type: String = row.get(5)?;
-    let event_version: i64 = row.get(6)?;
-    let payload: String = row.get(7)?;
-    let metadata: String = row.get(8)?;
-    let recorded_at_ms: i64 = row.get(9)?;
+    let StoredSqliteEventRow {
+        event_id,
+        aggregate_id,
+        aggregate_type,
+        revision,
+        sequence,
+        event_type,
+        event_version,
+        payload,
+        metadata,
+        recorded_at_ms,
+    } = row;
 
     let revision = u64::try_from(revision).map_err(|_| {
-        from_event_store_error(EventStoreError::deserialization(
-            "stored revision cannot be negative".to_owned(),
-        ))
+        EventStoreError::deserialization("stored revision cannot be negative".to_owned())
     })?;
     let sequence = u64::try_from(sequence).map_err(|_| {
-        rusqlite::Error::FromSqlConversionFailure(
-            4,
-            rusqlite::types::Type::Integer,
-            Box::new(EventStoreError::deserialization(
-                "SQLite sequence cannot be negative".to_owned(),
-            )),
-        )
+        EventStoreError::deserialization("SQLite sequence cannot be negative".to_owned())
     })?;
-    let event_version = u32::try_from(event_version).map_err(|_| {
-        rusqlite::Error::FromSqlConversionFailure(
-            6,
-            rusqlite::types::Type::Integer,
-            Box::new(EventStoreError::deserialization(
-                "event_version exceeds u32".to_owned(),
-            )),
-        )
-    })?;
-    let aggregate_id = deserialize_id(&aggregate_id).map_err(from_event_store_error)?;
+    let event_version = u32::try_from(event_version)
+        .map_err(|_| EventStoreError::deserialization("event_version exceeds u32".to_owned()))?;
+    let aggregate_id = deserialize_id(&aggregate_id)?;
 
     let (event_version, upcasted_bytes) = upcasters
         .prepare_payload(&event_type, event_version, payload.into_bytes())
-        .map_err(|err| from_event_store_error(EventStoreError::deserialization(err.to_string())))?;
+        .map_err(|err| EventStoreError::deserialization(err.to_string()))?;
 
-    let payload_value = serde_json::from_slice(&upcasted_bytes).map_err(|error| {
-        from_event_store_error(EventStoreError::deserialization(format!(
-            "payload JSON: {error}"
-        )))
-    })?;
-    let payload = deserialize_payload(&event_id, &event_type, payload_value)
-        .map_err(from_event_store_error)?;
-    let metadata_value = serde_json::from_str(&metadata).map_err(|error| {
-        from_event_store_error(EventStoreError::deserialization(format!(
-            "metadata JSON: {error}"
-        )))
-    })?;
-    let metadata =
-        deserialize_metadata(&event_id, metadata_value).map_err(from_event_store_error)?;
-    let recorded_at = millis_to_system_time(recorded_at_ms).map_err(from_event_store_error)?;
+    let payload_value = serde_json::from_slice(&upcasted_bytes)
+        .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
+    let payload = deserialize_payload(&event_id, &event_type, payload_value)?;
+    let metadata_value = serde_json::from_str(&metadata)
+        .map_err(|error| EventStoreError::deserialization(format!("metadata JSON: {error}")))?;
+    let metadata = deserialize_metadata(&event_id, metadata_value)?;
+    let recorded_at = millis_to_system_time(recorded_at_ms)?;
 
     Ok(EventEnvelope::new(
         EventId::from_string(event_id),
@@ -1032,10 +1094,19 @@ fn map_sqlite_insert_error(
         }
         _ => {}
     }
+    if is_sqlite_contention(&error) {
+        let current_revision = reread_revision().unwrap_or(stale_actual);
+        return crate::sql_common::map_stream_unique_violation(expected, current_revision);
+    }
     map_sqlite_error(error)
 }
 
 fn map_sqlite_error(error: rusqlite::Error) -> EventStoreError {
+    if let rusqlite::Error::FromSqlConversionFailure(_, _, source) = &error {
+        if let Some(store_error) = source.downcast_ref::<EventStoreError>() {
+            return store_error.clone();
+        }
+    }
     let code = match &error {
         rusqlite::Error::SqliteFailure(failure, _) => Some(failure.extended_code.to_string()),
         _ => None,
@@ -1045,10 +1116,6 @@ fn map_sqlite_error(error: rusqlite::Error) -> EventStoreError {
         Some(code) => mapped.with_code(code),
         None => mapped,
     }
-}
-
-fn from_event_store_error(error: EventStoreError) -> rusqlite::Error {
-    rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
 }
 
 /// SQLite checkpoint store implementation.
