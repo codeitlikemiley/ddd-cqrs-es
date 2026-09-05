@@ -1899,3 +1899,31 @@ where
         .map_err(|e| EventStoreError::backend(e.to_string()))?
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event::EventType;
+    use crate::Metadata;
+
+    #[test]
+    fn prepared_postgres_event_serializes_payload_and_metadata() {
+        #[derive(serde::Serialize)]
+        struct Sample {
+            value: u32,
+        }
+
+        let prepared = PreparedPostgresEvent::new(NewEvent {
+            payload: Sample { value: 7 },
+            event_type: EventType::from_static("sample.created"),
+            event_version: 2,
+            metadata: Metadata::default(),
+        })
+        .expect("prepare event");
+
+        assert_eq!(prepared.event_type, "sample.created");
+        assert_eq!(prepared.event_version, 2);
+        assert_eq!(prepared.payload_json["value"], 7);
+        assert!(prepared.recorded_at_ms > 0);
+    }
+}

@@ -1927,3 +1927,76 @@ where
         .map_err(|e| EventStoreError::backend(e.to_string()))?
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event::EventType;
+    use crate::{ConcurrencyError, ExpectedRevision, Metadata};
+
+    fn duplicate_key(message: &str) -> MySqlError {
+        MySqlError::MySqlError(mysql::error::MySqlError {
+            state: "23000".into(),
+            code: 1062,
+            message: message.into(),
+        })
+    }
+
+    #[test]
+    fn mysql_stream_revision_unique_violation_detects_aggregate_constraints() {
+        assert!(is_mysql_stream_revision_unique_violation(&duplicate_key(
+            "Duplicate entry 'acct-1-2' for key 'events.aggregate_type'"
+        )));
+    }
+
+    #[test]
+    fn mysql_stream_revision_unique_violation_rejects_event_id_collisions() {
+        assert!(!is_mysql_stream_revision_unique_violation(&duplicate_key(
+            "Duplicate entry 'evt-1' for key 'events.event_id'"
+        )));
+    }
+
+    #[test]
+    fn map_mysql_insert_error_maps_revision_conflict() {
+        let mapped = map_mysql_insert_error(
+            duplicate_key(
+                "Duplicate entry '1-counter-2' for key 'events.aggregate_type_aggregate_id_revision'",
+            ),
+            ExpectedRevision::Exact(1),
+            1,
+            || Ok(3),
+        );
+        assert!(matches!(
+            mapped,
+            EventStoreError::Concurrency(ConcurrencyError::WrongExpectedRevision {
+                expected: ExpectedRevision::Exact(1),
+                actual: 3,
+            })
+        ));
+    }
+
+    #[test]
+    fn max_mysql_append_events_respects_placeholder_limit() {
+        assert_eq!(MAX_MYSQL_APPEND_EVENTS, 7_281);
+    }
+
+    #[test]
+    fn prepared_mysql_event_serializes_payload_and_metadata() {
+        #[derive(serde::Serialize)]
+        struct Sample {
+            value: u32,
+        }
+
+        let prepared = PreparedMySqlEvent::new(NewEvent {
+            payload: Sample { value: 9 },
+            event_type: EventType::from_static("sample.created"),
+            event_version: 1,
+            metadata: Metadata::default(),
+        })
+        .expect("prepare event");
+
+        assert_eq!(prepared.event_type, "sample.created");
+        assert!(prepared.payload_json.contains("\"value\":9"));
+        assert!(prepared.recorded_at_ms > 0);
+    }
+}
