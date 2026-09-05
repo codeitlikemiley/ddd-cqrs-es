@@ -183,6 +183,31 @@ fn batch_advanced(outcome: ProjectionBatchOutcome, position: &mut Option<u64>) -
     }
 }
 
+/// Repeats bounded `run_batch` passes until the feed reports caught up.
+fn run_projection_catch_up<E>(
+    mut run_batch: impl FnMut(ProjectionBatchConfig) -> Result<ProjectionBatchOutcome, E>,
+) -> Result<usize, E> {
+    let config = ProjectionBatchConfig::default();
+    let mut applied = 0;
+    let mut position = None;
+
+    loop {
+        let outcome = run_batch(config)?;
+        applied += outcome.applied;
+        if !batch_advanced(outcome, &mut position) {
+            return Ok(applied);
+        }
+    }
+}
+
+/// Counts a loaded batch and finds the last global sequence in feed order.
+fn projection_batch_stats<E, Id>(events: &[EventEnvelope<E, Id>]) -> (usize, Option<u64>) {
+    (
+        events.len(),
+        events.iter().rev().find_map(|event| event.sequence),
+    )
+}
+
 fn apply_projection_events<P, E, Id>(
     projection: &mut P,
     events: impl IntoIterator<Item = EventEnvelope<E, Id>>,
@@ -273,6 +298,101 @@ where
     }
     Ok(())
 }
+
+/// Applies a loaded batch through [`Projection`], flushes, and persists an external checkpoint.
+///
+/// Used by persisted runners (sync and async). In-memory runners use
+/// [`finish_in_memory_projection_batch`] instead because they keep the checkpoint locally and
+/// always flush before returning a mid-batch projection error.
+fn run_persisted_projection_batch<P, E, Id, C, StoreError>(
+    projection: &mut P,
+    checkpoint_store: &C,
+    key: &str,
+    events: impl IntoIterator<Item = EventEnvelope<E, Id>>,
+    config: ProjectionBatchConfig,
+) -> Result<ProjectionBatchOutcome, ProjectionRunnerError<P::Error, StoreError, C::Error>>
+where
+    P: Projection<E, Id>,
+    C: CheckpointStore,
+{
+    let (applied, last_sequence, failure) = apply_projection_events(projection, events);
+    let flushed = persist_projection_checkpoint(projection, checkpoint_store, key, last_sequence);
+    finish_projection_batch(failure.map(ProjectionRunnerError::Projection), flushed)?;
+    Ok(projection_batch_outcome(applied, last_sequence, config))
+}
+
+#[cfg(feature = "async")]
+async fn run_persisted_projection_batch_async<P, E, Id, C, StoreError>(
+    projection: &mut P,
+    checkpoint_store: &C,
+    key: &str,
+    events: impl IntoIterator<Item = EventEnvelope<E, Id>>,
+    config: ProjectionBatchConfig,
+) -> Result<ProjectionBatchOutcome, ProjectionRunnerError<P::Error, StoreError, C::Error>>
+where
+    P: Projection<E, Id>,
+    C: AsyncCheckpointStore,
+{
+    let (applied, last_sequence, failure) = apply_projection_events(projection, events);
+    let flushed =
+        persist_projection_checkpoint_async(projection, checkpoint_store, key, last_sequence).await;
+    finish_projection_batch(failure.map(ProjectionRunnerError::Projection), flushed)?;
+    Ok(projection_batch_outcome(applied, last_sequence, config))
+}
+
+/// Flushes an in-memory runner checkpoint after [`apply_projection_events`].
+fn finish_in_memory_projection_batch<P, E, Id, StoreError>(
+    projection: &mut P,
+    checkpoint: &mut Option<u64>,
+    applied: usize,
+    last_sequence: Option<u64>,
+    failure: Option<P::Error>,
+    config: ProjectionBatchConfig,
+) -> Result<ProjectionBatchOutcome, ProjectionRunnerError<P::Error, StoreError>>
+where
+    P: Projection<E, Id>,
+{
+    projection
+        .flush()
+        .map_err(ProjectionRunnerError::Projection)?;
+    if let Some(sequence) = last_sequence {
+        *checkpoint = Some(sequence);
+    }
+    if let Some(error) = failure {
+        return Err(ProjectionRunnerError::Projection(error));
+    }
+    Ok(projection_batch_outcome(applied, last_sequence, config))
+}
+
+/// Loads one batch and delegates checkpoint movement to the projection-owned batch hook.
+///
+/// Checkpointed and transactional sync runners share this shape: the projection owns checkpoint
+/// persistence, so partial mid-batch progress and error surfaces differ from
+/// [`run_persisted_projection_batch`] (external checkpoint store + optional partial flush).
+fn run_owned_checkpoint_projection_batch<A, P, S, ProjectionError>(
+    projection: &mut P,
+    store: &S,
+    config: ProjectionBatchConfig,
+    load_checkpoint: impl FnOnce(&P) -> Result<Option<u64>, ProjectionError>,
+    apply_batch: impl FnOnce(&mut P, &[EventEnvelope<A::Event, A::Id>]) -> Result<(), ProjectionError>,
+) -> Result<ProjectionBatchOutcome, ProjectionRunnerError<ProjectionError, S::Error, ProjectionError>>
+where
+    A: Aggregate,
+    S: EventStore<A>,
+{
+    let checkpoint = load_checkpoint(projection).map_err(ProjectionRunnerError::Checkpoint)?;
+    let events = store
+        .load_global_after_limited(checkpoint, config.batch_size())
+        .map_err(ProjectionRunnerError::Store)?;
+    apply_batch(projection, &events).map_err(ProjectionRunnerError::Projection)?;
+    let (applied, last_sequence) = projection_batch_stats(&events);
+    Ok(projection_batch_outcome(applied, last_sequence, config))
+}
+
+// Async runner catch-up and owned-checkpoint `run_batch` loops stay inline in their
+// runners: async methods return futures that borrow `&mut self` (and often the current
+// envelope) until `.await` completes, so shared closure helpers would need higher-ranked
+// lifetime bounds that Rust cannot express cleanly with `async_trait` methods today.
 
 /// In-memory projection runner with a sequence checkpoint.
 ///
@@ -380,17 +500,7 @@ impl<P> InMemoryProjectionRunner<P> {
         )
         .entered();
 
-        let config = ProjectionBatchConfig::default();
-        let mut applied = 0;
-        let mut position = None;
-
-        loop {
-            let outcome = self.run_batch(store, config)?;
-            applied += outcome.applied;
-            if !batch_advanced(outcome, &mut position) {
-                return Ok(applied);
-            }
-        }
+        run_projection_catch_up(|config| self.run_batch(store, config))
     }
 
     /// Loads at most `config.batch_size()` global events after the current
@@ -421,17 +531,14 @@ impl<P> InMemoryProjectionRunner<P> {
         let (applied, last_sequence, failure) =
             apply_projection_events(&mut self.projection, events);
 
-        self.projection
-            .flush()
-            .map_err(ProjectionRunnerError::Projection)?;
-        if let Some(sequence) = last_sequence {
-            self.checkpoint = Some(sequence);
-        }
-        if let Some(error) = failure {
-            return Err(ProjectionRunnerError::Projection(error));
-        }
-
-        Ok(projection_batch_outcome(applied, last_sequence, config))
+        finish_in_memory_projection_batch(
+            &mut self.projection,
+            &mut self.checkpoint,
+            applied,
+            last_sequence,
+            failure,
+            config,
+        )
     }
 }
 
@@ -713,17 +820,7 @@ where
         )
         .entered();
 
-        let config = ProjectionBatchConfig::default();
-        let mut applied = 0;
-        let mut position = None;
-
-        loop {
-            let outcome = self.run_batch(store, config)?;
-            applied += outcome.applied;
-            if !batch_advanced(outcome, &mut position) {
-                return Ok(applied);
-            }
-        }
+        run_projection_catch_up(|config| self.run_batch(store, config))
     }
 
     /// Loads at most `config.batch_size()` global events after the persistent
@@ -761,17 +858,13 @@ where
         let events = store
             .load_global_after_limited(checkpoint, config.batch_size())
             .map_err(ProjectionRunnerError::Store)?;
-        let (applied, last_sequence, failure) =
-            apply_projection_events(&mut self.projection, events);
-
-        let flushed = persist_projection_checkpoint(
+        run_persisted_projection_batch(
             &mut self.projection,
             &self.checkpoint_store,
             &key,
-            last_sequence,
-        );
-        finish_projection_batch(failure.map(ProjectionRunnerError::Projection), flushed)?;
-        Ok(projection_batch_outcome(applied, last_sequence, config))
+            events,
+            config,
+        )
     }
 
     /// Loads at most `config.batch_size()` events of **any aggregate type**
@@ -812,17 +905,13 @@ where
         let events = feed
             .load_raw_global_after_limited(checkpoint, config.batch_size())
             .map_err(ProjectionRunnerError::Store)?;
-        let (applied, last_sequence, failure) =
-            apply_projection_events(&mut self.projection, events);
-
-        let flushed = persist_projection_checkpoint(
+        run_persisted_projection_batch(
             &mut self.projection,
             &self.checkpoint_store,
             &key,
-            last_sequence,
-        );
-        finish_projection_batch(failure.map(ProjectionRunnerError::Projection), flushed)?;
-        Ok(projection_batch_outcome(applied, last_sequence, config))
+            events,
+            config,
+        )
     }
 }
 
@@ -969,18 +1058,14 @@ where
             .load_global_after_limited(checkpoint, config.batch_size())
             .await
             .map_err(ProjectionRunnerError::Store)?;
-        let (applied, last_sequence, failure) =
-            apply_projection_events(&mut self.projection, events);
-
-        let flushed = persist_projection_checkpoint_async(
+        run_persisted_projection_batch_async(
             &mut self.projection,
             &self.checkpoint_store,
             &key,
-            last_sequence,
+            events,
+            config,
         )
-        .await;
-        finish_projection_batch(failure.map(ProjectionRunnerError::Projection), flushed)?;
-        Ok(projection_batch_outcome(applied, last_sequence, config))
+        .await
     }
 
     /// Loads at most `config.batch_size()` events of **any aggregate type**
@@ -1014,18 +1099,14 @@ where
             .load_raw_global_after_limited(checkpoint, config.batch_size())
             .await
             .map_err(ProjectionRunnerError::Store)?;
-        let (applied, last_sequence, failure) =
-            apply_projection_events(&mut self.projection, events);
-
-        let flushed = persist_projection_checkpoint_async(
+        run_persisted_projection_batch_async(
             &mut self.projection,
             &self.checkpoint_store,
             &key,
-            last_sequence,
+            events,
+            config,
         )
-        .await;
-        finish_projection_batch(failure.map(ProjectionRunnerError::Projection), flushed)?;
-        Ok(projection_batch_outcome(applied, last_sequence, config))
+        .await
     }
 }
 
@@ -1128,17 +1209,7 @@ impl<P> CheckpointedProjectionRunner<P> {
         )
         .entered();
 
-        let config = ProjectionBatchConfig::default();
-        let mut applied = 0;
-        let mut position = None;
-
-        loop {
-            let outcome = self.run_batch(store, config)?;
-            applied += outcome.applied;
-            if !batch_advanced(outcome, &mut position) {
-                return Ok(applied);
-            }
-        }
+        run_projection_catch_up(|config| self.run_batch(store, config))
     }
 
     /// Loads at most `config.batch_size()` global events after the projection's
@@ -1164,22 +1235,13 @@ impl<P> CheckpointedProjectionRunner<P> {
         )
         .entered();
 
-        let checkpoint = self
-            .projection
-            .load_checkpoint()
-            .map_err(ProjectionRunnerError::Checkpoint)?;
-
-        let events = store
-            .load_global_after_limited(checkpoint, config.batch_size())
-            .map_err(ProjectionRunnerError::Store)?;
-
-        self.projection
-            .apply_batch_and_checkpoint(&events)
-            .map_err(ProjectionRunnerError::Projection)?;
-        let applied = events.len();
-        let last_sequence = events.iter().rev().find_map(|event| event.sequence);
-
-        Ok(projection_batch_outcome(applied, last_sequence, config))
+        run_owned_checkpoint_projection_batch(
+            &mut self.projection,
+            store,
+            config,
+            |projection| projection.load_checkpoint(),
+            |projection, events| projection.apply_batch_and_checkpoint(events),
+        )
     }
 }
 
@@ -1280,17 +1342,7 @@ impl<P> TransactionalCheckpointedProjectionRunner<P> {
         )
         .entered();
 
-        let config = ProjectionBatchConfig::default();
-        let mut applied = 0;
-        let mut position = None;
-
-        loop {
-            let outcome = self.run_batch(store, config)?;
-            applied += outcome.applied;
-            if !batch_advanced(outcome, &mut position) {
-                return Ok(applied);
-            }
-        }
+        run_projection_catch_up(|config| self.run_batch(store, config))
     }
 
     /// Loads at most `config.batch_size()` global events after the projection's
@@ -1316,22 +1368,13 @@ impl<P> TransactionalCheckpointedProjectionRunner<P> {
         )
         .entered();
 
-        let checkpoint = self
-            .projection
-            .load_checkpoint()
-            .map_err(ProjectionRunnerError::Checkpoint)?;
-
-        let events = store
-            .load_global_after_limited(checkpoint, config.batch_size())
-            .map_err(ProjectionRunnerError::Store)?;
-
-        self.projection
-            .apply_batch_and_checkpoint_transactionally(&events)
-            .map_err(ProjectionRunnerError::Projection)?;
-        let applied = events.len();
-        let last_sequence = events.iter().rev().find_map(|event| event.sequence);
-
-        Ok(projection_batch_outcome(applied, last_sequence, config))
+        run_owned_checkpoint_projection_batch(
+            &mut self.projection,
+            store,
+            config,
+            |projection| projection.load_checkpoint(),
+            |projection, events| projection.apply_batch_and_checkpoint_transactionally(events),
+        )
     }
 }
 
@@ -1485,6 +1528,9 @@ impl<P> AsyncTransactionalCheckpointedProjectionRunner<P> {
         let mut applied = 0;
         let mut last_sequence = None;
 
+        // Per-event async `apply_and_checkpoint*` calls must stay inline: the returned futures
+        // borrow `&mut self` and the envelope for the duration of `.await`, which a shared
+        // closure helper cannot express without higher-ranked lifetime bounds.
         for event in events {
             self.projection
                 .apply_and_checkpoint_transactionally(&event)
@@ -1582,6 +1628,9 @@ impl<P> AsyncCheckpointedProjectionRunner<P> {
         let mut applied = 0;
         let mut last_sequence = None;
 
+        // Per-event async `apply_and_checkpoint*` calls must stay inline: the returned futures
+        // borrow `&mut self` and the envelope for the duration of `.await`, which a shared
+        // closure helper cannot express without higher-ranked lifetime bounds.
         for event in events {
             self.projection
                 .apply_and_checkpoint(&event)
