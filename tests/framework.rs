@@ -2781,6 +2781,142 @@ fn persisted_projection_runner_flushes_progress_before_reporting_failure() {
     assert_eq!(checkpoint_store.saves(), 1);
 }
 
+#[test]
+fn persisted_projection_runner_flushes_before_advancing_checkpoint() {
+    use ddd_cqrs_es::projection::PersistedProjectionRunner;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    struct BatchingProjection {
+        pending: u64,
+        persisted: u64,
+        flush_calls: Arc<Mutex<usize>>,
+    }
+
+    impl Projection<CounterEvent, String> for BatchingProjection {
+        type Error = std::convert::Infallible;
+
+        fn name(&self) -> &'static str {
+            "batching_projection"
+        }
+
+        fn apply(
+            &mut self,
+            event: &ddd_cqrs_es::EventEnvelope<CounterEvent, String>,
+        ) -> Result<(), Self::Error> {
+            if let CounterEvent::Incremented { by } = event.payload {
+                self.pending += by;
+            }
+            Ok(())
+        }
+
+        fn flush(&mut self) -> Result<(), Self::Error> {
+            *self.flush_calls.lock().unwrap() += 1;
+            self.persisted += self.pending;
+            self.pending = 0;
+            Ok(())
+        }
+    }
+
+    let store = InMemoryEventStore::<Counter>::new();
+    let repo = Repository::new(store.clone());
+    let counter_id = "counter-1".to_owned();
+
+    repo.execute(&counter_id, CounterCommand::Create, Metadata::default())
+        .unwrap();
+    for _ in 0..3 {
+        repo.execute(
+            &counter_id,
+            CounterCommand::Increment { by: 1 },
+            Metadata::default(),
+        )
+        .unwrap();
+    }
+
+    let flush_calls = Arc::new(Mutex::new(0));
+    let projection = BatchingProjection {
+        flush_calls: Arc::clone(&flush_calls),
+        ..Default::default()
+    };
+    let mut runner = PersistedProjectionRunner::new(projection, CountingCheckpointStore::default());
+
+    assert_eq!(runner.run::<Counter, _>(&store).unwrap(), 4);
+    let projection = runner.into_projection();
+    assert_eq!(projection.persisted, 3);
+    assert_eq!(projection.pending, 0);
+    assert_eq!(*flush_calls.lock().unwrap(), 1);
+}
+
+#[test]
+fn checkpointed_projection_runner_supports_batch_apply_hook() {
+    use ddd_cqrs_es::projection::{CheckpointedProjection, CheckpointedProjectionRunner};
+
+    struct BatchCounter {
+        total: u64,
+        checkpoint: Option<u64>,
+        batch_sizes: Vec<usize>,
+    }
+
+    impl CheckpointedProjection<CounterEvent, String> for BatchCounter {
+        type Error = std::convert::Infallible;
+
+        fn name(&self) -> &'static str {
+            "batch_counter"
+        }
+
+        fn load_checkpoint(&self) -> Result<Option<u64>, Self::Error> {
+            Ok(self.checkpoint)
+        }
+
+        fn apply_batch_and_checkpoint(
+            &mut self,
+            events: &[ddd_cqrs_es::EventEnvelope<CounterEvent, String>],
+        ) -> Result<(), Self::Error> {
+            self.batch_sizes.push(events.len());
+            for event in events {
+                if let CounterEvent::Incremented { by } = event.payload {
+                    self.total += by;
+                }
+                self.checkpoint = event.sequence;
+            }
+            Ok(())
+        }
+
+        fn apply_and_checkpoint(
+            &mut self,
+            _event: &ddd_cqrs_es::EventEnvelope<CounterEvent, String>,
+        ) -> Result<(), Self::Error> {
+            panic!("runner should call apply_batch_and_checkpoint");
+        }
+    }
+
+    let store = InMemoryEventStore::<Counter>::new();
+    let repo = Repository::new(store.clone());
+    let counter_id = "counter-1".to_owned();
+
+    repo.execute(&counter_id, CounterCommand::Create, Metadata::default())
+        .unwrap();
+    for _ in 0..2 {
+        repo.execute(
+            &counter_id,
+            CounterCommand::Increment { by: 1 },
+            Metadata::default(),
+        )
+        .unwrap();
+    }
+
+    let mut runner = CheckpointedProjectionRunner::new(BatchCounter {
+        total: 0,
+        checkpoint: None,
+        batch_sizes: Vec::new(),
+    });
+
+    assert_eq!(runner.run::<Counter, _>(&store).unwrap(), 3);
+    let projection = runner.into_projection();
+    assert_eq!(projection.total, 2);
+    assert_eq!(projection.batch_sizes, vec![3]);
+}
+
 #[cfg(feature = "postgres")]
 #[test]
 fn postgres_store_upcasts_chained_event_versions_on_load() {
