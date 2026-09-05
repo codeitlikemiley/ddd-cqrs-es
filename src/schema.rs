@@ -303,28 +303,6 @@ pub fn get_migrations(dialect: SqlDialect) -> Vec<SchemaMigration> {
                 version: 7,
                 description: "idempotency_lease_columns",
                 up_sql: r#"
-                    ALTER TABLE {idempotency_table}
-                        ADD COLUMN owner VARCHAR(255) NULL,
-                        ADD COLUMN expires_at_ms BIGINT NULL;
-                    CREATE INDEX {idempotency_table}_pending_updated_idx
-                        ON {idempotency_table} (updated_at_ms);
-                "#,
-            },
-            SchemaMigration {
-                version: 7,
-                description: "idempotency_lease_columns",
-                up_sql: r#"
-                    ALTER TABLE {idempotency_table} ADD COLUMN IF NOT EXISTS owner TEXT;
-                    ALTER TABLE {idempotency_table} ADD COLUMN IF NOT EXISTS expires_at_ms BIGINT;
-                    CREATE INDEX IF NOT EXISTS {idempotency_table}_pending_updated_idx
-                        ON {idempotency_table} (updated_at_ms)
-                        WHERE state = 'pending';
-                "#,
-            },
-            SchemaMigration {
-                version: 7,
-                description: "idempotency_lease_columns",
-                up_sql: r#"
                     ALTER TABLE {idempotency_table} ADD COLUMN owner TEXT;
                     ALTER TABLE {idempotency_table} ADD COLUMN expires_at_ms INTEGER;
                     CREATE INDEX IF NOT EXISTS {idempotency_table}_pending_updated_idx
@@ -405,6 +383,17 @@ pub fn get_migrations(dialect: SqlDialect) -> Vec<SchemaMigration> {
                     DROP INDEX IF EXISTS {events_table}_stream_idx;
                 "#,
             },
+            SchemaMigration {
+                version: 7,
+                description: "idempotency_lease_columns",
+                up_sql: r#"
+                    ALTER TABLE {idempotency_table} ADD COLUMN IF NOT EXISTS owner TEXT;
+                    ALTER TABLE {idempotency_table} ADD COLUMN IF NOT EXISTS expires_at_ms BIGINT;
+                    CREATE INDEX IF NOT EXISTS {idempotency_table}_pending_updated_idx
+                        ON {idempotency_table} (updated_at_ms)
+                        WHERE state = 'pending';
+                "#,
+            },
         ],
         SqlDialect::MySql => vec![
             SchemaMigration {
@@ -475,6 +464,17 @@ pub fn get_migrations(dialect: SqlDialect) -> Vec<SchemaMigration> {
                 version: 6,
                 description: "drop_duplicate_events_stream_index",
                 up_sql: "SELECT 1;",
+            },
+            SchemaMigration {
+                version: 7,
+                description: "idempotency_lease_columns",
+                up_sql: r#"
+                    ALTER TABLE {idempotency_table}
+                        ADD COLUMN owner VARCHAR(255) NULL,
+                        ADD COLUMN expires_at_ms BIGINT NULL;
+                    CREATE INDEX {idempotency_table}_pending_updated_idx
+                        ON {idempotency_table} (updated_at_ms);
+                "#,
             },
         ],
     }
