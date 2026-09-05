@@ -123,9 +123,8 @@ pub use aggregate::{Aggregate, LoadedAggregate};
 /// Async service traits and result types for asynchronous command execution.
 pub use async_api::{
     AsyncAtomicIdempotentEventStore, AsyncAtomicIdempotentRepositoryResult, AsyncCommandBus,
-    AsyncIdempotentCommandBus,
-    AsyncCommandHandler, AsyncEventStore, AsyncIdempotencyStore, AsyncQueryHandler,
-    AsyncRepository, AsyncRepositoryResult, AsyncSnapshotStore,
+    AsyncCommandHandler, AsyncEventStore, AsyncIdempotencyStore, AsyncIdempotentCommandBus,
+    AsyncQueryHandler, AsyncRepository, AsyncRepositoryResult, AsyncSnapshotStore,
 };
 
 #[cfg(feature = "json-file")]

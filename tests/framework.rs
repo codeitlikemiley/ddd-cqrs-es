@@ -1008,8 +1008,8 @@ fn process_manager_runner_resumes_partial_dispatch_from_checkpoint() {
 #[test]
 fn process_manager_runner_uses_stable_idempotency_keys() {
     use ddd_cqrs_es::{
-        process_manager_command_idempotency_key, EventEnvelope, EventId, EventType,
-        IdempotencyKey, ProcessManagerDispatchCheckpoint,
+        process_manager_command_idempotency_key, EventEnvelope, EventId, EventType, IdempotencyKey,
+        ProcessManagerDispatchCheckpoint,
     };
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
@@ -1130,15 +1130,11 @@ fn process_manager_runner_uses_stable_idempotency_keys() {
     let expected_second = process_manager_command_idempotency_key("two_step", "evt-1", 1);
 
     let mut runner = ddd_cqrs_es::ProcessManagerRunner::new(TwoStepProcess, bus.clone());
-    let first = runner
-        .run_envelope_strict(&envelope, &checkpoint)
-        .unwrap();
+    let first = runner.run_envelope_strict(&envelope, &checkpoint).unwrap();
     assert_eq!(first, vec![1, 1]);
 
     let mut runner = ddd_cqrs_es::ProcessManagerRunner::new(TwoStepProcess, bus.clone());
-    let redelivered = runner
-        .run_envelope_strict(&envelope, &checkpoint)
-        .unwrap();
+    let redelivered = runner.run_envelope_strict(&envelope, &checkpoint).unwrap();
     assert_eq!(redelivered, vec![2, 2]);
 
     assert_eq!(bus.seen.lock().unwrap().get(&expected_first), Some(&2));
@@ -1161,8 +1157,7 @@ fn sqlite_append_contention_surfaces_concurrency_not_backend_lock() {
             .as_nanos()
     );
     let seed_connection = rusqlite::Connection::open(&database_name).unwrap();
-    let seed_store =
-        ddd_cqrs_es::SqliteEventStore::<Counter>::new(seed_connection).unwrap();
+    let seed_store = ddd_cqrs_es::SqliteEventStore::<Counter>::new(seed_connection).unwrap();
     seed_store.initialize_schema().unwrap();
     seed_store
         .append(

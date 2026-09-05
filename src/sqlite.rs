@@ -286,7 +286,11 @@ where
         );
         let stored_rows = {
             let connection = lock_connection(&self.connection);
-            query_stored_event_rows(&connection, &query, params![A::aggregate_type(), aggregate_id])?
+            query_stored_event_rows(
+                &connection,
+                &query,
+                params![A::aggregate_type(), aggregate_id],
+            )?
         };
         let upcasters = self.upcasters.clone();
         stored_rows
@@ -613,8 +617,8 @@ where
             .collect::<Result<Vec<_>, _>>()
             .map_err(IdempotentAppendError::Store)?;
         let mut connection = lock_connection(&self.connection);
-        let transaction = begin_immediate_transaction(&mut connection)
-            .map_err(IdempotentAppendError::Store)?;
+        let transaction =
+            begin_immediate_transaction(&mut connection).map_err(IdempotentAppendError::Store)?;
 
         let load_idempotency = format!(
             "SELECT state, value, owner, expires_at_ms FROM {} WHERE idempotency_key = ?1;",
@@ -963,20 +967,17 @@ fn raw_envelope_from_stored_row(
     let sequence = u64::try_from(sequence).map_err(|_| {
         EventStoreError::deserialization("SQLite sequence cannot be negative".to_owned())
     })?;
-    let event_version = u32::try_from(event_version).map_err(|_| {
-        EventStoreError::deserialization("event_version exceeds u32".to_owned())
-    })?;
+    let event_version = u32::try_from(event_version)
+        .map_err(|_| EventStoreError::deserialization("event_version exceeds u32".to_owned()))?;
 
     let (event_version, upcasted_bytes) = upcasters
         .prepare_payload(&event_type, event_version, payload.into_bytes())
         .map_err(|err| EventStoreError::deserialization(err.to_string()))?;
-    let payload: serde_json::Value = serde_json::from_slice(&upcasted_bytes).map_err(|error| {
-        EventStoreError::deserialization(format!("payload JSON: {error}"))
-    })?;
+    let payload: serde_json::Value = serde_json::from_slice(&upcasted_bytes)
+        .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
 
-    let metadata_value = serde_json::from_str(&metadata).map_err(|error| {
-        EventStoreError::deserialization(format!("metadata JSON: {error}"))
-    })?;
+    let metadata_value = serde_json::from_str(&metadata)
+        .map_err(|error| EventStoreError::deserialization(format!("metadata JSON: {error}")))?;
     let metadata = deserialize_metadata(&event_id, metadata_value)?;
     let recorded_at = millis_to_system_time(recorded_at_ms)?;
 
@@ -1022,22 +1023,19 @@ where
     let sequence = u64::try_from(sequence).map_err(|_| {
         EventStoreError::deserialization("SQLite sequence cannot be negative".to_owned())
     })?;
-    let event_version = u32::try_from(event_version).map_err(|_| {
-        EventStoreError::deserialization("event_version exceeds u32".to_owned())
-    })?;
+    let event_version = u32::try_from(event_version)
+        .map_err(|_| EventStoreError::deserialization("event_version exceeds u32".to_owned()))?;
     let aggregate_id = deserialize_id(&aggregate_id)?;
 
     let (event_version, upcasted_bytes) = upcasters
         .prepare_payload(&event_type, event_version, payload.into_bytes())
         .map_err(|err| EventStoreError::deserialization(err.to_string()))?;
 
-    let payload_value = serde_json::from_slice(&upcasted_bytes).map_err(|error| {
-        EventStoreError::deserialization(format!("payload JSON: {error}"))
-    })?;
+    let payload_value = serde_json::from_slice(&upcasted_bytes)
+        .map_err(|error| EventStoreError::deserialization(format!("payload JSON: {error}")))?;
     let payload = deserialize_payload(&event_id, &event_type, payload_value)?;
-    let metadata_value = serde_json::from_str(&metadata).map_err(|error| {
-        EventStoreError::deserialization(format!("metadata JSON: {error}"))
-    })?;
+    let metadata_value = serde_json::from_str(&metadata)
+        .map_err(|error| EventStoreError::deserialization(format!("metadata JSON: {error}")))?;
     let metadata = deserialize_metadata(&event_id, metadata_value)?;
     let recorded_at = millis_to_system_time(recorded_at_ms)?;
 

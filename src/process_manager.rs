@@ -352,7 +352,10 @@ impl<P, B> ProcessManagerRunner<P, B> {
         for (index, command) in commands.into_iter().enumerate().skip(start_index) {
             let idempotency_key =
                 process_manager_command_idempotency_key(manager_name, event_id, index);
-            match self.command_bus.dispatch_idempotent(idempotency_key, command) {
+            match self
+                .command_bus
+                .dispatch_idempotent(idempotency_key, command)
+            {
                 Ok(output) => {
                     dispatched.push(output);
                     if let Err(error) =
