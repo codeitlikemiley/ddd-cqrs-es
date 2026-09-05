@@ -599,7 +599,34 @@ fn postgres_query_plans_use_expected_indexes_when_url_is_provided() {
     }
 
     let mut client = postgres::Client::connect(&database_url, postgres::NoTls).unwrap();
-    client.batch_execute("SET enable_seqscan = off;").unwrap();
+    // Seed a second aggregate_type so `aggregate_type = $1` is selective. With only
+    // one type, Postgres may prefer the sequence primary key over the composite
+    // global-replay index even when that index exists.
+    client
+        .execute(
+            &format!(
+                "INSERT INTO {table_name} (
+                    event_id, aggregate_id, aggregate_type, revision, event_type,
+                    event_version, payload, metadata, recorded_at_ms
+                 )
+                 SELECT
+                    'noise-' || g::text,
+                    '\"noise-\"' || g::text,
+                    'noise',
+                    1,
+                    'noise_event',
+                    1,
+                    '{{}}'::jsonb,
+                    '{{}}'::jsonb,
+                    0
+                 FROM generate_series(1, 200) AS g"
+            ),
+            &[],
+        )
+        .unwrap();
+    client
+        .batch_execute(&format!("ANALYZE {table_name}; SET enable_seqscan = off;"))
+        .unwrap();
 
     let global_plan_rows = client
         .query(
