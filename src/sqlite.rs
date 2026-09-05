@@ -469,19 +469,24 @@ where
     ) -> Result<Option<IdempotencyState<EventStream<A>>>, Self::Error> {
         let connection = lock_connection(&self.connection);
         let query = format!(
-            "SELECT state, value FROM {} WHERE idempotency_key = ?1;",
+            "SELECT state, value, owner, expires_at_ms FROM {} WHERE idempotency_key = ?1;",
             self.idempotency_table
         );
         let row = connection
             .query_row(&query, params![idempotency_key.as_str()], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                ))
             })
             .optional()
             .map_err(map_sqlite_error)?;
 
         let now = now_ms();
-        row.map(|(state, value)| match (state.as_str(), value) {
-            ("pending", _) => pending_state_from_row(None, None, now)
+        row.map(|(state, value, owner, expires_at_ms)| match (state.as_str(), value) {
+            ("pending", _) => pending_state_from_row(owner, expires_at_ms, now)
                 .map(IdempotencyState::Pending)
                 .ok_or_else(|| {
                     EventStoreError::deserialization(
@@ -535,7 +540,7 @@ where
             .map_err(|error| IdempotentAppendError::Store(map_sqlite_error(error)))?;
 
         let load_idempotency = format!(
-            "SELECT state, value FROM {} WHERE idempotency_key = ?1;",
+            "SELECT state, value, owner, expires_at_ms FROM {} WHERE idempotency_key = ?1;",
             self.idempotency_table
         );
         let row = transaction
@@ -544,13 +549,15 @@ where
             .query_row(params![idempotency_key.as_str()], |row| {
                 let state: String = row.get(0)?;
                 let value: Option<String> = row.get(1)?;
-                Ok((state, value))
+                let owner: Option<String> = row.get(2)?;
+                let expires_at_ms: Option<i64> = row.get(3)?;
+                Ok((state, value, owner, expires_at_ms))
             })
             .optional()
             .map_err(|error| IdempotentAppendError::Store(map_sqlite_error(error)))?;
 
         match row {
-            Some((state, Some(value))) if state == "complete" => {
+            Some((state, Some(value), owner, expires_at_ms)) if state == "complete" => {
                 let committed = serde_json::from_str(&value).map_err(|error| {
                     IdempotentAppendError::Store(EventStoreError::deserialization(format!(
                         "idempotent committed events JSON: {error}"
@@ -561,19 +568,21 @@ where
                     .map_err(|error| IdempotentAppendError::Store(map_sqlite_error(error)))?;
                 return Ok(committed);
             }
-            Some((state, None)) if state == "complete" => {
+            Some((state, None, ..)) if state == "complete" => {
                 return Err(IdempotentAppendError::Store(
                     EventStoreError::deserialization(
                         "completed idempotency row is missing value".to_owned(),
                     ),
                 ));
             }
-            Some((state, _)) if state == "pending" => {
-                return Err(IdempotentAppendError::Pending {
-                    key: idempotency_key,
-                });
+            Some((state, _, owner, expires_at_ms)) if state == "pending" => {
+                if pending_state_from_row(owner, expires_at_ms, now_ms()).is_some() {
+                    return Err(IdempotentAppendError::Pending {
+                        key: idempotency_key,
+                    });
+                }
             }
-            Some((state, _)) => {
+            Some((state, ..)) => {
                 return Err(IdempotentAppendError::Store(
                     EventStoreError::deserialization(format!("unknown idempotency state: {state}")),
                 ));
@@ -583,15 +592,21 @@ where
 
         let updated_at_ms =
             system_time_to_millis(SystemTime::now()).map_err(IdempotentAppendError::Store)?;
+        let lease = new_lease(&IdempotencyLeaseConfig::default());
         let reserve = format!(
-            "INSERT INTO {} (idempotency_key, state, value, updated_at_ms)
-             VALUES (?1, 'pending', NULL, ?2);",
+            "INSERT INTO {} (idempotency_key, state, value, updated_at_ms, owner, expires_at_ms)
+             VALUES (?1, 'pending', NULL, ?2, ?3, ?4);",
             self.idempotency_table
         );
         transaction
             .prepare_cached(&reserve)
             .map_err(|error| IdempotentAppendError::Store(map_sqlite_error(error)))?
-            .execute(params![idempotency_key.as_str(), updated_at_ms])
+            .execute(params![
+                idempotency_key.as_str(),
+                updated_at_ms,
+                lease.owner.as_str(),
+                i64::try_from(lease.expires_at_ms).unwrap_or(i64::MAX)
+            ])
             .map_err(|error| IdempotentAppendError::Store(map_sqlite_error(error)))?;
 
         let actual_revision =
@@ -1266,9 +1281,11 @@ where
                 })?;
                 Ok(Some(IdempotencyState::Complete(value)))
             }
-            Some((state, None, ..)) if state == "complete" => Err(EventStoreError::deserialization(
-                "completed idempotency row is missing value".to_owned(),
-            )),
+            Some((state, None, ..)) if state == "complete" => {
+                Err(EventStoreError::deserialization(
+                    "completed idempotency row is missing value".to_owned(),
+                ))
+            }
             Some((state, ..)) => Err(EventStoreError::deserialization(format!(
                 "unknown idempotency state: {state}"
             ))),
@@ -1354,10 +1371,7 @@ where
             self.table_name
         );
         let removed = connection
-            .execute(
-                &sql,
-                params![i64::try_from(now_ms).unwrap_or(i64::MAX)],
-            )
+            .execute(&sql, params![i64::try_from(now_ms).unwrap_or(i64::MAX)])
             .map_err(map_sqlite_error)?;
         Ok(removed)
     }
