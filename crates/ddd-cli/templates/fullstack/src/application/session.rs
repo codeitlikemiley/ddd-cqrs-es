@@ -77,7 +77,7 @@ pub async fn validate_csrf_token_for_session(
     else {
         return Err(AuthStackError::validation("x-csrf-token is required"));
     };
-    if expected != candidate {
+    if !crate::application::constant_time_eq(&expected, candidate) {
         return Err(AuthStackError::Forbidden);
     }
     Ok(())

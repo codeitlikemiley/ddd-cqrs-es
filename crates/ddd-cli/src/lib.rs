@@ -12,7 +12,8 @@ use crate::operation::{
     apply_operations, contained_join, write_operation, CommandReport, FileOperation,
 };
 use crate::render::{
-    available_template_names, ensure_package_name, ensure_rust_identifier, ensure_snake_identifier,
+    available_template_names, ensure_event_type_name, ensure_package_name, ensure_rust_identifier,
+    ensure_snake_identifier,
     parse_field_specs, render_aggregate, render_command_handle_arm, render_command_variant,
     render_domain_mod, render_domain_test, render_event_type_arm, render_event_variant,
     render_fullstack_domain_app_mod, render_fullstack_domain_app_module,
@@ -480,6 +481,10 @@ fn ensure_fullstack_rest_domain_hooks(cwd: &Path) -> Result<Option<String>> {
             patched.push_str(&content[insert_at..]);
             content = patched;
             changed = true;
+        } else {
+            anyhow::bail!(
+                "could not wire /api/domain/ prefix in src/rest.rs; add domain-rest-prefix markers"
+            );
         }
     }
 
@@ -499,6 +504,10 @@ fn ensure_fullstack_rest_domain_hooks(cwd: &Path) -> Result<Option<String>> {
             patched.push_str(&content[index..]);
             content = patched;
             changed = true;
+        } else {
+            anyhow::bail!(
+                "could not wire domain REST dispatch in src/rest.rs; add domain-rest-dispatch markers"
+            );
         }
     }
 
@@ -685,7 +694,7 @@ fn add_to_project(ctx: &ExecutionContext, command: AddCommand) -> Result<Command
                 );
             }
             let event_type = args.event_type.unwrap_or_else(|| variant.to_snake_case());
-            ensure_snake_identifier(&event_type, "event type")?;
+            ensure_event_type_name(&event_type, "event type")?;
             let path = format!("src/domain/{module}.rs");
             let relative_path = PathBuf::from(&path);
             let content = read_project_file(&ctx.cwd, &relative_path)?;
@@ -774,16 +783,16 @@ fn add_to_project(ctx: &ExecutionContext, command: AddCommand) -> Result<Command
             "snapshot policy",
         )),
         AddCommand::Upcaster(args) => operations.push(write_operation(
-            format!(
-                "src/upcasters/{}_v{}_to_v{}.rs",
-                args.event.to_snake_case(),
-                args.from,
-                args.to
-            ),
-            render_upcaster_stub(&args.event, args.from, args.to),
-            false,
-            "event upcaster",
-        )),
+                format!(
+                    "src/upcasters/{}_v{}_to_v{}.rs",
+                    args.event.to_snake_case(),
+                    args.from,
+                    args.to
+                ),
+                render_upcaster_stub(&args.event, args.from, args.to),
+                false,
+                "event upcaster",
+            )),
         AddCommand::Route(args) | AddCommand::RestEndpoint(args) => {
             operations.push(write_operation(
                 format!("src/routes/{}.rs", args.name.to_snake_case()),
@@ -845,7 +854,17 @@ fn validate_add_names(command: &AddCommand) -> Result<()> {
         AddCommand::Query(args) => check(&args.name, "query name"),
         AddCommand::ProcessManager(args) => check(&args.name, "process manager name"),
         AddCommand::Snapshot(args) => check(&args.name, "snapshot policy name"),
-        AddCommand::Upcaster(args) => check(&args.event, "upcaster event name"),
+        AddCommand::Upcaster(args) => {
+            check(&args.event, "upcaster event name")?;
+            if args.from >= args.to {
+                anyhow::bail!(
+                    "upcaster source version ({}) must be less than target version ({})",
+                    args.from,
+                    args.to
+                );
+            }
+            Ok(())
+        }
         AddCommand::Route(args) | AddCommand::RestEndpoint(args) => check(&args.name, "route name"),
         AddCommand::GrpcMethod(args) => check(&args.name, "gRPC method name"),
         AddCommand::ServerFn(args) => check(&args.name, "server function name"),
@@ -1233,22 +1252,34 @@ fn run_external_command(cwd: &Path, command: &[String]) -> Result<()> {
 
 fn print_report(format: OutputFormat, force_json: bool, report: &CommandReport) -> Result<()> {
     if format == OutputFormat::Json || force_json {
-        println!("{}", serde_json::to_string_pretty(report)?);
+        write_stdout_line(&serde_json::to_string_pretty(report)?)?;
         return Ok(());
     }
 
-    println!("{}", report.message);
+    write_stdout_line(&report.message)?;
     for operation in &report.operations {
-        println!(
+        write_stdout_line(&format!(
             "  {} {} ({} bytes) - {}",
             operation.action, operation.path, operation.bytes, operation.description
-        );
+        ))?;
     }
     if let Some(command) = &report.command {
-        println!("  command: {}", command.join(" "));
+        write_stdout_line(&format!("  command: {}", command.join(" ")))?;
     }
     if let Some(data) = &report.data {
-        println!("{}", serde_json::to_string_pretty(data)?);
+        write_stdout_line(&serde_json::to_string_pretty(data)?)?;
+    }
+    Ok(())
+}
+
+fn write_stdout_line(line: &str) -> Result<()> {
+    use std::io::{self, Write};
+
+    if let Err(error) = writeln!(io::stdout(), "{line}") {
+        if error.kind() == io::ErrorKind::BrokenPipe {
+            std::process::exit(0);
+        }
+        return Err(error.into());
     }
     Ok(())
 }
@@ -1307,30 +1338,64 @@ fn read_project_file(root: &Path, path: &Path) -> Result<String> {
 }
 
 fn marker_block<'a>(content: &'a str, end_marker: &str) -> Option<&'a str> {
-    let end = content.find(end_marker)?;
-    let start_marker = end_marker.strip_suffix(":end")?;
-    let start = content[..end].rfind(start_marker)?;
+    let end = find_unique_marker_line(content, end_marker).ok()?;
+    let start_marker = end_marker.trim().strip_suffix(":end")?;
+    let prefix = &content[..end];
+    let start = find_last_unique_marker_line(prefix, start_marker).ok()?;
     Some(&content[start..end])
 }
 
-fn block_contains_trimmed_line(block: &str, insertion: &str) -> bool {
-    let needle = insertion
+fn block_contains_trimmed_lines(block: &str, insertion: &str) -> bool {
+    let needles: Vec<&str> = insertion
         .lines()
         .map(str::trim)
-        .find(|line| !line.is_empty())
-        .unwrap_or_else(|| insertion.trim());
-    block.lines().any(|line| line.trim() == needle)
+        .filter(|line| !line.is_empty())
+        .collect();
+    if needles.is_empty() {
+        return block.contains(insertion.trim());
+    }
+    needles
+        .iter()
+        .all(|needle| block.lines().any(|line| line.trim() == *needle))
+}
+
+fn find_unique_marker_line(content: &str, marker: &str) -> Result<usize> {
+    let marker = marker.trim();
+    let mut found = None;
+    let mut offset = 0;
+    for line in content.split_inclusive('\n') {
+        let line_body = line.strip_suffix('\n').unwrap_or(line);
+        if line_body.trim() == marker {
+            if found.is_some() {
+                anyhow::bail!("marker `{marker}` appears more than once");
+            }
+            found = Some(offset);
+        }
+        offset += line.len();
+    }
+    found.ok_or_else(|| anyhow::anyhow!("marker `{marker}` not found"))
+}
+
+fn find_last_unique_marker_line(content: &str, marker: &str) -> Result<usize> {
+    let marker = marker.trim();
+    let mut found = None;
+    let mut offset = 0;
+    for line in content.split_inclusive('\n') {
+        let line_body = line.strip_suffix('\n').unwrap_or(line);
+        if line_body.trim() == marker {
+            found = Some(offset);
+        }
+        offset += line.len();
+    }
+    found.ok_or_else(|| anyhow::anyhow!("marker `{marker}` not found"))
 }
 
 fn insert_before_marker(content: &str, marker: &str, insertion: &str) -> Result<String> {
-    if marker_block(content, marker)
-        .is_some_and(|block| block_contains_trimmed_line(block, insertion))
+    if marker_block(content, marker).is_some_and(|block| block_contains_trimmed_lines(block, insertion))
     {
         return Ok(content.to_string());
     }
-    let Some(index) = content.find(marker) else {
-        anyhow::bail!("marker `{marker}` not found");
-    };
+    let index = find_unique_marker_line(content, marker)?;
     let mut patched = String::with_capacity(content.len() + insertion.len());
     patched.push_str(&content[..index]);
     patched.push_str(insertion);

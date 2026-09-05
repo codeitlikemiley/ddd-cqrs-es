@@ -176,6 +176,31 @@ fn batch_advanced(outcome: ProjectionBatchOutcome, position: &mut Option<u64>) -
     }
 }
 
+fn apply_projection_events<P, E, Id>(
+    projection: &mut P,
+    events: impl IntoIterator<Item = EventEnvelope<E, Id>>,
+) -> (usize, Option<u64>, Option<P::Error>)
+where
+    P: Projection<E, Id>,
+{
+    let mut applied = 0;
+    let mut last_sequence = None;
+    let mut failure = None;
+
+    for event in events {
+        if let Err(error) = projection.apply(&event) {
+            failure = Some(error);
+            break;
+        }
+        if let Some(sequence) = event.sequence {
+            last_sequence = Some(sequence);
+        }
+        applied += 1;
+    }
+
+    (applied, last_sequence, failure)
+}
+
 fn persist_projection_checkpoint<P, E, Id, C, StoreError>(
     projection: &mut P,
     checkpoint_store: &C,
@@ -386,20 +411,7 @@ impl<P> InMemoryProjectionRunner<P> {
         let events = store
             .load_global_after_limited(self.checkpoint, config.batch_size())
             .map_err(ProjectionRunnerError::Store)?;
-        let mut applied = 0;
-        let mut last_sequence = None;
-        let mut failure = None;
-
-        for event in events {
-            if let Err(error) = self.projection.apply(&event) {
-                failure = Some(ProjectionRunnerError::Projection(error));
-                break;
-            }
-            if let Some(sequence) = event.sequence {
-                last_sequence = Some(sequence);
-            }
-            applied += 1;
-        }
+        let (applied, last_sequence, failure) = apply_projection_events(&mut self.projection, events);
 
         self.projection
             .flush()
@@ -408,7 +420,7 @@ impl<P> InMemoryProjectionRunner<P> {
             self.checkpoint = Some(sequence);
         }
         if let Some(error) = failure {
-            return Err(error);
+            return Err(ProjectionRunnerError::Projection(error));
         }
 
         Ok(projection_batch_outcome(applied, last_sequence, config))
@@ -741,20 +753,7 @@ where
         let events = store
             .load_global_after_limited(checkpoint, config.batch_size())
             .map_err(ProjectionRunnerError::Store)?;
-        let mut applied = 0;
-        let mut last_sequence = None;
-        let mut failure = None;
-
-        for event in events {
-            if let Err(error) = self.projection.apply(&event) {
-                failure = Some(ProjectionRunnerError::Projection(error));
-                break;
-            }
-            if event.sequence.is_some() {
-                last_sequence = event.sequence;
-            }
-            applied += 1;
-        }
+        let (applied, last_sequence, failure) = apply_projection_events(&mut self.projection, events);
 
         let flushed = persist_projection_checkpoint(
             &mut self.projection,
@@ -762,7 +761,10 @@ where
             &key,
             last_sequence,
         );
-        finish_projection_batch(failure, flushed)?;
+        finish_projection_batch(
+            failure.map(ProjectionRunnerError::Projection),
+            flushed,
+        )?;
         Ok(projection_batch_outcome(applied, last_sequence, config))
     }
 
@@ -804,20 +806,7 @@ where
         let events = feed
             .load_raw_global_after_limited(checkpoint, config.batch_size())
             .map_err(ProjectionRunnerError::Store)?;
-        let mut applied = 0;
-        let mut last_sequence = None;
-        let mut failure = None;
-
-        for event in events {
-            if let Err(error) = self.projection.apply(&event) {
-                failure = Some(ProjectionRunnerError::Projection(error));
-                break;
-            }
-            if event.sequence.is_some() {
-                last_sequence = event.sequence;
-            }
-            applied += 1;
-        }
+        let (applied, last_sequence, failure) = apply_projection_events(&mut self.projection, events);
 
         let flushed = persist_projection_checkpoint(
             &mut self.projection,
@@ -825,7 +814,10 @@ where
             &key,
             last_sequence,
         );
-        finish_projection_batch(failure, flushed)?;
+        finish_projection_batch(
+            failure.map(ProjectionRunnerError::Projection),
+            flushed,
+        )?;
         Ok(projection_batch_outcome(applied, last_sequence, config))
     }
 }
@@ -973,20 +965,7 @@ where
             .load_global_after_limited(checkpoint, config.batch_size())
             .await
             .map_err(ProjectionRunnerError::Store)?;
-        let mut applied = 0;
-        let mut last_sequence = None;
-        let mut failure = None;
-
-        for event in events {
-            if let Err(error) = self.projection.apply(&event) {
-                failure = Some(ProjectionRunnerError::Projection(error));
-                break;
-            }
-            if event.sequence.is_some() {
-                last_sequence = event.sequence;
-            }
-            applied += 1;
-        }
+        let (applied, last_sequence, failure) = apply_projection_events(&mut self.projection, events);
 
         let flushed = persist_projection_checkpoint_async(
             &mut self.projection,
@@ -995,7 +974,10 @@ where
             last_sequence,
         )
         .await;
-        finish_projection_batch(failure, flushed)?;
+        finish_projection_batch(
+            failure.map(ProjectionRunnerError::Projection),
+            flushed,
+        )?;
         Ok(projection_batch_outcome(applied, last_sequence, config))
     }
 
@@ -1030,20 +1012,7 @@ where
             .load_raw_global_after_limited(checkpoint, config.batch_size())
             .await
             .map_err(ProjectionRunnerError::Store)?;
-        let mut applied = 0;
-        let mut last_sequence = None;
-        let mut failure = None;
-
-        for event in events {
-            if let Err(error) = self.projection.apply(&event) {
-                failure = Some(ProjectionRunnerError::Projection(error));
-                break;
-            }
-            if event.sequence.is_some() {
-                last_sequence = event.sequence;
-            }
-            applied += 1;
-        }
+        let (applied, last_sequence, failure) = apply_projection_events(&mut self.projection, events);
 
         let flushed = persist_projection_checkpoint_async(
             &mut self.projection,
@@ -1052,7 +1021,10 @@ where
             last_sequence,
         )
         .await;
-        finish_projection_batch(failure, flushed)?;
+        finish_projection_batch(
+            failure.map(ProjectionRunnerError::Projection),
+            flushed,
+        )?;
         Ok(projection_batch_outcome(applied, last_sequence, config))
     }
 }

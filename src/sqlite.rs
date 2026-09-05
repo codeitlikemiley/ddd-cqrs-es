@@ -12,8 +12,8 @@ use crate::idempotency::{
 };
 use crate::snapshot::{Snapshot, SnapshotStore};
 use crate::sql_common::{
-    check_expected_revision, deserialize_id, deserialize_metadata, deserialize_payload,
-    millis_to_system_time, serialize_id, serialize_metadata, serialize_payload,
+    check_expected_revision, aggregate_id_lookup_keys, deserialize_id, deserialize_metadata,
+    deserialize_payload, millis_to_system_time, serialize_id, serialize_metadata, serialize_payload,
     system_time_to_millis, validate_table_name,
 };
 use crate::upcast::UpcasterRegistry;
@@ -277,21 +277,27 @@ where
     type Error = EventStoreError;
 
     fn load(&self, aggregate_id: &A::Id) -> Result<EventStream<A>, Self::Error> {
-        let aggregate_id = serialize_id(aggregate_id)?;
         let query = format!(
             "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
              event_version, payload, metadata, recorded_at_ms FROM {table} \
              WHERE aggregate_type = ?1 AND aggregate_id = ?2 ORDER BY revision ASC",
             table = self.table_name
         );
-        let stored_rows = {
-            let connection = lock_connection(&self.connection);
-            query_stored_event_rows(
-                &connection,
-                &query,
-                params![A::aggregate_type(), aggregate_id],
-            )?
-        };
+        let keys = aggregate_id_lookup_keys(aggregate_id)?;
+        let mut stored_rows = Vec::new();
+        for key in keys {
+            stored_rows = {
+                let connection = lock_connection(&self.connection);
+                query_stored_event_rows(
+                    &connection,
+                    &query,
+                    params![A::aggregate_type(), key],
+                )?
+            };
+            if !stored_rows.is_empty() {
+                break;
+            }
+        }
         let upcasters = self.upcasters.clone();
         stored_rows
             .into_iter()
@@ -307,7 +313,6 @@ where
         let revision_i64 = i64::try_from(revision).map_err(|_| {
             EventStoreError::serialization("revision exceeds SQLite INTEGER".to_owned())
         })?;
-        let aggregate_id = serialize_id(aggregate_id)?;
         let query = format!(
             "SELECT event_id, aggregate_id, aggregate_type, revision, sequence, event_type, \
              event_version, payload, metadata, recorded_at_ms FROM {table} \
@@ -315,14 +320,21 @@ where
              ORDER BY revision ASC",
             table = self.table_name
         );
-        let stored_rows = {
-            let connection = lock_connection(&self.connection);
-            query_stored_event_rows(
-                &connection,
-                &query,
-                params![A::aggregate_type(), aggregate_id, revision_i64],
-            )?
-        };
+        let keys = aggregate_id_lookup_keys(aggregate_id)?;
+        let mut stored_rows = Vec::new();
+        for key in keys {
+            stored_rows = {
+                let connection = lock_connection(&self.connection);
+                query_stored_event_rows(
+                    &connection,
+                    &query,
+                    params![A::aggregate_type(), key, revision_i64],
+                )?
+            };
+            if !stored_rows.is_empty() {
+                break;
+            }
+        }
         let upcasters = self.upcasters.clone();
         stored_rows
             .into_iter()

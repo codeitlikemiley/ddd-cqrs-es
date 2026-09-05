@@ -168,9 +168,32 @@ pub(crate) fn serialize_id<Id>(id: &Id) -> Result<String, EventStoreError>
 where
     Id: serde::Serialize,
 {
-    serde_json::to_string(id).map_err(|error| {
+    match serde_json::to_value(id).map_err(|error| {
         EventStoreError::serialization_with_source(format!("aggregate_id: {error}"), error)
-    })
+    })? {
+        serde_json::Value::String(value) => Ok(value),
+        other => serde_json::to_string(&other).map_err(|error| {
+            EventStoreError::serialization_with_source(format!("aggregate_id: {error}"), error)
+        }),
+    }
+}
+
+/// Returns the storage keys that may identify one aggregate stream.
+///
+/// New rows store plain string ids; legacy rows used `serde_json::to_string`
+/// which persisted JSON quote characters in the column.
+pub(crate) fn aggregate_id_lookup_keys<Id>(id: &Id) -> Result<Vec<String>, EventStoreError>
+where
+    Id: serde::Serialize,
+{
+    let current = serialize_id(id)?;
+    let mut keys = vec![current.clone()];
+    if let Ok(legacy) = serde_json::to_string(id) {
+        if legacy != current {
+            keys.push(legacy);
+        }
+    }
+    Ok(keys)
 }
 
 #[cfg(all(
@@ -186,9 +209,23 @@ pub(crate) fn deserialize_id<Id>(value: &str) -> Result<Id, EventStoreError>
 where
     Id: serde::de::DeserializeOwned,
 {
-    serde_json::from_str(value).map_err(|error| {
-        EventStoreError::deserialization_with_source(format!("aggregate_id: {error}"), error)
-    })
+    match serde_json::from_str(value) {
+        Ok(id) => Ok(id),
+        Err(first) => {
+            let quoted = serde_json::to_string(value).map_err(|error| {
+                EventStoreError::deserialization_with_source(
+                    format!("aggregate_id: {error}"),
+                    error,
+                )
+            })?;
+            serde_json::from_str(&quoted).map_err(|error| {
+                EventStoreError::deserialization_with_source(
+                    format!("aggregate_id: {error} (also tried legacy quoted form after {first})"),
+                    error,
+                )
+            })
+        }
+    }
 }
 
 #[cfg(all(
@@ -347,6 +384,20 @@ mod tests {
                 actual: 2,
             })
         ));
+    }
+
+    #[test]
+    fn serialize_id_stores_string_ids_without_json_quotes() {
+        let id = "counter-1".to_string();
+        assert_eq!(serialize_id(&id).unwrap(), "counter-1");
+    }
+
+    #[test]
+    fn deserialize_id_accepts_legacy_json_quoted_string_ids() {
+        let id: String = deserialize_id("\"counter-1\"").unwrap();
+        assert_eq!(id, "counter-1");
+        let id: String = deserialize_id("counter-1").unwrap();
+        assert_eq!(id, "counter-1");
     }
 
     #[test]

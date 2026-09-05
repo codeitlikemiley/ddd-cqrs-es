@@ -1387,6 +1387,77 @@ fn json_format_emits_error_envelope_on_failure() {
         .stdout(predicate::str::contains(r#""status": "error""#));
 }
 
+#[test]
+fn add_upcaster_rejects_backwards_version_range() {
+    let temp = tempfile::tempdir().unwrap();
+    init_basic_project(&temp, "upcaster-range");
+
+    Command::cargo_bin("ddd")
+        .unwrap()
+        .arg("--cwd")
+        .arg(temp.path().join("upcaster-range"))
+        .arg("add")
+        .arg("upcaster")
+        .arg("InvoicePaid")
+        .arg("--from")
+        .arg("2")
+        .arg("--to")
+        .arg("1")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("must be less than target version"));
+}
+
+#[test]
+fn add_event_allows_dotted_event_type() {
+    let temp = tempfile::tempdir().unwrap();
+    init_basic_project_with_domain(&temp, "dotted-event", "Order");
+
+    Command::cargo_bin("ddd")
+        .unwrap()
+        .arg("--cwd")
+        .arg(temp.path().join("dotted-event"))
+        .arg("add")
+        .arg("event")
+        .arg("Order")
+        .arg("Placed")
+        .arg("--event-type")
+        .arg("order.placed")
+        .assert()
+        .success();
+
+    let domain_file = temp.path().join("dotted-event/src/domain/order.rs");
+    let content = std::fs::read_to_string(domain_file).unwrap();
+    assert!(content.contains(r#""order.placed""#));
+}
+
+#[test]
+fn insert_before_marker_ignores_marker_quoted_in_comments() {
+    let temp = tempfile::tempdir().unwrap();
+    init_basic_project_with_domain(&temp, "marker-line-start", "Invoice");
+    let domain_file = temp.path().join("marker-line-start/src/domain/invoice.rs");
+    let mut content = std::fs::read_to_string(&domain_file).unwrap();
+    content = content.replace(
+        "    // ddd:events",
+        "    // docs mention // ddd:events:end but the real block is below\n    // ddd:events",
+    );
+    std::fs::write(&domain_file, content).unwrap();
+
+    Command::cargo_bin("ddd")
+        .unwrap()
+        .arg("--cwd")
+        .arg(temp.path().join("marker-line-start"))
+        .arg("add")
+        .arg("event")
+        .arg("Invoice")
+        .arg("Paid")
+        .assert()
+        .success();
+
+    let updated = std::fs::read_to_string(domain_file).unwrap();
+    assert!(updated.contains("Paid"));
+}
+
 fn init_basic_project(temp: &tempfile::TempDir, name: &str) {
     init_basic_project_with_domain(temp, name, "Counter");
 }

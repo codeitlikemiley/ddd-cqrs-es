@@ -194,6 +194,24 @@ pub fn ensure_snake_identifier(value: &str, label: &str) -> anyhow::Result<()> {
     }
 }
 
+/// Ensures a persisted event type name is safe to embed in generated string
+/// literals. Dotted names such as `order.placed` are allowed.
+pub fn ensure_event_type_name(value: &str, label: &str) -> anyhow::Result<()> {
+    if value.is_empty() {
+        anyhow::bail!("{label} must not be empty");
+    }
+    let valid = value.chars().all(|ch| {
+        ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '.'
+    });
+    if valid {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "{label} `{value}` must use lowercase letters, digits, `_`, or `.`"
+        )
+    }
+}
+
 /// Ensures a `ddd.toml` `project.name` is usable as a crate name.
 ///
 /// The module-path form (dashes replaced by underscores) is embedded verbatim
@@ -255,7 +273,7 @@ pub fn render_command_variant(name: &str, fields: &[(String, String)]) -> String
 }
 
 pub fn render_event_type_arm(event_type: &str, variant: &str) -> anyhow::Result<String> {
-    ensure_snake_identifier(event_type, "event type")?;
+    ensure_event_type_name(event_type, "event type")?;
     Ok(format!(
         "            Self::{} {{ .. }} => \"{}\",\n",
         variant.to_upper_camel_case(),
@@ -1250,9 +1268,16 @@ pub fn render_fullstack_domain_rest_arm(names: &NameParts) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_rust_identifier, ensure_snake_identifier, parse_field_specs,
+        ensure_event_type_name, ensure_rust_identifier, ensure_snake_identifier, parse_field_specs,
         render_fullstack_domain_rest_arm, render_fullstack_domain_rest_bootstrap, NameParts,
     };
+
+    #[test]
+    fn event_type_name_allows_dotted_segments() {
+        assert!(ensure_event_type_name("order.placed", "event type").is_ok());
+        let error = ensure_event_type_name("OrderPlaced", "event type").unwrap_err();
+        assert!(error.to_string().contains("lowercase"));
+    }
 
     #[test]
     fn rust_identifier_rejects_keywords() {
