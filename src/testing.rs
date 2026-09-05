@@ -342,13 +342,13 @@ pub fn assert_event_store_any_writers_contract<A, S, F>(
                     vec![NewEvent::new(append_event.clone(), Metadata::default())],
                 ) {
                     Ok(committed) => return committed,
-                    Err(error) if is_retryable_any_append_error(error) && attempt + 1 < 8 => {
-                        continue;
+                    Err(error) => {
+                        let repo = error.into_repository_error::<()>();
+                        if is_retryable_any_append_error(&repo) && attempt + 1 < 8 {
+                            continue;
+                        }
+                        panic!("append with ExpectedRevision::Any failed: {repo:?}");
                     }
-                    Err(error) => panic!(
-                        "append with ExpectedRevision::Any failed: {:?}",
-                        error.into_repository_error::<()>()
-                    ),
                 }
             }
             panic!("append with ExpectedRevision::Any exhausted retries");
