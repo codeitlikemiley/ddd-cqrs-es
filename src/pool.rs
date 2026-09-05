@@ -628,7 +628,7 @@ mod tests {
     #[test]
     fn connect_factory_timeout_surfaces_connection_error() {
         let pool: ConnectionPool<u32> = ConnectionPool::pooled(1, || {
-            std::thread::sleep(Duration::from_secs(2));
+            std::thread::sleep(Duration::from_secs(15));
             Ok(99_u32)
         });
 
@@ -637,9 +637,14 @@ mod tests {
             panic!("expected connect timeout");
         };
         assert!(matches!(error, EventStoreError::Connection { .. }));
+        let elapsed = start.elapsed();
         assert!(
-            start.elapsed() < Duration::from_secs(2),
-            "acquire should fail before the slow factory completes"
+            elapsed >= Duration::from_secs(9),
+            "expected connect timeout near 10s, got {elapsed:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(14),
+            "acquire should fail before the slow factory completes, got {elapsed:?}"
         );
     }
 
