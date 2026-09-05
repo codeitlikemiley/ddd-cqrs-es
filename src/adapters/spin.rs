@@ -10,12 +10,28 @@
 ///
 /// Parameters are kept separate from SQL so callers never interpolate secret
 /// material. Use [`Self::query`] only when returned rows are required.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct SpinSqlStatement {
     sql: String,
     params: Vec<serde_json::Value>,
     returns_rows: bool,
     minimum_rows: usize,
+}
+
+#[cfg(any(
+    feature = "spin-sqlite",
+    feature = "spin-postgres",
+    feature = "spin-mysql"
+))]
+impl std::fmt::Debug for SpinSqlStatement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SpinSqlStatement")
+            .field("sql", &self.sql)
+            .field("params", &format!("[{} redacted]", self.params.len()))
+            .field("returns_rows", &self.returns_rows)
+            .field("minimum_rows", &self.minimum_rows)
+            .finish()
+    }
 }
 
 #[cfg(any(
@@ -56,6 +72,23 @@ impl SpinSqlStatement {
             returns_rows: true,
             minimum_rows: 1,
         }
+    }
+
+    /// Creates a Postgres transaction-scoped advisory lock for append serialization.
+    ///
+    /// Include this as the first statement in [`execute_spin_pg_atomic`] when
+    /// appending to an events table so concurrent writers observe the same
+    /// ordering guarantees as the native Postgres event store.
+    #[cfg(feature = "spin-postgres")]
+    #[must_use]
+    pub fn postgres_append_advisory_lock(events_table: impl Into<String>) -> Self {
+        Self::execute(
+            "SELECT pg_advisory_xact_lock($1, hashtext($2::text))",
+            vec![
+                serde_json::json!(0x6464_6465_i64),
+                serde_json::Value::String(events_table.into()),
+            ],
+        )
     }
 
     /// Returns the parameterized SQL text.
@@ -299,25 +332,75 @@ fn sqlite_value_json(value: spin_sdk::sqlite::Value) -> serde_json::Value {
     }
 }
 
-// -------------------------------------------------------------------------
-// Spin Postgres adapter
-// -------------------------------------------------------------------------
 #[cfg(feature = "spin-postgres")]
+fn spin_postgres_db_value_json(value: &spin_sdk::pg::DbValue) -> serde_json::Value {
+    use spin_sdk::pg::DbValue;
+
+    match value {
+        DbValue::DbNull => serde_json::Value::Null,
+        DbValue::Boolean(value) => serde_json::Value::Bool(*value),
+        DbValue::Int8(value) => i64::from(*value).into(),
+        DbValue::Int16(value) => i64::from(*value).into(),
+        DbValue::Int32(value) => i64::from(*value).into(),
+        DbValue::Int64(value) => (*value).into(),
+        DbValue::Floating32(value) => serde_json::Number::from_f64(f64::from(*value))
+            .map_or(serde_json::Value::Null, serde_json::Value::Number),
+        DbValue::Floating64(value) => serde_json::Number::from_f64(*value)
+            .map_or(serde_json::Value::Null, serde_json::Value::Number),
+        DbValue::Str(value) => serde_json::Value::String(value.clone()),
+        DbValue::Binary(value) => {
+            serde_json::Value::String(String::from_utf8_lossy(value).into_owned())
+        }
+        DbValue::Jsonb(value) => serde_json::from_slice(value).unwrap_or_else(|_| {
+            serde_json::Value::String(String::from_utf8_lossy(value).into_owned())
+        }),
+        DbValue::Unsupported(value) => {
+            serde_json::Value::String(String::from_utf8_lossy(value).into_owned())
+        }
+        other => serde_json::Value::String(format!("{other:?}")),
+    }
+}
+
+#[cfg(any(feature = "spin-postgres", feature = "spin-mysql"))]
+fn spin_sql_returns_rows(sql: &str) -> bool {
+    let upper = sql.trim_start().to_ascii_uppercase();
+    if upper.starts_with("WITH ") {
+        return upper.contains("SELECT") || upper.contains("RETURNING");
+    }
+    upper.starts_with("SELECT") || upper.contains("RETURNING")
+}
+
+#[cfg(feature = "spin-postgres")]
+fn normalize_postgres_transaction_error(error: String) -> String {
+    let lower = error.to_ascii_lowercase();
+    if lower.contains("23505") || lower.contains("unique constraint") {
+        "concurrency conflict: unique constraint violated".to_owned()
+    } else {
+        error
+    }
+}
 /// Execute a Spin Postgres query and return JSON rows for read operations.
 ///
 /// For write commands this returns an empty rowset after successful execution.
+/// Prefer [`execute_spin_pg_with_returns_rows`] when the caller knows whether
+/// rows are expected (for example CTE reads).
 pub async fn execute_spin_pg(
     db_url: &str,
     sql: &str,
     params: Vec<serde_json::Value>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    use spin_sdk::pg::{
-        Connection as SpinPgConn, DbValue as SpinPgDbVal, ParameterValue as SpinPgParam,
-    };
+    execute_spin_pg_with_returns_rows(db_url, sql, params, spin_sql_returns_rows(sql)).await
+}
 
-    // Check if query is SELECT or modifying command that returns rows (e.g. contains RETURNING)
-    let sql_upper = sql.trim_start().to_ascii_uppercase();
-    let is_select = sql_upper.starts_with("SELECT") || sql_upper.contains("RETURNING");
+#[cfg(feature = "spin-postgres")]
+/// Execute a Spin Postgres query with an explicit row-return expectation.
+pub async fn execute_spin_pg_with_returns_rows(
+    db_url: &str,
+    sql: &str,
+    params: Vec<serde_json::Value>,
+    returns_rows: bool,
+) -> Result<Vec<serde_json::Value>, String> {
+    use spin_sdk::pg::{Connection as SpinPgConn, ParameterValue as SpinPgParam};
 
     let pg_params: Vec<SpinPgParam> = params
         .into_iter()
@@ -342,7 +425,7 @@ pub async fn execute_spin_pg(
         .await
         .map_err(|e| format!("Pg connection error: {:?}", e))?;
 
-    if is_select {
+    if returns_rows {
         let mut rowset = conn
             .query(sql, pg_params)
             .await
@@ -358,54 +441,7 @@ pub async fn execute_spin_pg(
                     .get(i)
                     .cloned()
                     .unwrap_or_else(|| format!("col_{}", i));
-                let json_val = match val {
-                    SpinPgDbVal::DbNull => serde_json::Value::Null,
-                    SpinPgDbVal::Boolean(b) => serde_json::Value::Bool(*b),
-                    SpinPgDbVal::Int8(i) => serde_json::Value::Number((*i as i32).into()),
-                    SpinPgDbVal::Int16(i) => serde_json::Value::Number((*i as i32).into()),
-                    SpinPgDbVal::Int32(i) => serde_json::Value::Number((*i).into()),
-                    SpinPgDbVal::Int64(i) => serde_json::Value::Number((*i).into()),
-                    SpinPgDbVal::Floating32(f) => {
-                        if let Some(num) = serde_json::Number::from_f64(*f as f64) {
-                            serde_json::Value::Number(num)
-                        } else {
-                            serde_json::Value::Null
-                        }
-                    }
-                    SpinPgDbVal::Floating64(f) => {
-                        if let Some(num) = serde_json::Number::from_f64(*f) {
-                            serde_json::Value::Number(num)
-                        } else {
-                            serde_json::Value::Null
-                        }
-                    }
-                    SpinPgDbVal::Str(s) => {
-                        if let Ok(jv) = serde_json::from_str::<serde_json::Value>(s) {
-                            jv
-                        } else {
-                            serde_json::Value::String(s.clone())
-                        }
-                    }
-                    SpinPgDbVal::Binary(b) => {
-                        serde_json::Value::String(String::from_utf8_lossy(b).into_owned())
-                    }
-                    SpinPgDbVal::Jsonb(j) => {
-                        if let Ok(jv) = serde_json::from_slice::<serde_json::Value>(j) {
-                            jv
-                        } else {
-                            serde_json::Value::String(String::from_utf8_lossy(j).into_owned())
-                        }
-                    }
-                    SpinPgDbVal::Unsupported(b) => {
-                        if let Ok(jv) = serde_json::from_slice::<serde_json::Value>(b) {
-                            jv
-                        } else {
-                            serde_json::Value::String(String::from_utf8_lossy(b).into_owned())
-                        }
-                    }
-                    other => serde_json::Value::String(format!("{:?}", other)),
-                };
-                row_obj.insert(col_name, json_val);
+                row_obj.insert(col_name, spin_postgres_db_value_json(val));
             }
             rows.push(serde_json::Value::Object(row_obj));
         }
@@ -472,7 +508,12 @@ pub async fn execute_spin_pg_atomic(
                     .await
                     .map(|_| ())
                     .map_err(|rollback_error| format!("{rollback_error:?}"));
-                return Err(transaction_failure("Postgres", index, error, rollback));
+                return Err(transaction_failure(
+                    "Postgres",
+                    index,
+                    normalize_postgres_transaction_error(error),
+                    rollback,
+                ));
             }
         }
     }
@@ -537,30 +578,7 @@ async fn collect_postgres_statement(
         let values = columns
             .iter()
             .zip(&row)
-            .map(|(column, value)| {
-                let value = match value {
-                    DbValue::DbNull => serde_json::Value::Null,
-                    DbValue::Boolean(value) => serde_json::Value::Bool(*value),
-                    DbValue::Int8(value) => i64::from(*value).into(),
-                    DbValue::Int16(value) => i64::from(*value).into(),
-                    DbValue::Int32(value) => i64::from(*value).into(),
-                    DbValue::Int64(value) => (*value).into(),
-                    DbValue::Floating32(value) => serde_json::Number::from_f64(f64::from(*value))
-                        .map_or(serde_json::Value::Null, serde_json::Value::Number),
-                    DbValue::Floating64(value) => serde_json::Number::from_f64(*value)
-                        .map_or(serde_json::Value::Null, serde_json::Value::Number),
-                    DbValue::Str(value) => serde_json::from_str(value)
-                        .unwrap_or_else(|_| serde_json::Value::String(value.clone())),
-                    DbValue::Binary(value) | DbValue::Unsupported(value) => {
-                        serde_json::Value::String(String::from_utf8_lossy(value).into_owned())
-                    }
-                    DbValue::Jsonb(value) => serde_json::from_slice(value).unwrap_or_else(|_| {
-                        serde_json::Value::String(String::from_utf8_lossy(value).into_owned())
-                    }),
-                    other => serde_json::Value::String(format!("{other:?}")),
-                };
-                (column.clone(), value)
-            })
+            .map(|(column, value)| (column.clone(), spin_postgres_db_value_json(value)))
             .collect();
         rows.push(serde_json::Value::Object(values));
     }
@@ -667,6 +685,44 @@ mod spin_transaction_tests {
         );
         assert!(!error.contains("sensitive"));
     }
+
+    #[test]
+    fn debug_redacts_statement_parameters() {
+        let statement = SpinSqlStatement::execute(
+            "INSERT INTO secrets(value) VALUES (?1)",
+            vec![serde_json::json!("sensitive")],
+        );
+        let debug = format!("{statement:?}");
+        assert!(!debug.contains("sensitive"));
+        assert!(debug.contains("redacted"));
+    }
+
+    #[test]
+    fn cte_select_queries_are_treated_as_returning_rows() {
+        assert!(spin_sql_returns_rows(
+            "WITH totals AS (SELECT 1) SELECT * FROM totals"
+        ));
+        assert!(!spin_sql_returns_rows("INSERT INTO t VALUES (1)"));
+        assert!(!spin_sql_returns_rows("UPDATE t SET x = 1"));
+    }
+
+    #[cfg(feature = "spin-postgres")]
+    #[test]
+    fn postgres_unique_violations_are_normalized() {
+        assert_eq!(
+            normalize_postgres_transaction_error(
+                "ERROR: duplicate key value violates unique constraint (SQLSTATE 23505)".to_owned()
+            ),
+            "concurrency conflict: unique constraint violated"
+        );
+    }
+
+    #[cfg(feature = "spin-postgres")]
+    #[test]
+    fn postgres_text_columns_are_not_retyped_as_json() {
+        let value = spin_postgres_db_value_json(&spin_sdk::pg::DbValue::Str("123".to_owned()));
+        assert_eq!(value, serde_json::Value::String("123".to_owned()));
+    }
 }
 
 // -------------------------------------------------------------------------
@@ -700,8 +756,7 @@ fn mysql_parameters(params: Vec<serde_json::Value>) -> Vec<spin_sdk::mysql::Para
 
 #[cfg(feature = "spin-mysql")]
 fn spin_mysql_returns_rows(sql: &str) -> bool {
-    let sql_upper = sql.trim_start().to_ascii_uppercase();
-    sql_upper.starts_with("SELECT") || sql_upper.contains("RETURNING")
+    spin_sql_returns_rows(sql)
 }
 
 #[cfg(feature = "spin-mysql")]
@@ -949,8 +1004,7 @@ fn spin_mysql_value_to_json(value: &spin_sdk::mysql::DbValue) -> serde_json::Val
         SpinMysqlDbVal::Floating64(value) => serde_json::Number::from_f64(*value)
             .map(serde_json::Value::Number)
             .unwrap_or(serde_json::Value::Null),
-        SpinMysqlDbVal::Str(value) => serde_json::from_str::<serde_json::Value>(value)
-            .unwrap_or_else(|_| serde_json::Value::String(value.clone())),
+        SpinMysqlDbVal::Str(value) => serde_json::Value::String(value.clone()),
         SpinMysqlDbVal::Binary(value) => {
             serde_json::Value::String(String::from_utf8_lossy(value).into_owned())
         }

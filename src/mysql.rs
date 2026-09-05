@@ -1265,7 +1265,7 @@ impl MySqlCheckpointStore {
     pub fn initialize_schema(&self) -> Result<(), EventStoreError> {
         let config = crate::schema::SqlSchemaConfig::new(crate::schema::SqlDialect::MySql)
             .with_checkpoints_table(&self.table_name)?;
-        let migrator = crate::schema::SchemaMigrator::new(config);
+        let migrator = crate::schema::SchemaMigrator::for_checkpoints(config);
         self.pool.write(|connection| migrator.run_mysql(connection))
     }
 }
@@ -1428,7 +1428,7 @@ where
     pub fn initialize_schema(&self) -> Result<(), EventStoreError> {
         let config = crate::schema::SqlSchemaConfig::new(crate::schema::SqlDialect::MySql)
             .with_idempotency_table(&self.table_name)?;
-        let migrator = crate::schema::SchemaMigrator::new(config);
+        let migrator = crate::schema::SchemaMigrator::for_idempotency(config);
         self.pool.write(|connection| migrator.run_mysql(connection))
     }
 }
@@ -1635,7 +1635,7 @@ where
     pub fn initialize_schema(&self) -> Result<(), EventStoreError> {
         let config = crate::schema::SqlSchemaConfig::new(crate::schema::SqlDialect::MySql)
             .with_snapshots_table(&self.table_name)?;
-        let migrator = crate::schema::SchemaMigrator::new(config);
+        let migrator = crate::schema::SchemaMigrator::for_snapshots(config);
         self.pool.write(|connection| migrator.run_mysql(connection))
     }
 }

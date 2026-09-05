@@ -7,9 +7,11 @@
 #[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
 use crate::error::EventStoreError;
 #[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
+use crate::sql_common::system_time_to_millis;
+#[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
 use std::collections::HashSet;
 #[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 /// Fixed advisory-lock key serializing Postgres schema migration runs
 /// (the ASCII bytes of `ddd_sche` as a big-endian i64).
@@ -508,6 +510,8 @@ fn get_target_table_name(version: i32, config: &SqlSchemaConfig) -> &str {
 pub struct SchemaMigrator {
     #[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
     config: SqlSchemaConfig,
+    #[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
+    migration_versions: Option<Vec<i32>>,
 }
 
 impl SchemaMigrator {
@@ -521,13 +525,59 @@ impl SchemaMigrator {
 
         #[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
         {
-            Self { config }
+            Self {
+                config,
+                migration_versions: None,
+            }
+        }
+    }
+
+    /// Creates a migrator that applies only checkpoint-table migrations.
+    #[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
+    pub fn for_checkpoints(config: SqlSchemaConfig) -> Self {
+        Self::with_migration_versions(config, &[2])
+    }
+
+    /// Creates a migrator that applies only idempotency-table migrations.
+    #[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
+    pub fn for_idempotency(config: SqlSchemaConfig) -> Self {
+        Self::with_migration_versions(config, &[3, 7])
+    }
+
+    /// Creates a migrator that applies only snapshot-table migrations.
+    #[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
+    pub fn for_snapshots(config: SqlSchemaConfig) -> Self {
+        Self::with_migration_versions(config, &[4])
+    }
+
+    #[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
+    fn with_migration_versions(config: SqlSchemaConfig, versions: &[i32]) -> Self {
+        Self {
+            config,
+            migration_versions: Some(versions.to_vec()),
         }
     }
 
     #[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
     fn validate_config(&self) -> Result<(), EventStoreError> {
         self.config.validate()
+    }
+
+    #[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
+    fn migrations_for(&self, dialect: SqlDialect) -> Vec<SchemaMigration> {
+        let migrations = get_migrations(dialect);
+        match &self.migration_versions {
+            Some(versions) => migrations
+                .into_iter()
+                .filter(|migration| versions.contains(&migration.version))
+                .collect(),
+            None => migrations,
+        }
+    }
+
+    #[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
+    fn migration_timestamp_ms(&self) -> Result<i64, EventStoreError> {
+        system_time_to_millis(SystemTime::now())
     }
 
     /// Runs SQLite migrations.
@@ -586,7 +636,7 @@ impl SchemaMigrator {
             .map_err(|e| EventStoreError::backend(e.to_string()))?;
 
         // 3. Execute unapplied migrations
-        let migrations = get_migrations(SqlDialect::Sqlite);
+        let migrations = self.migrations_for(SqlDialect::Sqlite);
         for m in migrations {
             let target_table = get_target_table_name(m.version, &self.config);
             if !applied_pairs.contains(&(m.version, target_table.to_string())) {
@@ -614,10 +664,7 @@ impl SchemaMigrator {
                 }
 
                 // Record applied migration
-                let now_ms = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as i64;
+                let now_ms = self.migration_timestamp_ms()?;
                 let insert_mig = self.config.interpolate(
                     "INSERT INTO {migrations_table} (version, table_name, description, applied_at_ms) VALUES (?1, ?2, ?3, ?4);"
                 );
@@ -711,7 +758,7 @@ impl SchemaMigrator {
             .collect();
 
         // 3. Execute unapplied migrations
-        let migrations = get_migrations(SqlDialect::Postgres);
+        let migrations = self.migrations_for(SqlDialect::Postgres);
         for m in migrations {
             let target_table = get_target_table_name(m.version, &self.config);
             if !applied_pairs.contains(&(m.version, target_table.to_string())) {
@@ -739,10 +786,7 @@ impl SchemaMigrator {
                 }
 
                 // Record applied migration
-                let now_ms = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as i64;
+                let now_ms = self.migration_timestamp_ms()?;
                 let insert_mig = self.config.interpolate(
                     "INSERT INTO {migrations_table} (version, table_name, description, applied_at_ms) VALUES ($1, $2, $3, $4);"
                 );
@@ -766,9 +810,6 @@ impl SchemaMigrator {
 
         use mysql::prelude::Queryable;
 
-        // Concurrent migration runs race on CREATE TABLE IF NOT EXISTS and on
-        // the applied-migrations bookkeeping, so the whole run holds a
-        // database-wide named lock.
         let acquired: Option<Option<i64>> = conn
             .query_first(format!(
                 "SELECT GET_LOCK('{MYSQL_SCHEMA_LOCK_NAME}', {MYSQL_SCHEMA_LOCK_TIMEOUT_SECS});"
@@ -833,7 +874,7 @@ impl SchemaMigrator {
         let applied_pairs: HashSet<(i32, String)> = rows.into_iter().collect();
 
         // 3. Execute unapplied migrations
-        let migrations = get_migrations(SqlDialect::MySql);
+        let migrations = self.migrations_for(SqlDialect::MySql);
         for m in migrations {
             let target_table = get_target_table_name(m.version, &self.config);
             if !applied_pairs.contains(&(m.version, target_table.to_string())) {
@@ -905,10 +946,7 @@ impl SchemaMigrator {
                 }
 
                 // Record applied migration
-                let now_ms = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as i64;
+                let now_ms = self.migration_timestamp_ms()?;
                 let insert_mig = self.config.interpolate(
                     "INSERT INTO {migrations_table} (version, table_name, description, applied_at_ms) VALUES (?, ?, ?, ?);"
                 );
