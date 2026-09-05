@@ -365,7 +365,7 @@ pub fn assert_event_store_append_race_contract<A, S, F>(
 ) where
     A: Aggregate,
     A::Event: PartialEq + Debug + Clone,
-    A::Id: Clone + Send + Sync + serde::Serialize,
+    A::Id: Clone + Send + Sync + Debug,
     S: EventStore<A> + Send + Sync + 'static,
     S::Error: EventStoreFailure + Debug + Display + Send + 'static,
     F: Fn() -> S + Send + Sync + 'static,
@@ -451,14 +451,10 @@ pub fn assert_event_store_append_race_contract<A, S, F>(
     assert_eq!(stream.len(), 2);
 
     let global = factory().load_global_after(None).unwrap();
-    let aggregate_id_key = serde_json::to_string(&aggregate_id).expect("aggregate_id serializes");
+    let aggregate_id_label = format!("{aggregate_id:?}");
     let sequences: Vec<u64> = global
         .iter()
-        .filter(|event| {
-            serde_json::to_string(&event.aggregate_id)
-                .map(|id| id == aggregate_id_key)
-                .unwrap_or(false)
-        })
+        .filter(|event| format!("{:?}", event.aggregate_id) == aggregate_id_label)
         .filter_map(|event| event.sequence)
         .collect();
     if sequences.len() >= 2 {
