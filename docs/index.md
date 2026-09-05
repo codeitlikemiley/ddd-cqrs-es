@@ -55,16 +55,24 @@ The root crate provides durable stores, checkpoints, idempotency stores, and not
 | **`sqlite`** | Stable SQLite event store, checkpoint store, idempotency store, snapshot store, and atomic idempotent append. | `rusqlite` |
 | **`postgres`** | Stable PostgreSQL event store, checkpoint store, idempotency store, snapshot store, and atomic idempotent append. | `postgres` |
 | **`mysql`** | Stable MySQL event store, checkpoint store, idempotency store, snapshot store, and atomic idempotent append. | `mysql` |
-| **`spin-mysql`** | Experimental Spin SDK MySQL query helper. | `spin-sdk` |
+| **`spin-mysql`** | Experimental Spin SDK MySQL query helper. | `spin-sdk` (git fork, see note below) |
 | **`redis`** | Experimental async Redis event store, checkpoint store, pub/sub publisher, and command executor trait. | None |
 | **`wasi-redis`** | Experimental raw RESP Redis client for generic Wasmtime/WASI runtimes. | `redis` |
-| **`spin-redis`** | Experimental Spin SDK Redis client. | `spin-sdk` |
+| **`spin-redis`** | Experimental Spin SDK Redis client. | `spin-sdk` (git fork, see note below) |
 | **`wasi-http`** | Experimental outbound HTTP helper foundation for WASI runtimes. | `wasip3`, `http`, `http-body-util`, `bytes` |
 | **`wasi-neon`** | Experimental Neon HTTP SQL query helper. | `wasi-http` |
 | **`wasi-libsql`** | Experimental LibSQL/Turso Hrana HTTP query helper. | `wasi-http` |
-| **`spin-sqlite`** | Experimental Spin SQLite host-call query helper. | `spin-sdk` |
-| **`spin-postgres`** | Experimental Spin PostgreSQL host-call query helper. | `spin-sdk` |
+| **`spin-sqlite`** | Experimental Spin SQLite host-call query helper. | `spin-sdk` (git fork, see note below) |
+| **`spin-postgres`** | Experimental Spin PostgreSQL host-call query helper. | `spin-sdk` (git fork, see note below) |
 | **`wasi-supabase-rpc`** | Experimental Supabase RPC query helper. | `wasi-http` |
+
+### Spin SDK fork (`spin-*` features)
+
+The `spin-sqlite`, `spin-postgres`, `spin-mysql`, and `spin-redis` features depend on a **git-pinned fork** of `spin-sdk` ([`codeitlikemiley/spin-rust-sdk`](https://github.com/codeitlikemiley/spin-rust-sdk)) rather than the crates.io release. The fork carries WASI Preview 2 HTTP and storage host-call fixes that the framework and `leptos-wasi-runtime` require before upstream merges them.
+
+Consumers who enable only native SQL features (`sqlite`, `postgres`, `mysql`) never pull this dependency. When you opt into `spin-*`, Cargo resolves the fork from the pinned revision in the root `Cargo.toml`; `cargo-deny` explicitly allows this org-owned git source.
+
+Publishing to crates.io includes only library sources (see `exclude` in `Cargo.toml`); docs, examples, and CI scripts are omitted from the tarball.
 
 ---
 

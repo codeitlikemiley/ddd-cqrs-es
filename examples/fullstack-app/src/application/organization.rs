@@ -69,6 +69,13 @@ pub async fn update_organization(
     validate_display_name("organization name", &request.name, 120)?;
     let (context, _) = verified_context_and_permissions(auth, true).await?;
     enforce_organization_scope(&context, &request.organization_id).await?;
+    require_organization_permission(
+        &context,
+        &request.organization_id,
+        "organization.update",
+        AssuranceRequirement::Aal2,
+    )
+    .await?;
     let organization = crate::auth_product::update_organization(
         context.session_id().as_str(),
         &request.organization_id,
@@ -117,6 +124,13 @@ pub async fn invite_member(
     validate_identifier("role_id", &request.role_id)?;
     let (context, _) = verified_context_and_permissions(auth, true).await?;
     enforce_organization_scope(&context, &request.organization_id).await?;
+    require_organization_permission(
+        &context,
+        &request.organization_id,
+        "member.invite",
+        AssuranceRequirement::Aal2,
+    )
+    .await?;
     let invitation = crate::auth_product::create_invitation(
         context.session_id().as_str(),
         &request.organization_id,
@@ -158,6 +172,13 @@ pub async fn assign_role(
     validate_identifier("role_id", &request.role_id)?;
     let (context, _) = verified_context_and_permissions(auth, true).await?;
     enforce_organization_scope(&context, &request.organization_id).await?;
+    require_organization_permission(
+        &context,
+        &request.organization_id,
+        "member.role.assign",
+        AssuranceRequirement::Aal2,
+    )
+    .await?;
     let membership = crate::auth_product::assign_role(
         context.session_id().as_str(),
         &request.organization_id,
@@ -176,6 +197,13 @@ pub async fn remove_member(
     validate_identifier("user_id", &request.user_id)?;
     let (context, _) = verified_context_and_permissions(auth, true).await?;
     enforce_organization_scope(&context, &request.organization_id).await?;
+    require_organization_permission(
+        &context,
+        &request.organization_id,
+        "member.remove",
+        AssuranceRequirement::Aal2,
+    )
+    .await?;
     crate::auth_product::remove_member(
         context.session_id().as_str(),
         &request.organization_id,
@@ -205,6 +233,13 @@ pub async fn upsert_role(
     validate_role_permissions(&request.permissions)?;
     let (context, _) = verified_context_and_permissions(auth, true).await?;
     enforce_organization_scope(&context, &request.organization_id).await?;
+    require_organization_permission(
+        &context,
+        &request.organization_id,
+        "role.manage",
+        AssuranceRequirement::Aal2,
+    )
+    .await?;
     let role = crate::auth_product::upsert_role(
         context.session_id().as_str(),
         &request.organization_id,
@@ -469,6 +504,13 @@ pub async fn update_workspace_name(
     validate_display_name("organization name", &name, 120)?;
     let (context, _) = verified_context_and_permissions(auth, true).await?;
     let resolved = resolve_workspace_by_slug_with_context(&context, &slug).await?;
+    require_organization_permission(
+        &context,
+        &resolved.organization_id,
+        "organization.update",
+        AssuranceRequirement::Aal2,
+    )
+    .await?;
     let mut organization = crate::auth_product::update_organization(
         context.session_id().as_str(),
         &resolved.organization_id,
@@ -492,6 +534,13 @@ pub async fn assign_workspace_member_role(
     validate_identifier("role_id", &role_id)?;
     let (context, _) = verified_context_and_permissions(auth, true).await?;
     let resolved = resolve_workspace_by_slug_with_context(&context, &slug).await?;
+    require_organization_permission(
+        &context,
+        &resolved.organization_id,
+        "member.role.assign",
+        AssuranceRequirement::Aal2,
+    )
+    .await?;
     crate::auth_product::assign_role(
         context.session_id().as_str(),
         &resolved.organization_id,
@@ -509,6 +558,13 @@ pub async fn remove_workspace_member(
     validate_identifier("user_id", &user_id)?;
     let (context, _) = verified_context_and_permissions(auth, true).await?;
     let resolved = resolve_workspace_by_slug_with_context(&context, &slug).await?;
+    require_organization_permission(
+        &context,
+        &resolved.organization_id,
+        "member.remove",
+        AssuranceRequirement::Aal2,
+    )
+    .await?;
     crate::auth_product::remove_member(
         context.session_id().as_str(),
         &resolved.organization_id,
@@ -528,6 +584,13 @@ pub async fn invite_workspace_member(
     validate_identifier("role_id", &role_id)?;
     let (context, _) = verified_context_and_permissions(auth, true).await?;
     let resolved = resolve_workspace_by_slug_with_context(&context, &slug).await?;
+    require_organization_permission(
+        &context,
+        &resolved.organization_id,
+        "member.invite",
+        AssuranceRequirement::Aal2,
+    )
+    .await?;
     crate::auth_product::create_invitation(
         context.session_id().as_str(),
         &resolved.organization_id,
@@ -545,6 +608,13 @@ pub async fn revoke_workspace_invitation(
     validate_identifier("invitation_id", &invitation_id)?;
     let (context, _) = verified_context_and_permissions(auth, true).await?;
     let resolved = resolve_workspace_by_slug_with_context(&context, &slug).await?;
+    require_organization_permission(
+        &context,
+        &resolved.organization_id,
+        "member.invite.revoke",
+        AssuranceRequirement::Aal2,
+    )
+    .await?;
     crate::auth_product::revoke_invitation(
         context.session_id().as_str(),
         &resolved.organization_id,
@@ -561,6 +631,13 @@ pub async fn resend_workspace_invitation(
     validate_identifier("invitation_id", &invitation_id)?;
     let (context, _) = verified_context_and_permissions(auth, true).await?;
     let resolved = resolve_workspace_by_slug_with_context(&context, &slug).await?;
+    require_organization_permission(
+        &context,
+        &resolved.organization_id,
+        "member.invite.resend",
+        AssuranceRequirement::Aal2,
+    )
+    .await?;
     crate::auth_product::resend_invitation(
         context.session_id().as_str(),
         &resolved.organization_id,
@@ -581,6 +658,13 @@ pub async fn upsert_workspace_role(
     validate_role_permissions(&permissions)?;
     let (context, _) = verified_context_and_permissions(auth, true).await?;
     let resolved = resolve_workspace_by_slug_with_context(&context, &slug).await?;
+    require_organization_permission(
+        &context,
+        &resolved.organization_id,
+        "role.manage",
+        AssuranceRequirement::Aal2,
+    )
+    .await?;
     crate::auth_product::upsert_role(
         context.session_id().as_str(),
         &resolved.organization_id,
@@ -599,6 +683,13 @@ pub async fn delete_workspace_role(
     validate_identifier("role_id", &role_id)?;
     let (context, _) = verified_context_and_permissions(auth, true).await?;
     let resolved = resolve_workspace_by_slug_with_context(&context, &slug).await?;
+    require_organization_permission(
+        &context,
+        &resolved.organization_id,
+        "role.manage",
+        AssuranceRequirement::Aal2,
+    )
+    .await?;
     crate::auth_product::delete_role(
         context.session_id().as_str(),
         &resolved.organization_id,
@@ -617,6 +708,13 @@ pub async fn transfer_workspace_ownership(
     validate_identifier("target_user_id", &target_user_id)?;
     let (context, _) = verified_context_and_permissions(auth, true).await?;
     let resolved = resolve_workspace_by_slug_with_context(&context, &slug).await?;
+    require_organization_permission(
+        &context,
+        &resolved.organization_id,
+        "ownership.transfer",
+        AssuranceRequirement::Aal2,
+    )
+    .await?;
     crate::auth_product::transfer_ownership(
         context.session_id().as_str(),
         &resolved.organization_id,
@@ -629,6 +727,13 @@ pub async fn transfer_workspace_ownership(
 pub async fn leave_workspace(slug: String, auth: RequestAuth) -> AuthStackResult<AcceptedResponse> {
     let (context, _) = verified_context_and_permissions(auth, false).await?;
     let resolved = resolve_workspace_by_slug_with_context(&context, &slug).await?;
+    require_organization_permission(
+        &context,
+        &resolved.organization_id,
+        "member.leave",
+        AssuranceRequirement::Aal1,
+    )
+    .await?;
     crate::auth_product::leave_organization(
         context.session_id().as_str(),
         &resolved.organization_id,
@@ -644,6 +749,13 @@ pub async fn deactivate_workspace(
 ) -> AuthStackResult<OrganizationSummary> {
     let (context, _) = verified_context_and_permissions(auth, true).await?;
     let resolved = resolve_workspace_by_slug_with_context(&context, &slug).await?;
+    require_organization_permission(
+        &context,
+        &resolved.organization_id,
+        "organization.archive",
+        AssuranceRequirement::Aal2,
+    )
+    .await?;
     let mut organization = crate::auth_product::archive_organization(
         context.session_id().as_str(),
         &resolved.organization_id,

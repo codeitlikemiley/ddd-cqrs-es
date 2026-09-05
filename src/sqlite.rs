@@ -1008,11 +1008,7 @@ where
 }
 
 fn is_sqlite_stream_revision_unique_violation(message: Option<&str>) -> bool {
-    message.is_some_and(|message| {
-        message.contains("aggregate_id")
-            && message.contains("revision")
-            && !message.contains("event_id")
-    })
+    message.is_some_and(crate::sql_common::is_stream_revision_unique_violation_message)
 }
 
 fn map_sqlite_insert_error(

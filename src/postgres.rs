@@ -1179,14 +1179,10 @@ fn current_revision_postgres(
 }
 
 fn is_postgres_stream_revision_unique_violation(error: &::postgres::Error) -> bool {
-    if !error
+    error
         .code()
         .is_some_and(|code| *code == ::postgres::error::SqlState::UNIQUE_VIOLATION)
-    {
-        return false;
-    }
-    let message = error.to_string();
-    message.contains("revision") || message.contains("aggregate_id")
+        && crate::sql_common::is_stream_revision_unique_violation_message(&error.to_string())
 }
 
 fn map_postgres_insert_error(
