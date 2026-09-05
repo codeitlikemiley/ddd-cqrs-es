@@ -287,6 +287,20 @@ pub fn assert_event_store_global_replay_contract<A, S>(
     }
 }
 
+fn is_retryable_any_append_error<E: EventStoreFailure + Display>(error: E) -> bool {
+    match error.into_repository_error::<()>() {
+        RepositoryError::Concurrency(_) => true,
+        RepositoryError::Store(store_error) => {
+            let message = store_error.to_string().to_ascii_lowercase();
+            (message.contains("unique")
+                || message.contains("23505")
+                || message.contains("duplicate"))
+                && (message.contains("revision") || message.contains("aggregate"))
+        }
+        _ => false,
+    }
+}
+
 /// Verifies that concurrent `ExpectedRevision::Any` writers on one stream receive
 /// distinct revisions instead of colliding on the same optimistic target.
 pub fn assert_event_store_any_writers_contract<A, S, F>(
@@ -299,7 +313,7 @@ pub fn assert_event_store_any_writers_contract<A, S, F>(
     A::Event: PartialEq + Debug + Clone,
     A::Id: Clone + Send + Sync,
     S: EventStore<A> + Send + Sync + 'static,
-    S::Error: EventStoreFailure + Debug + Send + 'static,
+    S::Error: EventStoreFailure + Debug + Display + Send + 'static,
     F: Fn() -> S + Send + Sync + 'static,
 {
     let seed_store = make_store();
@@ -328,10 +342,13 @@ pub fn assert_event_store_any_writers_contract<A, S, F>(
                     vec![NewEvent::new(append_event.clone(), Metadata::default())],
                 ) {
                     Ok(committed) => return committed,
-                    Err(error) => match error.into_repository_error::<()>() {
-                        RepositoryError::Concurrency(_) if attempt + 1 < 8 => continue,
-                        other => panic!("append with ExpectedRevision::Any failed: {other:?}"),
-                    },
+                    Err(error) if is_retryable_any_append_error(error) && attempt + 1 < 8 => {
+                        continue;
+                    }
+                    Err(error) => panic!(
+                        "append with ExpectedRevision::Any failed: {:?}",
+                        error.into_repository_error::<()>()
+                    ),
                 }
             }
             panic!("append with ExpectedRevision::Any exhausted retries");
