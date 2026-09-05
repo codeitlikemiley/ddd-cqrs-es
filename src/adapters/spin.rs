@@ -705,6 +705,34 @@ fn spin_mysql_returns_rows(sql: &str) -> bool {
 }
 
 #[cfg(feature = "spin-mysql")]
+fn mysql_insert_values_row_count(insert_sql: &str) -> u64 {
+    let upper = insert_sql.to_ascii_uppercase();
+    let Some(values_start) = upper.rfind(" VALUES ") else {
+        return 1;
+    };
+    let values_clause = insert_sql[values_start + " VALUES ".len()..].trim();
+    let values_clause = values_clause
+        .split(" RETURNING ")
+        .next()
+        .unwrap_or(values_clause);
+
+    let mut rows = 0u64;
+    let mut depth = 0i32;
+    for ch in values_clause.chars() {
+        match ch {
+            '(' if depth == 0 => {
+                rows += 1;
+                depth = 1;
+            }
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            _ => {}
+        }
+    }
+    rows.max(1)
+}
+
+#[cfg(feature = "spin-mysql")]
 fn spin_mysql_insert_returning_limit(sql: &str) -> Option<(String, u64)> {
     let trimmed = sql.trim();
     let upper = trimmed.to_ascii_uppercase();
@@ -714,7 +742,8 @@ fn spin_mysql_insert_returning_limit(sql: &str) -> Option<(String, u64)> {
     let insert_sql = trimmed
         .replace(" RETURNING sequence", "")
         .replace(" RETURNING SEQUENCE", "");
-    Some((insert_sql, 1))
+    let limit = mysql_insert_values_row_count(&insert_sql);
+    Some((insert_sql, limit))
 }
 
 #[cfg(feature = "spin-mysql")]
@@ -939,5 +968,12 @@ mod spin_mysql_tests {
         let (insert_sql, limit) = spin_mysql_insert_returning_limit(sql).unwrap();
         assert!(!insert_sql.contains("RETURNING"));
         assert_eq!(limit, 1);
+    }
+
+    #[test]
+    fn insert_returning_counts_multi_row_values() {
+        let sql = "INSERT INTO events (event_id) VALUES (?), (?), (?) RETURNING sequence";
+        let (_, limit) = spin_mysql_insert_returning_limit(sql).unwrap();
+        assert_eq!(limit, 3);
     }
 }

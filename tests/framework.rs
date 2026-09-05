@@ -854,6 +854,139 @@ fn process_manager_runner_dispatches_emitted_commands() {
     assert_eq!(outputs, vec!["sent"]);
 }
 
+#[test]
+fn process_manager_runner_resumes_partial_dispatch_from_checkpoint() {
+    use ddd_cqrs_es::{
+        EventEnvelope, EventId, EventType, ProcessManagerDispatchCheckpoint,
+        ProcessManagerRunResult,
+    };
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum Event {
+        Started,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum Command {
+        First,
+        Second,
+    }
+
+    #[derive(Clone, Debug)]
+    struct TwoStepProcess;
+
+    impl ddd_cqrs_es::ProcessManager<Event, Command> for TwoStepProcess {
+        type Error = std::convert::Infallible;
+
+        fn name(&self) -> &'static str {
+            "two_step"
+        }
+
+        fn handle(&mut self, event: &Event) -> Result<Vec<Command>, Self::Error> {
+            match event {
+                Event::Started => Ok(vec![Command::First, Command::Second]),
+            }
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct MemoryCheckpoint(Arc<Mutex<HashMap<(String, String), usize>>>);
+
+    impl ProcessManagerDispatchCheckpoint for MemoryCheckpoint {
+        fn load_dispatch_index(
+            &self,
+            manager_name: &str,
+            event_id: &str,
+        ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+            Ok(self
+                .0
+                .lock()
+                .unwrap()
+                .get(&(manager_name.to_owned(), event_id.to_owned()))
+                .copied()
+                .unwrap_or(0))
+        }
+
+        fn save_dispatch_index(
+            &self,
+            manager_name: &str,
+            event_id: &str,
+            index: usize,
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            self.0
+                .lock()
+                .unwrap()
+                .insert((manager_name.to_owned(), event_id.to_owned()), index);
+            Ok(())
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct FailSecondBus {
+        fail_on: Command,
+    }
+
+    impl ddd_cqrs_es::CommandBus<Command> for FailSecondBus {
+        type Output = &'static str;
+        type Error = &'static str;
+
+        fn dispatch(&self, command: Command) -> Result<Self::Output, Self::Error> {
+            if command == self.fail_on {
+                Err("second command failed")
+            } else {
+                Ok("ok")
+            }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct RecordingOkBus;
+
+    impl ddd_cqrs_es::CommandBus<Command> for RecordingOkBus {
+        type Output = &'static str;
+        type Error = std::convert::Infallible;
+
+        fn dispatch(&self, _command: Command) -> Result<Self::Output, Self::Error> {
+            Ok("ok")
+        }
+    }
+
+    let envelope = EventEnvelope::builder(
+        EventId::from_string("evt-1"),
+        "agg-1".to_owned(),
+        "demo",
+        1,
+        EventType::from_static("started"),
+        Event::Started,
+    )
+    .build();
+    let checkpoint = MemoryCheckpoint::default();
+
+    let mut runner = ddd_cqrs_es::ProcessManagerRunner::new(
+        TwoStepProcess,
+        FailSecondBus {
+            fail_on: Command::Second,
+        },
+    );
+    let first = runner.run_envelope_with_checkpoint(&envelope, &checkpoint);
+    assert_eq!(
+        first,
+        ProcessManagerRunResult {
+            dispatched: vec!["ok"],
+            failed_index: Some(1),
+            error: Some(ddd_cqrs_es::ProcessManagerRunnerError::CommandBus(
+                "second command failed"
+            )),
+        }
+    );
+
+    let mut runner = ddd_cqrs_es::ProcessManagerRunner::new(TwoStepProcess, RecordingOkBus);
+    let resumed = runner.run_envelope_strict(&envelope, &checkpoint).unwrap();
+    assert_eq!(resumed, vec!["ok"]);
+}
+
 #[cfg(feature = "uuid")]
 #[test]
 fn event_ids_use_uuid_when_feature_is_enabled() {

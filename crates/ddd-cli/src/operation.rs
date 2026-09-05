@@ -91,21 +91,44 @@ pub fn apply_operations(
     validate_operations(root, operations, force)?;
 
     let mut reports = Vec::with_capacity(operations.len());
+    let mut applied = Vec::new();
     for operation in operations {
         let absolute_path = contained_join(root, &operation.path)?;
         let exists = absolute_path.exists();
+        let previous = if exists {
+            match std::fs::read(&absolute_path) {
+                Ok(content) => Some(content),
+                Err(error) => {
+                    rollback_applied(&applied);
+                    return Err(error)
+                        .with_context(|| format!("failed to read {}", absolute_path.display()));
+                }
+            }
+        } else {
+            None
+        };
 
         if !dry_run {
-            if is_manifest_path(&operation.path) {
-                write_manifest_atomically(&absolute_path, &operation.content)?;
+            let write_result = if is_manifest_path(&operation.path) {
+                write_manifest_atomically(&absolute_path, &operation.content)
             } else {
-                if let Some(parent) = absolute_path.parent() {
-                    std::fs::create_dir_all(parent)
-                        .with_context(|| format!("failed to create {}", parent.display()))?;
-                }
-                std::fs::write(&absolute_path, &operation.content)
-                    .with_context(|| format!("failed to write {}", absolute_path.display()))?;
+                (|| -> Result<()> {
+                    if let Some(parent) = absolute_path.parent() {
+                        std::fs::create_dir_all(parent)
+                            .with_context(|| format!("failed to create {}", parent.display()))?;
+                    }
+                    std::fs::write(&absolute_path, &operation.content)
+                        .with_context(|| format!("failed to write {}", absolute_path.display()))
+                })()
+            };
+            if let Err(error) = write_result {
+                rollback_applied(&applied);
+                return Err(error);
             }
+            applied.push(AppliedWrite {
+                path: absolute_path.clone(),
+                previous,
+            });
         }
 
         reports.push(FileOperationReport {
@@ -116,6 +139,24 @@ pub fn apply_operations(
         });
     }
     Ok(reports)
+}
+
+struct AppliedWrite {
+    path: PathBuf,
+    previous: Option<Vec<u8>>,
+}
+
+fn rollback_applied(applied: &[AppliedWrite]) {
+    for write in applied.iter().rev() {
+        match &write.previous {
+            Some(content) => {
+                let _ = std::fs::write(&write.path, content);
+            }
+            None => {
+                let _ = std::fs::remove_file(&write.path);
+            }
+        }
+    }
 }
 
 fn is_manifest_path(path: &Path) -> bool {
@@ -251,5 +292,31 @@ mod tests {
 
         assert_eq!(std::fs::read_to_string(&manifest).unwrap(), "new = true\n");
         assert!(!root.join("ddd.toml.tmp").exists());
+    }
+
+    #[test]
+    fn apply_operations_rolls_back_on_mid_batch_failure() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        std::fs::create_dir_all(root.join("src/domain")).unwrap();
+        let locked = root.join("locked");
+        std::fs::create_dir_all(&locked).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+        }
+
+        let operations = vec![
+            write_operation("src/domain/new.rs", "new\n", false, "new module"),
+            write_operation("locked/other.rs", "bad\n", false, "read-only directory"),
+        ];
+
+        let result = apply_operations(&root, &operations, false, false);
+        #[cfg(unix)]
+        assert!(result.is_err(), "expected write into read-only dir to fail");
+        #[cfg(not(unix))]
+        let _ = result;
+        assert!(!root.join("src/domain/new.rs").exists());
     }
 }
