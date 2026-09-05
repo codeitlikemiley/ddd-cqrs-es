@@ -828,7 +828,8 @@ mod tests {
     #[test]
     fn returning_connection_hands_off_to_a_registered_waiter() {
         let pool = Arc::new(
-            ConnectionPool::<u32>::pooled(1, || Ok(0)).with_acquire_timeout(Duration::from_millis(500)),
+            ConnectionPool::<u32>::pooled(1, || Ok(0))
+                .with_acquire_timeout(Duration::from_millis(500)),
         );
         let held = pool.acquire().unwrap();
         let pool_for_waiter = Arc::clone(&pool);

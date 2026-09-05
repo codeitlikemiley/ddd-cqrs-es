@@ -1538,8 +1538,7 @@ fn parse_append_eval_result(
                     crate::ConcurrencyError::WrongExpectedRevision { expected, actual },
                 )),
                 "inconsistent_state" => {
-                    let stream_card =
-                        redis_value_u64(&items[3], "append stream cardinality")?;
+                    let stream_card = redis_value_u64(&items[3], "append stream cardinality")?;
                     Err(EventStoreError::backend(format!(
                         "Redis stream revision counter ({actual}) does not match stream index \
                          cardinality ({stream_card}); configure maxmemory-policy noeviction and \
