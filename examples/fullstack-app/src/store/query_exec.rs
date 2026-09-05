@@ -112,11 +112,15 @@ pub(crate) async fn execute_dashboard_queries_batch(
         resources: resources.to_owned(),
         secrets,
     });
-    let futures = query_ids.iter().map(|query_id| {
+    let futures = query_ids.iter().filter_map(|query_id| {
+        let query = queries.iter().find(|query| query.id == *query_id)?;
+        if query.config.execution_class() != QueryExecutionClass::Read {
+            return None;
+        }
         let org_id = org_id.to_owned();
         let query_id = query_id.clone();
         let bundle = Arc::clone(&bundle);
-        async move {
+        Some(async move {
             match execute_dashboard_query_with_bundle(
                 &org_id,
                 &query_id,
@@ -133,7 +137,7 @@ pub(crate) async fn execute_dashboard_queries_batch(
                     error.public_message(),
                 ),
             }
-        }
+        })
     });
     join_all(futures).await
 }
