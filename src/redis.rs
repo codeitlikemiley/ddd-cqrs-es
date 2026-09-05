@@ -7,7 +7,18 @@
 //! source of truth.
 
 #[cfg(feature = "spin-redis")]
-use crate::adapters::redact_url_userinfo;
+fn redact_redis_url(url: &str) -> String {
+    let Some(scheme_end) = url.find("://") else {
+        return url.to_owned();
+    };
+    let scheme = &url[..scheme_end + 3];
+    let remainder = &url[scheme_end + 3..];
+    let Some(at_idx) = remainder.rfind('@') else {
+        return url.to_owned();
+    };
+    format!("{scheme}***@{}", &remainder[at_idx + 1..])
+}
+
 use crate::aggregate::Aggregate;
 use crate::async_api::AsyncEventStore;
 use crate::error::EventStoreError;
@@ -1005,7 +1016,7 @@ pub struct SpinRedisClient {
 impl std::fmt::Debug for SpinRedisClient {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SpinRedisClient")
-            .field("url", &redact_url_userinfo(&self.url))
+            .field("url", &redact_redis_url(&self.url))
             .finish_non_exhaustive()
     }
 }
