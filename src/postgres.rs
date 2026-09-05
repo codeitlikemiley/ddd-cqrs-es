@@ -1294,7 +1294,7 @@ impl crate::projection::CheckpointStore for PostgresCheckpointStore {
                 .map_err(map_postgres_error)?;
 
             if let Some(row) = rows.first() {
-                let sequence: i64 = row.get(0);
+                let sequence: i64 = row.try_get(0).map_err(map_postgres_error)?;
                 let sequence = u64::try_from(sequence).map_err(|_| {
                     EventStoreError::deserialization(
                         "Postgres checkpoint cannot be negative".to_owned(),

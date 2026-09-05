@@ -116,7 +116,11 @@ pub struct IdempotencyWaitConfig {
 
 impl IdempotencyWaitConfig {
     /// Creates an idempotency wait policy.
+    ///
+    /// `poll_interval` must be non-zero; callers that need sub-millisecond polling
+    /// should pick an explicit minimum rather than relying on a silent floor.
     pub fn new(pending_timeout: Duration, poll_interval: Duration) -> Self {
+        assert!(!poll_interval.is_zero(), "poll_interval must be non-zero");
         Self {
             pending_timeout,
             poll_interval,
@@ -124,20 +128,36 @@ impl IdempotencyWaitConfig {
     }
 
     /// Returns the next delay, capped by the remaining timeout.
-    pub(crate) fn next_delay(&self, elapsed: Duration) -> Option<Duration> {
+    ///
+    /// A small deterministic jitter derived from `jitter_key` spreads concurrent
+    /// waiters so they do not poll in lockstep.
+    pub(crate) fn next_delay(
+        &self,
+        elapsed: Duration,
+        jitter_key: &IdempotencyKey,
+    ) -> Option<Duration> {
         let remaining = self.pending_timeout.checked_sub(elapsed)?;
-        if remaining.is_zero() {
+        if remaining.is_zero() || self.poll_interval.is_zero() {
             return None;
         }
 
-        let poll_interval = if self.poll_interval.is_zero() {
-            Duration::from_millis(1)
-        } else {
-            self.poll_interval
-        };
-
-        Some(remaining.min(poll_interval))
+        let jitter_ms = idempotency_poll_jitter_ms(jitter_key, self.poll_interval);
+        let delay = self
+            .poll_interval
+            .saturating_add(Duration::from_millis(jitter_ms));
+        Some(remaining.min(delay))
     }
+}
+
+fn idempotency_poll_jitter_ms(key: &IdempotencyKey, poll_interval: Duration) -> u64 {
+    let span_ms = (poll_interval.as_millis().max(1) / 4) as u64;
+    if span_ms == 0 {
+        return 0;
+    }
+    let hash = key.as_str().bytes().fold(0u64, |acc, byte| {
+        acc.wrapping_mul(31).wrapping_add(u64::from(byte))
+    });
+    hash % span_ms
 }
 
 impl Default for IdempotencyWaitConfig {
@@ -544,12 +564,12 @@ pub(crate) fn pending_wait_delay<DomainError, StoreError, IdempotencyError>(
     started: std::time::Instant,
     idempotency_key: &IdempotencyKey,
 ) -> Result<Duration, IdempotentRepositoryError<DomainError, StoreError, IdempotencyError>> {
-    wait_config.next_delay(started.elapsed()).ok_or_else(|| {
-        IdempotentRepositoryError::IdempotencyPendingTimeout {
+    wait_config
+        .next_delay(started.elapsed(), idempotency_key)
+        .ok_or_else(|| IdempotentRepositoryError::IdempotencyPendingTimeout {
             key: idempotency_key.clone(),
             waited: started.elapsed(),
-        }
-    })
+        })
 }
 
 impl<DomainError, StoreError, IdempotencyError> Display
@@ -649,8 +669,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        pending_wait_delay, IdempotencyKey, IdempotencyLeaseConfig, IdempotencyState,
-        IdempotencyStore, IdempotencyWaitConfig, InMemoryIdempotencyStore,
+        idempotency_poll_jitter_ms, pending_wait_delay, IdempotencyKey, IdempotencyLeaseConfig,
+        IdempotencyState, IdempotencyStore, IdempotencyWaitConfig, InMemoryIdempotencyStore,
     };
     use std::time::{Duration, Instant};
 
@@ -665,7 +685,8 @@ mod tests {
             pending_wait_delay::<(), crate::EventStoreError, ()>(&config, Instant::now(), &key)
                 .unwrap();
 
-        assert!(delay <= Duration::from_millis(50));
+        assert!(delay >= Duration::from_millis(50));
+        assert!(delay <= Duration::from_millis(62));
         assert!(!delay.is_zero());
     }
 
@@ -684,6 +705,34 @@ mod tests {
             } => assert_eq!(timed_out_key, key),
             other => panic!("expected pending timeout, got {other:?}"),
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "poll_interval must be non-zero")]
+    fn zero_poll_interval_is_rejected() {
+        let _ = IdempotencyWaitConfig::new(Duration::from_secs(1), Duration::ZERO);
+    }
+
+    #[test]
+    fn poll_jitter_spreads_waiters_with_the_same_interval() {
+        let interval = Duration::from_millis(40);
+        let first = idempotency_poll_jitter_ms(&IdempotencyKey::new("alpha"), interval);
+        let second = idempotency_poll_jitter_ms(&IdempotencyKey::new("beta"), interval);
+        assert!(first <= 10);
+        assert!(second <= 10);
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn next_delay_applies_jitter_without_exceeding_remaining_budget() {
+        let config =
+            IdempotencyWaitConfig::new(Duration::from_millis(100), Duration::from_millis(20));
+        let key = IdempotencyKey::new("jitter-key");
+        let delay = config
+            .next_delay(Duration::from_millis(10), &key)
+            .expect("delay");
+        assert!(delay >= Duration::from_millis(20));
+        assert!(delay <= Duration::from_millis(90));
     }
 
     #[test]

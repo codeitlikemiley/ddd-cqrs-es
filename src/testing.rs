@@ -1106,6 +1106,7 @@ where
         let result = loaded.state.handle(command);
 
         AggregateFixtureResult {
+            given: self.given,
             state: loaded.state,
             revision: loaded.revision,
             result,
@@ -1128,6 +1129,7 @@ pub struct AggregateFixtureResult<A>
 where
     A: Aggregate,
 {
+    given: Vec<A::Event>,
     state: A,
     revision: u64,
     result: Result<Vec<A::Event>, A::Error>,
@@ -1188,5 +1190,20 @@ where
     pub fn then_expect_revision(self, expected: u64) -> Self {
         assert_eq!(self.revision, expected);
         self
+    }
+
+    /// Continues the scenario with another command after the previous one succeeded.
+    pub fn and_when(self, command: A::Command) -> AggregateFixtureResult<A>
+    where
+        A::Event: Clone,
+        A::Error: Debug,
+    {
+        let events = self
+            .result
+            .as_ref()
+            .expect("and_when requires the previous command to succeed");
+        let mut given = self.given;
+        given.extend(events.clone());
+        AggregateFixture::<A>::new().given(given).when(command)
     }
 }

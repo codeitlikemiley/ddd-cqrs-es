@@ -105,6 +105,14 @@ pub trait Projection<E, Id> {
 /// Default maximum event count for bounded projection catch-up.
 pub const DEFAULT_PROJECTION_BATCH_SIZE: usize = 500;
 
+const DEFAULT_PROJECTION_BATCH: NonZeroUsize = {
+    assert!(DEFAULT_PROJECTION_BATCH_SIZE > 0);
+    match NonZeroUsize::new(DEFAULT_PROJECTION_BATCH_SIZE) {
+        Some(batch_size) => batch_size,
+        None => panic!("DEFAULT_PROJECTION_BATCH_SIZE must be non-zero"),
+    }
+};
+
 /// Controls bounded projection replay.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProjectionBatchConfig {
@@ -126,8 +134,7 @@ impl ProjectionBatchConfig {
 impl Default for ProjectionBatchConfig {
     fn default() -> Self {
         Self {
-            batch_size: NonZeroUsize::new(DEFAULT_PROJECTION_BATCH_SIZE)
-                .expect("default projection batch size must be non-zero"),
+            batch_size: DEFAULT_PROJECTION_BATCH,
         }
     }
 }
