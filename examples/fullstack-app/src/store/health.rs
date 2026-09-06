@@ -196,6 +196,11 @@ pub(crate) async fn validate_runtime_security_config_uncached() -> AuthStackResu
             "production forbids AUTH_OAUTH_DEVELOPMENT_CALLBACK_BYPASS",
         ));
     }
+    if config_bool("AUTH_DASHBOARD_HTTP_ALLOW_PRIVATE", false).await {
+        return Err(AuthStackError::configuration(
+            "production forbids AUTH_DASHBOARD_HTTP_ALLOW_PRIVATE; tighten spin.production.toml.example outbound hosts instead",
+        ));
+    }
     if !config_bool("AUTH_REQUIRE_TRUSTED_INGRESS", false).await {
         return Err(AuthStackError::configuration(
             "production requires AUTH_REQUIRE_TRUSTED_INGRESS=true",

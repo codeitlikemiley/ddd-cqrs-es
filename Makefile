@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 SHELL := /usr/bin/env bash
 
-.PHONY: help version publish publish-fullstack registry-check example example-check fullstack-sync fullstack-check fullstack-compile examples-sync scaffold-fullstack ci clean preflight check-tools check-example-runtime check-wasm-target
+.PHONY: help version publish publish-fullstack registry-check example example-check fullstack-sync fullstack-check fullstack-template-sync fullstack-template-check fullstack-compile examples-sync scaffold-fullstack ci clean preflight check-tools check-example-runtime check-wasm-target
 
 # Convenience aliases used by examples/counter-app passthrough.
 EXAMPLE_RUNTIME := $(word 2,$(MAKECMDGOALS))
@@ -36,6 +36,8 @@ help:
 	@echo "  make example <spin|wasmtime|run>    run counter-app example with db/realtime args"
 	@echo "  make scaffold-fullstack [DIR=path]  scaffold a fullstack SaaS app via ddd CLI (default DIR=my-saas)"
 	@echo "  make fullstack-sync                 regenerate examples/fullstack-app from the CLI template"
+	@echo "  make fullstack-template-sync        sync examples/fullstack-app → CLI template (canonical edits)"
+	@echo "  make fullstack-template-check       fail if example and CLI template drift (content-based)"
 	@echo "  make examples-sync                  alias for fullstack-sync (template → example drift)"
 	@echo "  make fullstack-check                fail when the generated fullstack example has drifted"
 	@echo "  make fullstack-compile              generate a fullstack app and compile it for ssr and hydrate"
@@ -139,6 +141,12 @@ examples-sync: fullstack-sync
 
 fullstack-check:
 	@bash scripts/regenerate-fullstack-example.sh --check
+
+fullstack-template-sync:
+	@bash scripts/check-fullstack-template-sync.sh sync
+
+fullstack-template-check:
+	@bash scripts/check-fullstack-template-sync.sh check
 
 fullstack-compile:
 	@bash scripts/check-generated-fullstack.sh

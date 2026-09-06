@@ -7,6 +7,11 @@ description: Operate the consolidated authentication, authorization, Leptos isla
 preset. The embedded CLI template is the only editable source; run
 `bash scripts/regenerate-fullstack-example.sh --check` to detect drift.
 
+When editing the reference app directly, mirror changes into the embedded
+template with `make fullstack-template-sync` and verify both directions with
+`make fullstack-check` (template → example) and `make fullstack-template-check`
+(example → template). CI runs both checks so drift cannot land silently.
+
 ## Product boundary
 
 The template depends on one auth product: `wasi-auth`. The former `ddd-auth`
@@ -49,6 +54,9 @@ Production deployments must **not** ship those wildcards. Copy
 `spin.production.toml.example` and replace every outbound host with exact OAuth,
 database, and connector endpoints before deploy. The example manifest and CLI
 regression tests reject wildcard and loopback patterns in production templates.
+CI runs `scripts/verify-spin-production-manifests.sh` on both production
+examples and refuses to start in production when
+`AUTH_DASHBOARD_HTTP_ALLOW_PRIVATE=true` (use exact outbound hosts instead).
 
 Dashboard HTTP and gRPC connectors default **off** (`auth_dashboard_http_enabled`
 and `auth_dashboard_grpc_enabled` default to `false` in Spin). Enable them only

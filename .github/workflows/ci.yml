@@ -158,7 +158,7 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Ensure docs script is executable
-        run: chmod +x scripts/verify-docs-rust.sh scripts/verify-docs.sh scripts/ci-check.sh
+        run: chmod +x scripts/verify-docs-rust.sh scripts/verify-docs.sh scripts/ci-check.sh scripts/check-fullstack-template-sync.sh scripts/verify-spin-production-manifests.sh
 
       - name: Run CI quality suite
         run: bash scripts/ci-check.sh
