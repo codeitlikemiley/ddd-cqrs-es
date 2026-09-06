@@ -943,8 +943,7 @@ where
     let read_revision = |connection: &Connection, key: &str| {
         SqliteEventStore::<A>::current_revision_locked(table_name, connection, key)
     };
-    let stale_revision =
-        max_revision_for_lookup_keys(keys, |key| read_revision(connection, key))?;
+    let stale_revision = max_revision_for_lookup_keys(keys, |key| read_revision(connection, key))?;
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| {
