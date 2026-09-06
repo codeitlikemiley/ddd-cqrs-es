@@ -350,23 +350,25 @@ where
             .into_iter()
             .map(PreparedSqliteEvent::new)
             .collect::<Result<Vec<_>, _>>()?;
-        let mut connection = lock_connection(&self.connection);
         let table_name = self.table_name.clone();
-        let read_revision = |connection: &Connection, key: &str| {
-            Self::current_revision_locked(&table_name, connection, key)
-        };
-        let stale_revision =
-            max_revision_for_lookup_keys(&keys, |key| read_revision(&connection, key))?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| {
-                map_sqlite_contention_error(error, Some(expected_revision), || Ok(stale_revision))
-            })?;
-        let actual_revision =
-            max_revision_for_lookup_keys(&keys, |key| read_revision(&transaction, key))?;
-        check_expected_revision(expected_revision, actual_revision)?;
 
         if prepared.is_empty() {
+            let mut connection = lock_connection(&self.connection);
+            let read_revision = |connection: &Connection, key: &str| {
+                Self::current_revision_locked(&table_name, connection, key)
+            };
+            let stale_revision =
+                max_revision_for_lookup_keys(&keys, |key| read_revision(&connection, key))?;
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(|error| {
+                    map_sqlite_contention_error(error, Some(expected_revision), || {
+                        Ok(stale_revision)
+                    })
+                })?;
+            let actual_revision =
+                max_revision_for_lookup_keys(&keys, |key| read_revision(&transaction, key))?;
+            check_expected_revision(expected_revision, actual_revision)?;
             transaction.commit().map_err(|error| {
                 map_sqlite_contention_error(error, Some(expected_revision), || {
                     max_revision_for_lookup_keys(&keys, |key| read_revision(&connection, key))
@@ -375,22 +377,27 @@ where
             return Ok(Vec::new());
         }
 
-        let committed = insert_prepared_sqlite_events::<A>(
-            &transaction,
-            &self.table_name,
-            aggregate_id,
-            &aggregate_id_key,
-            actual_revision,
-            expected_revision,
-            prepared,
-        )?;
+        const MAX_APPEND_ATTEMPTS: u32 = 32;
+        for attempt in 0..MAX_APPEND_ATTEMPTS {
+            let mut connection = lock_connection(&self.connection);
+            match append_prepared_sqlite_events_once::<A>(
+                &mut connection,
+                &table_name,
+                &keys,
+                aggregate_id,
+                &aggregate_id_key,
+                expected_revision,
+                &prepared,
+            ) {
+                Ok(committed) => return Ok(committed),
+                Err(error) if error.is_retryable() && attempt + 1 < MAX_APPEND_ATTEMPTS => continue,
+                Err(error) => return Err(error),
+            }
+        }
 
-        transaction.commit().map_err(|error| {
-            map_sqlite_contention_error(error, Some(expected_revision), || {
-                max_revision_for_lookup_keys(&keys, |key| read_revision(&connection, key))
-            })
-        })?;
-        Ok(committed)
+        Err(EventStoreError::backend(
+            "sqlite append exhausted optimistic concurrency retries".to_owned(),
+        ))
     }
 
     fn load_global_after(&self, sequence: Option<u64>) -> Result<EventStream<A>, Self::Error> {
@@ -921,6 +928,53 @@ where
     }
 }
 
+fn append_prepared_sqlite_events_once<A>(
+    connection: &mut Connection,
+    table_name: &str,
+    keys: &[String],
+    aggregate_id: &A::Id,
+    aggregate_id_key: &str,
+    expected_revision: ExpectedRevision,
+    prepared: &[PreparedSqliteEvent<A::Event>],
+) -> Result<EventStream<A>, EventStoreError>
+where
+    A: Aggregate,
+{
+    let read_revision = |connection: &Connection, key: &str| {
+        SqliteEventStore::<A>::current_revision_locked(table_name, connection, key)
+    };
+    let stale_revision =
+        max_revision_for_lookup_keys(keys, |key| read_revision(connection, key))?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| {
+            map_sqlite_contention_error(error, Some(expected_revision), || Ok(stale_revision))
+        })?;
+    let actual_revision =
+        max_revision_for_lookup_keys(keys, |key| read_revision(&transaction, key))?;
+    check_expected_revision(expected_revision, actual_revision)?;
+
+    let committed = insert_prepared_sqlite_events::<A>(
+        &transaction,
+        table_name,
+        aggregate_id,
+        aggregate_id_key,
+        actual_revision,
+        expected_revision,
+        prepared,
+    )?;
+
+    if let Err(error) = transaction.commit() {
+        return Err(map_sqlite_contention_error(
+            error,
+            Some(expected_revision),
+            || Ok(stale_revision),
+        ));
+    }
+
+    Ok(committed)
+}
+
 /// Inserts all prepared events with one multi-row `INSERT` round trip and
 /// derives each assigned sequence from `last_insert_rowid()` and its offset.
 fn insert_prepared_sqlite_events<A>(
@@ -930,7 +984,7 @@ fn insert_prepared_sqlite_events<A>(
     aggregate_id_key: &str,
     actual_revision: u64,
     expected_revision: ExpectedRevision,
-    prepared: Vec<PreparedSqliteEvent<A::Event>>,
+    prepared: &[PreparedSqliteEvent<A::Event>],
 ) -> Result<EventStream<A>, EventStoreError>
 where
     A: Aggregate,
@@ -998,7 +1052,7 @@ where
     }
 
     let mut committed = Vec::with_capacity(count);
-    for (index, event) in prepared.into_iter().enumerate() {
+    for (index, event) in prepared.iter().enumerate() {
         let revision = actual_revision + index as u64 + 1;
         let sequence = first_sequence + index as i64;
         let sequence = u64::try_from(sequence).map_err(|_| {
@@ -1006,15 +1060,15 @@ where
         })?;
 
         committed.push(EventEnvelope::new(
-            event.event_id,
+            event.event_id.clone(),
             aggregate_id.clone(),
             A::aggregate_type(),
             revision,
             Some(sequence),
-            event.event_type,
+            event.event_type.clone(),
             event.event_version,
-            event.payload,
-            event.metadata,
+            event.payload.clone(),
+            event.metadata.clone(),
             event.recorded_at,
         ));
     }
