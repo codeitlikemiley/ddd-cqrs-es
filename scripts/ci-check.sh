@@ -58,6 +58,8 @@ log "Running CLI tests and generated fullstack drift check"
 cargo clippy --locked --all-targets -p ddd-cqrs-es-cli -- -D warnings
 cargo test --locked --all-targets -p ddd-cqrs-es-cli
 bash scripts/regenerate-fullstack-example.sh --check
+bash scripts/check-fullstack-template-sync.sh check
+bash scripts/verify-spin-production-manifests.sh
 
 log "Compiling counter-app example with sqlite"
 patch_config="$PWD/target/ci-local-patches.toml"

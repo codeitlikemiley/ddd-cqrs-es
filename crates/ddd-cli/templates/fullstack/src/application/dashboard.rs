@@ -321,6 +321,9 @@ pub(crate) async fn dashboard_http_enabled() -> bool {
 }
 
 pub(crate) async fn dashboard_http_allow_private() -> bool {
+    if feature_enabled("AUTH_PRODUCTION_MODE", false).await {
+        return false;
+    }
     matches!(
         config_value("AUTH_DASHBOARD_HTTP_ALLOW_PRIVATE")
             .await
