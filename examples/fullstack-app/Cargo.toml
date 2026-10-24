@@ -29,17 +29,17 @@ hmac = { version = "0.12", optional = true }
 leptos = { version = "0.8.20", default-features = false }
 leptos_meta = { version = "0.8.6", default-features = false }
 leptos_router = { version = "0.8.14", default-features = false }
-leptos_wasi = { package = "leptos-wasi-runtime", version = "=0.4.2-rc.1", default-features = false, features = ["wasip3", "islands-router", "tracing"], optional = true }
+# Agent 5 rev: wasip3 0.9 only. `wasip3` is the runtime feature; islands and
+# tracing stay off unless the app fails to compile without them.
+leptos_wasi = { package = "leptos-wasi-runtime", git = "https://github.com/codeitlikemiley/leptos_wasi", rev = "87e1476938c2b23d598a3fcc74a7acb094aac855", default-features = false, features = ["wasip3"], optional = true }
 server_fn = { version = "0.8.13", default-features = false }
 spin-sdk = { git = "https://github.com/codeitlikemiley/spin-rust-sdk", rev = "3cf30012b50a1afb750dac3d28aa6da4a32c3468", version = "7.0.0", optional = true }
 wasip3 = { version = "=0.9.0", features = ["http-compat"], optional = true }
 # `wasip3 0.9.0` is generated against wit-bindgen 0.62.0. A second runtime
 # version duplicates unit-stream intrinsics and cannot be component-linked.
-# wit-bindgen 0.57.1 `inter-task-wakeup` cancels a waitable synchronously while
-# it is still in a waitable set; Wasmtime 50 (Spin 4.2.5) traps. That cancel
-# order is fixed in wit-bindgen 0.59+ (PR 1638), which 0.62.0 includes.
-# leptos-wasi-runtime stays `=0.4.2-rc.1` (wasip3 0.7, `wasip3::spawn`) until
-# a 0.9 revision exists. This pin set is a test of that mismatch.
+# wit-bindgen 0.62 includes the cancel-order fix from PR 1638, so
+# `inter-task-wakeup` is safe on this revision. wasi-auth bdfad803 enables
+# `async-spawn` only; feature-unification keeps a single wit-bindgen 0.62.0.
 wit-bindgen = { version = "=0.62.0", features = ["async-spawn", "inter-task-wakeup"], optional = true }
 wasm-bindgen = { version = "=0.2.129", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
@@ -67,10 +67,13 @@ getrandom03 = { package = "getrandom", version = "0.3.4", features = ["wasm_js"]
 tonic-build = { version = "0.12", default-features = false, features = ["prost"] }
 wasi-auth = { version = "=0.1.0-rc.5", default-features = false, features = ["cedar"] }
 
-# Keep every transitive SDK edge on the audited final-WASI revision until an
-# upstream release contains the same wasip3 graph.
+# Keep every transitive SDK and auth edge on one wasip3 0.9 graph until the
+# crates.io releases contain the same commits. wasi-auth bdfad803 is PR 17:
+# HMAC trusted-context boundary and per-process replay defense on wasip3 0.9
+# and spin-sdk 7. Package version stays 0.1.0-rc.5, so this patch matches.
 [patch.crates-io]
 spin-sdk = { git = "https://github.com/codeitlikemiley/spin-rust-sdk", rev = "3cf30012b50a1afb750dac3d28aa6da4a32c3468" }
+wasi-auth = { git = "https://github.com/codeitlikemiley/wasi-auth", rev = "bdfad80372287a3be4215aeefad534098ef6537b" }
 
 [features]
 default = []

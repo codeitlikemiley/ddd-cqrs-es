@@ -235,8 +235,13 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
     assert!(cargo_toml.contains("wasi-auth"));
     assert!(!cargo_toml.contains("ddd-auth ="));
     assert!(!cargo_toml.contains("ddd-authz ="));
-    assert!(cargo_toml.contains("=0.4.2-rc.1"));
+    assert!(cargo_toml.contains("87e1476938c2b23d598a3fcc74a7acb094aac855"));
+    assert!(cargo_toml.contains(
+        r#"leptos_wasi = { package = "leptos-wasi-runtime", git = "https://github.com/codeitlikemiley/leptos_wasi", rev = "87e1476938c2b23d598a3fcc74a7acb094aac855", default-features = false, features = ["wasip3"], optional = true }"#
+    ));
+    assert!(!cargo_toml.contains("=0.4.2-rc.1"));
     assert!(cargo_toml.contains("=0.1.0-rc.5")); // wasi-auth (independent cadence)
+    assert!(cargo_toml.contains("bdfad80372287a3be4215aeefad534098ef6537b"));
     assert!(cargo_toml.contains(&format!("={}", env!("CARGO_PKG_VERSION")))); // ddd_cqrs_es
     assert!(cargo_toml.contains("=0.9.0"));
     assert!(cargo_toml.contains("=0.62.0"));
