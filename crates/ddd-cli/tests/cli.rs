@@ -240,6 +240,10 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
     assert!(cargo_toml.contains(&format!("={}", env!("CARGO_PKG_VERSION")))); // ddd_cqrs_es
     assert!(cargo_toml.contains("=0.7.0"));
     assert!(cargo_toml.contains("=0.57.1"));
+    assert!(cargo_toml.contains(
+        r#"wit-bindgen = { version = "=0.57.1", features = ["async-spawn"], optional = true }"#
+    ));
+    assert!(!cargo_toml.contains(r#"features = ["async-spawn", "inter-task-wakeup"]"#));
     assert!(!cargo_toml.contains("wit-bindgen-spin-compat"));
     assert!(cargo_toml.contains("a02d330fe9357be2d18e6deef400511195ce6f7f"));
     assert!(cargo_toml.contains(r#"rust-version = "1.93.0""#));
