@@ -31,6 +31,8 @@ mkdir -p "$COMPARE_DIR"
 rsync -a \
   --exclude='.DS_Store' \
   --exclude='.env' \
+  --exclude='.auth-root-key' \
+  --exclude='.auth-outbox-key' \
   --exclude='.spin' \
   --exclude='Cargo.lock' \
   --exclude='node_modules' \
@@ -53,6 +55,8 @@ perl -0pi -e 's/\n# `Cargo\.toml` pins the `ddd_cqrs_es` version.*\n\[patch\.cra
 DIFF_EXCLUDES=(
   --exclude=.DS_Store
   --exclude=.env
+  --exclude=.auth-root-key
+  --exclude=.auth-outbox-key
   --exclude=.spin
   --exclude=Cargo.lock
   --exclude=node_modules
@@ -73,6 +77,8 @@ fi
 RSYNC_EXCLUDES=(
   --exclude=.DS_Store
   --exclude=.env
+  --exclude=.auth-root-key
+  --exclude=.auth-outbox-key
   --exclude=.spin
   --exclude=Cargo.lock
   --exclude=node_modules
