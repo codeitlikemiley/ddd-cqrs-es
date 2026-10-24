@@ -800,6 +800,7 @@ if [[ -n "$organization_slug" && "$organization_slug" != "null" ]]; then
 fi
 tenant_refresh_response="$(curl -sS -f -X POST "$BASE_URL/api/auth/token/refresh" \
   -H "$session_cookie" \
+  -H "origin: ${AUTH_PUBLIC_BASE_URL}" \
   -H "x-csrf-token: $csrf_token" \
   -H 'content-type: application/json' \
   --data "{\"refresh_token\":\"$refresh_token\"}")"
