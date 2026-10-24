@@ -108,6 +108,7 @@ json_post() {
   shift 2
   curl -sS -X POST "$BASE_URL$path" \
     -H 'content-type: application/json' \
+    -H "origin: ${AUTH_PUBLIC_BASE_URL}" \
     "$@" \
     --data "$body"
 }
