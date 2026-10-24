@@ -116,8 +116,15 @@ captured_mail() {
   local recipient="$1"
   local kind="$2"
   local response=""
+  # The capture route is an account-takeover primitive: debug + AUTH_DEV_TOOLS
+  # plus a system.user.manage session (bootstrap administrator).
+  local -a auth_header=()
+  if [[ -n "${SMOKE_ADMIN_SESSION_ID:-}" ]]; then
+    auth_header=(-H "cookie: wasi_auth_dev_session=${SMOKE_ADMIN_SESSION_ID}")
+  fi
   for _ in $(seq 1 50); do
     response="$(curl -sS -f -G "$BASE_URL/api/auth/dev/mail/latest" \
+      "${auth_header[@]}" \
       --data-urlencode "recipient=$recipient" \
       --data-urlencode "kind=$kind" 2>/dev/null || true)"
     if [[ -n "$response" ]]; then
