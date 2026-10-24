@@ -91,8 +91,11 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
         // for document navigations so passkeys and session cookies share one host.
         if is_browser_navigation
             && !request_path.starts_with("/pkg/")
-            && let Some(location) =
-                loopback_ip_to_localhost_redirect(req.headers(), &request_path, request_query.as_deref())
+            && let Some(location) = loopback_ip_to_localhost_redirect(
+                req.headers(),
+                &request_path,
+                request_query.as_deref(),
+            )
         {
             return redirect_response(&location);
         }
@@ -320,9 +323,7 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
             .await
             .map_err(internal_error)?;
 
-        let mut http_res = wasip3::http_compat::http_from_wasi_response(wasi_res)?;
-        apply_browser_security_headers(http_res.headers_mut());
-        wasip3::http_compat::http_into_wasi_response(http_res)
+        with_browser_security_headers(wasi_res)
     }
 }
 
@@ -595,6 +596,45 @@ fn grpc_enabled(transport_mode: &str) -> bool {
     matches!(transport_mode, "grpc" | "both")
 }
 
+fn consume_ok() -> Result<(), ErrorCode> {
+    Ok(())
+}
+
+/// Attach browser security headers without re-reading the response body.
+///
+/// `response.get-headers` is immutable, so the previous code converted the
+/// WASI response to `http::Response` and back. That copy awaits response
+/// trailers (`future<result<option<fields>, error-code>>`). Wasmtime 50 traps
+/// when one component both reads and writes that future:
+/// `cannot read from and write to intra-component future/stream with
+/// non-numeric payload`. The host then returns an empty body, and Leptos
+/// server functions surface `Invalid format: missing delimiter in ""`.
+/// Hand the original body stream and trailers reader to the host unread.
+fn with_browser_security_headers(wasi_res: Response) -> Result<Response, ErrorCode> {
+    let status = wasi_res.get_status_code();
+    let mut headers = http::HeaderMap::try_from(wasi_res.get_headers())?;
+    apply_browser_security_headers(&mut headers);
+    let wasi_headers = wasip3::http::types::Fields::try_from(headers).map_err(|error| {
+        tracing::error!(
+            error = ?error,
+            "browser security headers were rejected"
+        );
+        ErrorCode::InternalError(None)
+    })?;
+
+    let (_consume_result, consume_result_reader) = wasip3::wit_future::new(consume_ok);
+    let (body, trailers) = Response::consume_body(wasi_res, consume_result_reader);
+    let (response, _transmission) = Response::new(wasi_headers, Some(body), trailers);
+    if response.set_status_code(status).is_err() {
+        tracing::error!(
+            status,
+            "rejected response status while attaching security headers"
+        );
+        return Err(ErrorCode::InternalError(None));
+    }
+    Ok(response)
+}
+
 fn apply_browser_security_headers(headers: &mut http::HeaderMap) {
     headers.insert(
         http::header::CACHE_CONTROL,
@@ -608,10 +648,7 @@ fn apply_browser_security_headers(headers: &mut http::HeaderMap) {
              connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
         ),
     );
-    headers.insert(
-        "X-Frame-Options",
-        http::HeaderValue::from_static("DENY"),
-    );
+    headers.insert("X-Frame-Options", http::HeaderValue::from_static("DENY"));
 }
 
 fn plain_text_response(
@@ -774,20 +811,27 @@ mod loopback_redirect_tests {
 
     #[test]
     fn redirects_ipv6_loopback() {
-        let location =
-            loopback_ip_to_localhost_redirect(&headers("[::1]:3008"), "/login", None);
+        let location = loopback_ip_to_localhost_redirect(&headers("[::1]:3008"), "/login", None);
         assert_eq!(location.as_deref(), Some("http://localhost:3008/login"));
     }
 
     #[test]
     fn leaves_localhost_and_public_hosts_alone() {
         assert!(
-            loopback_ip_to_localhost_redirect(&headers("localhost:3008"), "/account/passkeys", None)
-                .is_none()
+            loopback_ip_to_localhost_redirect(
+                &headers("localhost:3008"),
+                "/account/passkeys",
+                None
+            )
+            .is_none()
         );
         assert!(
-            loopback_ip_to_localhost_redirect(&headers("auth.example.com"), "/account/passkeys", None)
-                .is_none()
+            loopback_ip_to_localhost_redirect(
+                &headers("auth.example.com"),
+                "/account/passkeys",
+                None
+            )
+            .is_none()
         );
     }
 }

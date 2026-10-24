@@ -35,7 +35,10 @@ spin-sdk = { git = "https://github.com/codeitlikemiley/spin-rust-sdk", rev = "a0
 wasip3 = { version = "=0.7.0", features = ["http-compat"], optional = true }
 # `wasip3 0.7.0` is generated against wit-bindgen 0.57.1. A second runtime
 # version duplicates unit-stream intrinsics and cannot be component-linked.
-wit-bindgen = { version = "=0.57.1", features = ["async-spawn", "inter-task-wakeup"], optional = true }
+# Leave `inter-task-wakeup` off. wit-bindgen 0.57.1 cancels that wakeup stream
+# synchronously while it is still in the task waitable set, and Wasmtime 50
+# (Spin 4.2.5) traps. The reorder lands in wit-bindgen 0.59 (PR 1638).
+wit-bindgen = { version = "=0.57.1", features = ["async-spawn"], optional = true }
 wasm-bindgen = { version = "=0.2.126", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 js-sys = { version = "0.3", optional = true }
