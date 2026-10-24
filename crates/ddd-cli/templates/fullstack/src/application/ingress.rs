@@ -77,6 +77,24 @@ pub async fn authenticate_ingress<B>(
     })
 }
 
+pub async fn accept_signed_guest_context<B>(
+    request: &mut http::Request<B>,
+) -> AuthStackResult<Option<VerifiedRequestContext>> {
+    let Some(codec) = crate::auth_product::trusted_context_codec().await? else {
+        wasi_auth::http::strip_untrusted_auth_metadata(request.headers_mut());
+        return Ok(None);
+    };
+    wasi_auth::http::accept_signed_trusted_context(
+        codec,
+        request,
+        ApplicationClock.now_unix_seconds(),
+    )
+    .map_err(|error| {
+        tracing::warn!(error = %error, "signed trusted context was rejected");
+        AuthStackError::InvalidCredentials
+    })
+}
+
 pub async fn trusted_context_from_request<B>(
     request: &http::Request<B>,
 ) -> AuthStackResult<Option<VerifiedRequestContext>> {

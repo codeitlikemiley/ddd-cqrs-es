@@ -41,14 +41,14 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
 
         let mut req = wasip3::http_compat::http_from_wasi_request(request)?;
         ensure_request_id(&mut req)?;
-        let trusted_context = match crate::application::trusted_context_from_request(&req).await {
+        let trusted_context = match crate::application::accept_signed_guest_context(&mut req).await
+        {
             Ok(context) => context,
             Err(error) => {
                 tracing::warn!(error = %error, "trusted ingress envelope was rejected");
                 return plain_text_response(error.http_status(), "Request rejected.");
             }
         };
-        wasi_auth::http::strip_untrusted_auth_metadata(req.headers_mut());
         let request_path = req.uri().path().to_string();
         let request_query = req.uri().query().map(ToOwned::to_owned);
         let transport_mode = transport_mode().await;
