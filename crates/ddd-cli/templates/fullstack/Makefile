@@ -303,6 +303,17 @@ migration-preflight:
 # Local compose Postgres (127.0.0.1:54329) must be up before migrations/Spin.
 # Without this, login/register fail with HTTP 503 "auth storage is unavailable"
 # (rate-limit / session store cannot open a connection).
+#
+# `make dev` starts the outbox worker and Spin together. Both targets migrate,
+# so two `wasi-auth-migrate apply` processes used to race and one failed with
+# `PostgreSQL migration operation failed`. `dev` migrates once, then passes
+# SKIP_DB_MIGRATE=1 so those children do not migrate again.
+ifeq ($(SKIP_DB_MIGRATE),1)
+DB_MIGRATE_PREREQ :=
+else
+DB_MIGRATE_PREREQ := db-migrate
+endif
+
 db-migrate: db-up
 	DATABASE_URL='$(POSTGRES_URL)' cargo $(CARGO_CONFIG_ARGS) run --quiet --no-default-features --features migrate --bin wasi-auth-migrate -- apply
 
@@ -324,13 +335,13 @@ check: validate-toolchain validate-mail
 grpc-check: validate-toolchain validate-mail
 	WASI_RUNTIME=spin AUTH_TRANSPORT=grpc cargo check --target wasm32-wasip2 --no-default-features --features $(GRPC_FEATURES)
 
-dev: install-outbox-worker
+dev: install-outbox-worker db-migrate
 	@set -eu; \
-		$(MAKE) --no-print-directory outbox-worker & worker_pid=$$!; \
+		$(MAKE) --no-print-directory outbox-worker SKIP_DB_MIGRATE=1 & worker_pid=$$!; \
 		trap 'kill $$worker_pid 2>/dev/null || true; wait $$worker_pid 2>/dev/null || true' EXIT INT TERM; \
-		$(MAKE) --no-print-directory spin transport=$(transport)
+		$(MAKE) --no-print-directory spin SKIP_DB_MIGRATE=1 transport=$(transport)
 
-spin: validate-toolchain validate-mail db-migrate
+spin: validate-toolchain validate-mail $(DB_MIGRATE_PREREQ)
 	@case "$(db)" in \
 		postgres) \
 			if [ -z "$$POSTGRES_URL" ]; then \
@@ -382,7 +393,7 @@ install-outbox-worker:
 		fi; \
 	fi
 
-outbox-worker: validate-mail db-migrate install-outbox-worker
+outbox-worker: validate-mail $(DB_MIGRATE_PREREQ) install-outbox-worker
 	@test -n "$(AUTH_OUTBOX_KEY_BASE64)" || \
 		(echo "Error: AUTH_OUTBOX_KEY_BASE64 must be a base64-encoded 32-byte key."; exit 2)
 	@test -x "$(WASI_AUTH_OUTBOX_WORKER_BIN)" || \

@@ -278,9 +278,12 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
     assert!(makefile.contains("--variable auth_spicedb_check_token='$(AUTH_SPICEDB_CHECK_TOKEN)'"));
     assert!(!makefile.contains("--variable auth_spicedb_write_url"));
     assert!(!makefile.contains("--variable auth_mail_http_token"));
-    assert!(makefile.contains("outbox-worker: validate-mail db-migrate install-outbox-worker"));
+    assert!(makefile
+        .contains("outbox-worker: validate-mail $(DB_MIGRATE_PREREQ) install-outbox-worker"));
+    assert!(makefile.contains("spin: validate-toolchain validate-mail $(DB_MIGRATE_PREREQ)"));
+    assert!(makefile.contains("dev: install-outbox-worker db-migrate"));
+    assert!(makefile.contains("SKIP_DB_MIGRATE=1"));
     assert!(makefile.contains("cargo install wasi-auth --version '=$(WASI_AUTH_VERSION)'"));
-    assert!(makefile.contains("dev: install-outbox-worker"));
     assert!(makefile.contains("AUTH_RESEND_API_KEY='$(AUTH_RESEND_API_KEY)'"));
     assert!(makefile.contains("AUTH_RESEND_FROM_VALUE = $(subst"));
     assert!(makefile.contains("AUTH_RESEND_FROM='$(AUTH_RESEND_FROM_VALUE)'"));
