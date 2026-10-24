@@ -163,6 +163,9 @@ OPTIONAL_SPICEDB_FEATURE := ,spicedb
 endif
 BASE_FEATURES := ssr,$(db),$(MAIL_FEATURE)$(OPTIONAL_SPICEDB_FEATURE)
 GRPC_FEATURES := ssr,$(db),spin-grpc,$(MAIL_FEATURE)$(OPTIONAL_SPICEDB_FEATURE)
+# Spin 4.2.5 copies `{{ name }}` in component environment as literal text.
+# `--env` delivers the trusted-ingress key to the guest. Do not commit the key.
+SPIN_INGRESS_ENV = $(if $(AUTH_TRUSTED_INGRESS_KEY_BASE64),--env AUTH_TRUSTED_INGRESS_KEY_BASE64='$(AUTH_TRUSTED_INGRESS_KEY_BASE64)',)
 SPIN_VARIABLE_ARGS = \
 	--variable database_backend=$(db) \
 	--variable database_url='$(AUTH_DATABASE_URL)' \
@@ -350,7 +353,7 @@ spin: validate-toolchain validate-mail $(DB_MIGRATE_PREREQ)
 			fi ;; \
 		*) echo "Error: unsupported db=$(db). Fullstack authentication requires postgres."; exit 2 ;; \
 	esac
-	FULLSTACK_FEATURES=$(GRPC_FEATURES) AUTH_TRANSPORT=$(transport) "$(SPIN_BIN)" up $(SPIN_UP_BUILD_FLAG) --listen $(listen) $(SPIN_VARIABLE_ARGS)
+	FULLSTACK_FEATURES=$(GRPC_FEATURES) AUTH_TRANSPORT=$(transport) "$(SPIN_BIN)" up $(SPIN_UP_BUILD_FLAG) --listen $(listen) $(SPIN_INGRESS_ENV) $(SPIN_VARIABLE_ARGS)
 
 spin-backend: override AUTH_REQUIRE_TRUSTED_INGRESS := true
 spin-backend: listen=$(backend_listen)

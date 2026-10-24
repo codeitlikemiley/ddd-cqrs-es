@@ -395,13 +395,22 @@ pub(crate) async fn runtime_config_value(name: &str) -> Option<String> {
     {
         let variable_name = name.to_ascii_lowercase();
         if let Ok(value) = spin_sdk::variables::get(&variable_name).await
-            && !value.is_empty()
+            && let Some(value) = configured_value(value)
         {
             return Some(value);
         }
     }
 
-    env_non_empty(name)
+    env_non_empty(name).and_then(configured_value)
+}
+
+fn configured_value(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || (trimmed.contains("{{") && trimmed.contains("}}")) {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 #[allow(dead_code)]

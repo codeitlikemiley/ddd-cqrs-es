@@ -29,9 +29,9 @@ hmac = { version = "0.12", optional = true }
 leptos = { version = "0.8.20", default-features = false }
 leptos_meta = { version = "0.8.6", default-features = false }
 leptos_router = { version = "0.8.14", default-features = false }
-# Agent 5 rev: wasip3 0.9 only. `wasip3` is the runtime feature; islands and
-# tracing stay off unless the app fails to compile without them.
-leptos_wasi = { package = "leptos-wasi-runtime", git = "https://github.com/codeitlikemiley/leptos_wasi", rev = "87e1476938c2b23d598a3fcc74a7acb094aac855", default-features = false, features = ["wasip3"], optional = true }
+# Agent 5 rev d4f512e: wasip3 0.9 only. `wasip3` is the runtime feature;
+# islands and tracing stay off unless the app fails to compile without them.
+leptos_wasi = { package = "leptos-wasi-runtime", git = "https://github.com/codeitlikemiley/leptos_wasi", rev = "d4f512eb18b64c8f78c385365be28acc023462eb", default-features = false, features = ["wasip3"], optional = true }
 server_fn = { version = "0.8.13", default-features = false }
 spin-sdk = { git = "https://github.com/codeitlikemiley/spin-rust-sdk", rev = "3cf30012b50a1afb750dac3d28aa6da4a32c3468", version = "7.0.0", optional = true }
 wasip3 = { version = "=0.9.0", features = ["http-compat"], optional = true }
@@ -57,6 +57,9 @@ tonic = { version = "0.12", default-features = false, features = ["codegen", "pr
 tokio = { version = "1.52", features = ["macros", "rt"], optional = true }
 tokio-postgres = { version = "0.7", optional = true }
 wasi-auth = { version = "=0.1.0-rc.5", default-features = false, optional = true }
+# Middleware rev 3df96c2 keeps one wasip3 0.9 / wit-bindgen 0.62 graph and
+# forwards response headers without reading trailers.
+wasi-http-middleware-component-support = { git = "https://github.com/codeitlikemiley/wasi-http-middleware", rev = "3df96c21a7906b885e67229e9a7c8c01b6497109", optional = true }
 ddd_cqrs_es = { version = "=0.4.0-alpha.3", default-features = false, features = ["json", "serde", "async", "tracing", "json-file"], optional = true }
 qrcode = { version = "0.14", default-features = false, features = ["svg"], optional = true }
 
@@ -115,6 +118,7 @@ ssr = [
   "dep:tracing",
   "dep:wasi-auth",
   "wasi-auth/fullstack-spin",
+  "dep:wasi-http-middleware-component-support",
   "dep:leptos_wasi",
   "dep:wasip3",
   "dep:wit-bindgen",

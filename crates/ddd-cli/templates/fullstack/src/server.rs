@@ -596,59 +596,25 @@ fn grpc_enabled(transport_mode: &str) -> bool {
     matches!(transport_mode, "grpc" | "both")
 }
 
-fn consume_ok() -> Result<(), ErrorCode> {
-    Ok(())
-}
+const BROWSER_CONTENT_SECURITY_POLICY: &[u8] = b"default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
 
-/// Attach browser security headers without re-reading the response body.
+/// Attach browser security headers without reading the response body.
 ///
-/// `response.get-headers` is immutable, so the previous code converted the
-/// WASI response to `http::Response` and back. That copy awaits response
-/// trailers (`future<result<option<fields>, error-code>>`). Wasmtime 50 traps
-/// when one component both reads and writes that future:
-/// `cannot read from and write to intra-component future/stream with
-/// non-numeric payload`. The host then returns an empty body, and Leptos
-/// server functions surface `Invalid format: missing delimiter in ""`.
-/// Hand the original body stream and trailers reader to the host unread.
+/// `wasi-http-middleware` 3df96c2 clones the immutable header resource and
+/// forwards the original body stream and trailers future to the host. Copying
+/// those trailers in-process traps on Wasmtime 50
+/// (`cannot read from and write to intra-component future/stream with
+/// non-numeric payload`) and the client then sees an empty server-function body.
 fn with_browser_security_headers(wasi_res: Response) -> Result<Response, ErrorCode> {
-    let status = wasi_res.get_status_code();
-    let mut headers = http::HeaderMap::try_from(wasi_res.get_headers())?;
-    apply_browser_security_headers(&mut headers);
-    let wasi_headers = wasip3::http::types::Fields::try_from(headers).map_err(|error| {
-        tracing::error!(
-            error = ?error,
-            "browser security headers were rejected"
-        );
-        ErrorCode::InternalError(None)
-    })?;
-
-    let (_consume_result, consume_result_reader) = wasip3::wit_future::new(consume_ok);
-    let (body, trailers) = Response::consume_body(wasi_res, consume_result_reader);
-    let (response, _transmission) = Response::new(wasi_headers, Some(body), trailers);
-    if response.set_status_code(status).is_err() {
-        tracing::error!(
-            status,
-            "rejected response status while attaching security headers"
-        );
-        return Err(ErrorCode::InternalError(None));
-    }
-    Ok(response)
-}
-
-fn apply_browser_security_headers(headers: &mut http::HeaderMap) {
-    headers.insert(
-        http::header::CACHE_CONTROL,
-        http::HeaderValue::from_static("no-store"),
-    );
-    headers.insert(
-        "Content-Security-Policy",
-        http::HeaderValue::from_static(
-            "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; \
-             style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; \
-             connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
-        ),
-    );
-    headers.insert("X-Frame-Options", http::HeaderValue::from_static("DENY"));
+    wasi_http_middleware_component_support::edit_response_headers(
+        wasi_res,
+        &[],
+        &[
+            ("cache-control", b"no-store"),
+            ("content-security-policy", BROWSER_CONTENT_SECURITY_POLICY),
+            ("x-frame-options", b"DENY"),
+        ],
+    )
 }
 
 fn plain_text_response(
