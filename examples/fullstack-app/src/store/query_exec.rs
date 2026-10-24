@@ -320,8 +320,9 @@ where
     {
         let deadline_ns = wasip3::clocks::monotonic_clock::now()
             .saturating_add(u64::from(timeout_ms).saturating_mul(1_000_000));
-        // `select!` only polls fused futures. Fuse once so a timeout tick
-        // resumes the same query instead of dropping it.
+        // `select!` only polls fused, unpin futures. Pin first, then fuse
+        // once so a timeout tick resumes the same query.
+        futures::pin_mut!(fut);
         let mut fut = fut.fuse();
         loop {
             let remaining = deadline_ns.saturating_sub(wasip3::clocks::monotonic_clock::now());
