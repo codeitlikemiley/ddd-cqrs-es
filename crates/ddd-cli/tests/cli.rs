@@ -51,16 +51,14 @@ fn init_writes_basic_project_files() {
     command.assert().success();
 
     assert!(temp.path().join("sample-app/ddd.toml").exists());
-    assert!(
-        temp.path()
-            .join("sample-app/src/domain/invoice.rs")
-            .exists()
-    );
-    assert!(
-        temp.path()
-            .join("sample-app/tests/invoice_domain.rs")
-            .exists()
-    );
+    assert!(temp
+        .path()
+        .join("sample-app/src/domain/invoice.rs")
+        .exists());
+    assert!(temp
+        .path()
+        .join("sample-app/tests/invoice_domain.rs")
+        .exists());
 }
 
 #[test]
@@ -290,10 +288,8 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
     assert!(makefile.contains("--variable auth_spicedb_check_token='$(AUTH_SPICEDB_CHECK_TOKEN)'"));
     assert!(!makefile.contains("--variable auth_spicedb_write_url"));
     assert!(!makefile.contains("--variable auth_mail_http_token"));
-    assert!(
-        makefile
-            .contains("outbox-worker: validate-mail $(DB_MIGRATE_PREREQ) install-outbox-worker")
-    );
+    assert!(makefile
+        .contains("outbox-worker: validate-mail $(DB_MIGRATE_PREREQ) install-outbox-worker"));
     assert!(makefile.contains("spin: validate-toolchain validate-mail $(DB_MIGRATE_PREREQ)"));
     assert!(makefile.contains("dev: install-outbox-worker db-migrate"));
     assert!(makefile.contains("SKIP_DB_MIGRATE=1"));
@@ -365,18 +361,14 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
     assert!(production_spin_toml.contains("auth_bootstrap_admin_emails = { default = \"\" }"));
     assert!(production_spin_toml.contains("auth_cookie_secure = \"{{ auth_cookie_secure }}\""));
     assert!(production_spin_toml.contains("auth_password_kdf = \"{{ auth_password_kdf }}\""));
-    assert!(
-        production_spin_toml
-            .contains("auth_bootstrap_admin_emails = \"{{ auth_bootstrap_admin_emails }}\"")
-    );
+    assert!(production_spin_toml
+        .contains("auth_bootstrap_admin_emails = \"{{ auth_bootstrap_admin_emails }}\""));
     assert!(
         production_spin_toml.contains("auth_jwt_key_ring_json = \"{{ auth_jwt_key_ring_json }}\"")
     );
     assert!(production_spin_toml.contains("auth_public_base_url = \"{{ auth_public_base_url }}\""));
-    assert!(
-        production_spin_toml
-            .contains("auth_google_client_secret = \"{{ auth_google_client_secret }}\"")
-    );
+    assert!(production_spin_toml
+        .contains("auth_google_client_secret = \"{{ auth_google_client_secret }}\""));
     assert!(
         production_spin_toml.contains("auth_apple_private_key = \"{{ auth_apple_private_key }}\"")
     );
