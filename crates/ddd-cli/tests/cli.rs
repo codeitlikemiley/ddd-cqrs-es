@@ -238,15 +238,16 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
     assert!(cargo_toml.contains("=0.4.2-rc.1"));
     assert!(cargo_toml.contains("=0.1.0-rc.5")); // wasi-auth (independent cadence)
     assert!(cargo_toml.contains(&format!("={}", env!("CARGO_PKG_VERSION")))); // ddd_cqrs_es
-    assert!(cargo_toml.contains("=0.7.0"));
-    assert!(cargo_toml.contains("=0.57.1"));
+    assert!(cargo_toml.contains("=0.9.0"));
+    assert!(cargo_toml.contains("=0.62.0"));
+    assert!(cargo_toml.contains("=0.2.129"));
     assert!(!cargo_toml.contains("wit-bindgen-spin-compat"));
-    assert!(cargo_toml.contains("a02d330fe9357be2d18e6deef400511195ce6f7f"));
+    assert!(cargo_toml.contains("3cf30012b50a1afb750dac3d28aa6da4a32c3468"));
     assert!(cargo_toml.contains(r#"rust-version = "1.93.0""#));
     assert!(!cargo_toml.contains("path ="));
     assert!(cargo_toml.contains("[patch.crates-io]"));
     assert!(cargo_toml.contains(
-        r#"spin-sdk = { git = "https://github.com/codeitlikemiley/spin-rust-sdk", rev = "a02d330fe9357be2d18e6deef400511195ce6f7f" }"#
+        r#"spin-sdk = { git = "https://github.com/codeitlikemiley/spin-rust-sdk", rev = "3cf30012b50a1afb750dac3d28aa6da4a32c3468" }"#
     ));
     assert!(cargo_toml.contains("spin-postgres"));
     assert!(!cargo_toml.contains("spin-mysql"));
