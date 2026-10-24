@@ -64,7 +64,7 @@ json_post() {
   local path="$1"
   local body="$2"
   shift 2
-  curl -fsS -X POST "${BASE_URL}${path}"     -H "content-type: application/json"     "$@"     --data "${body}"
+  curl -fsS -X POST "${BASE_URL}${path}"     -H "content-type: application/json"     -H "origin: ${AUTH_PUBLIC_BASE_URL:-${BASE_URL}}"     "$@"     --data "${body}"
 }
 
 registration="$(json_post /api/auth/password/register   "{\"email\":\"${email}\",\"password\":\"${password}\",\"redirect_url\":\"/dashboard\"}")"
