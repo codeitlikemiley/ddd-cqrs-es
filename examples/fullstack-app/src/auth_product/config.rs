@@ -139,12 +139,23 @@ pub(crate) async fn runtime_config_value(name: &str) -> Option<String> {
     {
         let variable_name = name.to_ascii_lowercase();
         if let Ok(value) = spin_sdk::variables::get(&variable_name).await
-            && !value.is_empty()
+            && let Some(value) = configured_value(value)
         {
             return Some(value);
         }
     }
-    std::env::var(name).ok().filter(|value| !value.is_empty())
+    std::env::var(name).ok().and_then(configured_value)
+}
+
+/// Spin 4.2.5 copies an uninterpolated `{{ name }}` template into the guest.
+/// Treat that literal as unset so `spin up --env NAME=...` can supply the value.
+fn configured_value(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || (trimmed.contains("{{") && trimmed.contains("}}")) {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 pub(crate) fn email_key(email: &str) -> String {

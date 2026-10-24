@@ -376,12 +376,23 @@ pub(crate) async fn store_config_value(name: &str) -> Option<String> {
     #[cfg(all(runtime_spin, not(test)))]
     {
         let variable_name = name.to_ascii_lowercase();
-        if let Ok(value) = spin_sdk::variables::get(&variable_name).await {
+        if let Ok(value) = spin_sdk::variables::get(&variable_name).await
+            && let Some(value) = configured_value(value)
+        {
             return Some(value);
         }
     }
 
-    std::env::var(name).ok()
+    std::env::var(name).ok().and_then(configured_value)
+}
+
+fn configured_value(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || (trimmed.contains("{{") && trimmed.contains("}}")) {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 pub(crate) fn truthy(value: &str) -> bool {

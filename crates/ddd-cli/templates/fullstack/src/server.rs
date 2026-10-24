@@ -41,14 +41,14 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
 
         let mut req = wasip3::http_compat::http_from_wasi_request(request)?;
         ensure_request_id(&mut req)?;
-        let trusted_context = match crate::application::trusted_context_from_request(&req).await {
+        let trusted_context = match crate::application::accept_signed_guest_context(&mut req).await
+        {
             Ok(context) => context,
             Err(error) => {
                 tracing::warn!(error = %error, "trusted ingress envelope was rejected");
                 return plain_text_response(error.http_status(), "Request rejected.");
             }
         };
-        wasi_auth::http::strip_untrusted_auth_metadata(req.headers_mut());
         let request_path = req.uri().path().to_string();
         let request_query = req.uri().query().map(ToOwned::to_owned);
         let transport_mode = transport_mode().await;
@@ -91,8 +91,11 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
         // for document navigations so passkeys and session cookies share one host.
         if is_browser_navigation
             && !request_path.starts_with("/pkg/")
-            && let Some(location) =
-                loopback_ip_to_localhost_redirect(req.headers(), &request_path, request_query.as_deref())
+            && let Some(location) = loopback_ip_to_localhost_redirect(
+                req.headers(),
+                &request_path,
+                request_query.as_deref(),
+            )
         {
             return redirect_response(&location);
         }
@@ -320,9 +323,7 @@ impl wasip3::exports::http::handler::Guest for FullstackServer {
             .await
             .map_err(internal_error)?;
 
-        let mut http_res = wasip3::http_compat::http_from_wasi_response(wasi_res)?;
-        apply_browser_security_headers(http_res.headers_mut());
-        wasip3::http_compat::http_into_wasi_response(http_res)
+        with_browser_security_headers(wasi_res)
     }
 }
 
@@ -595,23 +596,25 @@ fn grpc_enabled(transport_mode: &str) -> bool {
     matches!(transport_mode, "grpc" | "both")
 }
 
-fn apply_browser_security_headers(headers: &mut http::HeaderMap) {
-    headers.insert(
-        http::header::CACHE_CONTROL,
-        http::HeaderValue::from_static("no-store"),
-    );
-    headers.insert(
-        "Content-Security-Policy",
-        http::HeaderValue::from_static(
-            "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; \
-             style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; \
-             connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
-        ),
-    );
-    headers.insert(
-        "X-Frame-Options",
-        http::HeaderValue::from_static("DENY"),
-    );
+const BROWSER_CONTENT_SECURITY_POLICY: &[u8] = b"default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
+
+/// Attach browser security headers without reading the response body.
+///
+/// `wasi-http-middleware` 3df96c2 clones the immutable header resource and
+/// forwards the original body stream and trailers future to the host. Copying
+/// those trailers in-process traps on Wasmtime 50
+/// (`cannot read from and write to intra-component future/stream with
+/// non-numeric payload`) and the client then sees an empty server-function body.
+fn with_browser_security_headers(wasi_res: Response) -> Result<Response, ErrorCode> {
+    wasi_http_middleware_component_support::edit_response_headers(
+        wasi_res,
+        &[],
+        &[
+            ("cache-control", b"no-store"),
+            ("content-security-policy", BROWSER_CONTENT_SECURITY_POLICY),
+            ("x-frame-options", b"DENY"),
+        ],
+    )
 }
 
 fn plain_text_response(
@@ -774,20 +777,27 @@ mod loopback_redirect_tests {
 
     #[test]
     fn redirects_ipv6_loopback() {
-        let location =
-            loopback_ip_to_localhost_redirect(&headers("[::1]:3008"), "/login", None);
+        let location = loopback_ip_to_localhost_redirect(&headers("[::1]:3008"), "/login", None);
         assert_eq!(location.as_deref(), Some("http://localhost:3008/login"));
     }
 
     #[test]
     fn leaves_localhost_and_public_hosts_alone() {
         assert!(
-            loopback_ip_to_localhost_redirect(&headers("localhost:3008"), "/account/passkeys", None)
-                .is_none()
+            loopback_ip_to_localhost_redirect(
+                &headers("localhost:3008"),
+                "/account/passkeys",
+                None
+            )
+            .is_none()
         );
         assert!(
-            loopback_ip_to_localhost_redirect(&headers("auth.example.com"), "/account/passkeys", None)
-                .is_none()
+            loopback_ip_to_localhost_redirect(
+                &headers("auth.example.com"),
+                "/account/passkeys",
+                None
+            )
+            .is_none()
         );
     }
 }

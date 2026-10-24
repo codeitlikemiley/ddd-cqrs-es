@@ -235,18 +235,27 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
     assert!(cargo_toml.contains("wasi-auth"));
     assert!(!cargo_toml.contains("ddd-auth ="));
     assert!(!cargo_toml.contains("ddd-authz ="));
-    assert!(cargo_toml.contains("=0.4.2-rc.1"));
+    assert!(cargo_toml.contains("d4f512eb18b64c8f78c385365be28acc023462eb"));
+    assert!(cargo_toml.contains(
+        r#"leptos_wasi = { package = "leptos-wasi-runtime", git = "https://github.com/codeitlikemiley/leptos_wasi", rev = "d4f512eb18b64c8f78c385365be28acc023462eb", default-features = false, features = ["wasip3"], optional = true }"#
+    ));
+    assert!(cargo_toml.contains("3df96c21a7906b885e67229e9a7c8c01b6497109"));
+    assert!(!cargo_toml.contains("=0.7.0"));
+    assert!(!cargo_toml.contains("=0.57.1"));
+    assert!(!cargo_toml.contains("=0.4.2-rc.1"));
     assert!(cargo_toml.contains("=0.1.0-rc.5")); // wasi-auth (independent cadence)
+    assert!(cargo_toml.contains("bdfad80372287a3be4215aeefad534098ef6537b"));
     assert!(cargo_toml.contains(&format!("={}", env!("CARGO_PKG_VERSION")))); // ddd_cqrs_es
-    assert!(cargo_toml.contains("=0.7.0"));
-    assert!(cargo_toml.contains("=0.57.1"));
+    assert!(cargo_toml.contains("=0.9.0"));
+    assert!(cargo_toml.contains("=0.62.0"));
+    assert!(cargo_toml.contains("=0.2.129"));
     assert!(!cargo_toml.contains("wit-bindgen-spin-compat"));
-    assert!(cargo_toml.contains("a02d330fe9357be2d18e6deef400511195ce6f7f"));
+    assert!(cargo_toml.contains("3cf30012b50a1afb750dac3d28aa6da4a32c3468"));
     assert!(cargo_toml.contains(r#"rust-version = "1.93.0""#));
     assert!(!cargo_toml.contains("path ="));
     assert!(cargo_toml.contains("[patch.crates-io]"));
     assert!(cargo_toml.contains(
-        r#"spin-sdk = { git = "https://github.com/codeitlikemiley/spin-rust-sdk", rev = "a02d330fe9357be2d18e6deef400511195ce6f7f" }"#
+        r#"spin-sdk = { git = "https://github.com/codeitlikemiley/spin-rust-sdk", rev = "3cf30012b50a1afb750dac3d28aa6da4a32c3468" }"#
     ));
     assert!(cargo_toml.contains("spin-postgres"));
     assert!(!cargo_toml.contains("spin-mysql"));
@@ -267,6 +276,7 @@ fn fullstack_writes_manifest_defaults_and_passes_check() {
     assert!(makefile.contains("--variable auth_cookie_secure=$(AUTH_COOKIE_SECURE)"));
     assert!(makefile.contains("--variable auth_jwt_key_ring_json='$(AUTH_JWT_KEY_RING_JSON)'"));
     assert!(makefile.contains("--variable auth_public_base_url=$(AUTH_PUBLIC_BASE_URL)"));
+    assert!(makefile.contains("--env AUTH_TRUSTED_INGRESS_KEY_BASE64="));
     assert!(makefile.contains("--variable auth_google_client_secret=$(AUTH_GOOGLE_CLIENT_SECRET)"));
     assert!(makefile.contains("--variable auth_apple_private_key='$(AUTH_APPLE_PRIVATE_KEY)'"));
     assert!(makefile.contains("POSTGRES_URL ?="));

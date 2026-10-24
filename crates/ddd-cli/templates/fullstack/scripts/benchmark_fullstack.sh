@@ -64,15 +64,19 @@ json_post() {
   local path="$1"
   local body="$2"
   shift 2
-  curl -fsS -X POST "${BASE_URL}${path}"     -H "content-type: application/json"     "$@"     --data "${body}"
+  curl -fsS -X POST "${BASE_URL}${path}"     -H "content-type: application/json"     -H "origin: ${AUTH_PUBLIC_BASE_URL:-${BASE_URL}}"     "$@"     --data "${body}"
 }
 
 registration="$(json_post /api/auth/password/register   "{\"email\":\"${email}\",\"password\":\"${password}\",\"redirect_url\":\"/dashboard\"}")"
 jq -e '.authenticated == false and .redirect_url == "/verify-email/pending"'   <<<"${registration}" >/dev/null
 
 verification_mail=""
+admin_mail_header=()
+if [[ -n "${SMOKE_ADMIN_SESSION_ID:-}" ]]; then
+  admin_mail_header=(-H "cookie: wasi_auth_dev_session=${SMOKE_ADMIN_SESSION_ID}")
+fi
 for _ in $(seq 1 50); do
-  verification_mail="$(curl -fsS -G "${BASE_URL}/api/auth/dev/mail/latest"     --data-urlencode "recipient=${email}"     --data-urlencode "kind=email-verification" 2>/dev/null || true)"
+  verification_mail="$(curl -fsS -G "${BASE_URL}/api/auth/dev/mail/latest"     "${admin_mail_header[@]}"     --data-urlencode "recipient=${email}"     --data-urlencode "kind=email-verification" 2>/dev/null || true)"
   [[ -n "${verification_mail}" ]] && break
   sleep 0.1
 done

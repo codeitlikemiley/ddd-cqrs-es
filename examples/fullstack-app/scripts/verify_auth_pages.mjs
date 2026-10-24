@@ -190,11 +190,16 @@ async function assertRedirect(page, path, expectedPathPrefix) {
 
 async function capturedMail(email, kind) {
   let lastStatus = 0;
+  const adminSession = process.env.SMOKE_ADMIN_SESSION_ID || "";
+  const headers = adminSession
+    ? { cookie: `wasi_auth_dev_session=${adminSession}` }
+    : {};
   for (let attempt = 0; attempt < 50; attempt += 1) {
     const response = await fetch(
       url(
         `/api/auth/dev/mail/latest?recipient=${encodeURIComponent(email)}&kind=${encodeURIComponent(kind)}`,
       ),
+      { headers },
     );
     lastStatus = response.status;
     if (response.ok) return response.json();

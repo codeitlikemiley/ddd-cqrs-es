@@ -29,14 +29,19 @@ hmac = { version = "0.12", optional = true }
 leptos = { version = "0.8.20", default-features = false }
 leptos_meta = { version = "0.8.6", default-features = false }
 leptos_router = { version = "0.8.14", default-features = false }
-leptos_wasi = { package = "leptos-wasi-runtime", version = "=0.4.2-rc.1", default-features = false, features = ["wasip3", "islands-router", "tracing"], optional = true }
+# Agent 5 rev d4f512e: wasip3 0.9 only. `wasip3` is the runtime feature;
+# islands and tracing stay off unless the app fails to compile without them.
+leptos_wasi = { package = "leptos-wasi-runtime", git = "https://github.com/codeitlikemiley/leptos_wasi", rev = "d4f512eb18b64c8f78c385365be28acc023462eb", default-features = false, features = ["wasip3"], optional = true }
 server_fn = { version = "0.8.13", default-features = false }
-spin-sdk = { git = "https://github.com/codeitlikemiley/spin-rust-sdk", rev = "a02d330fe9357be2d18e6deef400511195ce6f7f", version = "6.0.0", optional = true }
-wasip3 = { version = "=0.7.0", features = ["http-compat"], optional = true }
-# `wasip3 0.7.0` is generated against wit-bindgen 0.57.1. A second runtime
+spin-sdk = { git = "https://github.com/codeitlikemiley/spin-rust-sdk", rev = "3cf30012b50a1afb750dac3d28aa6da4a32c3468", version = "7.0.0", optional = true }
+wasip3 = { version = "=0.9.0", features = ["http-compat"], optional = true }
+# `wasip3 0.9.0` is generated against wit-bindgen 0.62.0. A second runtime
 # version duplicates unit-stream intrinsics and cannot be component-linked.
-wit-bindgen = { version = "=0.57.1", features = ["async-spawn", "inter-task-wakeup"], optional = true }
-wasm-bindgen = { version = "=0.2.126", optional = true }
+# wit-bindgen 0.62 includes the cancel-order fix from PR 1638, so
+# `inter-task-wakeup` is safe on this revision. wasi-auth bdfad803 enables
+# `async-spawn` only; feature-unification keeps a single wit-bindgen 0.62.0.
+wit-bindgen = { version = "=0.62.0", features = ["async-spawn", "inter-task-wakeup"], optional = true }
+wasm-bindgen = { version = "=0.2.129", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 js-sys = { version = "0.3", optional = true }
 web-sys = { version = "0.3", features = ["DataTransfer", "Document", "DomTokenList", "DragEvent", "Element", "Event", "EventTarget", "HtmlElement", "HtmlInputElement", "HtmlSelectElement", "HtmlTextAreaElement", "Location", "NodeList", "Storage", "Window"], optional = true }
@@ -52,6 +57,9 @@ tonic = { version = "0.12", default-features = false, features = ["codegen", "pr
 tokio = { version = "1.52", features = ["macros", "rt"], optional = true }
 tokio-postgres = { version = "0.7", optional = true }
 wasi-auth = { version = "=0.1.0-rc.5", default-features = false, optional = true }
+# Middleware rev 3df96c2 keeps one wasip3 0.9 / wit-bindgen 0.62 graph and
+# forwards response headers without reading trailers.
+wasi-http-middleware-component-support = { git = "https://github.com/codeitlikemiley/wasi-http-middleware", rev = "3df96c21a7906b885e67229e9a7c8c01b6497109", optional = true }
 ddd_cqrs_es = { version = "=0.3.0-rc.7", default-features = false, features = ["json", "serde", "async", "tracing", "json-file"], optional = true }
 qrcode = { version = "0.14", default-features = false, features = ["svg"], optional = true }
 
@@ -62,10 +70,13 @@ getrandom03 = { package = "getrandom", version = "0.3.4", features = ["wasm_js"]
 tonic-build = { version = "0.12", default-features = false, features = ["prost"] }
 wasi-auth = { version = "=0.1.0-rc.5", default-features = false, features = ["cedar"] }
 
-# Keep every transitive SDK edge on the audited final-WASI revision until an
-# upstream release contains the same wasip3 graph.
+# Keep every transitive SDK and auth edge on one wasip3 0.9 graph until the
+# crates.io releases contain the same commits. wasi-auth bdfad803 is PR 17:
+# HMAC trusted-context boundary and per-process replay defense on wasip3 0.9
+# and spin-sdk 7. Package version stays 0.1.0-rc.5, so this patch matches.
 [patch.crates-io]
-spin-sdk = { git = "https://github.com/codeitlikemiley/spin-rust-sdk", rev = "a02d330fe9357be2d18e6deef400511195ce6f7f" }
+spin-sdk = { git = "https://github.com/codeitlikemiley/spin-rust-sdk", rev = "3cf30012b50a1afb750dac3d28aa6da4a32c3468" }
+wasi-auth = { git = "https://github.com/codeitlikemiley/wasi-auth", rev = "bdfad80372287a3be4215aeefad534098ef6537b" }
 
 [features]
 default = []
@@ -107,6 +118,7 @@ ssr = [
   "dep:tracing",
   "dep:wasi-auth",
   "wasi-auth/fullstack-spin",
+  "dep:wasi-http-middleware-component-support",
   "dep:leptos_wasi",
   "dep:wasip3",
   "dep:wit-bindgen",
