@@ -45,6 +45,8 @@ jobs:
           cargo check --locked --all-targets -p ddd_cqrs_es
           cargo check --locked --all-targets -p ddd-cqrs-es-cli
 
+  # Quality, wasm, and generated-fullstack pin Rust 1.99.0.
+  # The msrv job above stays on rust-version 1.93.0.
   wasm-feature-matrix:
     name: wasm32 feature matrix
     runs-on: ubuntu-latest
@@ -56,7 +58,7 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
         with:
-          toolchain: stable
+          toolchain: 1.99.0
           targets: wasm32-wasip2
 
       - name: Cache cargo artifacts
@@ -66,7 +68,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-wasm-matrix-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-wasm-matrix-1.99.0-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-wasm-matrix-
 
@@ -138,7 +140,7 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
         with:
-          toolchain: stable
+          toolchain: 1.99.0
           components: rustfmt, clippy
 
       - name: Install release policy tools
@@ -153,7 +155,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-1.99.0-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
@@ -178,7 +180,7 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
         with:
-          toolchain: stable
+          toolchain: 1.99.0
           targets: wasm32-wasip2, wasm32-unknown-unknown
 
       - name: Cache cargo artifacts
@@ -188,7 +190,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-fullstack-${{ hashFiles('**/Cargo.lock', 'crates/ddd-cli/templates/fullstack/Cargo.toml.template') }}
+          key: ${{ runner.os }}-fullstack-1.99.0-${{ hashFiles('**/Cargo.lock', 'crates/ddd-cli/templates/fullstack/Cargo.toml.template') }}
           restore-keys: |
             ${{ runner.os }}-fullstack-
 
